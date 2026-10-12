@@ -1,4 +1,4 @@
-# ksp-backend
+# ksp_back
 
 Backend de l'écosystème **KSP** : services NestJS indépendants, qui communiquent en gRPC (questions) et par événements RabbitMQ (faits). Les fronts (`ksp-portail`, `ksp-shop`, `ksp-print`, `ksp-backoffice`, `ksp-courier`) n'appellent que la `gateway`.
 
