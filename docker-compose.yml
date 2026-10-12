@@ -1,0 +1,84 @@
+# Infrastructure de développement local : uniquement les dépendances, jamais les services KSP
+# (ils tournent avec « pnpm --filter @ksp/<service>-service dev »).
+#   pnpm infra:up      démarre l'ensemble
+#   pnpm infra:down    l'arrête (les données sont conservées dans les volumes)
+# Mots de passe de développement uniquement.
+
+name: ksp
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ksp
+      POSTGRES_PASSWORD: ksp
+      POSTGRES_DB: ksp
+    ports: ['5432:5432']
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Une base et un utilisateur par service, créés au premier démarrage.
+      - ./infra/local/postgres-init.sql:/docker-entrypoint-initdb.d/01-services.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ksp']
+      interval: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ksp
+      RABBITMQ_DEFAULT_PASS: ksp
+    ports:
+      - '5672:5672'
+      - '15672:15672' # console d'administration : http://localhost:15672
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    ports: ['6379:6379']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      retries: 10
+
+  # Stockage objet compatible S3 (service file). Version figée : à revoir lors du choix de l'hébergeur (ADR-018).
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: ksp
+      MINIO_ROOT_PASSWORD: ksp-local-secret
+    ports:
+      - '9000:9000'
+      - '9001:9001' # console : http://localhost:9001
+    volumes:
+      - minio-data:/data
+
+  # Traces distribuées : les services envoient en OTLP sur 4317, interface sur http://localhost:16686
+  jaeger:
+    image: jaegertracing/jaeger:2.5.0
+    ports:
+      - '4317:4317'
+      - '16686:16686'
+
+  # Recherche du catalogue (phase 3) : démarré seulement avec « docker compose --profile search up -d ».
+  meilisearch:
+    image: getmeili/meilisearch:v1.15
+    profiles: ['search']
+    environment:
+      MEILI_MASTER_KEY: ksp-local-master-key
+      MEILI_ENV: development
+    ports: ['7700:7700']
+    volumes:
+      - meilisearch-data:/meili_data
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  minio-data:
+  meilisearch-data:
