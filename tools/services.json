@@ -1,0 +1,12 @@
+{
+  "gateway": {
+    "grpcPort": null,
+    "httpPort": 3000,
+    "database": false
+  },
+  "identity": {
+    "grpcPort": 50051,
+    "httpPort": 3101,
+    "database": true
+  }
+}
