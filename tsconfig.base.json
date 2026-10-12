@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "declaration": true,
+    "sourceMap": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "incremental": false,
+    "paths": {
+      "@ksp/contracts": ["./libs/contracts/src"],
+      "@ksp/platform": ["./libs/platform/src"],
+      "@ksp/platform/telemetry": ["./libs/platform/src/telemetry/telemetry"]
+    }
+  }
+}

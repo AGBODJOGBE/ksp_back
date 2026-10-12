@@ -1,0 +1,13 @@
+packages:
+  - libs/*
+  - services/*
+
+onlyBuiltDependencies:
+  - '@bufbuild/buf'
+  - '@prisma/client'
+  - '@prisma/engines'
+  - '@swc/core'
+  - esbuild
+  - unrs-resolver
+  - prisma
+  - protobufjs

@@ -1,0 +1,51 @@
+{
+  "name": "ksp-backend",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Backend de l'écosystème KSP : services NestJS communiquant en gRPC et par événements RabbitMQ.",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --workspace-concurrency=1 run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "contracts:lint": "buf lint",
+    "contracts:breaking": "buf breaking --against '.git#branch=main'",
+    "contracts:generate": "buf generate && prettier --write libs/contracts/src/generated",
+    "prisma:generate": "pnpm -r --if-present run prisma:generate",
+    "ci:changed-services": "tsx tools/ci/changed-services.ts",
+    "new-service": "tsx tools/new-service/index.ts",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "prepare": "husky || true"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "1.73.0",
+    "@commitlint/cli": "21.2.3",
+    "@commitlint/config-conventional": "21.2.3",
+    "@eslint/js": "9.39.5",
+    "@swc/core": "1.16.13",
+    "@swc/jest": "0.2.39",
+    "@types/jest": "30.0.0",
+    "@types/node": "22.20.5",
+    "eslint": "9.39.5",
+    "eslint-config-prettier": "10.1.8",
+    "husky": "9.1.7",
+    "jest": "30.5.2",
+    "lint-staged": "17.6.0",
+    "prettier": "3.9.10",
+    "ts-proto": "2.13.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.1"
+  },
+  "lint-staged": {
+    "*.{ts,js,mjs,json,md,yml,yaml}": "prettier --write",
+    "*.ts": "eslint --fix"
+  }
+}
