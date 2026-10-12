@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.organization.created.v1.schema.json",
+  "title": "identity.organization.created",
+  "description": "Une organisation a été créée (UC-ID-12).",
+  "x-event-type": "identity.organization.created",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["organizationId", "createdBy"],
+  "properties": {
+    "organizationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "createdBy": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

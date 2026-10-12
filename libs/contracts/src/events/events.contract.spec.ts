@@ -1,0 +1,82 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import Ajv2020 from 'ajv/dist/2020';
+import addFormats from 'ajv-formats';
+import { type IdentityEventPayloads, type IdentityEventType } from './identity.events';
+
+const EVENTS_ROOT = resolve(__dirname, '..', '..', '..', '..', 'contracts', 'events');
+
+function loadSchemas(service: string): Map<string, object> {
+  const dir = join(EVENTS_ROOT, service);
+  const schemas = new Map<string, object>();
+  for (const file of readdirSync(dir)) {
+    const schema = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+    schemas.set(schema['x-event-type'], schema);
+  }
+  return schemas;
+}
+
+const uuid = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0f';
+
+/** Un exemple valide par événement : si un type TS diverge du schéma, ce test casse. */
+const examples: { [K in IdentityEventType]: IdentityEventPayloads[K] } = {
+  'identity.user.registered': { userId: uuid, method: 'phone' },
+  'identity.otp.requested': {
+    userId: null,
+    purpose: 'login',
+    channel: 'sms',
+    targetMasked: '+229 01 ** ** ** 45',
+  },
+  'identity.user.verified': { userId: uuid, verifiedVia: 'email' },
+  'identity.user.suspended': { userId: uuid, reason: 'Fraude signalée', suspendedBy: uuid },
+  'identity.user.reactivated': { userId: uuid, reactivatedBy: uuid },
+  'identity.user.deleted': { userId: uuid },
+  'identity.organization.created': { organizationId: uuid, createdBy: uuid },
+  'identity.member.added': { organizationId: uuid, userId: uuid, orgRole: 'org_member' },
+  'identity.member.removed': { organizationId: uuid, userId: uuid, removedBy: uuid },
+  'identity.role.granted': {
+    assignmentId: uuid,
+    userId: uuid,
+    roleCode: 'seller',
+    scopeType: 'org',
+    scopeId: uuid,
+    grantedBy: 'system',
+  },
+  'identity.role.revoked': { assignmentId: uuid, userId: uuid, roleCode: 'seller', revokedBy: uuid },
+};
+
+describe('Contrats des événements identity', () => {
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  addFormats(ajv);
+  ajv.addKeyword('x-event-type').addKeyword('x-event-version');
+  const schemas = loadSchemas('identity');
+
+  it('chaque type TypeScript a un schéma, et inversement', () => {
+    expect([...schemas.keys()].sort()).toEqual(Object.keys(examples).sort());
+  });
+
+  it.each(Object.entries(examples))('%s : l’exemple respecte le schéma', (type, payload) => {
+    const validate = ajv.compile(schemas.get(type)!);
+    expect(validate(payload)).toBe(true);
+  });
+
+  it('identity.otp.requested refuse tout champ qui pourrait contenir le code', () => {
+    const validate = ajv.compile(schemas.get('identity.otp.requested')!);
+    expect(validate({ ...examples['identity.otp.requested'], code: '123456' })).toBe(false);
+  });
+
+  it('l’enveloppe exige un type au format <service>.<entité>.<action>', () => {
+    const envelope = JSON.parse(readFileSync(join(EVENTS_ROOT, 'envelope.schema.json'), 'utf8'));
+    const validate = ajv.compile(envelope);
+    const base = {
+      eventId: uuid,
+      version: 1,
+      occurredAt: '2026-10-10T10:00:00Z',
+      producer: 'identity',
+      correlationId: 'c-1',
+      payload: {},
+    };
+    expect(validate({ ...base, type: 'identity.user.registered' })).toBe(true);
+    expect(validate({ ...base, type: 'UserRegistered' })).toBe(false);
+  });
+});

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.user.deleted.v1.schema.json",
+  "title": "identity.user.deleted",
+  "description": "Le compte a été anonymisé après le délai de suppression (UC-ID-11).",
+  "x-event-type": "identity.user.deleted",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["userId"],
+  "properties": {
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

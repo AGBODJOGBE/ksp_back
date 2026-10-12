@@ -1,0 +1,14 @@
+version: v2
+inputs:
+  - directory: contracts/proto
+plugins:
+  - local: ./node_modules/.bin/protoc-gen-ts_proto
+    out: libs/contracts/src/generated
+    opt:
+      - nestJs=true
+      - addGrpcMetadata=true
+      - stringEnums=true
+      - useOptionals=messages
+      - esModuleInterop=true
+      - useDate=string
+      - exportCommonSymbols=false

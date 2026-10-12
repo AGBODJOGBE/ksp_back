@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.user.registered.v1.schema.json",
+  "title": "identity.user.registered",
+  "description": "Un compte vient d'être créé (UC-ID-01, UC-ID-02).",
+  "x-event-type": "identity.user.registered",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["userId", "method"],
+  "properties": {
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "method": {
+      "enum": ["phone", "email"]
+    }
+  }
+}

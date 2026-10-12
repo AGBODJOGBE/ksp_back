@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/envelope.schema.json",
+  "title": "Enveloppe commune à tous les événements KSP",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "type", "version", "occurredAt", "producer", "correlationId", "payload"],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUID v7, sert à la déduplication (inbox)."
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z]+\\.[a-z_]+\\.[a-z_]+$",
+      "description": "<service>.<entité>.<action au passé>"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": {
+      "type": "string"
+    },
+    "correlationId": {
+      "type": "string"
+    },
+    "causationId": {
+      "type": ["string", "null"]
+    },
+    "payload": {
+      "type": "object"
+    }
+  }
+}

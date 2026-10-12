@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.role.granted.v1.schema.json",
+  "title": "identity.role.granted",
+  "description": "Un rôle a été attribué (UC-ID-17, UC-ID-19).",
+  "x-event-type": "identity.role.granted",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assignmentId", "userId", "roleCode", "scopeType", "grantedBy"],
+  "properties": {
+    "assignmentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "roleCode": {
+      "type": "string"
+    },
+    "scopeType": {
+      "enum": ["global", "domain", "org", "personal"]
+    },
+    "scopeId": {
+      "type": ["string", "null"]
+    },
+    "grantedBy": {
+      "type": "string",
+      "description": "Utilisateur ou \"system\" pour une activation automatique"
+    }
+  }
+}

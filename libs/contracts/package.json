@@ -1,0 +1,25 @@
+{
+  "name": "@ksp/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contrats partagés : code gRPC généré depuis contracts/proto et types des événements.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/copy-assets.cjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "1.14.6",
+    "@nestjs/microservices": "11.2.7",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
+  },
+  "files": [
+    "dist"
+  ]
+}

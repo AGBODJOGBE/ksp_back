@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package ksp.common.v1;
+
+// Montant monétaire. Toujours un entier (FCFA n'a pas de subdivision utilisée),
+// jamais de nombre à virgule.
+message Money {
+  int64 amount = 1;
+  // Code ISO 4217, "XOF" pour le franc CFA.
+  string currency = 2;
+}

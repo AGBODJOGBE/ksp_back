@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package ksp.common.v1;
+
+// Contrat commun implémenté par chaque service qui peut empêcher la suppression
+// d'un compte (recovery, order, wallet, realestate, cleaning).
+// identity interroge tous ces services avant de supprimer un compte :
+// une seule réponse positive bloque la suppression (UC-ID-11).
+service ObligationService {
+  rpc HasPendingObligations(HasPendingObligationsRequest) returns (HasPendingObligationsResponse);
+}
+
+message HasPendingObligationsRequest {
+  string user_id = 1;
+  // Organisation concernée, vide pour le contexte personnel.
+  string organization_id = 2;
+}
+
+message HasPendingObligationsResponse {
+  bool has_pending = 1;
+  repeated PendingObligation obligations = 2;
+}
+
+message PendingObligation {
+  // Nature de l'obligation, par exemple "open_recovery_case" ou "undelivered_order".
+  string kind = 1;
+  // Référence lisible de l'objet concerné (numéro de dossier, de commande…).
+  string reference = 2;
+  // Explication affichée à l'utilisateur.
+  string description = 3;
+}

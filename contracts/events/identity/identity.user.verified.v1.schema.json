@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.user.verified.v1.schema.json",
+  "title": "identity.user.verified",
+  "description": "Le téléphone ou l'e-mail du compte est vérifié.",
+  "x-event-type": "identity.user.verified",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["userId", "verifiedVia"],
+  "properties": {
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "verifiedVia": {
+      "enum": ["phone", "email"]
+    }
+  }
+}

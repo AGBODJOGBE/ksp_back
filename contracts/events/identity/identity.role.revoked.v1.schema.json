@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.role.revoked.v1.schema.json",
+  "title": "identity.role.revoked",
+  "description": "Un rôle a été retiré (UC-ID-19).",
+  "x-event-type": "identity.role.revoked",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assignmentId", "userId", "roleCode", "revokedBy"],
+  "properties": {
+    "assignmentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "roleCode": {
+      "type": "string"
+    },
+    "revokedBy": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.member.added.v1.schema.json",
+  "title": "identity.member.added",
+  "description": "Un membre a rejoint une organisation (UC-ID-14).",
+  "x-event-type": "identity.member.added",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["organizationId", "userId", "orgRole"],
+  "properties": {
+    "organizationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "orgRole": {
+      "enum": ["org_admin", "org_member", "org_viewer"]
+    }
+  }
+}

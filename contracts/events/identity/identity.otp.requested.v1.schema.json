@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.otp.requested.v1.schema.json",
+  "title": "identity.otp.requested",
+  "description": "Un code de vérification a été demandé. Ne contient JAMAIS le code (ADR-014).",
+  "x-event-type": "identity.otp.requested",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["purpose", "channel", "targetMasked"],
+  "properties": {
+    "userId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "purpose": {
+      "enum": ["login", "phone_change", "mfa", "password_reset", "signature"]
+    },
+    "channel": {
+      "enum": ["sms", "whatsapp", "email"]
+    },
+    "targetMasked": {
+      "type": "string",
+      "description": "Destinataire masqué, par exemple +229 01 ** ** ** 45"
+    }
+  }
+}

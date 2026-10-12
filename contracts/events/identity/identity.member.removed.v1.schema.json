@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.member.removed.v1.schema.json",
+  "title": "identity.member.removed",
+  "description": "Un membre a été retiré d'une organisation (UC-ID-16).",
+  "x-event-type": "identity.member.removed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["organizationId", "userId", "removedBy"],
+  "properties": {
+    "organizationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "removedBy": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

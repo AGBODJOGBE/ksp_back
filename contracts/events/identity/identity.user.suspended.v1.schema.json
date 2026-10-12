@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.user.suspended.v1.schema.json",
+  "title": "identity.user.suspended",
+  "description": "Un administrateur a suspendu le compte (UC-ID-20).",
+  "x-event-type": "identity.user.suspended",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["userId", "reason", "suspendedBy"],
+  "properties": {
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "suspendedBy": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

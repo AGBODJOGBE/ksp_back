@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.user.reactivated.v1.schema.json",
+  "title": "identity.user.reactivated",
+  "description": "Un administrateur a réactivé le compte (UC-ID-20).",
+  "x-event-type": "identity.user.reactivated",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["userId", "reactivatedBy"],
+  "properties": {
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reactivatedBy": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}
