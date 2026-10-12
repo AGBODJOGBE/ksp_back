@@ -130,7 +130,8 @@ console.log(
   `✓ Service ${name} créé dans services/${name} (gRPC :${tokens.__GRPC_PORT__}, HTTP :${tokens.__HTTP_PORT__})`,
 );
 console.log('Étapes suivantes :');
-console.log('  pnpm install                 # installe les dépendances et génère le client Prisma');
+console.log('  pnpm install                 # installe les dépendances');
+console.log('  pnpm prisma:generate         # génère le client Prisma du service');
 console.log('  pnpm contracts:generate      # génère le code TypeScript du contrat gRPC');
 console.log(`  pnpm --filter @ksp/${name}-service test`);
 console.log('  docker compose down -v && pnpm infra:up   # recrée la base locale du service');
