@@ -1,6 +1,6 @@
 import { identityV1 } from '@ksp/contracts';
-import { AppError } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
+import { notImplemented } from './not-implemented';
 
 /**
  * Adaptateur gRPC : traduit chaque appel en cas d'usage (couche application).
@@ -39,10 +39,4 @@ export class IdentityGrpcController implements identityV1.IdentityServiceControl
   getCatalog(): Promise<identityV1.GetCatalogResponse> {
     return notImplemented('GetCatalog');
   }
-}
-
-function notImplemented(method: string): Promise<never> {
-  return Promise.reject(
-    AppError.notImplemented('IDENTITY_NOT_IMPLEMENTED', `La méthode ${method} n'est pas encore disponible.`),
-  );
 }

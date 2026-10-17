@@ -2,6 +2,8 @@ import { loadConfig } from '@ksp/platform';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { configSchema } from '../src/config';
+import { AccountGrpcController } from '../src/interfaces/grpc/account.controller';
+import { AuthGrpcController } from '../src/interfaces/grpc/auth.controller';
 import { IdentityGrpcController } from '../src/interfaces/grpc/identity.controller';
 
 describe('AppModule', () => {
@@ -16,6 +18,8 @@ describe('AppModule', () => {
     });
     const moduleRef = await Test.createTestingModule({ imports: [AppModule.forRoot(config)] }).compile();
     expect(moduleRef.get(IdentityGrpcController)).toBeDefined();
+    expect(moduleRef.get(AuthGrpcController)).toBeDefined();
+    expect(moduleRef.get(AccountGrpcController)).toBeDefined();
     await moduleRef.close();
   });
 });
