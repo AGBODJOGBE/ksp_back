@@ -418,10 +418,13 @@ export const IDENTITY_SERVICE_NAME = "IdentityService";
  * Connexion et sessions — réservé à la gateway.
  *
  * Erreurs (code AppError → statut gRPC) :
- *   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attempts_remaining
+ *   IDENTITY_PHONE_INVALID          INVALID_ARGUMENT    numéro mal formé, ou refusé par notification
+ *   IDENTITY_OTP_PURPOSE_INVALID    INVALID_ARGUMENT    objet du code non pris en charge
+ *   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attemptsRemaining
  *   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION code expiré ou déjà utilisé
  *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
- *   IDENTITY_OTP_RATE_LIMITED       RESOURCE_EXHAUSTED  details.retry_after_seconds (→ Retry-After)
+ *   IDENTITY_OTP_RATE_LIMITED       RESOURCE_EXHAUSTED  details.retryAfterSeconds (→ Retry-After)
+ *   IDENTITY_OTP_SEND_FAILED        UNAVAILABLE         notification n'a pu envoyer le code par aucun canal
  *   IDENTITY_REFRESH_TOKEN_INVALID  UNAUTHENTICATED     jeton inconnu ou expiré
  *   IDENTITY_REFRESH_TOKEN_REUSED   UNAUTHENTICATED     ancien jeton réutilisé : session révoquée
  *   IDENTITY_SESSION_REVOKED        UNAUTHENTICATED
@@ -473,10 +476,13 @@ export interface AuthServiceClient {
  * Connexion et sessions — réservé à la gateway.
  *
  * Erreurs (code AppError → statut gRPC) :
- *   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attempts_remaining
+ *   IDENTITY_PHONE_INVALID          INVALID_ARGUMENT    numéro mal formé, ou refusé par notification
+ *   IDENTITY_OTP_PURPOSE_INVALID    INVALID_ARGUMENT    objet du code non pris en charge
+ *   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attemptsRemaining
  *   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION code expiré ou déjà utilisé
  *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
- *   IDENTITY_OTP_RATE_LIMITED       RESOURCE_EXHAUSTED  details.retry_after_seconds (→ Retry-After)
+ *   IDENTITY_OTP_RATE_LIMITED       RESOURCE_EXHAUSTED  details.retryAfterSeconds (→ Retry-After)
+ *   IDENTITY_OTP_SEND_FAILED        UNAVAILABLE         notification n'a pu envoyer le code par aucun canal
  *   IDENTITY_REFRESH_TOKEN_INVALID  UNAUTHENTICATED     jeton inconnu ou expiré
  *   IDENTITY_REFRESH_TOKEN_REUSED   UNAUTHENTICATED     ancien jeton réutilisé : session révoquée
  *   IDENTITY_SESSION_REVOKED        UNAUTHENTICATED

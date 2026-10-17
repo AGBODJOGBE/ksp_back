@@ -92,7 +92,7 @@ export interface SendNotificationResponse {
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
  *   NOTIFICATION_RECIPIENT_INVALID    INVALID_ARGUMENT  destinataire absent ou mal formé pour le canal
- *   NOTIFICATION_CHANNELS_EXHAUSTED   UNAVAILABLE       tous les canaux ont échoué (details.channels_tried)
+ *   NOTIFICATION_CHANNELS_EXHAUSTED   UNAVAILABLE       tous les canaux ont échoué (details.channelsTried)
  *
  * Le reste du contrat (notifications dans l'application, préférences, appareils, modèles,
  * événements écoutés) sera écrit après le cahier des charges du service notification.
@@ -116,7 +116,7 @@ export interface NotificationServiceClient {
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
  *   NOTIFICATION_RECIPIENT_INVALID    INVALID_ARGUMENT  destinataire absent ou mal formé pour le canal
- *   NOTIFICATION_CHANNELS_EXHAUSTED   UNAVAILABLE       tous les canaux ont échoué (details.channels_tried)
+ *   NOTIFICATION_CHANNELS_EXHAUSTED   UNAVAILABLE       tous les canaux ont échoué (details.channelsTried)
  *
  * Le reste du contrat (notifications dans l'application, préférences, appareils, modèles,
  * événements écoutés) sera écrit après le cahier des charges du service notification.

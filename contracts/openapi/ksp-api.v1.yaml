@@ -88,8 +88,8 @@ paths:
         si l'envoi échoue. Inscription et connexion suivent le même parcours. La réponse est la
         même que le numéro soit connu ou non.
 
-        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `IDENTITY_OTP_RATE_LIMITED` et
-        `GATEWAY_RATE_LIMITED` (429).
+        Erreurs : `GATEWAY_VALIDATION_FAILED` et `IDENTITY_PHONE_INVALID` (400),
+        `IDENTITY_OTP_RATE_LIMITED` et `GATEWAY_RATE_LIMITED` (429), `IDENTITY_OTP_SEND_FAILED` (503).
       x-ksp-grpc: ksp.identity.v1.AuthService/RequestOtp
       x-ksp-access: public
       x-ksp-rate-limit: otp_request

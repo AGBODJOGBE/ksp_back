@@ -32,3 +32,78 @@ model ProcessedEvent {
   @@id([eventId, consumer])
   @@map("processed_events")
 }
+
+/// Statut d'un compte (cahier des charges Identité, partie 6).
+enum UserStatus {
+  pending_verification
+  active
+  locked
+  suspended
+  deletion_pending
+  deleted
+}
+
+enum OtpChannel {
+  sms
+  whatsapp
+}
+
+/// Objet d'un code. D'autres objets (changement de numéro, double authentification…) viendront avec leurs cas d'usage.
+enum OtpPurpose {
+  login
+}
+
+/// Le compte : une personne = un compte.
+model User {
+  id                  String     @id @db.Uuid
+  status              UserStatus
+  firstName           String?    @map("first_name")
+  lastName            String?    @map("last_name")
+  preferredLanguage   String     @default("fr") @map("preferred_language")
+  createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletionRequestedAt DateTime?  @map("deletion_requested_at") @db.Timestamptz(3)
+  anonymizedAt        DateTime?  @map("anonymized_at") @db.Timestamptz(3)
+
+  phones UserPhone[]
+
+  @@map("users")
+}
+
+/// Numéros d'un compte. Un numéro n'appartient qu'à un seul compte.
+model UserPhone {
+  id         String    @id @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  phoneE164  String    @unique @map("phone_e164")
+  isPrimary  Boolean   @default(false) @map("is_primary")
+  verifiedAt DateTime? @map("verified_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_phones")
+}
+
+/// Codes de vérification envoyés (UC-ID-01). Le code n'est jamais stocké en clair : seulement son HMAC.
+model OtpChallenge {
+  id           String      @id @db.Uuid
+  /// Destinataire au format E.164.
+  target       String
+  /// Canal demandé.
+  channel      OtpChannel
+  /// Canal réellement utilisé après une éventuelle bascule ; vide tant que l'envoi n'a pas réussi.
+  channelUsed  OtpChannel? @map("channel_used")
+  purpose      OtpPurpose
+  codeHash     String      @map("code_hash")
+  attempts     Int         @default(0)
+  expiresAt    DateTime    @map("expires_at") @db.Timestamptz(3)
+  consumedAt   DateTime?   @map("consumed_at") @db.Timestamptz(3)
+  ip           String?
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  sentAt       DateTime?   @map("sent_at") @db.Timestamptz(3)
+  sendFailedAt DateTime?   @map("send_failed_at") @db.Timestamptz(3)
+
+  /// Limites d'envoi par numéro : derniers envois réussis d'une cible.
+  @@index([target, sentAt])
+  @@map("otp_challenges")
+}

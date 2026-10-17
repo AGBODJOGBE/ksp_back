@@ -15,6 +15,7 @@ describe('AppModule', () => {
       HTTP_PORT: '3101',
       DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
       RABBITMQ_URL: 'amqp://localhost',
+      OTP_HMAC_SECRET: 'test-secret-test-secret-test-secret-00',
     });
     const moduleRef = await Test.createTestingModule({ imports: [AppModule.forRoot(config)] }).compile();
     expect(moduleRef.get(IdentityGrpcController)).toBeDefined();
