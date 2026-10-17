@@ -1,0 +1,866 @@
+openapi: 3.1.0
+info:
+  title: API publique KSP
+  version: 1.0.0
+  description: |
+    API REST exposée par la gateway aux fronts KSP (cahier des charges Gateway, partie 6).
+    Ce fichier est la référence écrite avant le code : quand la gateway existera, la CI
+    vérifiera que la documentation qu'elle génère lui correspond.
+
+    **Conventions**
+    - JSON, champs en camelCase ; dates ISO 8601 en UTC ; montants en entiers XOF.
+    - Tout champ inconnu dans une requête est refusé (400).
+    - Chaque réponse porte l'en-tête `X-Correlation-Id`.
+    - Erreurs au format unique `{ "error": { code, message, details, correlationId } }`.
+
+    **Type de client** : déduit par la gateway, jamais déclaré par le client.
+    - Origine `admin.ksp.bj` : back-office.
+    - Origines `ksp.bj`, `shop.ksp.bj`, `print.ksp.bj` : web.
+    - Aucune origine et en-tête `X-App-Version` présent : mobile (application client, application livreur).
+    - Toute autre requête vers une route d'authentification est refusée (`GATEWAY_CLIENT_UNKNOWN`).
+
+    **Jeton de renouvellement**
+    - Web et back-office : cookie `HttpOnly`, `Secure`, `SameSite=Strict`, limité au chemin
+      `/api/v1/identity/token`, nommé `__Secure-ksp_rt` (web) ou `__Secure-ksp_admin_rt` (back-office).
+      Il n'apparaît jamais dans le corps des réponses.
+    - Mobile : dans le corps des réponses ; l'application le range dans le stockage sécurisé du téléphone.
+
+    **Extensions `x-ksp-*`** (base du manifeste de routage de la gateway)
+    - `x-ksp-grpc` : appel gRPC exécuté, `<paquet>.<Service>/<Méthode>`.
+    - `x-ksp-access` : `public`, `refresh_token` ou `authenticated`.
+    - `x-ksp-rate-limit` : catégorie de limite d'appels, définie dans `x-ksp-rate-limits`.
+servers:
+  - url: https://api.ksp.bj
+    description: Production (adresse à valider avec le choix de l'hébergeur, ADR-018)
+  - url: http://localhost:3000
+    description: Développement local
+tags:
+  - name: Authentification
+    description: Connexion par téléphone, sessions (UC-ID-01, 04, 05)
+  - name: Compte
+    description: Profil de l'utilisateur connecté
+  - name: Clés publiques
+    description: Vérification des jetons d'accès (UC-ID-22)
+
+# Valeurs proposées par le cahier des charges Gateway (partie 4), réglables par configuration.
+x-ksp-rate-limits:
+  public:
+    limit: 60
+    per: minute
+    key: ip
+  authenticated:
+    limit: 300
+    per: minute
+    key: user
+  otp_request:
+    limit: 5
+    per: minute
+    key: ip
+    description: identity ajoute sa propre limite par numéro (5 par heure, 10 par jour).
+  otp_verify:
+    limit: 10
+    per: minute
+    key: ip
+  refresh:
+    limit: 60
+    per: minute
+    key: ip
+
+# Préfixes réservés, sans route pour l'instant.
+x-ksp-reserved-prefixes:
+  - prefix: /api/v1/bff/web
+    description: Façade web (portail, shop, print), une route par écran.
+  - prefix: /api/v1/bff/mobile
+    description: Façade mobile (application client, application livreur).
+  - prefix: /api/v1/bff/admin
+    description: Façade back-office, double authentification obligatoire.
+  - prefix: /partner/v1
+    description: API Partenaires (ADR-019), contrat écrit en phase 3 avec le service delivery.
+
+paths:
+  /api/v1/identity/otp/request:
+    post:
+      tags: [Authentification]
+      operationId: requestOtp
+      summary: Demander un code de connexion
+      description: |
+        UC-ID-01. Envoie un code par SMS ou WhatsApp, avec bascule automatique sur l'autre canal
+        si l'envoi échoue. Inscription et connexion suivent le même parcours. La réponse est la
+        même que le numéro soit connu ou non.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `IDENTITY_OTP_RATE_LIMITED` et
+        `GATEWAY_RATE_LIMITED` (429).
+      x-ksp-grpc: ksp.identity.v1.AuthService/RequestOtp
+      x-ksp-access: public
+      x-ksp-rate-limit: otp_request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestOtpRequest'
+            example:
+              phone: '+2290197000045'
+              channel: sms
+      responses:
+        '200':
+          description: Code envoyé
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestOtpResponse'
+              example:
+                challengeId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0f
+                maskedTarget: '+229 01 •• •• •• 45'
+                channel: sms
+                expiresInSeconds: 300
+                resendAfterSeconds: 60
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/identity/otp/verify:
+    post:
+      tags: [Authentification]
+      operationId: verifyOtp
+      summary: Valider le code et ouvrir une session
+      description: |
+        UC-ID-01. Crée le compte si le numéro est nouveau, puis ouvre une session. Un compte
+        interne qui se connecte au back-office reçoit à la place une étape de double
+        authentification (`mfa_required`), avec configuration obligatoire à la première connexion.
+
+        Erreurs : `IDENTITY_OTP_INVALID` (400, `details.attemptsRemaining`),
+        `IDENTITY_OTP_EXPIRED` et `IDENTITY_OTP_TOO_MANY_ATTEMPTS` (422),
+        `IDENTITY_ACCOUNT_SUSPENDED` (403), `GATEWAY_RATE_LIMITED` (429).
+      x-ksp-grpc: ksp.identity.v1.AuthService/VerifyOtp
+      x-ksp-access: public
+      x-ksp-rate-limit: otp_verify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyOtpRequest'
+            example:
+              challengeId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0f
+              code: '482913'
+              deviceLabel: Téléphone Android
+      responses:
+        '200':
+          description: Session ouverte, ou double authentification à passer
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+            Set-Cookie:
+              $ref: '#/components/headers/Set-Cookie-Refresh'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/VerifyOtpSessionResponse'
+                  - $ref: '#/components/schemas/MfaRequiredResponse'
+                discriminator:
+                  propertyName: status
+                  mapping:
+                    authenticated: '#/components/schemas/VerifyOtpSessionResponse'
+                    mfa_required: '#/components/schemas/MfaRequiredResponse'
+              examples:
+                nouveauCompteMobile:
+                  summary: Nouveau compte, application mobile
+                  value:
+                    status: authenticated
+                    accessToken: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.e30.c2ln
+                    accessTokenExpiresAt: '2026-10-17T10:15:00Z'
+                    refreshToken: rt_9f8e7d6c5b4a
+                    refreshTokenExpiresAt: '2026-11-16T10:00:00Z'
+                    sessionId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e10
+                    user:
+                      id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                      status: active
+                      firstName: null
+                      lastName: null
+                      phone: '+2290197000045'
+                      email: null
+                      preferredLanguage: fr
+                      createdAt: '2026-10-17T10:00:00Z'
+                    profileIncomplete: true
+                    isNewUser: true
+                agentBackOffice:
+                  summary: Compte interne, première connexion au back-office
+                  value:
+                    status: mfa_required
+                    mfaToken: mfa_2b3c4d5e6f
+                    expiresAt: '2026-10-17T10:05:00Z'
+                    methods: [totp, recovery_code]
+                    enrollmentRequired: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/identity/token/refresh:
+    post:
+      tags: [Authentification]
+      operationId: refreshSession
+      summary: Renouveler la session
+      description: |
+        UC-ID-04. Web et back-office : le jeton est lu dans le cookie, sans corps de requête.
+        Mobile : le jeton est envoyé dans le corps. Chaque renouvellement remplace le jeton de
+        renouvellement ; la réutilisation d'un ancien jeton révoque toute la session.
+
+        Erreurs : `IDENTITY_REFRESH_TOKEN_INVALID`, `IDENTITY_REFRESH_TOKEN_REUSED` et
+        `IDENTITY_SESSION_REVOKED` (401), `IDENTITY_ACCOUNT_SUSPENDED` (403),
+        `GATEWAY_RATE_LIMITED` (429).
+      x-ksp-grpc: ksp.identity.v1.AuthService/RefreshSession
+      x-ksp-access: refresh_token
+      x-ksp-rate-limit: refresh
+      security:
+        - refreshCookieWeb: []
+        - refreshCookieBackoffice: []
+        - {}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshSessionRequest'
+            example:
+              refreshToken: rt_9f8e7d6c5b4a
+      responses:
+        '200':
+          description: Nouveaux jetons
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+            Set-Cookie:
+              $ref: '#/components/headers/Set-Cookie-Refresh'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+              example:
+                status: authenticated
+                accessToken: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.e30.c2ln
+                accessTokenExpiresAt: '2026-10-17T10:30:00Z'
+                refreshTokenExpiresAt: '2026-11-16T10:15:00Z'
+                sessionId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e10
+                user:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                  status: active
+                  firstName: Koffi
+                  lastName: Adjovi
+                  phone: '+2290197000045'
+                  email: null
+                  preferredLanguage: fr
+                  createdAt: '2026-10-17T10:00:00Z'
+                profileIncomplete: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/identity/logout:
+    post:
+      tags: [Authentification]
+      operationId: logout
+      summary: Se déconnecter
+      description: |
+        UC-ID-05. « Cet appareil » révoque la session du jeton d'accès ; « tous les appareils »
+        révoque toutes les sessions. Sur le web et le back-office, la gateway efface aussi le cookie
+        de renouvellement.
+      x-ksp-grpc: ksp.identity.v1.AuthService/Logout
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+            example:
+              scope: all_devices
+      responses:
+        '200':
+          description: Sessions révoquées
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+            Set-Cookie:
+              $ref: '#/components/headers/Set-Cookie-Clear'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutResponse'
+              example:
+                revokedSessions: 3
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/identity/me:
+    get:
+      tags: [Compte]
+      operationId: getMe
+      summary: Lire son profil
+      x-ksp-grpc: ksp.identity.v1.AccountService/GetMe
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Profil de l'utilisateur connecté
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+              example:
+                user:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                  status: active
+                  firstName: null
+                  lastName: null
+                  phone: '+2290197000045'
+                  email: null
+                  preferredLanguage: fr
+                  createdAt: '2026-10-17T10:00:00Z'
+                profileIncomplete: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      tags: [Compte]
+      operationId: updateMe
+      summary: Compléter ou modifier son profil
+      description: Seuls les champs envoyés sont modifiés. Sert à compléter le nom après l'inscription (UC-ID-01).
+      x-ksp-grpc: ksp.identity.v1.AccountService/UpdateMe
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMeRequest'
+            example:
+              firstName: Koffi
+              lastName: Adjovi
+      responses:
+        '200':
+          description: Profil modifié
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+              example:
+                user:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                  status: active
+                  firstName: Koffi
+                  lastName: Adjovi
+                  phone: '+2290197000045'
+                  email: null
+                  preferredLanguage: fr
+                  createdAt: '2026-10-17T10:00:00Z'
+                profileIncomplete: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /.well-known/jwks.json:
+    get:
+      tags: [Clés publiques]
+      operationId: getJwks
+      summary: Clés publiques de vérification des jetons
+      description: |
+        UC-ID-22. Servies depuis le cache de la gateway (10 minutes), rechargé immédiatement si un
+        jeton porte une clé inconnue. Pendant une rotation, l'ancienne et la nouvelle clé sont publiées.
+      x-ksp-grpc: ksp.identity.v1.AuthService/GetSigningKeys
+      x-ksp-access: public
+      x-ksp-rate-limit: public
+      responses:
+        '200':
+          description: Jeu de clés JWK (RFC 7517)
+          headers:
+            Cache-Control:
+              description: '`public, max-age=600`'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Jwks'
+              example:
+                keys:
+                  - kid: k1
+                    kty: EC
+                    crv: P-256
+                    x: f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU
+                    y: x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0
+                    alg: ES256
+                    use: sig
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Jeton d'accès ES256 délivré par identity, valable 15 minutes.
+    refreshCookieWeb:
+      type: apiKey
+      in: cookie
+      name: __Secure-ksp_rt
+      description: Jeton de renouvellement des sites web (portail, shop, print).
+    refreshCookieBackoffice:
+      type: apiKey
+      in: cookie
+      name: __Secure-ksp_admin_rt
+      description: Jeton de renouvellement du back-office.
+
+  headers:
+    X-Correlation-Id:
+      description: Identifiant de la requête, à citer au support.
+      schema:
+        type: string
+        format: uuid
+    Set-Cookie-Refresh:
+      description: |
+        Web et back-office uniquement : nouveau jeton de renouvellement, par exemple
+        `__Secure-ksp_rt=…; Path=/api/v1/identity/token; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000`.
+      schema:
+        type: string
+    Set-Cookie-Clear:
+      description: 'Web et back-office uniquement : effacement du cookie de renouvellement (`Max-Age=0`).'
+      schema:
+        type: string
+    Retry-After:
+      description: Nombre de secondes à attendre avant de réessayer.
+      schema:
+        type: integer
+        minimum: 1
+
+  responses:
+    BadRequest:
+      description: Requête invalide (`GATEWAY_VALIDATION_FAILED`, `GATEWAY_CLIENT_UNKNOWN`, `IDENTITY_OTP_INVALID`)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: IDENTITY_OTP_INVALID
+              message: Le code est incorrect.
+              details:
+                attemptsRemaining: 3
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+    Unauthorized:
+      description: Jeton absent, invalide, expiré ou session révoquée (`GATEWAY_TOKEN_MISSING`, `GATEWAY_TOKEN_INVALID`, `GATEWAY_TOKEN_EXPIRED`, `IDENTITY_REFRESH_TOKEN_*`, `IDENTITY_SESSION_REVOKED`)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: GATEWAY_TOKEN_EXPIRED
+              message: Votre session a expiré, reconnectez-vous.
+              details: {}
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+    Forbidden:
+      description: Accès refusé (`IDENTITY_ACCOUNT_SUSPENDED`)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: IDENTITY_ACCOUNT_SUSPENDED
+              message: Ce compte est suspendu.
+              details: {}
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+    UnprocessableEntity:
+      description: Code expiré ou annulé (`IDENTITY_OTP_EXPIRED`, `IDENTITY_OTP_TOO_MANY_ATTEMPTS`)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: IDENTITY_OTP_EXPIRED
+              message: Le code a expiré, demandez-en un nouveau.
+              details: {}
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+    TooManyRequests:
+      description: Trop de requêtes (`GATEWAY_RATE_LIMITED`, `IDENTITY_OTP_RATE_LIMITED`)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+        Retry-After:
+          $ref: '#/components/headers/Retry-After'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: IDENTITY_OTP_RATE_LIMITED
+              message: Trop de codes demandés, réessayez plus tard.
+              details:
+                retryAfterSeconds: 45
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+    ServiceUnavailable:
+      description: Service momentanément indisponible, coupe-circuit ouvert (`IDENTITY_UNAVAILABLE`)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: IDENTITY_UNAVAILABLE
+              message: Le service est momentanément indisponible, réessayez dans quelques instants.
+              details: {}
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, details, correlationId]
+          properties:
+            code:
+              type: string
+              pattern: '^[A-Z]+(_[A-Z0-9]+)+$'
+              description: Forme SERVICE_RAISON.
+            message:
+              type: string
+              description: Message lisible par l'utilisateur, en français.
+            details:
+              type: object
+            correlationId:
+              type: string
+              format: uuid
+
+    PhoneE164:
+      type: string
+      pattern: '^\+[1-9][0-9]{6,14}$'
+      description: Numéro au format international E.164.
+
+    OtpChannel:
+      type: string
+      enum: [sms, whatsapp]
+
+    UserStatus:
+      type: string
+      enum: [pending_verification, active, locked, suspended, deletion_pending, deleted]
+
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, status, firstName, lastName, phone, email, preferredLanguage, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        firstName:
+          type: [string, 'null']
+        lastName:
+          type: [string, 'null']
+        phone:
+          oneOf:
+            - $ref: '#/components/schemas/PhoneE164'
+            - type: 'null'
+        email:
+          type: [string, 'null']
+          format: email
+        preferredLanguage:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    RequestOtpRequest:
+      type: object
+      additionalProperties: false
+      required: [phone]
+      properties:
+        phone:
+          $ref: '#/components/schemas/PhoneE164'
+        channel:
+          $ref: '#/components/schemas/OtpChannel'
+          default: sms
+
+    RequestOtpResponse:
+      type: object
+      additionalProperties: false
+      required: [challengeId, maskedTarget, channel, expiresInSeconds, resendAfterSeconds]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+          description: À renvoyer avec le code.
+        maskedTarget:
+          type: string
+        channel:
+          $ref: '#/components/schemas/OtpChannel'
+          description: Canal réellement utilisé, après une éventuelle bascule.
+        expiresInSeconds:
+          type: integer
+          minimum: 1
+        resendAfterSeconds:
+          type: integer
+          minimum: 0
+
+    VerifyOtpRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeId, code]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          pattern: '^[0-9]{4,8}$'
+          description: Longueur fixée par configuration (6 chiffres proposés).
+        deviceLabel:
+          type: string
+          maxLength: 100
+          description: Nom de l'appareil affiché dans la liste des sessions ; déduit du User-Agent s'il est absent.
+
+    SessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [status, accessToken, accessTokenExpiresAt, refreshTokenExpiresAt, sessionId, user, profileIncomplete]
+      properties:
+        status:
+          const: authenticated
+        accessToken:
+          type: string
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+        refreshToken:
+          type: string
+          description: Mobile uniquement. Web et back-office le reçoivent dans le cookie.
+        refreshTokenExpiresAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/User'
+        profileIncomplete:
+          type: boolean
+          description: Le nom n'est pas encore renseigné ; il est obligatoire avant tout paiement.
+
+    VerifyOtpSessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          status,
+          accessToken,
+          accessTokenExpiresAt,
+          refreshTokenExpiresAt,
+          sessionId,
+          user,
+          profileIncomplete,
+          isNewUser,
+        ]
+      properties:
+        status:
+          const: authenticated
+        accessToken:
+          type: string
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+        refreshToken:
+          type: string
+          description: Mobile uniquement. Web et back-office le reçoivent dans le cookie.
+        refreshTokenExpiresAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/User'
+        profileIncomplete:
+          type: boolean
+        isNewUser:
+          type: boolean
+          description: Le compte vient d'être créé par ce code.
+
+    MfaRequiredResponse:
+      type: object
+      additionalProperties: false
+      required: [status, mfaToken, expiresAt, methods, enrollmentRequired]
+      properties:
+        status:
+          const: mfa_required
+        mfaToken:
+          type: string
+          description: Jeton court, à usage unique, à présenter à l'étape de double authentification (lot suivant).
+        expiresAt:
+          type: string
+          format: date-time
+        methods:
+          type: array
+          items:
+            type: string
+            enum: [totp, recovery_code, sms]
+        enrollmentRequired:
+          type: boolean
+          description: L'application d'authentification doit être configurée avant tout accès.
+
+    RefreshSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      description: Mobile uniquement ; web et back-office n'envoient pas de corps.
+      properties:
+        refreshToken:
+          type: string
+
+    LogoutRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        scope:
+          type: string
+          enum: [this_device, all_devices]
+          default: this_device
+
+    LogoutResponse:
+      type: object
+      additionalProperties: false
+      required: [revokedSessions]
+      properties:
+        revokedSessions:
+          type: integer
+          minimum: 0
+
+    MeResponse:
+      type: object
+      additionalProperties: false
+      required: [user, profileIncomplete]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        profileIncomplete:
+          type: boolean
+
+    UpdateMeRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        preferredLanguage:
+          type: string
+          pattern: '^[a-z]{2}$'
+          description: Code de langue, "fr" par défaut.
+
+    Jwks:
+      type: object
+      additionalProperties: false
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [kid, kty, crv, x, y, alg, use]
+            properties:
+              kid:
+                type: string
+              kty:
+                const: EC
+              crv:
+                const: P-256
+              x:
+                type: string
+              y:
+                type: string
+              alg:
+                const: ES256
+              use:
+                const: sig

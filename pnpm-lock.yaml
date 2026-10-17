@@ -81,6 +81,9 @@ importers:
       ajv-formats:
         specifier: 3.0.1
         version: 3.0.1(ajv@8.20.0)
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
 
   libs/platform:
     dependencies:
