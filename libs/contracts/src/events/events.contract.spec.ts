@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
 import { type IdentityEventPayloads, type IdentityEventType } from './identity.events';
+import { type NotificationEventPayloads, type NotificationEventType } from './notification.events';
 
 const EVENTS_ROOT = resolve(__dirname, '..', '..', '..', '..', 'contracts', 'events');
 
@@ -79,4 +80,41 @@ describe('Contrats des événements identity', () => {
     expect(validate({ ...base, type: 'identity.user.registered' })).toBe(true);
     expect(validate({ ...base, type: 'UserRegistered' })).toBe(false);
   });
+});
+
+const notificationExamples: { [K in NotificationEventType]: NotificationEventPayloads[K] } = {
+  'notification.message.failed': {
+    notificationId: uuid,
+    templateCode: 'identity.otp',
+    channelsTried: ['sms', 'whatsapp'],
+    reason: 'provider_unavailable',
+    recipientUserId: null,
+    targetMasked: '+229 01 ** ** ** 45',
+  },
+};
+
+describe('Contrats des événements notification', () => {
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  addFormats(ajv);
+  ajv.addKeyword('x-event-type').addKeyword('x-event-version');
+  const schemas = loadSchemas('notification');
+
+  it('chaque type TypeScript a un schéma, et inversement', () => {
+    expect([...schemas.keys()].sort()).toEqual(Object.keys(notificationExamples).sort());
+  });
+
+  it.each(Object.entries(notificationExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
+    const validate = ajv.compile(schemas.get(type)!);
+    expect(validate(payload)).toBe(true);
+  });
+
+  it.each(['variables', 'content', 'text'])(
+    'notification.message.failed refuse le champ « %s », qui pourrait contenir un code',
+    (field) => {
+      const validate = ajv.compile(schemas.get('notification.message.failed')!);
+      expect(validate({ ...notificationExamples['notification.message.failed'], [field]: '123456' })).toBe(
+        false,
+      );
+    },
+  );
 });

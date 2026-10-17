@@ -28,6 +28,7 @@ export enum Priority {
 
 export enum DeliveryStatus {
   DELIVERY_STATUS_UNSPECIFIED = "DELIVERY_STATUS_UNSPECIFIED",
+  /** DELIVERY_STATUS_ACCEPTED - Pris en charge par le prestataire ; la remise au destinataire n'est pas encore confirmée. */
   DELIVERY_STATUS_ACCEPTED = "DELIVERY_STATUS_ACCEPTED",
   DELIVERY_STATUS_SENT = "DELIVERY_STATUS_SENT",
   DELIVERY_STATUS_FAILED = "DELIVERY_STATUS_FAILED",
@@ -52,8 +53,18 @@ export interface SendNotificationRequest {
   /** Variables du modèle. Peuvent contenir un secret (code) : jamais journalisées. */
   variables: { [key: string]: string };
   priority: Priority;
-  /** Deux appels avec la même clé ne produisent qu'un seul envoi. */
+  /**
+   * Deux appels avec la même clé ne produisent qu'un seul envoi ; le second reçoit la réponse
+   * du premier. identity utilise l'identifiant de la demande de code.
+   */
   idempotencyKey: string;
+  /** Langue du modèle, "fr" par défaut. */
+  locale: string;
+  /**
+   * Au-delà de ce délai après l'appel, le message n'est plus envoyé ni renvoyé (un code expiré
+   * est inutile). 0 : pas de limite.
+   */
+  ttlSeconds: number;
 }
 
 export interface SendNotificationRequest_VariablesEntry {
@@ -71,6 +82,20 @@ export interface SendNotificationResponse {
  * Envoi direct d'une notification. Utilisé pour les envois prioritaires dont l'appelant
  * doit connaître le résultat immédiatement : codes de vérification d'identity (ADR-014)
  * et codes de signature de document. Les autres notifications passent par les événements.
+ *
+ * Appelants autorisés : identity et document uniquement (jeton de service, ADR-013).
+ *
+ * Modèles utilisés par ces appels :
+ *   identity.otp   variables : code, expires_in_minutes. Modèle secret : l'historique des envois
+ *                  ne garde ni le texte ni les variables, seulement le destinataire masqué.
+ *
+ * Erreurs (code AppError → statut gRPC) :
+ *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
+ *   NOTIFICATION_RECIPIENT_INVALID    INVALID_ARGUMENT  destinataire absent ou mal formé pour le canal
+ *   NOTIFICATION_CHANNELS_EXHAUSTED   UNAVAILABLE       tous les canaux ont échoué (details.channels_tried)
+ *
+ * Le reste du contrat (notifications dans l'application, préférences, appareils, modèles,
+ * événements écoutés) sera écrit après le cahier des charges du service notification.
  */
 
 export interface NotificationServiceClient {
@@ -81,6 +106,20 @@ export interface NotificationServiceClient {
  * Envoi direct d'une notification. Utilisé pour les envois prioritaires dont l'appelant
  * doit connaître le résultat immédiatement : codes de vérification d'identity (ADR-014)
  * et codes de signature de document. Les autres notifications passent par les événements.
+ *
+ * Appelants autorisés : identity et document uniquement (jeton de service, ADR-013).
+ *
+ * Modèles utilisés par ces appels :
+ *   identity.otp   variables : code, expires_in_minutes. Modèle secret : l'historique des envois
+ *                  ne garde ni le texte ni les variables, seulement le destinataire masqué.
+ *
+ * Erreurs (code AppError → statut gRPC) :
+ *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
+ *   NOTIFICATION_RECIPIENT_INVALID    INVALID_ARGUMENT  destinataire absent ou mal formé pour le canal
+ *   NOTIFICATION_CHANNELS_EXHAUSTED   UNAVAILABLE       tous les canaux ont échoué (details.channels_tried)
+ *
+ * Le reste du contrat (notifications dans l'application, préférences, appareils, modèles,
+ * événements écoutés) sera écrit après le cahier des charges du service notification.
  */
 
 export interface NotificationServiceController {

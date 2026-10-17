@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/notification/notification.message.failed.v1.schema.json",
+  "title": "notification.message.failed",
+  "description": "Un message n'a pu être remis par aucun canal. Ne contient jamais le texte du message ni ses variables (qui peuvent porter un code).",
+  "x-event-type": "notification.message.failed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["notificationId", "templateCode", "channelsTried", "reason", "targetMasked"],
+  "properties": {
+    "notificationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "templateCode": {
+      "type": "string",
+      "pattern": "^[a-z]+(\\.[a-z_]+)+$",
+      "description": "Modèle du message, par exemple identity.otp"
+    },
+    "channelsTried": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "enum": ["sms", "whatsapp", "email", "push", "in_app"]
+      },
+      "description": "Canaux essayés, dans l'ordre"
+    },
+    "reason": {
+      "enum": ["provider_unavailable", "provider_rejected", "recipient_invalid", "ttl_expired"],
+      "description": "Cause du dernier échec ; ttl_expired : délai de validité dépassé avant l'envoi"
+    },
+    "recipientUserId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Vide pour un destinataire sans compte (débiteur du recouvrement)"
+    },
+    "targetMasked": {
+      "type": "string",
+      "description": "Destinataire masqué, par exemple +229 01 ** ** ** 45"
+    }
+  }
+}
