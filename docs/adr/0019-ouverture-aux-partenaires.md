@@ -56,7 +56,7 @@ Les durées et le nombre de tentatives sont des paramètres de configuration ; l
 
 **Responsabilités** : le partenaire de livraison répond du colis entre le ramassage (état vérifié, photo) et la remise contre le code ; le commerçant répond de la conformité du produit. En cas de litige, le support KSP tranche sur les preuves : vérification et photos au ramassage, photo et code de remise à la livraison.
 
-**À valider** : les taux de commission (sur la livraison et sur les ventes), uniques ou par partenaire et par catégorie de produit.
+**Commissions** : les taux (pourcentage sur la livraison, commission sur les ventes) sont des paramètres définis par KSP depuis le back-office, jamais écrits dans le code.
 
 ## Alternatives écartées
 
