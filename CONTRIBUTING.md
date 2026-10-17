@@ -26,6 +26,14 @@
 
 **Terminé** : critères d'acceptation couverts par des tests, CI au vert, code relu, documentation et contrats à jour, traces et métriques en place.
 
+## Branches et fusion
+
+- On ne travaille jamais directement sur `main`.
+- Une fonctionnalité = une branche, partie d'un `main` à jour, nommée `<type>/<périmètre>-<sujet>` avec les types des messages de commit : `feat/identity-otp-request`, `fix/ci-image-name`, `docs/regles-branches`.
+- La branche est poussée puis proposée en demande de fusion (pull request) vers `main` : c'est elle qui déclenche la CI.
+- Fusion après CI verte et validation du responsable du projet, en « Squash and merge » : une fonctionnalité = un commit sur `main`, avec un titre au format des messages de commit.
+- La branche est supprimée après la fusion.
+
 ## Organisation d'un service
 
 | Couche               | Contenu                                                                             | Peut dépendre de        |
