@@ -3,7 +3,8 @@
  *   tsx tools/ci/changed-services.ts origin/main   →   ["identity","notification"]
  *
  * Règles : un fichier dans services/<nom>/ touche ce service ; une modification du socle
- * commun (libs/, contracts/, fichiers racine du build) touche tous les services.
+ * commun (libs/, contracts/, fichiers racine du build) ou de la CI elle-même (.github/workflows/, tools/ci/)
+ * touche tous les services : une erreur dans la construction des images ne doit pas passer inaperçue.
  * Pas de regroupement de déploiements (ADR-015) : chaque service garde son image.
  */
 import { execFileSync } from 'node:child_process';
@@ -18,6 +19,8 @@ const SHARED = [
   /^pnpm-lock\.yaml$/,
   /^pnpm-workspace\.yaml$/,
   /^tsconfig\.base\.json$/,
+  /^\.github\/workflows\//,
+  /^tools\/ci\//,
 ];
 
 export function affectedServices(changedFiles: string[], allServices: string[]): string[] {
