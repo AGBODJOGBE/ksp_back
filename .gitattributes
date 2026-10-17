@@ -1,0 +1,2 @@
+# Fins de ligne LF dans le dépôt et sur chaque poste, Windows compris : Prettier et la CI l'exigent.
+* text=auto eol=lf
