@@ -45,6 +45,7 @@ Un cas d'usage = une classe = au moins un test de ses critères d'acceptation.
 - On reste compatible (`pnpm contracts:breaking`) ; sinon on crée une `v2` à côté de la `v1`.
 - Après une modification de `.proto` : `pnpm contracts:generate`, et le code généré est committé.
 - Un nouvel événement : schéma `contracts/events/<service>/<événement>.v1.schema.json` + type dans `libs/contracts/src/events`.
+- Une nouvelle route REST : dans `contracts/openapi/ksp-api.v1.yaml`, avec `x-ksp-grpc` (appel gRPC exécuté), `x-ksp-access` et `x-ksp-rate-limit`, et un exemple par requête et par réponse. Le test de contrat vérifie que l'appel gRPC existe et que chaque exemple respecte son schéma.
 
 ## Conventions
 
