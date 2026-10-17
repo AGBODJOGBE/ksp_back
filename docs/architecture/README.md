@@ -15,6 +15,23 @@ Cloudflare → Traefik (k3s) → gateway
         └──────── outbox ─────► RabbitMQ « ksp.events » ◄──── inbox ────────┘
 ```
 
+## Solutions partenaires
+
+Des solutions externes (livraison, puis impression et nettoyage) se branchent à KSP sans jamais entrer dans le système interne (ADR-019) :
+
+```
+Partenaires (ForYou, autres) — n'importe quel langage, n'importe quelle base
+        │ REST /partner/v1 (identifiants machine)      ▲ webhooks signés
+        ▼                                              │
+     gateway ── gRPC ──► delivery ── port fournisseur ─┘
+                            │
+                            └─ événements delivery.job.* ──► order, wallet, notification
+```
+
+- Chaque capacité a un contrat standard écrit par KSP (`contracts/partner/`), avec ses tests de conformité.
+- Au panier, `delivery` demande un devis à chaque partenaire qui couvre la zone ; chaque partenaire fixe ses prix.
+- Le client paie d'avance le panier et la livraison ; `wallet` reverse leur part au partenaire et au commerçant après la livraison, moins les commissions KSP.
+
 ## Ce que fournit le kit `@ksp/platform`
 
 | Besoin                                                    | Élément du kit                                                                                                                |

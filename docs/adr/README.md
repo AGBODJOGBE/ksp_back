@@ -22,3 +22,4 @@ Chaque décision importante fait l'objet d'une fiche courte : contexte, décisio
 | [ADR-016](0016-outillage-personnel.md)                | Outillage personnel non versionné                                 | Accepté    |
 | [ADR-017](0017-postgres-et-rabbitmq-en-production.md) | PostgreSQL géré hors du cluster ; RabbitMQ dans le cluster        | Accepté    |
 | [ADR-018](0018-hebergeur.md)                          | Choix de l'hébergeur                                              | À trancher |
+| [ADR-019](0019-ouverture-aux-partenaires.md)          | Ouverture aux solutions partenaires                               | Accepté    |
