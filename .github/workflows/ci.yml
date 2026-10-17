@@ -141,6 +141,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Les noms d'images Docker doivent être en minuscules ; le propriétaire GitHub ne l'est pas forcément.
+      - name: Propriétaire du registre en minuscules
+        run: echo "IMAGE_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
       # Construite à chaque demande de fusion, publiée seulement depuis main.
       # Le déploiement est piloté par le dépôt ksp-infra, qui référence ces images par leur tag.
       - uses: docker/build-push-action@v6
@@ -148,6 +151,6 @@ jobs:
           context: .
           file: services/${{ matrix.service }}/Dockerfile
           push: ${{ github.event_name == 'push' }}
-          tags: ghcr.io/${{ github.repository_owner }}/ksp-${{ matrix.service }}:${{ github.sha }}
+          tags: ghcr.io/${{ env.IMAGE_OWNER }}/ksp-${{ matrix.service }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
