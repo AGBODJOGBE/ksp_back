@@ -20,6 +20,7 @@ describe('contexte de requête', () => {
       mfa: true,
       authTime: 1760000000,
     },
+    client: { ip: '196.192.10.4', userAgent: 'Mozilla/5.0 (Linux; Android 14)' },
   };
 
   it('fait l’aller-retour contexte → métadonnées → contexte sans perte', () => {
@@ -30,6 +31,15 @@ describe('contexte de requête', () => {
     const read = contextFromMetadata(new Metadata());
     expect(read.correlationId).toMatch(/^[0-9a-f-]{36}$/);
     expect(read.user).toBeUndefined();
+    expect(read.client).toBeUndefined();
+  });
+
+  it('transmet l’adresse IP et l’appareil du client, même sans utilisateur connecté', () => {
+    const read = contextFromMetadata(
+      metadataFromContext({ correlationId: 'corr-2', client: { ip: '196.192.10.4' } }),
+    );
+    expect(read.user).toBeUndefined();
+    expect(read.client).toEqual({ ip: '196.192.10.4' });
   });
 
   it('ignore des rôles illisibles au lieu de planter', () => {

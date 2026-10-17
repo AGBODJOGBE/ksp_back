@@ -22,11 +22,18 @@ export interface UserContext {
   authTime?: number;
 }
 
+/** Client à l'origine de la requête, posé par la gateway (limites d'appels, sessions, historique). */
+export interface ClientInfo {
+  ip?: string;
+  userAgent?: string;
+}
+
 export interface RequestContext {
   correlationId: string;
   /** Identifiant de l'événement qui a déclenché le traitement, s'il y en a un. */
   causationId?: string;
   user?: UserContext;
+  client?: ClientInfo;
   /** Service appelant, connu après vérification de son jeton de service. */
   callerService?: string;
 }
@@ -41,6 +48,8 @@ export const METADATA_KEYS = {
   roles: 'x-user-roles',
   mfa: 'x-user-mfa',
   authTime: 'x-auth-time',
+  clientIp: 'x-client-ip',
+  userAgent: 'x-user-agent',
   authorization: 'authorization',
 } as const;
 
@@ -93,6 +102,12 @@ export function contextFromMetadata(metadata: Metadata): RequestContext {
       ...(authTime ? { authTime: Number(authTime) } : {}),
     };
   }
+
+  const ip = first(metadata, METADATA_KEYS.clientIp);
+  const userAgent = first(metadata, METADATA_KEYS.userAgent);
+  if (ip || userAgent) {
+    context.client = { ...(ip ? { ip } : {}), ...(userAgent ? { userAgent } : {}) };
+  }
   return context;
 }
 
@@ -110,5 +125,7 @@ export function metadataFromContext(context: RequestContext | undefined = curren
     metadata.set(METADATA_KEYS.mfa, String(user.mfa));
     if (user.authTime !== undefined) metadata.set(METADATA_KEYS.authTime, String(user.authTime));
   }
+  if (context?.client?.ip) metadata.set(METADATA_KEYS.clientIp, context.client.ip);
+  if (context?.client?.userAgent) metadata.set(METADATA_KEYS.userAgent, context.client.userAgent);
   return metadata;
 }
