@@ -33,6 +33,52 @@ export enum ScopeType {
   UNRECOGNIZED = "UNRECOGNIZED",
 }
 
+export enum OtpChannel {
+  OTP_CHANNEL_UNSPECIFIED = "OTP_CHANNEL_UNSPECIFIED",
+  OTP_CHANNEL_SMS = "OTP_CHANNEL_SMS",
+  OTP_CHANNEL_WHATSAPP = "OTP_CHANNEL_WHATSAPP",
+  UNRECOGNIZED = "UNRECOGNIZED",
+}
+
+export enum OtpPurpose {
+  OTP_PURPOSE_UNSPECIFIED = "OTP_PURPOSE_UNSPECIFIED",
+  /** OTP_PURPOSE_LOGIN - Inscription ou connexion : même parcours (UC-ID-01). */
+  OTP_PURPOSE_LOGIN = "OTP_PURPOSE_LOGIN",
+  UNRECOGNIZED = "UNRECOGNIZED",
+}
+
+/**
+ * Type de client, qui fixe les règles de la session (cahier des charges Identité, partie 4) :
+ * web et mobile 30 jours prolongés à chaque usage et 5 sessions ; back-office 12 heures
+ * sans prolongation, 2 sessions et double authentification obligatoire.
+ */
+export enum ClientKind {
+  CLIENT_KIND_UNSPECIFIED = "CLIENT_KIND_UNSPECIFIED",
+  CLIENT_KIND_WEB = "CLIENT_KIND_WEB",
+  /** CLIENT_KIND_MOBILE - Application client et application livreur. */
+  CLIENT_KIND_MOBILE = "CLIENT_KIND_MOBILE",
+  CLIENT_KIND_BACKOFFICE = "CLIENT_KIND_BACKOFFICE",
+  UNRECOGNIZED = "UNRECOGNIZED",
+}
+
+export enum MfaMethod {
+  MFA_METHOD_UNSPECIFIED = "MFA_METHOD_UNSPECIFIED",
+  /** MFA_METHOD_TOTP - Application d'authentification : méthode principale. */
+  MFA_METHOD_TOTP = "MFA_METHOD_TOTP",
+  /** MFA_METHOD_RECOVERY_CODE - Codes de récupération remis à l'activation. */
+  MFA_METHOD_RECOVERY_CODE = "MFA_METHOD_RECOVERY_CODE",
+  /** MFA_METHOD_SMS - Jamais proposé à un compte interne : sa première étape est déjà un code par téléphone. */
+  MFA_METHOD_SMS = "MFA_METHOD_SMS",
+  UNRECOGNIZED = "UNRECOGNIZED",
+}
+
+export enum LogoutScope {
+  LOGOUT_SCOPE_UNSPECIFIED = "LOGOUT_SCOPE_UNSPECIFIED",
+  LOGOUT_SCOPE_THIS_DEVICE = "LOGOUT_SCOPE_THIS_DEVICE",
+  LOGOUT_SCOPE_ALL_DEVICES = "LOGOUT_SCOPE_ALL_DEVICES",
+  UNRECOGNIZED = "UNRECOGNIZED",
+}
+
 export interface User {
   id: string;
   status: UserStatus;
@@ -137,11 +183,145 @@ export interface GetCatalogResponse {
   roles: RoleDefinition[];
 }
 
-/**
- * Contrat entre services du service identity (cahier des charges Identité, partie 8).
- * Les opérations publiques appelées par la gateway (inscription, connexion, sessions,
- * organisations, administration) sont ajoutées à l'étape « Contrats de la phase 1 ».
- */
+export interface RequestOtpRequest {
+  phoneE164: string;
+  /** Canal souhaité ; bascule automatique sur l'autre canal si l'envoi échoue. */
+  channel: OtpChannel;
+  purpose: OtpPurpose;
+}
+
+export interface RequestOtpResponse {
+  /** À renvoyer avec le code dans VerifyOtp. */
+  challengeId: string;
+  /** Destinataire masqué, par exemple "+229 01 •• •• •• 45". */
+  maskedTarget: string;
+  /** Canal réellement utilisé, après une éventuelle bascule. */
+  channel: OtpChannel;
+  expiresInSeconds: number;
+  /** Délai avant de pouvoir demander un nouveau code. */
+  resendAfterSeconds: number;
+}
+
+export interface VerifyOtpRequest {
+  challengeId: string;
+  code: string;
+  clientKind: ClientKind;
+  /**
+   * Nom de l'appareil affiché dans la liste des sessions (UC-ID-10), par exemple
+   * "Téléphone Android". Vide : déduit de x-user-agent.
+   */
+  deviceLabel: string;
+}
+
+export interface VerifyOtpResponse {
+  result?:
+    | AuthResult
+    | undefined;
+  /** Le compte vient d'être créé par ce code. */
+  isNewUser: boolean;
+}
+
+/** Issue d'une étape de connexion : une session ouverte, ou la double authentification à passer. */
+export interface AuthResult {
+  session?: SessionTokens | undefined;
+  mfaRequired?: MfaChallenge | undefined;
+}
+
+export interface SessionTokens {
+  accessToken: string;
+  accessTokenExpiresAt: string;
+  /**
+   * Transmis en clair une seule fois, jamais journalisé. La gateway le place dans un cookie
+   * HttpOnly sur le web, ou le renvoie dans le corps de la réponse sur mobile (UC-GW-13).
+   */
+  refreshToken: string;
+  refreshTokenExpiresAt: string;
+  sessionId: string;
+  user?:
+    | User
+    | undefined;
+  /** Le nom n'est pas encore renseigné : le front invite à le compléter (UC-ID-01). */
+  profileIncomplete: boolean;
+}
+
+export interface MfaChallenge {
+  /**
+   * Jeton court, à usage unique, qui prouve que la première étape est passée.
+   * À présenter à VerifyMfa (lot suivant). Jamais journalisé.
+   */
+  mfaToken: string;
+  expiresAt: string;
+  methods: MfaMethod[];
+  /**
+   * Première connexion d'un compte interne : l'application d'authentification doit être
+   * configurée avant tout accès (UC-ID-09, UC-ID-18).
+   */
+  enrollmentRequired: boolean;
+}
+
+export interface RefreshSessionRequest {
+  /** Lu par la gateway dans le cookie (web) ou dans le corps de la requête (mobile). */
+  refreshToken: string;
+}
+
+export interface RefreshSessionResponse {
+  session?: SessionTokens | undefined;
+}
+
+export interface LogoutRequest {
+  scope: LogoutScope;
+}
+
+export interface LogoutResponse {
+  revokedSessions: number;
+}
+
+export interface GetSigningKeysRequest {
+}
+
+export interface GetSigningKeysResponse {
+  /** Clés en cours et clé suivante, publiées ensemble pendant une rotation. */
+  keys: SigningKey[];
+}
+
+/** Clé publique au format JWK (RFC 7517), courbe P-256 pour ES256. */
+export interface SigningKey {
+  kid: string;
+  /** "EC" */
+  kty: string;
+  /** "P-256" */
+  crv: string;
+  x: string;
+  y: string;
+  /** "ES256" */
+  alg: string;
+  /** "sig" */
+  use: string;
+}
+
+export interface GetMeRequest {
+}
+
+export interface GetMeResponse {
+  user?: User | undefined;
+  profileIncomplete: boolean;
+}
+
+export interface UpdateMeRequest {
+  firstName?: string | undefined;
+  lastName?:
+    | string
+    | undefined;
+  /** Code de langue, "fr" par défaut. */
+  preferredLanguage?: string | undefined;
+}
+
+export interface UpdateMeResponse {
+  user?: User | undefined;
+  profileIncomplete: boolean;
+}
+
+/** Appelé par tous les services autorisés par la carte des services. */
 
 export interface IdentityServiceClient {
   getUser(request: GetUserRequest, metadata?: Metadata): Observable<GetUserResponse>;
@@ -163,11 +343,7 @@ export interface IdentityServiceClient {
   getCatalog(request: GetCatalogRequest, metadata?: Metadata): Observable<GetCatalogResponse>;
 }
 
-/**
- * Contrat entre services du service identity (cahier des charges Identité, partie 8).
- * Les opérations publiques appelées par la gateway (inscription, connexion, sessions,
- * organisations, administration) sont ajoutées à l'étape « Contrats de la phase 1 ».
- */
+/** Appelé par tous les services autorisés par la carte des services. */
 
 export interface IdentityServiceController {
   getUser(
@@ -236,3 +412,205 @@ export function IdentityServiceControllerMethods() {
 }
 
 export const IDENTITY_SERVICE_NAME = "IdentityService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Connexion et sessions — réservé à la gateway.
+ *
+ * Erreurs (code AppError → statut gRPC) :
+ *   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attempts_remaining
+ *   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION code expiré ou déjà utilisé
+ *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
+ *   IDENTITY_OTP_RATE_LIMITED       RESOURCE_EXHAUSTED  details.retry_after_seconds (→ Retry-After)
+ *   IDENTITY_REFRESH_TOKEN_INVALID  UNAUTHENTICATED     jeton inconnu ou expiré
+ *   IDENTITY_REFRESH_TOKEN_REUSED   UNAUTHENTICATED     ancien jeton réutilisé : session révoquée
+ *   IDENTITY_SESSION_REVOKED        UNAUTHENTICATED
+ *   IDENTITY_ACCOUNT_SUSPENDED      PERMISSION_DENIED
+ *
+ * Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
+ * LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),
+ * EnrollTotp et VerifyMfa (UC-ID-09), ListSessions et RevokeSession (UC-ID-10),
+ * SwitchContext (UC-ID-15).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface AuthServiceClient {
+  /**
+   * UC-ID-01. Envoie un code par appel gRPC à notification (ADR-014).
+   * La réponse est la même que le numéro soit connu ou non (anti-énumération).
+   */
+
+  requestOtp(request: RequestOtpRequest, metadata?: Metadata): Observable<RequestOtpResponse>;
+
+  /**
+   * UC-ID-01. Vérifie le code ; crée le compte si le numéro est nouveau, puis ouvre une
+   * session, ou demande la double authentification (compte interne sur le back-office).
+   */
+
+  verifyOtp(request: VerifyOtpRequest, metadata?: Metadata): Observable<VerifyOtpResponse>;
+
+  /**
+   * UC-ID-04. Remplace le jeton de renouvellement à chaque appel. Un ancien jeton
+   * réutilisé révoque toute la session (signe de vol).
+   */
+
+  refreshSession(request: RefreshSessionRequest, metadata?: Metadata): Observable<RefreshSessionResponse>;
+
+  /** UC-ID-05. La session est celle des métadonnées (x-session-id). */
+
+  logout(request: LogoutRequest, metadata?: Metadata): Observable<LogoutResponse>;
+
+  /**
+   * UC-ID-22. Clés publiques de signature des jetons d'accès. La gateway les garde en cache
+   * et les publie elle-même sur /.well-known/jwks.json.
+   */
+
+  getSigningKeys(request: GetSigningKeysRequest, metadata?: Metadata): Observable<GetSigningKeysResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Connexion et sessions — réservé à la gateway.
+ *
+ * Erreurs (code AppError → statut gRPC) :
+ *   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attempts_remaining
+ *   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION code expiré ou déjà utilisé
+ *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
+ *   IDENTITY_OTP_RATE_LIMITED       RESOURCE_EXHAUSTED  details.retry_after_seconds (→ Retry-After)
+ *   IDENTITY_REFRESH_TOKEN_INVALID  UNAUTHENTICATED     jeton inconnu ou expiré
+ *   IDENTITY_REFRESH_TOKEN_REUSED   UNAUTHENTICATED     ancien jeton réutilisé : session révoquée
+ *   IDENTITY_SESSION_REVOKED        UNAUTHENTICATED
+ *   IDENTITY_ACCOUNT_SUSPENDED      PERMISSION_DENIED
+ *
+ * Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
+ * LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),
+ * EnrollTotp et VerifyMfa (UC-ID-09), ListSessions et RevokeSession (UC-ID-10),
+ * SwitchContext (UC-ID-15).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface AuthServiceController {
+  /**
+   * UC-ID-01. Envoie un code par appel gRPC à notification (ADR-014).
+   * La réponse est la même que le numéro soit connu ou non (anti-énumération).
+   */
+
+  requestOtp(
+    request: RequestOtpRequest,
+    metadata?: Metadata,
+  ): Promise<RequestOtpResponse> | Observable<RequestOtpResponse> | RequestOtpResponse;
+
+  /**
+   * UC-ID-01. Vérifie le code ; crée le compte si le numéro est nouveau, puis ouvre une
+   * session, ou demande la double authentification (compte interne sur le back-office).
+   */
+
+  verifyOtp(
+    request: VerifyOtpRequest,
+    metadata?: Metadata,
+  ): Promise<VerifyOtpResponse> | Observable<VerifyOtpResponse> | VerifyOtpResponse;
+
+  /**
+   * UC-ID-04. Remplace le jeton de renouvellement à chaque appel. Un ancien jeton
+   * réutilisé révoque toute la session (signe de vol).
+   */
+
+  refreshSession(
+    request: RefreshSessionRequest,
+    metadata?: Metadata,
+  ): Promise<RefreshSessionResponse> | Observable<RefreshSessionResponse> | RefreshSessionResponse;
+
+  /** UC-ID-05. La session est celle des métadonnées (x-session-id). */
+
+  logout(
+    request: LogoutRequest,
+    metadata?: Metadata,
+  ): Promise<LogoutResponse> | Observable<LogoutResponse> | LogoutResponse;
+
+  /**
+   * UC-ID-22. Clés publiques de signature des jetons d'accès. La gateway les garde en cache
+   * et les publie elle-même sur /.well-known/jwks.json.
+   */
+
+  getSigningKeys(
+    request: GetSigningKeysRequest,
+    metadata?: Metadata,
+  ): Promise<GetSigningKeysResponse> | Observable<GetSigningKeysResponse> | GetSigningKeysResponse;
+}
+
+export function AuthServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["requestOtp", "verifyOtp", "refreshSession", "logout", "getSigningKeys"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("AuthService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("AuthService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const AUTH_SERVICE_NAME = "AuthService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Compte de l'utilisateur connecté — réservé à la gateway.
+ *
+ * Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
+ * RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) et
+ * l'administration (UC-ID-18 à 21) auront leurs propres services.
+ * ---------------------------------------------------------------------------
+ */
+
+export interface AccountServiceClient {
+  getMe(request: GetMeRequest, metadata?: Metadata): Observable<GetMeResponse>;
+
+  /** Seuls les champs renseignés sont modifiés. */
+
+  updateMe(request: UpdateMeRequest, metadata?: Metadata): Observable<UpdateMeResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Compte de l'utilisateur connecté — réservé à la gateway.
+ *
+ * Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
+ * RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) et
+ * l'administration (UC-ID-18 à 21) auront leurs propres services.
+ * ---------------------------------------------------------------------------
+ */
+
+export interface AccountServiceController {
+  getMe(request: GetMeRequest, metadata?: Metadata): Promise<GetMeResponse> | Observable<GetMeResponse> | GetMeResponse;
+
+  /** Seuls les champs renseignés sont modifiés. */
+
+  updateMe(
+    request: UpdateMeRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateMeResponse> | Observable<UpdateMeResponse> | UpdateMeResponse;
+}
+
+export function AccountServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["getMe", "updateMe"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("AccountService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("AccountService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const ACCOUNT_SERVICE_NAME = "AccountService";

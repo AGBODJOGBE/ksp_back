@@ -2,9 +2,16 @@ syntax = "proto3";
 
 package ksp.identity.v1;
 
-// Contrat entre services du service identity (cahier des charges Identité, partie 8).
-// Les opérations publiques appelées par la gateway (inscription, connexion, sessions,
-// organisations, administration) sont ajoutées à l'étape « Contrats de la phase 1 ».
+// Contrats du service identity (cahier des charges Identité, partie 8). Trois services :
+// - IdentityService : appelé par tous les services (informations utilisateur, permissions, catalogues) ;
+// - AuthService et AccountService : réservés à la gateway, qui les expose en REST aux fronts.
+//
+// L'utilisateur connecté n'est jamais dans les messages : la gateway le transmet dans les
+// métadonnées gRPC (x-user-id, x-session-id, x-active-context, x-user-roles, x-user-mfa,
+// x-auth-time), avec l'adresse IP et l'appareil du client (x-client-ip, x-user-agent).
+// Les dates sont des chaînes ISO 8601 en UTC.
+
+// Appelé par tous les services autorisés par la carte des services.
 service IdentityService {
   rpc GetUser(GetUserRequest) returns (GetUserResponse);
   rpc GetUsersByIds(GetUsersByIdsRequest) returns (GetUsersByIdsResponse);
@@ -140,4 +147,215 @@ message GetCatalogRequest {
 message GetCatalogResponse {
   repeated Permission permissions = 1;
   repeated RoleDefinition roles = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Connexion et sessions — réservé à la gateway.
+//
+// Erreurs (code AppError → statut gRPC) :
+//   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attempts_remaining
+//   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION code expiré ou déjà utilisé
+//   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
+//   IDENTITY_OTP_RATE_LIMITED       RESOURCE_EXHAUSTED  details.retry_after_seconds (→ Retry-After)
+//   IDENTITY_REFRESH_TOKEN_INVALID  UNAUTHENTICATED     jeton inconnu ou expiré
+//   IDENTITY_REFRESH_TOKEN_REUSED   UNAUTHENTICATED     ancien jeton réutilisé : session révoquée
+//   IDENTITY_SESSION_REVOKED        UNAUTHENTICATED
+//   IDENTITY_ACCOUNT_SUSPENDED      PERMISSION_DENIED
+//
+// Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
+// LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),
+// EnrollTotp et VerifyMfa (UC-ID-09), ListSessions et RevokeSession (UC-ID-10),
+// SwitchContext (UC-ID-15).
+// ---------------------------------------------------------------------------
+service AuthService {
+  // UC-ID-01. Envoie un code par appel gRPC à notification (ADR-014).
+  // La réponse est la même que le numéro soit connu ou non (anti-énumération).
+  rpc RequestOtp(RequestOtpRequest) returns (RequestOtpResponse);
+  // UC-ID-01. Vérifie le code ; crée le compte si le numéro est nouveau, puis ouvre une
+  // session, ou demande la double authentification (compte interne sur le back-office).
+  rpc VerifyOtp(VerifyOtpRequest) returns (VerifyOtpResponse);
+  // UC-ID-04. Remplace le jeton de renouvellement à chaque appel. Un ancien jeton
+  // réutilisé révoque toute la session (signe de vol).
+  rpc RefreshSession(RefreshSessionRequest) returns (RefreshSessionResponse);
+  // UC-ID-05. La session est celle des métadonnées (x-session-id).
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  // UC-ID-22. Clés publiques de signature des jetons d'accès. La gateway les garde en cache
+  // et les publie elle-même sur /.well-known/jwks.json.
+  rpc GetSigningKeys(GetSigningKeysRequest) returns (GetSigningKeysResponse);
+}
+
+enum OtpChannel {
+  OTP_CHANNEL_UNSPECIFIED = 0;
+  OTP_CHANNEL_SMS = 1;
+  OTP_CHANNEL_WHATSAPP = 2;
+}
+
+enum OtpPurpose {
+  OTP_PURPOSE_UNSPECIFIED = 0;
+  // Inscription ou connexion : même parcours (UC-ID-01).
+  OTP_PURPOSE_LOGIN = 1;
+}
+
+// Type de client, qui fixe les règles de la session (cahier des charges Identité, partie 4) :
+// web et mobile 30 jours prolongés à chaque usage et 5 sessions ; back-office 12 heures
+// sans prolongation, 2 sessions et double authentification obligatoire.
+enum ClientKind {
+  CLIENT_KIND_UNSPECIFIED = 0;
+  CLIENT_KIND_WEB = 1;
+  // Application client et application livreur.
+  CLIENT_KIND_MOBILE = 2;
+  CLIENT_KIND_BACKOFFICE = 3;
+}
+
+enum MfaMethod {
+  MFA_METHOD_UNSPECIFIED = 0;
+  // Application d'authentification : méthode principale.
+  MFA_METHOD_TOTP = 1;
+  // Codes de récupération remis à l'activation.
+  MFA_METHOD_RECOVERY_CODE = 2;
+  // Jamais proposé à un compte interne : sa première étape est déjà un code par téléphone.
+  MFA_METHOD_SMS = 3;
+}
+
+enum LogoutScope {
+  LOGOUT_SCOPE_UNSPECIFIED = 0;
+  LOGOUT_SCOPE_THIS_DEVICE = 1;
+  LOGOUT_SCOPE_ALL_DEVICES = 2;
+}
+
+message RequestOtpRequest {
+  string phone_e164 = 1;
+  // Canal souhaité ; bascule automatique sur l'autre canal si l'envoi échoue.
+  OtpChannel channel = 2;
+  OtpPurpose purpose = 3;
+}
+
+message RequestOtpResponse {
+  // À renvoyer avec le code dans VerifyOtp.
+  string challenge_id = 1;
+  // Destinataire masqué, par exemple "+229 01 •• •• •• 45".
+  string masked_target = 2;
+  // Canal réellement utilisé, après une éventuelle bascule.
+  OtpChannel channel = 3;
+  int32 expires_in_seconds = 4;
+  // Délai avant de pouvoir demander un nouveau code.
+  int32 resend_after_seconds = 5;
+}
+
+message VerifyOtpRequest {
+  string challenge_id = 1;
+  string code = 2;
+  ClientKind client_kind = 3;
+  // Nom de l'appareil affiché dans la liste des sessions (UC-ID-10), par exemple
+  // "Téléphone Android". Vide : déduit de x-user-agent.
+  string device_label = 4;
+}
+
+message VerifyOtpResponse {
+  AuthResult result = 1;
+  // Le compte vient d'être créé par ce code.
+  bool is_new_user = 2;
+}
+
+// Issue d'une étape de connexion : une session ouverte, ou la double authentification à passer.
+message AuthResult {
+  oneof outcome {
+    SessionTokens session = 1;
+    MfaChallenge mfa_required = 2;
+  }
+}
+
+message SessionTokens {
+  string access_token = 1;
+  string access_token_expires_at = 2;
+  // Transmis en clair une seule fois, jamais journalisé. La gateway le place dans un cookie
+  // HttpOnly sur le web, ou le renvoie dans le corps de la réponse sur mobile (UC-GW-13).
+  string refresh_token = 3;
+  string refresh_token_expires_at = 4;
+  string session_id = 5;
+  User user = 6;
+  // Le nom n'est pas encore renseigné : le front invite à le compléter (UC-ID-01).
+  bool profile_incomplete = 7;
+}
+
+message MfaChallenge {
+  // Jeton court, à usage unique, qui prouve que la première étape est passée.
+  // À présenter à VerifyMfa (lot suivant). Jamais journalisé.
+  string mfa_token = 1;
+  string expires_at = 2;
+  repeated MfaMethod methods = 3;
+  // Première connexion d'un compte interne : l'application d'authentification doit être
+  // configurée avant tout accès (UC-ID-09, UC-ID-18).
+  bool enrollment_required = 4;
+}
+
+message RefreshSessionRequest {
+  // Lu par la gateway dans le cookie (web) ou dans le corps de la requête (mobile).
+  string refresh_token = 1;
+}
+
+message RefreshSessionResponse {
+  SessionTokens session = 1;
+}
+
+message LogoutRequest {
+  LogoutScope scope = 1;
+}
+
+message LogoutResponse {
+  int32 revoked_sessions = 1;
+}
+
+message GetSigningKeysRequest {}
+
+message GetSigningKeysResponse {
+  // Clés en cours et clé suivante, publiées ensemble pendant une rotation.
+  repeated SigningKey keys = 1;
+}
+
+// Clé publique au format JWK (RFC 7517), courbe P-256 pour ES256.
+message SigningKey {
+  string kid = 1;
+  // "EC"
+  string kty = 2;
+  // "P-256"
+  string crv = 3;
+  string x = 4;
+  string y = 5;
+  // "ES256"
+  string alg = 6;
+  // "sig"
+  string use = 7;
+}
+
+// ---------------------------------------------------------------------------
+// Compte de l'utilisateur connecté — réservé à la gateway.
+//
+// Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
+// RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) et
+// l'administration (UC-ID-18 à 21) auront leurs propres services.
+// ---------------------------------------------------------------------------
+service AccountService {
+  rpc GetMe(GetMeRequest) returns (GetMeResponse);
+  // Seuls les champs renseignés sont modifiés.
+  rpc UpdateMe(UpdateMeRequest) returns (UpdateMeResponse);
+}
+
+message GetMeRequest {}
+
+message GetMeResponse {
+  User user = 1;
+  bool profile_incomplete = 2;
+}
+
+message UpdateMeRequest {
+  optional string first_name = 1;
+  optional string last_name = 2;
+  // Code de langue, "fr" par défaut.
+  optional string preferred_language = 3;
+}
+
+message UpdateMeResponse {
+  User user = 1;
+  bool profile_incomplete = 2;
 }
