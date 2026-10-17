@@ -211,6 +211,9 @@ importers:
       rxjs:
         specifier: 7.8.2
         version: 7.8.2
+      uuid:
+        specifier: 11.1.1
+        version: 11.1.1
       zod:
         specifier: 4.6.5
         version: 4.6.5
@@ -218,6 +221,12 @@ importers:
       '@nestjs/testing':
         specifier: 11.2.7
         version: 11.2.7(@nestjs/common@11.2.7(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.2.7)(@nestjs/microservices@11.2.7)(@nestjs/platform-express@11.2.7)
+      '@types/pg':
+        specifier: 8.15.6
+        version: 8.15.6
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
 
 packages:
 
