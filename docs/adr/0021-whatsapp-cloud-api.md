@@ -18,6 +18,10 @@
 | Remise             | Le message d'authentification n'arrive que sur le téléphone principal de l'utilisateur ; statuts (envoyé, remis, lu, échoué) reçus par webhook                                                 |
 | Webhooks           | Reçus par la gateway sur `/webhooks/whatsapp` et transmis bruts à `notification`, qui vérifie la signature (UC-GW-11)                                                                          |
 
+## Canal des codes au lancement
+
+**WhatsApp seul** (décision du porteur du projet, 2026-10-19) : c'est le canal par défaut des codes de connexion. Le SMS reste prévu dans le contrat et sera branché avec un agrégateur avant la mise en production ; jusque-là, un utilisateur sans WhatsApp ne peut pas recevoir de code.
+
 ## Préalables (à lancer tôt, ils prennent du temps)
 
 1. Portefeuille d'entreprise Meta (Business Manager) au nom de KSP, **vérification de l'entreprise**.
@@ -27,7 +31,7 @@
 
 ## À valider
 
-- **Canal SMS** : sans prestataire SMS, un utilisateur sans WhatsApp ne peut pas recevoir de code. Choisir un agrégateur SMS (avec nom d'expéditeur « KSP ») ou faire de WhatsApp le seul canal au lancement.
+- **Agrégateur SMS** à choisir avant la mise en production (nom d'expéditeur « KSP »), pour les utilisateurs sans WhatsApp.
 - Vérifier lors de l'intégration si la « poignée de main » décrite par Meta concerne aussi le bouton « Copier le code » ou seulement le remplissage automatique sur Android.
 
 ## Alternatives écartées
