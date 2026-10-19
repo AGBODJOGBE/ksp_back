@@ -2,8 +2,11 @@ import { identityV1 } from '@ksp/contracts';
 import { AppError, currentContext } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
 import { RequestOtpUseCase } from '../../application/otp/request-otp.use-case';
+import { VerifyOtpUseCase } from '../../application/session/verify-otp.use-case';
 import { GetSigningKeysUseCase } from '../../application/token/get-signing-keys.use-case';
 import { type OtpChannel } from '../../domain/otp/otp-challenge';
+import { type ClientKind } from '../../domain/session/session-policy';
+import { toUserMessage } from './mappers';
 import { notImplemented } from './not-implemented';
 
 const CHANNEL_IN: Partial<Record<identityV1.OtpChannel, OtpChannel>> = {
@@ -16,6 +19,12 @@ const CHANNEL_OUT: Record<OtpChannel, identityV1.OtpChannel> = {
   whatsapp: identityV1.OtpChannel.OTP_CHANNEL_WHATSAPP,
 };
 
+const CLIENT_KIND: Partial<Record<identityV1.ClientKind, ClientKind>> = {
+  [identityV1.ClientKind.CLIENT_KIND_WEB]: 'web',
+  [identityV1.ClientKind.CLIENT_KIND_MOBILE]: 'mobile',
+  [identityV1.ClientKind.CLIENT_KIND_BACKOFFICE]: 'backoffice',
+};
+
 /**
  * Adaptateur gRPC de la connexion et des sessions, réservé à la gateway.
  * Aucune règle métier ici : chaque méthode traduit l'appel et délègue à son cas d'usage.
@@ -25,6 +34,7 @@ const CHANNEL_OUT: Record<OtpChannel, identityV1.OtpChannel> = {
 export class AuthGrpcController implements identityV1.AuthServiceController {
   constructor(
     private readonly requestOtpUseCase: RequestOtpUseCase,
+    private readonly verifyOtpUseCase: VerifyOtpUseCase,
     private readonly getSigningKeysUseCase: GetSigningKeysUseCase,
   ) {}
 
@@ -34,16 +44,42 @@ export class AuthGrpcController implements identityV1.AuthServiceController {
     }
     const result = await this.requestOtpUseCase.execute({
       phone: request.phoneE164,
-      // Canal non précisé : SMS par défaut (cahier des charges Identité, partie 4).
-      channel: CHANNEL_IN[request.channel] ?? 'sms',
+      // Canal non précisé : WhatsApp, seul canal au lancement (ADR-021) ; le SMS viendra avec un agrégateur.
+      channel: CHANNEL_IN[request.channel] ?? 'whatsapp',
       purpose: 'login',
       ip: currentContext()?.client?.ip ?? null,
     });
     return { ...result, channel: CHANNEL_OUT[result.channel] };
   }
 
-  verifyOtp(): Promise<identityV1.VerifyOtpResponse> {
-    return notImplemented('VerifyOtp');
+  async verifyOtp(request: identityV1.VerifyOtpRequest): Promise<identityV1.VerifyOtpResponse> {
+    const clientKind = CLIENT_KIND[request.clientKind];
+    if (!clientKind) {
+      throw AppError.invalid('IDENTITY_CLIENT_KIND_INVALID', 'Le type de client est invalide.');
+    }
+    const client = currentContext()?.client;
+    const opened = await this.verifyOtpUseCase.execute({
+      challengeId: request.challengeId,
+      code: request.code,
+      clientKind,
+      deviceLabel: request.deviceLabel.trim() || null,
+      ip: client?.ip ?? null,
+      userAgent: client?.userAgent ?? null,
+    });
+    return {
+      result: {
+        session: {
+          accessToken: opened.accessToken,
+          accessTokenExpiresAt: opened.accessTokenExpiresAt.toISOString(),
+          refreshToken: opened.refreshToken,
+          refreshTokenExpiresAt: opened.refreshTokenExpiresAt.toISOString(),
+          sessionId: opened.sessionId,
+          user: toUserMessage(opened.account),
+          profileIncomplete: opened.profileIncomplete,
+        },
+      },
+      isNewUser: opened.isNewUser,
+    };
   }
 
   refreshSession(): Promise<identityV1.RefreshSessionResponse> {

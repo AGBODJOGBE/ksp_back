@@ -2,6 +2,7 @@ import { appendToOutbox, createEnvelope, type SqlExecutor } from '@ksp/platform'
 import { Injectable } from '@nestjs/common';
 import { type OtpChallengeRepository, type OtpRequestedEvent } from '../../application/otp/otp.ports';
 import { type OtpChallenge, type OtpChannel } from '../../domain/otp/otp-challenge';
+import { type StoredOtpChallenge } from '../../domain/otp/otp-verification';
 import { type PhoneNumber } from '../../domain/user/phone-number';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -45,5 +46,31 @@ export class PrismaOtpChallengeRepository implements OtpChallengeRepository {
 
   async markSendFailed(id: string, failedAt: Date): Promise<void> {
     await this.prisma.otpChallenge.update({ where: { id }, data: { sendFailedAt: failedAt } });
+  }
+
+  async findById(id: string): Promise<StoredOtpChallenge | null> {
+    return this.prisma.otpChallenge.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        target: true,
+        codeHash: true,
+        attempts: true,
+        expiresAt: true,
+        sentAt: true,
+        sendFailedAt: true,
+        consumedAt: true,
+      },
+    });
+  }
+
+  async registerFailedAttempt(id: string): Promise<number> {
+    // Incrément fait par PostgreSQL : deux essais simultanés comptent bien pour deux.
+    const updated = await this.prisma.otpChallenge.update({
+      where: { id },
+      data: { attempts: { increment: 1 } },
+      select: { attempts: true },
+    });
+    return updated.attempts;
   }
 }

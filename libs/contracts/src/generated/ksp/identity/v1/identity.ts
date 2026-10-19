@@ -185,7 +185,10 @@ export interface GetCatalogResponse {
 
 export interface RequestOtpRequest {
   phoneE164: string;
-  /** Canal souhaité ; bascule automatique sur l'autre canal si l'envoi échoue. */
+  /**
+   * Canal souhaité ; non précisé : WhatsApp, seul canal au lancement (ADR-021).
+   * Bascule automatique sur l'autre canal si l'envoi échoue.
+   */
   channel: OtpChannel;
   purpose: OtpPurpose;
 }
@@ -420,6 +423,7 @@ export const IDENTITY_SERVICE_NAME = "IdentityService";
  * Erreurs (code AppError → statut gRPC) :
  *   IDENTITY_PHONE_INVALID          INVALID_ARGUMENT    numéro mal formé, ou refusé par notification
  *   IDENTITY_OTP_PURPOSE_INVALID    INVALID_ARGUMENT    objet du code non pris en charge
+ *   IDENTITY_CLIENT_KIND_INVALID    INVALID_ARGUMENT    type de client non précisé
  *   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attemptsRemaining
  *   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION code expiré ou déjà utilisé
  *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
@@ -429,6 +433,7 @@ export const IDENTITY_SERVICE_NAME = "IdentityService";
  *   IDENTITY_REFRESH_TOKEN_REUSED   UNAUTHENTICATED     ancien jeton réutilisé : session révoquée
  *   IDENTITY_SESSION_REVOKED        UNAUTHENTICATED
  *   IDENTITY_ACCOUNT_SUSPENDED      PERMISSION_DENIED
+ *   IDENTITY_BACKOFFICE_FORBIDDEN   PERMISSION_DENIED   compte sans accès au back-office
  *
  * Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
  * LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),
@@ -478,6 +483,7 @@ export interface AuthServiceClient {
  * Erreurs (code AppError → statut gRPC) :
  *   IDENTITY_PHONE_INVALID          INVALID_ARGUMENT    numéro mal formé, ou refusé par notification
  *   IDENTITY_OTP_PURPOSE_INVALID    INVALID_ARGUMENT    objet du code non pris en charge
+ *   IDENTITY_CLIENT_KIND_INVALID    INVALID_ARGUMENT    type de client non précisé
  *   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attemptsRemaining
  *   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION code expiré ou déjà utilisé
  *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
@@ -487,6 +493,7 @@ export interface AuthServiceClient {
  *   IDENTITY_REFRESH_TOKEN_REUSED   UNAUTHENTICATED     ancien jeton réutilisé : session révoquée
  *   IDENTITY_SESSION_REVOKED        UNAUTHENTICATED
  *   IDENTITY_ACCOUNT_SUSPENDED      PERMISSION_DENIED
+ *   IDENTITY_BACKOFFICE_FORBIDDEN   PERMISSION_DENIED   compte sans accès au back-office
  *
  * Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
  * LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),

@@ -4,9 +4,10 @@ import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { RequestOtpUseCase } from './application/otp/request-otp.use-case';
 import { IssueServiceTokenUseCase } from './application/service-token/issue-service-token.use-case';
+import { VerifyOtpUseCase } from './application/session/verify-otp.use-case';
 import { AccessTokenIssuer } from './application/token/access-token-issuer';
 import { GetSigningKeysUseCase } from './application/token/get-signing-keys.use-case';
-import { otpPolicyFrom, type ServiceConfig } from './config';
+import { otpPolicyFrom, type ServiceConfig, sessionPolicyFrom } from './config';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { CryptoOtpCodeGenerator } from './infrastructure/otp/crypto-otp-code-generator';
 import { HmacOtpHasher } from './infrastructure/otp/hmac-otp-hasher';
@@ -15,6 +16,8 @@ import { PrismaOtpChallengeRepository } from './infrastructure/otp/prisma-otp-ch
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { ConfigServiceClientRegistry } from './infrastructure/service-token/config-service-client-registry';
 import { LocalServiceTokenProvider } from './infrastructure/service-token/local-service-token-provider';
+import { CryptoRefreshTokenGenerator } from './infrastructure/session/crypto-refresh-token-generator';
+import { PrismaLoginRepository } from './infrastructure/session/prisma-login.repository';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { KeyRingSigner } from './infrastructure/token/key-ring-signer';
 import { AccountGrpcController } from './interfaces/grpc/account.controller';
@@ -117,6 +120,28 @@ export class AppModule {
               new UuidV7Generator(),
               new SystemClock(),
               otpPolicyFrom(config),
+            ),
+        },
+        PrismaLoginRepository,
+        {
+          provide: VerifyOtpUseCase,
+          inject: [PrismaOtpChallengeRepository, PrismaLoginRepository, AccessTokenIssuer],
+          useFactory: (
+            challenges: PrismaOtpChallengeRepository,
+            logins: PrismaLoginRepository,
+            accessTokens: AccessTokenIssuer,
+          ) =>
+            new VerifyOtpUseCase(
+              challenges,
+              logins,
+              logins,
+              new HmacOtpHasher(config.OTP_HMAC_SECRET),
+              new CryptoRefreshTokenGenerator(),
+              accessTokens,
+              new UuidV7Generator(),
+              new SystemClock(),
+              otpPolicyFrom(config),
+              sessionPolicyFrom(config),
             ),
         },
       ],

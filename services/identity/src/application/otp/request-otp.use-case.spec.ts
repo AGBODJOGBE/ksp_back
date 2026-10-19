@@ -1,8 +1,8 @@
 import { AppError } from '@ksp/platform';
-import { type OtpChallenge, type OtpChannel } from '../../domain/otp/otp-challenge';
+import { type OtpChannel } from '../../domain/otp/otp-challenge';
 import { type OtpPolicy } from '../../domain/otp/otp-policy';
-import { type PhoneNumber } from '../../domain/user/phone-number';
-import { type OtpChallengeRepository, type OtpRequestedEvent, type OtpSender } from './otp.ports';
+import { InMemoryChallenges } from '../testing/fakes';
+import { type OtpSender } from './otp.ports';
 import { RequestOtpUseCase } from './request-otp.use-case';
 
 const policy: OtpPolicy = {
@@ -14,30 +14,6 @@ const policy: OtpPolicy = {
   maxPerDay: 10,
   blockSeconds: 3600,
 };
-
-class InMemoryChallenges implements OtpChallengeRepository {
-  readonly rows = new Map<
-    string,
-    OtpChallenge & { sentAt?: Date; channelUsed?: OtpChannel; sendFailedAt?: Date }
-  >();
-  readonly events: OtpRequestedEvent[] = [];
-
-  async sentAtSince(target: PhoneNumber, since: Date): Promise<Date[]> {
-    return [...this.rows.values()]
-      .filter((row) => row.target.e164 === target.e164 && row.sentAt && row.sentAt >= since)
-      .map((row) => row.sentAt as Date);
-  }
-  async create(challenge: OtpChallenge): Promise<void> {
-    this.rows.set(challenge.id, { ...challenge });
-  }
-  async markSent(id: string, channelUsed: OtpChannel, sentAt: Date, event: OtpRequestedEvent): Promise<void> {
-    Object.assign(this.rows.get(id)!, { channelUsed, sentAt });
-    this.events.push(event);
-  }
-  async markSendFailed(id: string, failedAt: Date): Promise<void> {
-    Object.assign(this.rows.get(id)!, { sendFailedAt: failedAt });
-  }
-}
 
 class FakeSender implements OtpSender {
   readonly sent: { challengeId: string; code: string; channel: OtpChannel; ttlSeconds: number }[] = [];
@@ -59,7 +35,7 @@ function setup() {
   const useCase = new RequestOtpUseCase(
     challenges,
     sender,
-    { hash: (id, code) => `hmac(${id}:${code})` },
+    { hash: (id, code) => `hmac(${id}:${code})`, matches: () => false },
     { generate: (length) => '4'.repeat(length) },
     { next: () => `00000000-0000-7000-8000-${String(++seq).padStart(12, '0')}` },
     { now: () => now },
