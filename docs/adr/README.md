@@ -24,3 +24,4 @@ Chaque décision importante fait l'objet d'une fiche courte : contexte, décisio
 | [ADR-018](0018-hebergeur.md)                          | Choix de l'hébergeur                                              | À trancher |
 | [ADR-019](0019-ouverture-aux-partenaires.md)          | Ouverture aux solutions partenaires                               | Accepté    |
 | [ADR-020](0020-cles-de-signature.md)                  | Clés de signature des jetons                                      | Accepté    |
+| [ADR-022](0022-jetons-de-service.md)                  | Jetons de service : flux OAuth 2.0 client credentials             | Accepté    |
