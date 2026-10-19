@@ -1,5 +1,6 @@
 export * from './auth/access-token';
 export * from './auth/service-token';
+export * from './auth/service-token-client';
 export * from './auth/user-context';
 export * from './bootstrap/bootstrap';
 export * from './bootstrap/platform.module';

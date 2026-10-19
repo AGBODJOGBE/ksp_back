@@ -1,5 +1,6 @@
 import { type DynamicModule, Global, Module, type Provider } from '@nestjs/common';
 import { SERVICE_TOKEN_VERIFIER, ServiceTokenVerifier } from '../auth/service-token';
+import { SERVICE_TOKEN_PROVIDER, ServiceTokenClient } from '../auth/service-token-client';
 import { type BaseServiceConfig } from '../config/config';
 import { GrpcContextInterceptor } from '../grpc/grpc-context.interceptor';
 import { HealthController } from '../health/health.controller';
@@ -45,6 +46,17 @@ export class PlatformModule {
         ),
       });
     }
+    const tokenClient = Boolean(config.IDENTITY_TOKEN_URL && config.SERVICE_CLIENT_SECRET);
+    if (tokenClient) {
+      providers.push({
+        provide: SERVICE_TOKEN_PROVIDER,
+        useValue: new ServiceTokenClient({
+          tokenUrl: config.IDENTITY_TOKEN_URL as string,
+          clientId: config.SERVICE_NAME,
+          clientSecret: config.SERVICE_CLIENT_SECRET as string,
+        }),
+      });
+    }
     return {
       module: PlatformModule,
       imports: [createLoggerModule(config.SERVICE_NAME, config.LOG_LEVEL)],
@@ -58,6 +70,7 @@ export class PlatformModule {
         RabbitMqPublisher,
         RabbitMqConsumer,
         ...(config.IDENTITY_JWKS_URL ? [SERVICE_TOKEN_VERIFIER] : []),
+        ...(tokenClient ? [SERVICE_TOKEN_PROVIDER] : []),
       ],
     };
   }
