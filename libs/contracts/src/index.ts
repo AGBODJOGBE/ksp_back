@@ -5,4 +5,5 @@ export * as notificationV1 from './generated/ksp/notification/v1/notification';
 export * from './events';
 export * from './proto-path';
 export * from './tokens/access-token';
+export * from './tokens/service-token';
 // new-service:exports (le générateur de service ajoute les nouveaux contrats ici)

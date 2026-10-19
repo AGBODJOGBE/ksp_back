@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/tokens/service-token.v1.schema.json",
+  "title": "Jeton de service KSP (v1)",
+  "description": "Contenu d'un jeton de service émis par identity (flux OAuth 2.0 client credentials, ADR-013 et ADR-022) et vérifié par le service appelé (ServiceTokenVerifier). Règle d'évolution : on ajoute des champs, on n'en renomme ni n'en retire jamais.",
+  "x-header": {
+    "alg": "ES256",
+    "typ": "JWT",
+    "kid": "identifiant de la clé de signature (ADR-020)"
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["iss", "sub", "aud", "iat", "exp", "jti", "token_use"],
+  "properties": {
+    "iss": {
+      "const": "ksp-identity"
+    },
+    "sub": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Service appelant, par exemple gateway"
+    },
+    "aud": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Service appelé, par exemple identity"
+    },
+    "iat": {
+      "type": "integer"
+    },
+    "exp": {
+      "type": "integer",
+      "description": "5 minutes après l'émission par défaut"
+    },
+    "jti": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "token_use": {
+      "const": "service"
+    }
+  }
+}
