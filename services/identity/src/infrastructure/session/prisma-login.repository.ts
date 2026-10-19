@@ -12,7 +12,7 @@ import { sessionsToRevoke } from '../../domain/session/session-policy';
 import { Prisma } from '../../../prisma/generated';
 import { PrismaService } from '../prisma/prisma.service';
 
-const ACCOUNT_SELECT = {
+export const ACCOUNT_SELECT = {
   id: true,
   status: true,
   firstName: true,
@@ -24,7 +24,7 @@ const ACCOUNT_SELECT = {
 
 type AccountRow = Prisma.UserGetPayload<{ select: typeof ACCOUNT_SELECT }>;
 
-function toAccount(row: AccountRow): Account {
+export function toAccount(row: AccountRow): Account {
   return {
     id: row.id,
     status: row.status,
