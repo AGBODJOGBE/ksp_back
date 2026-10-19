@@ -9,7 +9,8 @@ ksp-backend/
 ├── contracts/
 │   ├── proto/ksp/<service>/v1/*.proto   contrats gRPC (paquet ksp.<service>.v1)
 │   ├── events/<service>/*.schema.json   schémas des événements (+ enveloppe commune)
-│   └── openapi/ksp-api.v1.yaml          API REST publique de la gateway (OpenAPI 3.1)
+│   ├── openapi/ksp-api.v1.yaml          API REST publique de la gateway (OpenAPI 3.1)
+│   └── tokens/*.schema.json             contenu des jetons (jeton d'accès, ADR-020)
 ├── libs/
 │   ├── contracts/     @ksp/contracts : code TypeScript généré depuis les contrats
 │   └── platform/      @ksp/platform  : kit technique commun, aucun code métier
