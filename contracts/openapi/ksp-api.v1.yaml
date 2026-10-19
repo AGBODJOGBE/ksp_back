@@ -84,7 +84,8 @@ paths:
       operationId: requestOtp
       summary: Demander un code de connexion
       description: |
-        UC-ID-01. Envoie un code par SMS ou WhatsApp, avec bascule automatique sur l'autre canal
+        UC-ID-01. Envoie un code par WhatsApp (canal par défaut, seul canal au lancement, ADR-021)
+        ou par SMS, avec bascule automatique sur l'autre canal
         si l'envoi échoue. Inscription et connexion suivent le même parcours. La réponse est la
         même que le numéro soit connu ou non.
 
@@ -101,7 +102,7 @@ paths:
               $ref: '#/components/schemas/RequestOtpRequest'
             example:
               phone: '+2290197000045'
-              channel: sms
+              channel: whatsapp
       responses:
         '200':
           description: Code envoyé
@@ -114,8 +115,8 @@ paths:
                 $ref: '#/components/schemas/RequestOtpResponse'
               example:
                 challengeId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0f
-                maskedTarget: '+229 01 •• •• •• 45'
-                channel: sms
+                maskedTarget: '+229********45'
+                channel: whatsapp
                 expiresInSeconds: 300
                 resendAfterSeconds: 60
         '400':
@@ -137,7 +138,7 @@ paths:
 
         Erreurs : `IDENTITY_OTP_INVALID` (400, `details.attemptsRemaining`),
         `IDENTITY_OTP_EXPIRED` et `IDENTITY_OTP_TOO_MANY_ATTEMPTS` (422),
-        `IDENTITY_ACCOUNT_SUSPENDED` (403), `GATEWAY_RATE_LIMITED` (429).
+        `IDENTITY_ACCOUNT_SUSPENDED` et `IDENTITY_BACKOFFICE_FORBIDDEN` (403), `GATEWAY_RATE_LIMITED` (429).
       x-ksp-grpc: ksp.identity.v1.AuthService/VerifyOtp
       x-ksp-access: public
       x-ksp-rate-limit: otp_verify
@@ -654,7 +655,7 @@ components:
           $ref: '#/components/schemas/PhoneE164'
         channel:
           $ref: '#/components/schemas/OtpChannel'
-          default: sms
+          default: whatsapp
 
     RequestOtpResponse:
       type: object
