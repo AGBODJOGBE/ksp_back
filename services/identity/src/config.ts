@@ -23,6 +23,13 @@ export const configSchema = baseServiceConfigSchema.safeExtend({
   IDENTITY_SIGNING_KEYS: z.string().optional(),
   /** Durée de vie d'un jeton d'accès (cahier des charges Identité, partie 4 : 15 minutes). */
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+  /**
+   * Services autorisés à demander des jetons de service (ADR-022), fournis par le coffre :
+   * { "<service>": { "secretSha256": "<hex>", "audiences": ["<service appelé>", …] } }.
+   */
+  SERVICE_CLIENTS: z.string().optional(),
+  /** Durée de vie d'un jeton de service : 5 minutes. */
+  SERVICE_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(300),
   /** Adresse gRPC du service notification (envoi des codes, ADR-014). */
   NOTIFICATION_GRPC_URL: z.string().min(1).default('localhost:50052'),
 });
