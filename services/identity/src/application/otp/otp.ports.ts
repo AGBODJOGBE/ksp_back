@@ -39,11 +39,3 @@ export interface OtpHasher {
 export interface OtpCodeGenerator {
   generate(length: number): string;
 }
-
-export interface Clock {
-  now(): Date;
-}
-
-export interface IdGenerator {
-  next(): string;
-}

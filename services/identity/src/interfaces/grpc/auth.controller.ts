@@ -2,6 +2,7 @@ import { identityV1 } from '@ksp/contracts';
 import { AppError, currentContext } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
 import { RequestOtpUseCase } from '../../application/otp/request-otp.use-case';
+import { GetSigningKeysUseCase } from '../../application/token/get-signing-keys.use-case';
 import { type OtpChannel } from '../../domain/otp/otp-challenge';
 import { notImplemented } from './not-implemented';
 
@@ -22,7 +23,10 @@ const CHANNEL_OUT: Record<OtpChannel, identityV1.OtpChannel> = {
 @Controller()
 @identityV1.AuthServiceControllerMethods()
 export class AuthGrpcController implements identityV1.AuthServiceController {
-  constructor(private readonly requestOtpUseCase: RequestOtpUseCase) {}
+  constructor(
+    private readonly requestOtpUseCase: RequestOtpUseCase,
+    private readonly getSigningKeysUseCase: GetSigningKeysUseCase,
+  ) {}
 
   async requestOtp(request: identityV1.RequestOtpRequest): Promise<identityV1.RequestOtpResponse> {
     if (request.purpose !== identityV1.OtpPurpose.OTP_PURPOSE_LOGIN) {
@@ -50,7 +54,7 @@ export class AuthGrpcController implements identityV1.AuthServiceController {
     return notImplemented('Logout');
   }
 
-  getSigningKeys(): Promise<identityV1.GetSigningKeysResponse> {
-    return notImplemented('GetSigningKeys');
+  getSigningKeys(): identityV1.GetSigningKeysResponse {
+    return { keys: this.getSigningKeysUseCase.execute() };
   }
 }

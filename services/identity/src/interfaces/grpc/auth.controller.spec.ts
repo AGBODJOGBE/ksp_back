@@ -1,6 +1,8 @@
 import { identityV1 } from '@ksp/contracts';
 import { runWithContext } from '@ksp/platform';
 import { type RequestOtpInput, type RequestOtpUseCase } from '../../application/otp/request-otp.use-case';
+import { GetSigningKeysUseCase } from '../../application/token/get-signing-keys.use-case';
+import { type PublicSigningKey } from '../../application/token/token.ports';
 import { AuthGrpcController } from './auth.controller';
 
 function controller() {
@@ -17,7 +19,17 @@ function controller() {
       };
     },
   } as unknown as RequestOtpUseCase;
-  return { calls, auth: new AuthGrpcController(useCase) };
+  const key: PublicSigningKey = {
+    kid: 'k1',
+    kty: 'EC',
+    crv: 'P-256',
+    x: 'x',
+    y: 'y',
+    alg: 'ES256',
+    use: 'sig',
+  };
+  const signingKeys = new GetSigningKeysUseCase({ sign: async () => '', publicKeys: () => [key] });
+  return { calls, key, auth: new AuthGrpcController(useCase, signingKeys) };
 }
 
 const request = (overrides: Partial<identityV1.RequestOtpRequest> = {}): identityV1.RequestOtpRequest => ({
@@ -57,5 +69,12 @@ describe('AuthGrpcController.requestOtp', () => {
       auth.requestOtp(request({ purpose: identityV1.OtpPurpose.OTP_PURPOSE_UNSPECIFIED })),
     ).rejects.toMatchObject({ code: 'IDENTITY_OTP_PURPOSE_INVALID' });
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('AuthGrpcController.getSigningKeys', () => {
+  it('renvoie les clés publiques du signataire', () => {
+    const { auth, key } = controller();
+    expect(auth.getSigningKeys()).toEqual({ keys: [key] });
   });
 });

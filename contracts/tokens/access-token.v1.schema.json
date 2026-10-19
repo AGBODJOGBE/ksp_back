@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/tokens/access-token.v1.schema.json",
+  "title": "Jeton d'accès KSP (v1)",
+  "description": "Contenu d'un jeton d'accès émis par identity et lu par la gateway et les services. Profil RFC 9068 : en-tête typ = at+jwt, alg = ES256, kid = clé de signature. Règle d'évolution : on ajoute des champs, on n'en renomme ni n'en retire jamais ; un vérificateur ignore les champs qu'il ne connaît pas.",
+  "x-header": {
+    "alg": "ES256",
+    "typ": "at+jwt",
+    "kid": "identifiant de la clé de signature (ADR-020)"
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "iss",
+    "aud",
+    "sub",
+    "client_id",
+    "iat",
+    "exp",
+    "jti",
+    "token_use",
+    "sid",
+    "ctx",
+    "roles",
+    "mfa",
+    "auth_time"
+  ],
+  "properties": {
+    "iss": {
+      "const": "ksp-identity",
+      "description": "Émetteur"
+    },
+    "aud": {
+      "const": "ksp-api",
+      "description": "Destinataire : la gateway"
+    },
+    "sub": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identifiant de l'utilisateur"
+    },
+    "client_id": {
+      "enum": ["web", "mobile", "backoffice"],
+      "description": "Type de client qui a ouvert la session"
+    },
+    "iat": {
+      "type": "integer",
+      "description": "Émission, en secondes depuis 1970"
+    },
+    "exp": {
+      "type": "integer",
+      "description": "Expiration, en secondes depuis 1970 (15 minutes après l'émission par défaut)"
+    },
+    "jti": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identifiant unique du jeton (révocation, audit)"
+    },
+    "token_use": {
+      "const": "access",
+      "description": "Distingue un jeton d'accès d'un jeton de service (token_use = service)"
+    },
+    "sid": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identifiant de la session"
+    },
+    "ctx": {
+      "type": "string",
+      "pattern": "^(personal|[0-9a-f-]{36})$",
+      "description": "Contexte actif : personal ou identifiant de l'organisation (UC-ID-15)"
+    },
+    "roles": {
+      "type": "array",
+      "description": "Rôles du contexte actif, avec leur portée. Les permissions ne sont pas dans le jeton : chaque service les déduit du catalogue.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "scopeType"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "scopeType": {
+            "enum": ["global", "domain", "org", "personal"]
+          },
+          "scopeId": {
+            "type": ["string", "null"]
+          }
+        }
+      }
+    },
+    "mfa": {
+      "type": "boolean",
+      "description": "Double authentification passée dans cette session"
+    },
+    "auth_time": {
+      "type": "integer",
+      "description": "Dernière authentification forte, en secondes depuis 1970"
+    }
+  }
+}

@@ -23,4 +23,5 @@ Chaque décision importante fait l'objet d'une fiche courte : contexte, décisio
 | [ADR-017](0017-postgres-et-rabbitmq-en-production.md) | PostgreSQL géré hors du cluster ; RabbitMQ dans le cluster        | Accepté |
 | [ADR-018](0018-hebergeur.md)                          | Choix de l'hébergeur : Contabo                                    | Accepté |
 | [ADR-019](0019-ouverture-aux-partenaires.md)          | Ouverture aux solutions partenaires                               | Accepté |
+| [ADR-020](0020-cles-de-signature.md)                  | Clés de signature des jetons                                      | Accepté |
 | [ADR-021](0021-whatsapp-cloud-api.md)                 | WhatsApp par l'API officielle de Meta                             | Accepté |

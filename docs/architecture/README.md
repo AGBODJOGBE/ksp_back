@@ -42,6 +42,7 @@ Partenaires (ForYou, autres) — n'importe quel langage, n'importe quelle base
 | Erreurs communes                                          | `AppError` (`invalid`, `notFound`, `conflict`…), conversion gRPC ↔ HTTP, filtre global                                        |
 | Appels gRPC sortants                                      | `GrpcCaller` : délai, nouvelles tentatives si idempotent, coupe-circuit, propagation du contexte et du jeton                  |
 | Authentification entre services                           | `ServiceTokenVerifier` (ES256, audience = service appelé), `GrpcContextInterceptor`                                           |
+| Jetons d'accès (gateway)                                  | `AccessTokenVerifier` (RFC 9068, contrat `contracts/tokens`, clés publiques d'identity sur `/.well-known/jwks.json`, ADR-020) |
 | Droits de l'utilisateur                                   | `requireUser`, `requireRole`, `requireRecentMfa`                                                                              |
 | Événements                                                | `createEnvelope`, `appendToOutbox`, `SqlOutboxStore`, `OutboxRelay`, `SqlInboxStore`, `RabbitMqPublisher`, `RabbitMqConsumer` |
 | Santé et métriques                                        | `/health/live`, `/health/ready` (`ReadinessRegistry`), `/metrics` (Prometheus)                                                |
