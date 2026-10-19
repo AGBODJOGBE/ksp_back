@@ -1,6 +1,7 @@
 import { baseServiceConfigSchema } from '@ksp/platform';
 import { z } from 'zod';
 import { type OtpPolicy } from './domain/otp/otp-policy';
+import { type SessionPolicy } from './domain/session/session-policy';
 
 /**
  * Configuration du service : variables communes, plus celles propres à identity.
@@ -30,11 +31,23 @@ export const configSchema = baseServiceConfigSchema.safeExtend({
   SERVICE_CLIENTS: z.string().optional(),
   /** Durée de vie d'un jeton de service : 5 minutes. */
   SERVICE_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(300),
+  /** Durée du jeton de renouvellement des sites et applications : 30 jours, prolongée à chaque usage. */
+  REFRESH_TOKEN_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30 * 24 * 3600),
+  /** Sessions simultanées des sites et applications ; au-delà, la plus ancienne est révoquée. */
+  MAX_SESSIONS: z.coerce.number().int().positive().default(5),
   /** Adresse gRPC du service notification (envoi des codes, ADR-014). */
   NOTIFICATION_GRPC_URL: z.string().min(1).default('localhost:50052'),
 });
 
 export type ServiceConfig = z.infer<typeof configSchema>;
+
+export function sessionPolicyFrom(config: ServiceConfig): SessionPolicy {
+  return { refreshTtlSeconds: config.REFRESH_TOKEN_TTL_SECONDS, maxSessions: config.MAX_SESSIONS };
+}
 
 export function otpPolicyFrom(config: ServiceConfig): OtpPolicy {
   return {

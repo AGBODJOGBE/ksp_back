@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { type OtpHasher } from '../../application/otp/otp.ports';
 
 /**
@@ -10,5 +10,11 @@ export class HmacOtpHasher implements OtpHasher {
 
   hash(challengeId: string, code: string): string {
     return createHmac('sha256', this.secret).update(`${challengeId}:${code}`).digest('hex');
+  }
+
+  matches(challengeId: string, code: string, codeHash: string): boolean {
+    const expected = Buffer.from(codeHash, 'hex');
+    const actual = Buffer.from(this.hash(challengeId, code), 'hex');
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
   }
 }
