@@ -34,20 +34,20 @@ Partenaires (ForYou, autres) — n'importe quel langage, n'importe quelle base
 
 ## Ce que fournit le kit `@ksp/platform`
 
-| Besoin                                                    | Élément du kit                                                                                                                |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Démarrer un service (HTTP technique + gRPC, arrêt propre) | `bootstrapService`, `PlatformModule.forRoot`                                                                                  |
-| Configuration validée au démarrage                        | `baseServiceConfigSchema`, `loadConfig` (zod)                                                                                 |
-| Corrélation de bout en bout                               | `RequestContext` (AsyncLocalStorage), `runWithContext`, métadonnées `x-correlation-id`, `x-user-*`                            |
-| Erreurs communes                                          | `AppError` (`invalid`, `notFound`, `conflict`…), conversion gRPC ↔ HTTP, filtre global                                        |
-| Appels gRPC sortants                                      | `GrpcCaller` : délai, nouvelles tentatives si idempotent, coupe-circuit, propagation du contexte et du jeton                  |
-| Authentification entre services                           | `ServiceTokenVerifier` (ES256, audience = service appelé), `GrpcContextInterceptor`                                           |
-| Jetons d'accès (gateway)                                  | `AccessTokenVerifier` (RFC 9068, contrat `contracts/tokens`, clés publiques d'identity sur `/.well-known/jwks.json`, ADR-020) |
-| Droits de l'utilisateur                                   | `requireUser`, `requireRole`, `requireRecentMfa`                                                                              |
-| Événements                                                | `createEnvelope`, `appendToOutbox`, `SqlOutboxStore`, `OutboxRelay`, `SqlInboxStore`, `RabbitMqPublisher`, `RabbitMqConsumer` |
-| Santé et métriques                                        | `/health/live`, `/health/ready` (`ReadinessRegistry`), `/metrics` (Prometheus)                                                |
-| Journaux                                                  | pino structuré, champs sensibles masqués (`REDACTED_PATHS`), `correlationId` sur chaque ligne                                 |
-| Traces                                                    | OpenTelemetry (activé si `OTEL_EXPORTER_OTLP_ENDPOINT` est défini)                                                            |
+| Besoin                                                    | Élément du kit                                                                                                                                                                       |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Démarrer un service (HTTP technique + gRPC, arrêt propre) | `bootstrapService`, `PlatformModule.forRoot`                                                                                                                                         |
+| Configuration validée au démarrage                        | `baseServiceConfigSchema`, `loadConfig` (zod)                                                                                                                                        |
+| Corrélation de bout en bout                               | `RequestContext` (AsyncLocalStorage), `runWithContext`, métadonnées `x-correlation-id`, `x-user-*`                                                                                   |
+| Erreurs communes                                          | `AppError` (`invalid`, `notFound`, `conflict`…), conversion gRPC ↔ HTTP, filtre global                                                                                               |
+| Appels gRPC sortants                                      | `GrpcCaller` : délai, nouvelles tentatives si idempotent, coupe-circuit, propagation du contexte et du jeton                                                                         |
+| Authentification entre services                           | `ServiceTokenVerifier` (ES256, audience = service appelé), `GrpcContextInterceptor` ; `ServiceTokenClient` obtient et garde en cache les jetons (`/oauth/token` d'identity, ADR-022) |
+| Jetons d'accès (gateway)                                  | `AccessTokenVerifier` (RFC 9068, contrat `contracts/tokens`, clés publiques d'identity sur `/.well-known/jwks.json`, ADR-020)                                                        |
+| Droits de l'utilisateur                                   | `requireUser`, `requireRole`, `requireRecentMfa`                                                                                                                                     |
+| Événements                                                | `createEnvelope`, `appendToOutbox`, `SqlOutboxStore`, `OutboxRelay`, `SqlInboxStore`, `RabbitMqPublisher`, `RabbitMqConsumer`                                                        |
+| Santé et métriques                                        | `/health/live`, `/health/ready` (`ReadinessRegistry`), `/metrics` (Prometheus)                                                                                                       |
+| Journaux                                                  | pino structuré, champs sensibles masqués (`REDACTED_PATHS`), `correlationId` sur chaque ligne                                                                                        |
+| Traces                                                    | OpenTelemetry (activé si `OTEL_EXPORTER_OTLP_ENDPOINT` est défini)                                                                                                                   |
 
 ## Publier un événement
 

@@ -3,6 +3,7 @@ import { GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { RequestOtpUseCase } from './application/otp/request-otp.use-case';
+import { IssueServiceTokenUseCase } from './application/service-token/issue-service-token.use-case';
 import { AccessTokenIssuer } from './application/token/access-token-issuer';
 import { GetSigningKeysUseCase } from './application/token/get-signing-keys.use-case';
 import { otpPolicyFrom, type ServiceConfig } from './config';
@@ -12,12 +13,15 @@ import { HmacOtpHasher } from './infrastructure/otp/hmac-otp-hasher';
 import { NotificationOtpSender } from './infrastructure/otp/notification-otp-sender';
 import { PrismaOtpChallengeRepository } from './infrastructure/otp/prisma-otp-challenge.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
+import { ConfigServiceClientRegistry } from './infrastructure/service-token/config-service-client-registry';
+import { LocalServiceTokenProvider } from './infrastructure/service-token/local-service-token-provider';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { KeyRingSigner } from './infrastructure/token/key-ring-signer';
 import { AccountGrpcController } from './interfaces/grpc/account.controller';
 import { AuthGrpcController } from './interfaces/grpc/auth.controller';
 import { IdentityGrpcController } from './interfaces/grpc/identity.controller';
 import { JwksHttpController } from './interfaces/http/jwks.controller';
+import { OAuthTokenHttpController } from './interfaces/http/oauth-token.controller';
 
 const NOTIFICATION_CLIENT = Symbol('NOTIFICATION_CLIENT');
 const OTP_SENDER = Symbol('OTP_SENDER');
@@ -35,7 +39,13 @@ export class AppModule {
           grpcClientOptions(NOTIFICATION_CLIENT, 'notification', config.NOTIFICATION_GRPC_URL),
         ]),
       ],
-      controllers: [IdentityGrpcController, AuthGrpcController, AccountGrpcController, JwksHttpController],
+      controllers: [
+        IdentityGrpcController,
+        AuthGrpcController,
+        AccountGrpcController,
+        JwksHttpController,
+        OAuthTokenHttpController,
+      ],
       providers: [
         PrismaService,
         OutboxRelayService,
@@ -70,14 +80,29 @@ export class AppModule {
             ),
         },
         {
+          provide: IssueServiceTokenUseCase,
+          inject: [TOKEN_SIGNER],
+          useFactory: (signer: KeyRingSigner) =>
+            new IssueServiceTokenUseCase(
+              ConfigServiceClientRegistry.fromConfig(config.SERVICE_CLIENTS),
+              signer,
+              new UuidV7Generator(),
+              new SystemClock(),
+              config.SERVICE_TOKEN_TTL_SECONDS,
+            ),
+        },
+        {
           provide: OTP_SENDER,
-          inject: [NOTIFICATION_CLIENT],
-          useFactory: (grpc: ClientGrpc) =>
+          inject: [NOTIFICATION_CLIENT, IssueServiceTokenUseCase],
+          useFactory: (grpc: ClientGrpc, serviceTokens: IssueServiceTokenUseCase) =>
             new NotificationOtpSender(
               grpc.getService<notificationV1.NotificationServiceClient>(
                 notificationV1.NOTIFICATION_SERVICE_NAME,
               ),
-              new GrpcCaller({ target: 'notification' }),
+              new GrpcCaller({
+                target: 'notification',
+                serviceTokenProvider: new LocalServiceTokenProvider(serviceTokens),
+              }),
             ),
         },
         {

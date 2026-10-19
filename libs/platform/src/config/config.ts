@@ -20,6 +20,13 @@ export const baseServiceConfigSchema = z
     /** Clés publiques d'identity pour vérifier les jetons de service (ADR-013). Obligatoire en production. */
     IDENTITY_JWKS_URL: z.string().optional(),
     SERVICE_TOKEN_ISSUER: z.string().default('ksp-identity'),
+    /**
+     * Route d'émission des jetons de service d'identity (ADR-022), par exemple
+     * http://identity:3101/oauth/token. Avec SERVICE_CLIENT_SECRET, active les appels authentifiés.
+     */
+    IDENTITY_TOKEN_URL: z.string().optional(),
+    /** Secret du service auprès d'identity (client credentials), fourni par le coffre. */
+    SERVICE_CLIENT_SECRET: z.string().optional(),
     OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
   })
   .refine((cfg) => cfg.NODE_ENV !== 'production' || Boolean(cfg.IDENTITY_JWKS_URL), {

@@ -17,6 +17,8 @@ export const REDACTED_PATHS = [
   '*.refreshToken',
   '*.mfaToken',
   '*.secret',
+  '*.client_secret',
+  '*.clientSecret',
   '*.variables',
   '*.phoneE164',
 ];

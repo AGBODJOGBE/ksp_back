@@ -6,6 +6,7 @@ import { AccountGrpcController } from '../src/interfaces/grpc/account.controller
 import { AuthGrpcController } from '../src/interfaces/grpc/auth.controller';
 import { IdentityGrpcController } from '../src/interfaces/grpc/identity.controller';
 import { JwksHttpController } from '../src/interfaces/http/jwks.controller';
+import { OAuthTokenHttpController } from '../src/interfaces/http/oauth-token.controller';
 
 describe('AppModule', () => {
   it('assemble toutes les dépendances du service', async () => {
@@ -23,6 +24,7 @@ describe('AppModule', () => {
     expect(moduleRef.get(AuthGrpcController)).toBeDefined();
     expect(moduleRef.get(AccountGrpcController)).toBeDefined();
     expect(moduleRef.get(JwksHttpController).jwks().keys).toHaveLength(1);
+    expect(moduleRef.get(OAuthTokenHttpController)).toBeDefined();
     await moduleRef.close();
   });
 });

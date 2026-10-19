@@ -25,3 +25,4 @@ Chaque décision importante fait l'objet d'une fiche courte : contexte, décisio
 | [ADR-019](0019-ouverture-aux-partenaires.md)          | Ouverture aux solutions partenaires                               | Accepté |
 | [ADR-020](0020-cles-de-signature.md)                  | Clés de signature des jetons                                      | Accepté |
 | [ADR-021](0021-whatsapp-cloud-api.md)                 | WhatsApp par l'API officielle de Meta                             | Accepté |
+| [ADR-022](0022-jetons-de-service.md)                  | Jetons de service : flux OAuth 2.0 client credentials             | Accepté |
