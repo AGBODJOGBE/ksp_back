@@ -6,6 +6,8 @@ import {
   type VerifyOtpInput,
   type VerifyOtpUseCase,
 } from '../../application/session/verify-otp.use-case';
+import { type LogoutUseCase } from '../../application/session/logout.use-case';
+import { type RefreshSessionUseCase } from '../../application/session/refresh-session.use-case';
 import { GetSigningKeysUseCase } from '../../application/token/get-signing-keys.use-case';
 import { type PublicSigningKey } from '../../application/token/token.ports';
 import { AuthGrpcController } from './auth.controller';
@@ -61,7 +63,28 @@ function controller() {
     use: 'sig',
   };
   const signingKeys = new GetSigningKeysUseCase({ sign: async () => '', publicKeys: () => [key] });
-  return { requests, verifications, key, auth: new AuthGrpcController(requestOtp, verifyOtp, signingKeys) };
+  const refreshes: string[] = [];
+  const refresh = {
+    execute: async (token: string) => {
+      refreshes.push(token);
+      return { ...opened, isNewUser: undefined };
+    },
+  } as unknown as RefreshSessionUseCase;
+  const logouts: { userId: string; sessionId: string; scope: string }[] = [];
+  const logout = {
+    execute: async (input: { userId: string; sessionId: string; scope: string }) => {
+      logouts.push(input);
+      return input.scope === 'all_devices' ? 3 : 1;
+    },
+  } as unknown as LogoutUseCase;
+  return {
+    requests,
+    verifications,
+    refreshes,
+    logouts,
+    key,
+    auth: new AuthGrpcController(requestOtp, verifyOtp, refresh, logout, signingKeys),
+  };
 }
 
 const otpRequest = (overrides: Partial<identityV1.RequestOtpRequest> = {}): identityV1.RequestOtpRequest => ({
@@ -175,5 +198,50 @@ describe('AuthGrpcController.getSigningKeys', () => {
   it('renvoie les clés publiques du signataire', () => {
     const { auth, key } = controller();
     expect(auth.getSigningKeys()).toEqual({ keys: [key] });
+  });
+});
+
+describe('AuthGrpcController.refreshSession', () => {
+  it('transmet le jeton de renouvellement et renvoie les nouveaux jetons', async () => {
+    const { refreshes, auth } = controller();
+    const response = await auth.refreshSession({ refreshToken: 'rt-ancien' });
+    expect(refreshes).toEqual(['rt-ancien']);
+    expect(response.session).toMatchObject({ accessToken: 'jwt', refreshToken: 'rt', sessionId: 's-1' });
+  });
+});
+
+describe('AuthGrpcController.logout', () => {
+  const user = {
+    userId: 'u-1',
+    sessionId: 's-1',
+    activeContext: 'personal',
+    roles: [],
+    mfa: false,
+  };
+
+  it('déconnecte cet appareil par défaut, avec la session transmise par la gateway', async () => {
+    const { logouts, auth } = controller();
+    const response = await runWithContext({ correlationId: 'c', user }, () =>
+      auth.logout({ scope: identityV1.LogoutScope.LOGOUT_SCOPE_UNSPECIFIED }),
+    );
+    expect(logouts).toEqual([{ userId: 'u-1', sessionId: 's-1', scope: 'this_device' }]);
+    expect(response).toEqual({ revokedSessions: 1 });
+  });
+
+  it('déconnecte tous les appareils sur demande', async () => {
+    const { logouts, auth } = controller();
+    const response = await runWithContext({ correlationId: 'c', user }, () =>
+      auth.logout({ scope: identityV1.LogoutScope.LOGOUT_SCOPE_ALL_DEVICES }),
+    );
+    expect(logouts[0].scope).toBe('all_devices');
+    expect(response).toEqual({ revokedSessions: 3 });
+  });
+
+  it('refuse un appel sans utilisateur connecté', async () => {
+    const { logouts, auth } = controller();
+    await expect(
+      auth.logout({ scope: identityV1.LogoutScope.LOGOUT_SCOPE_THIS_DEVICE }),
+    ).rejects.toMatchObject({ code: 'AUTH_REQUIRED' });
+    expect(logouts).toHaveLength(0);
   });
 });

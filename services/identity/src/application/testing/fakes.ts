@@ -7,6 +7,11 @@ import { type StoredOtpChallenge } from '../../domain/otp/otp-verification';
 import { type PhoneNumber } from '../../domain/user/phone-number';
 import { type OtpChallengeRepository, type OtpRequestedEvent } from '../otp/otp.ports';
 import {
+  type RefreshRotation,
+  type SessionStore,
+  type StoredRefreshToken,
+} from '../session/session-store.ports';
+import {
   type Account,
   type AccountRepository,
   ChallengeAlreadyConsumedError,
@@ -128,5 +133,86 @@ export class InMemoryIdentityStore implements AccountRepository, LoginRepository
 
   async recordFailedLogin(event: { userId: string | null; reason: string }): Promise<void> {
     this.loginEvents.push({ userId: event.userId, success: false, reason: event.reason });
+  }
+}
+
+interface FakeRefreshToken {
+  id: string;
+  hash: string;
+  sessionId: string;
+  usedAt: Date | null;
+  replacedById?: string;
+}
+
+interface FakeSession {
+  id: string;
+  userId: string;
+  clientKind: 'web' | 'mobile' | 'backoffice';
+  createdAt: Date;
+  lastSeenAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
+  revokeReason?: string;
+}
+
+/** Sessions et jetons de renouvellement en mémoire, avec la même atomicité que le vrai dépôt. */
+export class InMemorySessionStore implements SessionStore {
+  readonly sessions: FakeSession[] = [];
+  readonly tokens: FakeRefreshToken[] = [];
+  readonly accounts = new Map<string, Account>();
+  /** Simule un autre renouvellement qui passe juste avant (course entre deux requêtes). */
+  raceOnNextRotation = false;
+
+  async findRefreshToken(hash: string): Promise<StoredRefreshToken | null> {
+    const token = this.tokens.find((candidate) => candidate.hash === hash);
+    if (!token) return null;
+    const session = this.sessions.find((candidate) => candidate.id === token.sessionId)!;
+    return {
+      id: token.id,
+      usedAt: token.usedAt,
+      session: {
+        id: session.id,
+        clientKind: session.clientKind,
+        createdAt: session.createdAt,
+        expiresAt: session.expiresAt,
+        revokedAt: session.revokedAt,
+      },
+      account: this.accounts.get(session.userId)!,
+    };
+  }
+
+  async rotateRefreshToken(rotation: RefreshRotation): Promise<boolean> {
+    const old = this.tokens.find((token) => token.id === rotation.oldTokenId)!;
+    if (this.raceOnNextRotation) {
+      this.raceOnNextRotation = false;
+      old.usedAt = rotation.now;
+    }
+    if (old.usedAt) return false;
+    old.usedAt = rotation.now;
+    old.replacedById = rotation.newToken.id;
+    this.tokens.push({ ...rotation.newToken, sessionId: rotation.sessionId, usedAt: null });
+    const session = this.sessions.find((candidate) => candidate.id === rotation.sessionId)!;
+    session.lastSeenAt = rotation.now;
+    session.expiresAt = rotation.sessionExpiresAt;
+    return true;
+  }
+
+  async revokeSession(sessionId: string, userId: string, reason: string, now: Date): Promise<number> {
+    const session = this.sessions.find(
+      (candidate) => candidate.id === sessionId && candidate.userId === userId && !candidate.revokedAt,
+    );
+    if (!session) return 0;
+    session.revokedAt = now;
+    session.revokeReason = reason;
+    return 1;
+  }
+
+  async revokeAllSessions(userId: string, reason: string, now: Date): Promise<number> {
+    const active = this.sessions.filter((session) => session.userId === userId && !session.revokedAt);
+    for (const session of active) {
+      session.revokedAt = now;
+      session.revokeReason = reason;
+    }
+    return active.length;
   }
 }

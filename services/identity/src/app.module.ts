@@ -4,6 +4,8 @@ import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { RequestOtpUseCase } from './application/otp/request-otp.use-case';
 import { IssueServiceTokenUseCase } from './application/service-token/issue-service-token.use-case';
+import { LogoutUseCase } from './application/session/logout.use-case';
+import { RefreshSessionUseCase } from './application/session/refresh-session.use-case';
 import { VerifyOtpUseCase } from './application/session/verify-otp.use-case';
 import { AccessTokenIssuer } from './application/token/access-token-issuer';
 import { GetSigningKeysUseCase } from './application/token/get-signing-keys.use-case';
@@ -16,8 +18,12 @@ import { PrismaOtpChallengeRepository } from './infrastructure/otp/prisma-otp-ch
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { ConfigServiceClientRegistry } from './infrastructure/service-token/config-service-client-registry';
 import { LocalServiceTokenProvider } from './infrastructure/service-token/local-service-token-provider';
-import { CryptoRefreshTokenGenerator } from './infrastructure/session/crypto-refresh-token-generator';
+import {
+  CryptoRefreshTokenGenerator,
+  hashRefreshToken,
+} from './infrastructure/session/crypto-refresh-token-generator';
 import { PrismaLoginRepository } from './infrastructure/session/prisma-login.repository';
+import { PrismaSessionStore } from './infrastructure/session/prisma-session.store';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { KeyRingSigner } from './infrastructure/token/key-ring-signer';
 import { AccountGrpcController } from './interfaces/grpc/account.controller';
@@ -143,6 +149,26 @@ export class AppModule {
               otpPolicyFrom(config),
               sessionPolicyFrom(config),
             ),
+        },
+        PrismaSessionStore,
+        {
+          provide: RefreshSessionUseCase,
+          inject: [PrismaSessionStore, AccessTokenIssuer],
+          useFactory: (sessions: PrismaSessionStore, accessTokens: AccessTokenIssuer) =>
+            new RefreshSessionUseCase(
+              sessions,
+              new CryptoRefreshTokenGenerator(),
+              hashRefreshToken,
+              accessTokens,
+              new UuidV7Generator(),
+              new SystemClock(),
+              sessionPolicyFrom(config),
+            ),
+        },
+        {
+          provide: LogoutUseCase,
+          inject: [PrismaSessionStore],
+          useFactory: (sessions: PrismaSessionStore) => new LogoutUseCase(sessions, new SystemClock()),
         },
       ],
     };
