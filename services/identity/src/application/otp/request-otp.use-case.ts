@@ -2,9 +2,8 @@ import { AppError } from '@ksp/platform';
 import { newOtpChallenge, type OtpChannel, type OtpPurpose } from '../../domain/otp/otp-challenge';
 import { decideSend, type OtpPolicy } from '../../domain/otp/otp-policy';
 import { PhoneNumber } from '../../domain/user/phone-number';
+import { type Clock, type IdGenerator } from '../shared/system.ports';
 import {
-  type Clock,
-  type IdGenerator,
   type OtpChallengeRepository,
   type OtpCodeGenerator,
   type OtpHasher,

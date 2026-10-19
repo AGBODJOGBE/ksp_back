@@ -16,6 +16,13 @@ export const configSchema = baseServiceConfigSchema.safeExtend({
   OTP_MAX_PER_HOUR: z.coerce.number().int().positive().default(5),
   OTP_MAX_PER_DAY: z.coerce.number().int().positive().default(10),
   OTP_BLOCK_SECONDS: z.coerce.number().int().positive().default(3600),
+  /**
+   * Clés de signature des jetons (ADR-020), fournies par le coffre à secrets : liste JSON
+   * [{ kid, status: next | active | retired, privateKeyPem }]. Vide hors production : clé temporaire.
+   */
+  IDENTITY_SIGNING_KEYS: z.string().optional(),
+  /** Durée de vie d'un jeton d'accès (cahier des charges Identité, partie 4 : 15 minutes). */
+  ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   /** Adresse gRPC du service notification (envoi des codes, ADR-014). */
   NOTIFICATION_GRPC_URL: z.string().min(1).default('localhost:50052'),
 });

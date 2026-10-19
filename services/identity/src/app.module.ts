@@ -1,8 +1,10 @@
 import { notificationV1 } from '@ksp/contracts';
 import { GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
-import { type DynamicModule, Module } from '@nestjs/common';
+import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { RequestOtpUseCase } from './application/otp/request-otp.use-case';
+import { AccessTokenIssuer } from './application/token/access-token-issuer';
+import { GetSigningKeysUseCase } from './application/token/get-signing-keys.use-case';
 import { otpPolicyFrom, type ServiceConfig } from './config';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { CryptoOtpCodeGenerator } from './infrastructure/otp/crypto-otp-code-generator';
@@ -11,12 +13,15 @@ import { NotificationOtpSender } from './infrastructure/otp/notification-otp-sen
 import { PrismaOtpChallengeRepository } from './infrastructure/otp/prisma-otp-challenge.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
+import { KeyRingSigner } from './infrastructure/token/key-ring-signer';
 import { AccountGrpcController } from './interfaces/grpc/account.controller';
 import { AuthGrpcController } from './interfaces/grpc/auth.controller';
 import { IdentityGrpcController } from './interfaces/grpc/identity.controller';
+import { JwksHttpController } from './interfaces/http/jwks.controller';
 
 const NOTIFICATION_CLIENT = Symbol('NOTIFICATION_CLIENT');
 const OTP_SENDER = Symbol('OTP_SENDER');
+const TOKEN_SIGNER = Symbol('TOKEN_SIGNER');
 
 /** Racine de composition : relie chaque cas d'usage à ses adaptateurs. */
 @Module({})
@@ -30,11 +35,40 @@ export class AppModule {
           grpcClientOptions(NOTIFICATION_CLIENT, 'notification', config.NOTIFICATION_GRPC_URL),
         ]),
       ],
-      controllers: [IdentityGrpcController, AuthGrpcController, AccountGrpcController],
+      controllers: [IdentityGrpcController, AuthGrpcController, AccountGrpcController, JwksHttpController],
       providers: [
         PrismaService,
         OutboxRelayService,
         PrismaOtpChallengeRepository,
+        {
+          // Chargé au démarrage : une configuration de clés invalide empêche le service de démarrer.
+          provide: TOKEN_SIGNER,
+          useFactory: async () => {
+            const signer = await KeyRingSigner.fromConfig(config.IDENTITY_SIGNING_KEYS, config.NODE_ENV);
+            if (signer.ephemeral) {
+              new Logger('KeyRingSigner').warn(
+                'Aucune clé configurée : clé de signature temporaire, les sessions ne survivront pas au redémarrage.',
+              );
+            }
+            return signer;
+          },
+        },
+        {
+          provide: GetSigningKeysUseCase,
+          inject: [TOKEN_SIGNER],
+          useFactory: (signer: KeyRingSigner) => new GetSigningKeysUseCase(signer),
+        },
+        {
+          provide: AccessTokenIssuer,
+          inject: [TOKEN_SIGNER],
+          useFactory: (signer: KeyRingSigner) =>
+            new AccessTokenIssuer(
+              signer,
+              new UuidV7Generator(),
+              new SystemClock(),
+              config.ACCESS_TOKEN_TTL_SECONDS,
+            ),
+        },
         {
           provide: OTP_SENDER,
           inject: [NOTIFICATION_CLIENT],
