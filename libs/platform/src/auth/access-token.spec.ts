@@ -1,4 +1,5 @@
 import { createLocalJWKSet, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
+import { AppError } from '../errors/app-error';
 import { AccessTokenVerifier } from './access-token';
 
 describe('AccessTokenVerifier', () => {
@@ -78,6 +79,18 @@ describe('AccessTokenVerifier', () => {
     ).toString('base64url');
     await expect(verifier.verify(`${header}.${body}.`)).rejects.toMatchObject({
       code: 'GATEWAY_TOKEN_INVALID',
+    });
+  });
+
+  it('laisse passer l’indisponibilité des clés : ce n’est pas un jeton invalide', async () => {
+    const down = new AccessTokenVerifier({
+      keys: async () => {
+        throw AppError.unavailable('IDENTITY_UNAVAILABLE', 'Service indisponible.');
+      },
+    });
+    await expect(down.verify(await sign())).rejects.toMatchObject({
+      code: 'IDENTITY_UNAVAILABLE',
+      kind: 'UNAVAILABLE',
     });
   });
 });

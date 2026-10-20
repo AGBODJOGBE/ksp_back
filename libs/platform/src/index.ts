@@ -12,6 +12,7 @@ export * from './errors/grpc-exception.filter';
 export * from './grpc/grpc-caller';
 export * from './grpc/grpc-context.interceptor';
 export * from './grpc/grpc-options';
+export * from './health/health.controller';
 export * from './health/readiness';
 export * from './logging/logger';
 export * from './messaging/envelope';

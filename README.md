@@ -34,7 +34,7 @@ ksp-backend/
 | Immobilier                         | `realestate`                                                                                              | 2     |
 | Marketplace, impression, livraison | `catalog`, `order`, `print`, `delivery`                                                                   | 3     |
 
-Services présents dans le dépôt : `identity` et `notification` (lot 1 : inscription par téléphone, envoi des codes par WhatsApp).
+Services présents dans le dépôt : `gateway`, `identity` et `notification` (lot 1 : inscription par téléphone, envoi des codes par WhatsApp).
 
 ## Démarrer
 
@@ -54,6 +54,8 @@ Chaque service expose :
 
 - gRPC sur son port (`identity` : 50051, `notification` : 50052) ;
 - HTTP technique (`identity` : 3101, `notification` : 3102) : `/health/live`, `/health/ready`, `/metrics`.
+
+La `gateway` n'a ni gRPC entrant ni base : elle sert l'API REST des fronts sur le port 3000 (`/api/v1/…`, `/.well-known/jwks.json`), avec les mêmes sondes et métriques (voir `services/gateway/README.md`).
 
 En développement, `notification` n'envoie aucun message : le code de connexion s'affiche dans son terminal (voir `services/notification/README.md`).
 
