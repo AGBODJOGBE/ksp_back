@@ -8,5 +8,10 @@
     "grpcPort": 50051,
     "httpPort": 3101,
     "database": true
+  },
+  "notification": {
+    "grpcPort": 50052,
+    "httpPort": 3102,
+    "database": true
   }
 }

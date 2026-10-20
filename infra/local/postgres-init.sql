@@ -5,3 +5,6 @@
 
 CREATE USER identity WITH PASSWORD 'identity' CREATEDB;
 CREATE DATABASE identity OWNER identity;
+
+CREATE USER notification WITH PASSWORD 'notification' CREATEDB;
+CREATE DATABASE notification OWNER notification;
