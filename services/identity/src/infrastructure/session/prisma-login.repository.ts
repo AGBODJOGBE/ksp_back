@@ -7,6 +7,7 @@ import {
   type LoginRepository,
   PhoneAlreadyRegisteredError,
   type PhoneLoginPlan,
+  type ProfileChanges,
 } from '../../application/session/session.ports';
 import { sessionsToRevoke } from '../../domain/session/session-policy';
 import { Prisma } from '../../../prisma/generated';
@@ -49,6 +50,16 @@ export class PrismaLoginRepository implements AccountRepository, LoginRepository
       select: { user: { select: ACCOUNT_SELECT } },
     });
     return phone ? toAccount(phone.user) : null;
+  }
+
+  async findById(userId: string): Promise<Account | null> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: ACCOUNT_SELECT });
+    return user ? toAccount(user) : null;
+  }
+
+  async updateProfile(userId: string, changes: ProfileChanges): Promise<Account | null> {
+    const updated = await this.prisma.user.updateMany({ where: { id: userId }, data: changes });
+    return updated.count === 1 ? this.findById(userId) : null;
   }
 
   async completePhoneLogin(plan: PhoneLoginPlan): Promise<{ account: Account; isNewUser: boolean }> {
