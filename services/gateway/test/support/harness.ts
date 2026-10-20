@@ -1,0 +1,319 @@
+import { type AddressInfo, createServer } from 'node:net';
+import { identityV1 } from '@ksp/contracts';
+import {
+  AppError,
+  currentContext,
+  GrpcContextInterceptor,
+  GrpcExceptionFilter,
+  grpcServerOptions,
+  loadConfig,
+  type RequestContext,
+  SERVICE_TOKEN_PROVIDER,
+  ServiceTokenVerifier,
+  type ServiceTokenProvider,
+} from '@ksp/platform';
+import { Controller, Inject, type INestMicroservice, Module } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { type MicroserviceOptions } from '@nestjs/microservices';
+import { type NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import {
+  createLocalJWKSet,
+  exportJWK,
+  generateKeyPair,
+  type JSONWebKeySet,
+  type KeyLike,
+  SignJWT,
+} from 'jose';
+import { AppModule } from '../../src/app.module';
+import { type PublicSigningKey } from '../../src/application/keys/public-keys';
+import { configSchema } from '../../src/config';
+import { type JwksSource } from '../../src/infrastructure/keys/signing-keys-cache';
+import { configureHttpApp } from '../../src/interfaces/http/http-app';
+import { JWKS_SOURCE } from '../../src/tokens';
+
+/**
+ * Harnais de bout en bout : la vraie gateway (module, chaîne HTTP, client gRPC) face à un serveur
+ * gRPC identity simulé, qui implémente le contrôleur généré depuis identity.proto et vérifie le
+ * jeton de service de la gateway avec le kit, comme le vrai service.
+ */
+
+export function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+export const USER_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11';
+export const SESSION_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e10';
+
+export const protoUser: identityV1.User = {
+  id: USER_ID,
+  status: identityV1.UserStatus.USER_STATUS_ACTIVE,
+  firstName: '',
+  lastName: '',
+  phoneE164: '+2290197000045',
+  email: '',
+  preferredLanguage: 'fr',
+  createdAt: '2026-10-17T10:00:00.000Z',
+};
+
+export function protoSession(refreshToken = 'rt-new'): identityV1.SessionTokens {
+  return {
+    accessToken: 'eyJhbGciOiJFUzI1NiJ9.e30.c2ln',
+    accessTokenExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+    refreshToken,
+    refreshTokenExpiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+    sessionId: SESSION_ID,
+    user: protoUser,
+    profileIncomplete: true,
+  };
+}
+
+type AuthMethod = keyof identityV1.AuthServiceController;
+type AccountMethod = keyof identityV1.AccountServiceController;
+export type StubMethod = AuthMethod | AccountMethod;
+
+export interface RecordedCall {
+  method: StubMethod;
+  request: Record<string, unknown>;
+  context: RequestContext | undefined;
+}
+
+/** Comportement du service simulé : réponses par défaut, remplaçables méthode par méthode. */
+export class IdentityStub {
+  readonly calls: RecordedCall[] = [];
+  private readonly overrides = new Map<StubMethod, (request: Record<string, unknown>) => Promise<unknown>>();
+
+  readonly defaults: Record<StubMethod, (request: Record<string, unknown>) => unknown> = {
+    requestOtp: () => ({
+      challengeId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0f',
+      maskedTarget: '+229********45',
+      channel: identityV1.OtpChannel.OTP_CHANNEL_WHATSAPP,
+      expiresInSeconds: 300,
+      resendAfterSeconds: 60,
+    }),
+    verifyOtp: () => ({ result: { session: protoSession() }, isNewUser: true }),
+    refreshSession: () => ({ session: protoSession('rt-rotated') }),
+    logout: (request) => ({
+      revokedSessions: request['scope'] === identityV1.LogoutScope.LOGOUT_SCOPE_ALL_DEVICES ? 3 : 1,
+    }),
+    getSigningKeys: () => ({ keys: [] }),
+    getMe: () => ({ user: protoUser, profileIncomplete: true }),
+    updateMe: (request) => ({
+      user: { ...protoUser, ...request },
+      profileIncomplete: !request['firstName'],
+    }),
+  };
+
+  /** Remplace la réponse d'une méthode (erreur métier, délai…) jusqu'à reset(). */
+  on(method: StubMethod, handler: (request: Record<string, unknown>) => Promise<unknown>): void {
+    this.overrides.set(method, handler);
+  }
+
+  reset(): void {
+    this.overrides.clear();
+    this.calls.length = 0;
+  }
+
+  last(method: StubMethod): RecordedCall | undefined {
+    return this.calls.filter((call) => call.method === method).at(-1);
+  }
+
+  async handle(method: StubMethod, request: Record<string, unknown>): Promise<never> {
+    this.calls.push({ method, request, context: currentContext() });
+    const override = this.overrides.get(method);
+    return (override ? await override(request) : this.defaults[method](request)) as never;
+  }
+}
+
+const STUB = Symbol('IDENTITY_STUB');
+
+@Controller()
+@identityV1.AuthServiceControllerMethods()
+class StubAuthController implements identityV1.AuthServiceController {
+  constructor(@Inject(STUB) private readonly stub: IdentityStub) {}
+  requestOtp(request: identityV1.RequestOtpRequest) {
+    return this.stub.handle('requestOtp', { ...request });
+  }
+  verifyOtp(request: identityV1.VerifyOtpRequest) {
+    return this.stub.handle('verifyOtp', { ...request });
+  }
+  refreshSession(request: identityV1.RefreshSessionRequest) {
+    return this.stub.handle('refreshSession', { ...request });
+  }
+  logout(request: identityV1.LogoutRequest) {
+    return this.stub.handle('logout', { ...request });
+  }
+  getSigningKeys(request: identityV1.GetSigningKeysRequest) {
+    return this.stub.handle('getSigningKeys', { ...request });
+  }
+}
+
+@Controller()
+@identityV1.AccountServiceControllerMethods()
+class StubAccountController implements identityV1.AccountServiceController {
+  constructor(@Inject(STUB) private readonly stub: IdentityStub) {}
+  getMe(request: identityV1.GetMeRequest) {
+    return this.stub.handle('getMe', { ...request });
+  }
+  updateMe(request: identityV1.UpdateMeRequest) {
+    return this.stub.handle('updateMe', { ...request });
+  }
+}
+
+/** Clés de test : jetons d'accès (publiés par la source JWKS) et jetons de service. */
+export class TestKeys {
+  private constructor(
+    readonly accessKey: KeyLike,
+    readonly accessJwk: PublicSigningKey,
+    private readonly serviceKey: KeyLike,
+    readonly serviceJwks: JSONWebKeySet,
+  ) {}
+
+  static async create(): Promise<TestKeys> {
+    const access = await generateKeyPair('ES256');
+    const service = await generateKeyPair('ES256');
+    const a = await exportJWK(access.publicKey);
+    const s = await exportJWK(service.publicKey);
+    return new TestKeys(
+      access.privateKey,
+      { kid: 'k-test', kty: 'EC', crv: 'P-256', x: a.x!, y: a.y!, alg: 'ES256', use: 'sig' },
+      service.privateKey,
+      { keys: [{ ...s, kid: 'svc', alg: 'ES256', use: 'sig' }] },
+    );
+  }
+
+  /** Source JWKS de la gateway : les clés publiques des jetons d'accès. */
+  jwksSource(): JwksSource & { calls: number } {
+    const source = {
+      calls: 0,
+      fetch: async () => {
+        source.calls += 1;
+        return [this.accessJwk];
+      },
+    };
+    return source;
+  }
+
+  /** Jetons de service signés sur place, au nom de la gateway (ADR-022). */
+  serviceTokens(): ServiceTokenProvider {
+    return {
+      getToken: (audience: string) =>
+        new SignJWT({ token_use: 'service' })
+          .setProtectedHeader({ alg: 'ES256', kid: 'svc' })
+          .setIssuer('ksp-identity')
+          .setSubject('gateway')
+          .setAudience(audience)
+          .setJti('0192f1c4-0000-7000-8000-000000000001')
+          .setIssuedAt()
+          .setExpirationTime('5m')
+          .sign(this.serviceKey),
+    };
+  }
+
+  /** Jeton d'accès conforme au contrat (contracts/tokens/access-token.v1.schema.json). */
+  accessToken(
+    options: {
+      expiresIn?: string | number;
+      key?: KeyLike;
+      kid?: string;
+      claims?: Record<string, unknown>;
+    } = {},
+  ): Promise<string> {
+    return new SignJWT({
+      client_id: 'web',
+      jti: '0192f1c4-0000-7000-8000-000000000002',
+      token_use: 'access',
+      sid: SESSION_ID,
+      ctx: 'personal',
+      roles: [{ role: 'customer', scopeType: 'personal' }],
+      mfa: false,
+      auth_time: Math.floor(Date.now() / 1000),
+      ...options.claims,
+    })
+      .setProtectedHeader({ alg: 'ES256', kid: options.kid ?? 'k-test', typ: 'at+jwt' })
+      .setIssuer('ksp-identity')
+      .setAudience('ksp-api')
+      .setSubject(USER_ID)
+      .setIssuedAt()
+      .setExpirationTime(options.expiresIn ?? '15m')
+      .sign(options.key ?? this.accessKey);
+  }
+}
+
+export interface IdentityServer {
+  stub: IdentityStub;
+  url: string;
+  close(): Promise<void>;
+}
+
+export async function startIdentityStub(keys: TestKeys): Promise<IdentityServer> {
+  const stub = new IdentityStub();
+
+  @Module({
+    controllers: [StubAuthController, StubAccountController],
+    providers: [{ provide: STUB, useValue: stub }],
+  })
+  class StubModule {}
+
+  const port = await freePort();
+  const app: INestMicroservice = await NestFactory.createMicroservice<MicroserviceOptions>(StubModule, {
+    ...grpcServerOptions(['identity'], port),
+    logger: false,
+  });
+  app.useGlobalFilters(new GrpcExceptionFilter());
+  app.useGlobalInterceptors(
+    new GrpcContextInterceptor(
+      new ServiceTokenVerifier({
+        audience: 'identity',
+        issuer: 'ksp-identity',
+        keys: createLocalJWKSet(keys.serviceJwks),
+      }),
+    ),
+  );
+  await app.listen();
+  return { stub, url: `127.0.0.1:${port}`, close: () => app.close() };
+}
+
+export const ORIGINS = {
+  web: 'https://ksp.bj',
+  backoffice: 'https://admin.ksp.bj',
+};
+
+/** La gateway complète, avec la même chaîne HTTP qu'en production. */
+export async function startGateway(options: {
+  identityUrl: string;
+  keys: TestKeys;
+  env?: Record<string, string>;
+  jwks?: JwksSource;
+}): Promise<NestExpressApplication> {
+  const config = loadConfig(configSchema, {
+    NODE_ENV: 'test',
+    LOG_LEVEL: 'fatal',
+    IDENTITY_GRPC_URL: options.identityUrl,
+    CORS_WEB_ORIGINS: `${ORIGINS.web},https://shop.ksp.bj,https://print.ksp.bj`,
+    CORS_BACKOFFICE_ORIGINS: ORIGINS.backoffice,
+    ...options.env,
+  });
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule.forRoot(config)] })
+    .overrideProvider(JWKS_SOURCE)
+    .useValue(options.jwks ?? options.keys.jwksSource())
+    .overrideProvider(SERVICE_TOKEN_PROVIDER)
+    .useValue(options.keys.serviceTokens())
+    .compile();
+  const app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false, logger: false });
+  configureHttpApp(app, config);
+  await app.init();
+  return app;
+}
+
+/** Erreur métier telle qu'identity la lève. */
+export function identityError(error: AppError): () => Promise<never> {
+  return () => Promise.reject(error);
+}
