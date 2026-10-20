@@ -1,7 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noEmit": true
