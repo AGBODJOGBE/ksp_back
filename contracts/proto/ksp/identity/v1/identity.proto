@@ -335,7 +335,14 @@ message SigningKey {
 }
 
 // ---------------------------------------------------------------------------
-// Compte de l'utilisateur connecté — réservé à la gateway.
+// Compte de l'utilisateur connecté — réservé à la gateway. L'utilisateur est toujours celui
+// des métadonnées (x-user-id) : on ne lit ni ne modifie que son propre compte.
+//
+// Erreurs (code AppError → statut gRPC) :
+//   IDENTITY_NAME_INVALID           INVALID_ARGUMENT    lettres seulement, 100 caractères au plus (details.field)
+//   IDENTITY_LANGUAGE_INVALID       INVALID_ARGUMENT    code de deux lettres attendu
+//   IDENTITY_PROFILE_EMPTY_UPDATE   INVALID_ARGUMENT    aucun champ à modifier
+//   IDENTITY_USER_NOT_FOUND         NOT_FOUND           compte inexistant ou supprimé
 //
 // Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
 // RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) et

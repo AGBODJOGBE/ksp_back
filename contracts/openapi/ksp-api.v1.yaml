@@ -328,6 +328,7 @@ paths:
       tags: [Compte]
       operationId: getMe
       summary: Lire son profil
+      description: 'Erreurs : `IDENTITY_USER_NOT_FOUND` (404) si le compte a été supprimé.'
       x-ksp-grpc: ksp.identity.v1.AccountService/GetMe
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -356,6 +357,8 @@ paths:
                 profileIncomplete: true
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -364,7 +367,12 @@ paths:
       tags: [Compte]
       operationId: updateMe
       summary: Compléter ou modifier son profil
-      description: Seuls les champs envoyés sont modifiés. Sert à compléter le nom après l'inscription (UC-ID-01).
+      description: |
+        Seuls les champs envoyés sont modifiés. Sert à compléter le nom après l'inscription (UC-ID-01).
+        Un nom accepte les lettres de toutes les langues, les espaces, le trait d'union, l'apostrophe et le point.
+
+        Erreurs : `IDENTITY_NAME_INVALID` (400, `details.field`), `IDENTITY_LANGUAGE_INVALID` et
+        `IDENTITY_PROFILE_EMPTY_UPDATE` (400), `IDENTITY_USER_NOT_FOUND` (404).
       x-ksp-grpc: ksp.identity.v1.AccountService/UpdateMe
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -404,6 +412,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -516,6 +526,21 @@ components:
             error:
               code: GATEWAY_TOKEN_EXPIRED
               message: Votre session a expiré, reconnectez-vous.
+              details: {}
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+    NotFound:
+      description: Introuvable (`IDENTITY_USER_NOT_FOUND`)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: IDENTITY_USER_NOT_FOUND
+              message: Compte introuvable.
               details: {}
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
     Forbidden:
