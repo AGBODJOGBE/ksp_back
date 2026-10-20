@@ -147,6 +147,20 @@ describeWithDatabase('PrismaLoginRepository (PostgreSQL)', () => {
     expect(consumed.rows).toEqual([{ consumed_at: null }]);
   });
 
+  it('lit un compte par son identifiant et met à jour seulement les champs donnés', async () => {
+    const { account } = await repository.completePhoneLogin(plan(await sentChallenge(), null, base));
+    expect(await repository.findById(account.id)).toEqual(account);
+    expect(await repository.findById('0192f1c4-7a2b-7c3d-8e4f-ffffffffffff')).toBeNull();
+
+    const named = await repository.updateProfile(account.id, { firstName: 'Koffi', lastName: 'Adjovi' });
+    expect(named).toMatchObject({ firstName: 'Koffi', lastName: 'Adjovi', preferredLanguage: 'fr' });
+    const english = await repository.updateProfile(account.id, { preferredLanguage: 'en' });
+    expect(english).toMatchObject({ firstName: 'Koffi', lastName: 'Adjovi', preferredLanguage: 'en' });
+    expect(
+      await repository.updateProfile('0192f1c4-7a2b-7c3d-8e4f-ffffffffffff', { firstName: 'X' }),
+    ).toBeNull();
+  });
+
   it('enregistre un échec de connexion', async () => {
     await repository.recordFailedLogin({
       id: uuid(),

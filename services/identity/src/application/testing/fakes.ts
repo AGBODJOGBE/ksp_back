@@ -17,6 +17,7 @@ import {
   ChallengeAlreadyConsumedError,
   type LoginRepository,
   type PhoneLoginPlan,
+  type ProfileChanges,
 } from '../session/session.ports';
 
 type ChallengeRow = OtpChallenge & {
@@ -88,6 +89,17 @@ export class InMemoryIdentityStore implements AccountRepository, LoginRepository
 
   async findByPhone(phoneE164: string): Promise<Account | null> {
     return this.accounts.find((account) => account.phoneE164 === phoneE164) ?? null;
+  }
+
+  async findById(userId: string): Promise<Account | null> {
+    return this.accounts.find((account) => account.id === userId) ?? null;
+  }
+
+  async updateProfile(userId: string, changes: ProfileChanges): Promise<Account | null> {
+    const account = this.accounts.find((candidate) => candidate.id === userId);
+    if (!account) return null;
+    Object.assign(account, changes);
+    return account;
   }
 
   async completePhoneLogin(plan: PhoneLoginPlan): Promise<{ account: Account; isNewUser: boolean }> {

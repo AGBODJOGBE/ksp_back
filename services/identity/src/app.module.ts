@@ -2,6 +2,7 @@ import { notificationV1 } from '@ksp/contracts';
 import { GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
+import { GetMeUseCase, UpdateMeUseCase } from './application/account/account.use-cases';
 import { RequestOtpUseCase } from './application/otp/request-otp.use-case';
 import { IssueServiceTokenUseCase } from './application/service-token/issue-service-token.use-case';
 import { LogoutUseCase } from './application/session/logout.use-case';
@@ -169,6 +170,16 @@ export class AppModule {
           provide: LogoutUseCase,
           inject: [PrismaSessionStore],
           useFactory: (sessions: PrismaSessionStore) => new LogoutUseCase(sessions, new SystemClock()),
+        },
+        {
+          provide: GetMeUseCase,
+          inject: [PrismaLoginRepository],
+          useFactory: (accounts: PrismaLoginRepository) => new GetMeUseCase(accounts),
+        },
+        {
+          provide: UpdateMeUseCase,
+          inject: [PrismaLoginRepository],
+          useFactory: (accounts: PrismaLoginRepository) => new UpdateMeUseCase(accounts),
         },
       ],
     };

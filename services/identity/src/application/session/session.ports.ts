@@ -15,8 +15,18 @@ export interface Account {
   createdAt: Date;
 }
 
+/** Champs du profil modifiables par l'utilisateur ; un champ absent n'est pas modifié. */
+export interface ProfileChanges {
+  firstName?: string;
+  lastName?: string;
+  preferredLanguage?: string;
+}
+
 export interface AccountRepository {
   findByPhone(phoneE164: string): Promise<Account | null>;
+  findById(userId: string): Promise<Account | null>;
+  /** Applique les changements et renvoie le compte à jour, ou null si le compte n'existe pas. */
+  updateProfile(userId: string, changes: ProfileChanges): Promise<Account | null>;
 }
 
 /** Écritures d'une connexion par téléphone réussie, faites en une seule transaction. */

@@ -1,3 +1,4 @@
+import { isProfileIncomplete } from '../../domain/user/profile';
 import { AppError } from '@ksp/platform';
 import { type OtpPolicy } from '../../domain/otp/otp-policy';
 import { challengeState } from '../../domain/otp/otp-verification';
@@ -149,7 +150,7 @@ export class VerifyOtpUseCase {
       refreshTokenExpiresAt,
       sessionId,
       account: result.account,
-      profileIncomplete: !result.account.firstName || !result.account.lastName,
+      profileIncomplete: isProfileIncomplete(result.account),
       isNewUser: result.isNewUser,
     };
   }

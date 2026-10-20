@@ -1,3 +1,4 @@
+import { isProfileIncomplete } from '../../domain/user/profile';
 import { AppError } from '@ksp/platform';
 import { type SessionPolicy } from '../../domain/session/session-policy';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
@@ -83,7 +84,7 @@ export class RefreshSessionUseCase {
       refreshTokenExpiresAt: sessionExpiresAt,
       sessionId: session.id,
       account,
-      profileIncomplete: !account.firstName || !account.lastName,
+      profileIncomplete: isProfileIncomplete(account),
     };
   }
 }
