@@ -34,7 +34,7 @@ ksp-backend/
 | Immobilier                         | `realestate`                                                                                              | 2     |
 | Marketplace, impression, livraison | `catalog`, `order`, `print`, `delivery`                                                                   | 3     |
 
-Services présents dans le dépôt : `identity` (squelette, contrat exposé, cas d'usage à venir au lot 1).
+Services présents dans le dépôt : `identity` et `notification` (lot 1 : inscription par téléphone, envoi des codes par WhatsApp).
 
 ## Démarrer
 
@@ -52,8 +52,10 @@ pnpm --filter @ksp/identity-service dev
 
 Chaque service expose :
 
-- gRPC sur son port (`identity` : 50051) ;
-- HTTP technique (`identity` : 3101) : `/health/live`, `/health/ready`, `/metrics`.
+- gRPC sur son port (`identity` : 50051, `notification` : 50052) ;
+- HTTP technique (`identity` : 3101, `notification` : 3102) : `/health/live`, `/health/ready`, `/metrics`.
+
+En développement, `notification` n'envoie aucun message : le code de connexion s'affiche dans son terminal (voir `services/notification/README.md`).
 
 Consoles locales : RabbitMQ http://localhost:15672 (ksp / ksp), MinIO http://localhost:9001, traces Jaeger http://localhost:16686.
 
