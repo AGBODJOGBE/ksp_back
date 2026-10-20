@@ -123,8 +123,14 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /api/v1/identity/otp/verify:
     post:
@@ -208,8 +214,14 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /api/v1/identity/token/refresh:
     post:
@@ -275,8 +287,14 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /api/v1/identity/logout:
     post:
@@ -320,8 +338,14 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /api/v1/identity/me:
     get:
@@ -361,8 +385,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
     patch:
       tags: [Compte]
       operationId: updateMe
@@ -416,8 +444,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /.well-known/jwks.json:
     get:
@@ -427,6 +459,9 @@ paths:
       description: |
         UC-ID-22. Servies depuis le cache de la gateway (10 minutes), rechargé immédiatement si un
         jeton porte une clé inconnue. Pendant une rotation, l'ancienne et la nouvelle clé sont publiées.
+
+        `x-ksp-grpc` désigne la source logique des clés. La gateway les lit sur le point JWKS HTTP
+        interne d'identity (`/.well-known/jwks.json`, ADR-020), sans passer par gRPC.
       x-ksp-grpc: ksp.identity.v1.AuthService/GetSigningKeys
       x-ksp-access: public
       x-ksp-rate-limit: public
@@ -453,8 +488,12 @@ paths:
                     use: sig
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
 components:
   securitySchemes:
@@ -604,6 +643,54 @@ components:
             error:
               code: IDENTITY_UNAVAILABLE
               message: Le service est momentanément indisponible, réessayez dans quelques instants.
+              details: {}
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+
+    PayloadTooLarge:
+      description: Corps de requête au-delà de 1 Mo (`GATEWAY_PAYLOAD_TOO_LARGE`)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: GATEWAY_PAYLOAD_TOO_LARGE
+              message: La requête est trop volumineuse.
+              details: {}
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+    InternalError:
+      description: |
+        Erreur interne (`GATEWAY_INTERNAL_ERROR`, `GATEWAY_UPSTREAM_ERROR`). Le message ne donne
+        jamais de détail technique.
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: GATEWAY_INTERNAL_ERROR
+              message: Une erreur inattendue est survenue. Réessayez dans quelques instants.
+              details: {}
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+    GatewayTimeout:
+      description: Le service appelé n'a pas répondu à temps (`IDENTITY_TIMEOUT`)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: IDENTITY_TIMEOUT
+              message: Le service met trop de temps à répondre, réessayez dans quelques instants.
               details: {}
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
 
