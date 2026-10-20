@@ -1,0 +1,179 @@
+import { Logger } from '@nestjs/common';
+import { type OutgoingMessage } from '../../application/send/notification.ports';
+import { MetaWhatsAppProvider, type MetaWhatsAppOptions } from './meta-whatsapp.provider';
+
+const TOKEN = 'EAAG-secret-token';
+
+const message: OutgoingMessage = {
+  notificationId: 'n-1',
+  channel: 'whatsapp',
+  templateCode: 'identity.otp',
+  phoneE164: '+2290197000045',
+  variables: { code: '482913', expires_in_minutes: '5' },
+  locale: 'fr',
+};
+
+interface Call {
+  url: string;
+  init: RequestInit;
+}
+
+function provider(
+  reply: (call: Call) => Promise<Response> | Response,
+  options: Partial<MetaWhatsAppOptions> = {},
+) {
+  const calls: Call[] = [];
+  const fakeFetch = (async (url: string, init: RequestInit) => {
+    const call = { url, init };
+    calls.push(call);
+    return reply(call);
+  }) as unknown as typeof fetch;
+  return {
+    calls,
+    whatsapp: new MetaWhatsAppProvider({
+      accessToken: TOKEN,
+      phoneNumberId: '106540352242922',
+      apiVersion: 'v23.0',
+      otpTemplate: 'ksp_otp',
+      language: 'fr',
+      timeoutMs: 2000,
+      fetch: fakeFetch,
+      ...options,
+    }),
+  };
+}
+
+const json = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+const graphError = (status: number, code: number) =>
+  json(status, { error: { message: 'erreur', type: 'OAuthException', code, fbtrace_id: 'AbCdEf' } });
+
+describe('MetaWhatsAppProvider', () => {
+  let logs: string[];
+
+  beforeEach(() => {
+    logs = [];
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation((text: unknown) => void logs.push(String(text)));
+    jest.spyOn(Logger.prototype, 'error').mockImplementation((text: unknown) => void logs.push(String(text)));
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('envoie le modèle d’authentification « Copier le code », le code dans le corps et dans le bouton', async () => {
+    const { calls, whatsapp } = provider(() =>
+      json(200, {
+        messaging_product: 'whatsapp',
+        contacts: [{ input: '+2290197000045', wa_id: '2290197000045' }],
+        messages: [{ id: 'wamid.HBgLMjI5MDE5NzAwMDA0NRUCABEYEjA', message_status: 'accepted' }],
+      }),
+    );
+
+    await expect(whatsapp.send(message)).resolves.toEqual({
+      accepted: true,
+      providerMessageId: 'wamid.HBgLMjI5MDE5NzAwMDA0NRUCABEYEjA',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('https://graph.facebook.com/v23.0/106540352242922/messages');
+    expect(calls[0]!.init.method).toBe('POST');
+    expect(calls[0]!.init.headers).toEqual({
+      Authorization: `Bearer ${TOKEN}`,
+      'Content-Type': 'application/json',
+    });
+    expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: '+2290197000045',
+      type: 'template',
+      template: {
+        name: 'ksp_otp',
+        language: { code: 'fr' },
+        components: [
+          { type: 'body', parameters: [{ type: 'text', text: '482913' }] },
+          { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: '482913' }] },
+        ],
+      },
+    });
+  });
+
+  it.each([
+    [400, 131026, 'recipient_invalid'],
+    [400, 131021, 'recipient_invalid'],
+    [500, 1, 'provider_unavailable'],
+    [503, 133004, 'provider_unavailable'],
+    [400, 130429, 'provider_unavailable'],
+    [400, 131056, 'provider_unavailable'],
+    [401, 190, 'provider_rejected'],
+    [400, 132001, 'provider_rejected'],
+    [400, 100, 'provider_rejected'],
+  ])('HTTP %i, erreur Graph %i → %s', async (status, code, reason) => {
+    const { whatsapp } = provider(() => graphError(status, code));
+    await expect(whatsapp.send(message)).resolves.toEqual({ accepted: false, reason });
+  });
+
+  it('HTTP 429 ou 5xx sans corps lisible → prestataire indisponible', async () => {
+    const tooMany = provider(() => new Response('trop de requêtes', { status: 429 }));
+    await expect(tooMany.whatsapp.send(message)).resolves.toEqual({
+      accepted: false,
+      reason: 'provider_unavailable',
+    });
+    const down = provider(() => new Response('<html>502</html>', { status: 502 }));
+    await expect(down.whatsapp.send(message)).resolves.toEqual({
+      accepted: false,
+      reason: 'provider_unavailable',
+    });
+  });
+
+  it('erreur réseau → prestataire indisponible', async () => {
+    const { whatsapp } = provider(() => {
+      throw new TypeError('fetch failed');
+    });
+    await expect(whatsapp.send(message)).resolves.toEqual({
+      accepted: false,
+      reason: 'provider_unavailable',
+    });
+    expect(logs).toEqual(['WhatsApp injoignable (erreur réseau).']);
+  });
+
+  it('pas de réponse dans le délai → l’appel est interrompu, prestataire indisponible', async () => {
+    const { whatsapp } = provider(
+      ({ init }) =>
+        new Promise<Response>((_, reject) => {
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+        }),
+      { timeoutMs: 20 },
+    );
+    await expect(whatsapp.send(message)).resolves.toEqual({
+      accepted: false,
+      reason: 'provider_unavailable',
+    });
+    expect(logs).toEqual(['WhatsApp injoignable (pas de réponse en 20 ms).']);
+  });
+
+  it('réponse acceptée sans identifiant de message → prestataire indisponible (pas d’accusé)', async () => {
+    const { whatsapp } = provider(() => json(200, { messages: [] }));
+    await expect(whatsapp.send(message)).resolves.toEqual({
+      accepted: false,
+      reason: 'provider_unavailable',
+    });
+  });
+
+  it('modèle sans équivalent WhatsApp → refus, sans appel à Meta', async () => {
+    const { calls, whatsapp } = provider(() => json(200, {}));
+    await expect(whatsapp.send({ ...message, templateCode: 'document.signature' })).resolves.toEqual({
+      accepted: false,
+      reason: 'provider_rejected',
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('ne journalise ni le jeton, ni le numéro, ni le code', async () => {
+    const { whatsapp } = provider(() => graphError(400, 131026));
+    await whatsapp.send(message);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain('131026');
+    expect(logs[0]).toContain('AbCdEf');
+    for (const secret of [TOKEN, '0197000045', '482913']) expect(logs.join('\n')).not.toContain(secret);
+  });
+});

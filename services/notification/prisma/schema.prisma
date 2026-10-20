@@ -1,0 +1,78 @@
+// Base de données du service notification. Aucun autre service n'y accède (règle d'or n° 1).
+
+generator client {
+  provider = "prisma-client-js"
+  // Client propre à ce service : plusieurs services cohabitent dans le dépôt.
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Événements à publier (pattern outbox, règle d'or n° 4). Écrits dans la même transaction que la donnée métier.
+model OutboxEvent {
+  id          String    @id @db.Uuid
+  eventType   String    @map("event_type")
+  payload     Json
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(3)
+  attempts    Int       @default(0)
+
+  @@map("outbox")
+}
+
+/// Événements déjà traités par ce service (inbox) : un événement reçu deux fois n'a qu'un effet.
+model ProcessedEvent {
+  eventId     String   @map("event_id") @db.Uuid
+  consumer    String
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@id([eventId, consumer])
+  @@map("processed_events")
+}
+
+enum NotificationChannel {
+  sms
+  whatsapp
+  email
+  push
+  in_app
+}
+
+/// pending : enregistrée, envoi en cours ; accepted : prise en charge par un prestataire ; failed : aucun canal n'a abouti.
+enum NotificationStatus {
+  pending
+  accepted
+  failed
+}
+
+/// Notifications envoyées directement (SendNotification). Ne contient jamais le texte ni les variables
+/// d'un modèle : un code de connexion n'est stocké nulle part (ADR-014). Le destinataire est masqué.
+model Notification {
+  id                String                @id @db.Uuid
+  /// Deux appels avec la même clé ne produisent qu'un envoi.
+  idempotencyKey    String                @unique @map("idempotency_key")
+  templateCode      String                @map("template_code")
+  requestedChannel  NotificationChannel   @map("requested_channel")
+  channelUsed       NotificationChannel?  @map("channel_used")
+  /// Canaux considérés, dans l'ordre (sautés compris).
+  channelsTried     NotificationChannel[] @default([]) @map("channels_tried")
+  targetMasked      String                @map("target_masked")
+  recipientUserId   String?               @map("recipient_user_id") @db.Uuid
+  status            NotificationStatus
+  /// Identifiant du message chez le prestataire (wamid… pour WhatsApp), pour les statuts de remise.
+  providerMessageId String?               @map("provider_message_id")
+  /// Code d'erreur renvoyé à l'appelant (NOTIFICATION_CHANNELS_EXHAUSTED…).
+  errorCode         String?               @map("error_code")
+  /// Cause publiée dans notification.message.failed.
+  failureReason     String?               @map("failure_reason")
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Au-delà, le message n'est plus envoyé (ttl_seconds de l'appel) ; null : pas de limite.
+  expiresAt         DateTime?             @map("expires_at") @db.Timestamptz(3)
+  acceptedAt        DateTime?             @map("accepted_at") @db.Timestamptz(3)
+  failedAt          DateTime?             @map("failed_at") @db.Timestamptz(3)
+
+  @@map("notifications")
+}

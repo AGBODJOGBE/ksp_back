@@ -93,6 +93,10 @@ export interface SendNotificationResponse {
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
  *   NOTIFICATION_RECIPIENT_INVALID    INVALID_ARGUMENT  destinataire absent ou mal formé pour le canal
  *   NOTIFICATION_CHANNELS_EXHAUSTED   UNAVAILABLE       tous les canaux ont échoué (details.channelsTried)
+ *   NOTIFICATION_VARIABLES_INVALID    INVALID_ARGUMENT  variables du modèle absentes ou mal formées
+ *                                                       (details.invalidVariables : noms seuls, jamais les valeurs)
+ *   NOTIFICATION_CALLER_FORBIDDEN     PERMISSION_DENIED service appelant non autorisé
+ *   NOTIFICATION_ALREADY_IN_PROGRESS  ALREADY_EXISTS    envoi en cours avec la même idempotency_key
  *
  * Le reste du contrat (notifications dans l'application, préférences, appareils, modèles,
  * événements écoutés) sera écrit après le cahier des charges du service notification.
@@ -117,6 +121,10 @@ export interface NotificationServiceClient {
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
  *   NOTIFICATION_RECIPIENT_INVALID    INVALID_ARGUMENT  destinataire absent ou mal formé pour le canal
  *   NOTIFICATION_CHANNELS_EXHAUSTED   UNAVAILABLE       tous les canaux ont échoué (details.channelsTried)
+ *   NOTIFICATION_VARIABLES_INVALID    INVALID_ARGUMENT  variables du modèle absentes ou mal formées
+ *                                                       (details.invalidVariables : noms seuls, jamais les valeurs)
+ *   NOTIFICATION_CALLER_FORBIDDEN     PERMISSION_DENIED service appelant non autorisé
+ *   NOTIFICATION_ALREADY_IN_PROGRESS  ALREADY_EXISTS    envoi en cours avec la même idempotency_key
  *
  * Le reste du contrat (notifications dans l'application, préférences, appareils, modèles,
  * événements écoutés) sera écrit après le cahier des charges du service notification.
