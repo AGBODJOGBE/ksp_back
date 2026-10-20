@@ -8,6 +8,8 @@ import { currentContext } from '../context/request-context';
 export const REDACTED_PATHS = [
   'req.headers.authorization',
   'req.headers.cookie',
+  // Cookie de renouvellement posé par la gateway.
+  'res.headers["set-cookie"]',
   '*.password',
   '*.newPassword',
   '*.code',

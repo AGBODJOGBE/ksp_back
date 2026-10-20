@@ -43,6 +43,8 @@ export class AccessTokenVerifier {
       });
       claims = payload as unknown as AccessTokenClaims;
     } catch (error) {
+      // Clés publiques impossibles à charger : panne d'identity, pas un jeton invalide (pas de 401 à tort).
+      if (error instanceof AppError) throw error;
       if (error instanceof errors.JWTExpired) {
         throw AppError.unauthenticated('GATEWAY_TOKEN_EXPIRED', 'Votre session a expiré, reconnectez-vous.');
       }
