@@ -66,7 +66,7 @@ describe('configuration de la gateway', () => {
     const config = loadConfig(configSchema, env);
     expect(config.IDENTITY_TOKEN_URL).toBeUndefined();
     expect(config.SERVICE_CLIENT_SECRET).toBeUndefined();
-    expect(config.CORS_BACKOFFICE_ORIGINS).toEqual(['http://localhost:3004']);
+    expect(config.CORS_BACKOFFICE_ORIGINS).toEqual(['http://localhost:3040']);
   });
 
   it('refuse une origine avec un chemin', () => {
