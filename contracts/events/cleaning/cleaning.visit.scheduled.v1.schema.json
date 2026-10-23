@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.visit.scheduled.v1.schema.json",
+  "title": "cleaning.visit.scheduled",
+  "description": "Visite technique planifiée (UC-CL-07) : le client est prévenu.",
+  "x-event-type": "cleaning.visit.scheduled",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "visitId", "customerId", "agentId", "scheduledAt"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "visitId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "agentId": { "type": "string", "format": "uuid" },
+    "scheduledAt": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.mission.completed.v1.schema.json",
+  "title": "cleaning.mission.completed",
+  "description": "Mission terminée : tous ses passages sont clôturés (UC-CL-10). Déclenche le compte rendu au client ; écouté par billing.",
+  "x-event-type": "cleaning.mission.completed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["missionId", "customerId", "completedInterventions", "completedAt"],
+  "properties": {
+    "missionId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "completedInterventions": { "type": "integer", "minimum": 1 },
+    "completedAt": { "type": "string", "format": "date-time" }
+  }
+}

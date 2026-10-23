@@ -30,6 +30,11 @@ info:
     - `x-ksp-access` : `public`, `refresh_token`, `mfa_token` (jeton de double authentification
       dans le corps, vérifié par identity) ou `authenticated`.
     - `x-ksp-rate-limit` : catégorie de limite d'appels, définie dans `x-ksp-rate-limits`.
+    - `x-ksp-roles` : au moins un de ces rôles est exigé (route connectée uniquement).
+    - `x-ksp-mfa-max-age` : double authentification faite depuis au plus ce nombre de secondes ;
+      obligatoire sur toute route `/api/v1/admin/`.
+    - En-tête `Idempotency-Key` obligatoire sur les écritures sensibles (paramètre `IdempotencyKey`).
+
 servers:
   - url: https://api.ksp.bj
     description: Production (adresse à valider avec le choix de l'hébergeur, ADR-018)
@@ -42,6 +47,10 @@ tags:
     description: Profil de l'utilisateur connecté
   - name: Clés publiques
     description: Vérification des jetons d'accès (UC-ID-22)
+  - name: Nettoyage
+    description: Simulateur public, demandes de devis et missions du client (UC-CL-01 à 05)
+  - name: Nettoyage (back-office)
+    description: Demandes, visites, devis, missions, catalogue, agents et équipes (UC-CL-06 à 12)
 
 # Valeurs proposées par le cahier des charges Gateway (partie 4), réglables par configuration.
 x-ksp-rate-limits:
@@ -71,6 +80,11 @@ x-ksp-rate-limits:
     per: minute
     key: ip
     description: identity limite aussi les essais par jeton de double authentification (5).
+  cleaning_simulation:
+    limit: 20
+    per: minute
+    key: ip
+    description: Simulateur public du Nettoyage (cahier des charges Nettoyage, partie 5).
 
 # Préfixes réservés, sans route pour l'instant.
 x-ksp-reserved-prefixes:
@@ -729,6 +743,2394 @@ paths:
         '504':
           $ref: '#/components/responses/GatewayTimeout'
 
+  /api/v1/cleaning/services:
+    get:
+      tags:
+        - Nettoyage
+      operationId: listCleaningServices
+      summary: Prestations de nettoyage
+      description: |
+        UC-CL-01. Prestations actives, options et minimum de commande quand ils sont fixés.
+      x-ksp-grpc: ksp.cleaning.v1.CatalogService/ListServices
+      x-ksp-access: public
+      x-ksp-rate-limit: public
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningServiceList'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/simulations:
+    post:
+      tags:
+        - Nettoyage
+      operationId: simulateCleaning
+      summary: Simuler un prix
+      description: |
+        UC-CL-01. Fourchette indicative (−10 % / +15 % arrondie à 500 FCFA) et détail du calcul, sans compte ni donnée personnelle ; rien n’est enregistré. Une prestation sans prix répond `priced: false`, sans erreur.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` et `CLEANING_VALIDATION_FAILED` (400), `CLEANING_SERVICE_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.cleaning.v1.CatalogService/Simulate
+      x-ksp-access: public
+      x-ksp-rate-limit: cleaning_simulation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SimulateCleaningRequest'
+            example:
+              serviceCode: home_cleaning
+              premisesType: house
+              quantity: 6
+              options:
+                - windows
+              commune: Abomey-Calavi
+              frequency: once
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningSimulation'
+              examples:
+                estimation:
+                  value:
+                    serviceCode: home_cleaning
+                    priced: true
+                    estimate:
+                      low:
+                        amount: 33500
+                        currency: XOF
+                      high:
+                        amount: 43000
+                        currency: XOF
+                    computedPrice:
+                      amount: 37400
+                      currency: XOF
+                    breakdown:
+                      - label: Nettoyage à domicile
+                        quantity: 6
+                        unitPrice:
+                          amount: 5000
+                          currency: XOF
+                        amount:
+                          amount: 30000
+                          currency: XOF
+                      - label: Vitres
+                        quantity: 1
+                        unitPrice:
+                          amount: 4000
+                          currency: XOF
+                        amount:
+                          amount: 4000
+                          currency: XOF
+                    minimumApplied: false
+                    communeCoefficientBp: 11000
+                    recommendedTeamSize: 2
+                    notice: 'Estimation non contractuelle : le prix définitif figure dans le devis établi par KSP.'
+                sansPrix:
+                  value:
+                    serviceCode: pest_control
+                    priced: false
+                    estimate: null
+                    computedPrice: null
+                    breakdown: []
+                    minimumApplied: false
+                    communeCoefficientBp: 0
+                    recommendedTeamSize: 1
+                    notice: "Le prix de cette prestation n'est pas encore publié : demandez un devis, KSP vous répondra."
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/quote-requests:
+    post:
+      tags:
+        - Nettoyage
+      operationId: requestCleaningQuote
+      summary: Demander un devis
+      description: |
+        UC-CL-02. Profil complet exigé : la gateway le vérifie auprès d’identity avant l’appel. Idempotent par `Idempotency-Key`. Le type de client (particulier ou entreprise) vient du contexte actif.
+
+        Erreurs : `CLEANING_VALIDATION_FAILED`, `CLEANING_SLOT_INVALID` (400), `CLEANING_SERVICE_NOT_FOUND` (404), `IDENTITY_PROFILE_INCOMPLETE`, `CLEANING_LEAD_TIME_TOO_SHORT`, `CLEANING_TOO_MANY_OPEN_REQUESTS` (422).
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/RequestQuote
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestCleaningQuoteRequest'
+            example:
+              serviceCode: home_cleaning
+              premisesType: house
+              quantity: 6
+              options:
+                - windows
+              commune: Abomey-Calavi
+              address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+              preferredSlots:
+                - start: 2026-11-05T08:00:00Z
+                  end: 2026-11-05T11:00:00Z
+              comment: Portail bleu.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+              example:
+                id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                status: received
+                customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                customerKind: individual
+                organizationId: null
+                serviceCode: home_cleaning
+                premisesType: house
+                quantity: 6
+                options:
+                  - windows
+                commune: Abomey-Calavi
+                address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                preferredSlots:
+                  - start: 2026-11-05T08:00:00Z
+                    end: 2026-11-05T11:00:00Z
+                comment: Portail bleu.
+                recurrence: null
+                requestedTeamSize: null
+                recommendedTeamSize: 2
+                estimate:
+                  low:
+                    amount: 32000
+                    currency: XOF
+                  high:
+                    amount: 41000
+                    currency: XOF
+                visit: null
+                quote: null
+                missionId: null
+                closingReason: null
+                createdAt: 2026-10-22T10:00:00Z
+                updatedAt: 2026-10-23T08:00:00Z
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    get:
+      tags:
+        - Nettoyage
+      operationId: listMyCleaningRequests
+      summary: Mes demandes de devis
+      description: |
+        UC-CL-03.
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/ListMyRequests
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequestList'
+              example:
+                data:
+                  - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                    status: quote_sent
+                    customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                    customerKind: individual
+                    organizationId: null
+                    serviceCode: home_cleaning
+                    premisesType: house
+                    quantity: 6
+                    options:
+                      - windows
+                    commune: Abomey-Calavi
+                    address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                    preferredSlots:
+                      - start: 2026-11-05T08:00:00Z
+                        end: 2026-11-05T11:00:00Z
+                    comment: Portail bleu.
+                    recurrence: null
+                    requestedTeamSize: null
+                    recommendedTeamSize: 2
+                    estimate:
+                      low:
+                        amount: 32000
+                        currency: XOF
+                      high:
+                        amount: 41000
+                        currency: XOF
+                    visit: null
+                    quote:
+                      id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d3001
+                      lines:
+                        - label: Nettoyage à domicile
+                          quantity: 6
+                          unitPrice:
+                            amount: 5000
+                            currency: XOF
+                          amount:
+                            amount: 30000
+                            currency: XOF
+                        - label: Vitres
+                          quantity: 1
+                          unitPrice:
+                            amount: 4000
+                            currency: XOF
+                          amount:
+                            amount: 4000
+                            currency: XOF
+                        - label: Ajustement commune (Abomey-Calavi)
+                          quantity: 1
+                          unitPrice:
+                            amount: 1700
+                            currency: XOF
+                          amount:
+                            amount: 1700
+                            currency: XOF
+                      subtotal:
+                        amount: 35700
+                        currency: XOF
+                      interventionCount: 1
+                      total:
+                        amount: 35700
+                        currency: XOF
+                      proposedSlots:
+                        - start: 2026-11-05T08:00:00Z
+                          end: 2026-11-05T11:00:00Z
+                      validUntil: 2026-11-07T08:00:00Z
+                      depositPercent: 30
+                      depositAmount:
+                        amount: 10710
+                        currency: XOF
+                      recurrence: null
+                      teamSize: 2
+                      durationMinutes: 180
+                      sentAt: 2026-10-23T08:00:00Z
+                    missionId: null
+                    closingReason: null
+                    createdAt: 2026-10-22T10:00:00Z
+                    updatedAt: 2026-10-23T08:00:00Z
+                nextCursor: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/quote-requests/{id}:
+    get:
+      tags:
+        - Nettoyage
+      operationId: getMyCleaningRequest
+      summary: Détail d’une demande
+      description: |
+        UC-CL-03.
+
+        Erreurs : `CLEANING_REQUEST_NOT_FOUND` (404), y compris pour la demande d’un autre client.
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/GetRequest
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+              example:
+                id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                status: quote_sent
+                customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                customerKind: individual
+                organizationId: null
+                serviceCode: home_cleaning
+                premisesType: house
+                quantity: 6
+                options:
+                  - windows
+                commune: Abomey-Calavi
+                address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                preferredSlots:
+                  - start: 2026-11-05T08:00:00Z
+                    end: 2026-11-05T11:00:00Z
+                comment: Portail bleu.
+                recurrence: null
+                requestedTeamSize: null
+                recommendedTeamSize: 2
+                estimate:
+                  low:
+                    amount: 32000
+                    currency: XOF
+                  high:
+                    amount: 41000
+                    currency: XOF
+                visit: null
+                quote:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d3001
+                  lines:
+                    - label: Nettoyage à domicile
+                      quantity: 6
+                      unitPrice:
+                        amount: 5000
+                        currency: XOF
+                      amount:
+                        amount: 30000
+                        currency: XOF
+                    - label: Vitres
+                      quantity: 1
+                      unitPrice:
+                        amount: 4000
+                        currency: XOF
+                      amount:
+                        amount: 4000
+                        currency: XOF
+                    - label: Ajustement commune (Abomey-Calavi)
+                      quantity: 1
+                      unitPrice:
+                        amount: 1700
+                        currency: XOF
+                      amount:
+                        amount: 1700
+                        currency: XOF
+                  subtotal:
+                    amount: 35700
+                    currency: XOF
+                  interventionCount: 1
+                  total:
+                    amount: 35700
+                    currency: XOF
+                  proposedSlots:
+                    - start: 2026-11-05T08:00:00Z
+                      end: 2026-11-05T11:00:00Z
+                  validUntil: 2026-11-07T08:00:00Z
+                  depositPercent: 30
+                  depositAmount:
+                    amount: 10710
+                    currency: XOF
+                  recurrence: null
+                  teamSize: 2
+                  durationMinutes: 180
+                  sentAt: 2026-10-23T08:00:00Z
+                missionId: null
+                closingReason: null
+                createdAt: 2026-10-22T10:00:00Z
+                updatedAt: 2026-10-23T08:00:00Z
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/quote-requests/{id}/accept:
+    post:
+      tags:
+        - Nettoyage
+      operationId: acceptCleaningQuote
+      summary: Accepter le devis
+      description: |
+        UC-CL-04. Le client choisit un créneau proposé et son option de paiement (acompte ou totalité, avant ou après, espèces ou Mobile Money) ; la mission est créée. Idempotent par `Idempotency-Key`.
+
+        Erreurs : `CLEANING_SLOT_INVALID` (400), `CLEANING_REQUEST_NOT_FOUND` (404), `CLEANING_CONCURRENT_UPDATE` (409), `CLEANING_QUOTE_EXPIRED`, `CLEANING_INVALID_TRANSITION`, `CLEANING_LEAD_TIME_TOO_SHORT` (422).
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/AcceptQuote
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptCleaningQuoteRequest'
+            example:
+              slotStart: 2026-11-05T08:00:00Z
+              paymentPlan:
+                option: deposit
+                timing: before
+                method: cash
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcceptCleaningQuoteResponse'
+              example:
+                request:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                  status: accepted
+                  customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                  customerKind: individual
+                  organizationId: null
+                  serviceCode: home_cleaning
+                  premisesType: house
+                  quantity: 6
+                  options:
+                    - windows
+                  commune: Abomey-Calavi
+                  address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                  preferredSlots:
+                    - start: 2026-11-05T08:00:00Z
+                      end: 2026-11-05T11:00:00Z
+                  comment: Portail bleu.
+                  recurrence: null
+                  requestedTeamSize: null
+                  recommendedTeamSize: 2
+                  estimate:
+                    low:
+                      amount: 32000
+                      currency: XOF
+                    high:
+                      amount: 41000
+                      currency: XOF
+                  visit: null
+                  quote:
+                    id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d3001
+                    lines:
+                      - label: Nettoyage à domicile
+                        quantity: 6
+                        unitPrice:
+                          amount: 5000
+                          currency: XOF
+                        amount:
+                          amount: 30000
+                          currency: XOF
+                      - label: Vitres
+                        quantity: 1
+                        unitPrice:
+                          amount: 4000
+                          currency: XOF
+                        amount:
+                          amount: 4000
+                          currency: XOF
+                      - label: Ajustement commune (Abomey-Calavi)
+                        quantity: 1
+                        unitPrice:
+                          amount: 1700
+                          currency: XOF
+                        amount:
+                          amount: 1700
+                          currency: XOF
+                    subtotal:
+                      amount: 35700
+                      currency: XOF
+                    interventionCount: 1
+                    total:
+                      amount: 35700
+                      currency: XOF
+                    proposedSlots:
+                      - start: 2026-11-05T08:00:00Z
+                        end: 2026-11-05T11:00:00Z
+                    validUntil: 2026-11-07T08:00:00Z
+                    depositPercent: 30
+                    depositAmount:
+                      amount: 10710
+                      currency: XOF
+                    recurrence: null
+                    teamSize: 2
+                    durationMinutes: 180
+                    sentAt: 2026-10-23T08:00:00Z
+                  missionId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000
+                  closingReason: null
+                  createdAt: 2026-10-22T10:00:00Z
+                  updatedAt: 2026-10-23T08:00:00Z
+                mission:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000
+                  requestId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                  quoteId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d3001
+                  customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                  status: scheduled
+                  serviceCode: home_cleaning
+                  commune: Abomey-Calavi
+                  address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                  chosenSlot:
+                    start: 2026-11-05T08:00:00Z
+                    end: 2026-11-05T11:00:00Z
+                  recurrence: null
+                  plannedInterventions: 1
+                  completedInterventions: 0
+                  interventions:
+                    - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d4001
+                      status: planned
+                      scheduledStart: 2026-11-05T08:00:00Z
+                      durationMinutes: 180
+                      agents:
+                        - agentId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+                          displayName: Awa B.
+                      checklist:
+                        - code: arrival
+                          label: Arrivée sur place et accueil du client
+                          done: false
+                      incidentNote: null
+                      beforePhotoFileIds: []
+                      afterPhotoFileIds: []
+                      startedAt: null
+                      completedAt: null
+                  payment:
+                    plan:
+                      option: deposit
+                      timing: before
+                      method: cash
+                    status: deposit_received
+                    total:
+                      amount: 35700
+                      currency: XOF
+                    depositPercent: 30
+                    depositAmount:
+                      amount: 10710
+                      currency: XOF
+                    paid:
+                      amount: 10710
+                      currency: XOF
+                    payments:
+                      - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001
+                        amount:
+                          amount: 10710
+                          currency: XOF
+                        method: cash
+                        reference: Reçu 0042
+                        recordedBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001
+                        recordedAt: 2026-10-24T09:00:00Z
+                  cancellationReason: null
+                  createdAt: 2026-10-23T09:00:00Z
+                  updatedAt: 2026-10-24T09:00:00Z
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/quote-requests/{id}/decline:
+    post:
+      tags:
+        - Nettoyage
+      operationId: declineCleaningQuote
+      summary: Refuser le devis
+      description: |
+        UC-CL-04.
+
+        Erreurs : `CLEANING_INVALID_TRANSITION` (422).
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/DeclineQuote
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningOptionalReasonRequest'
+            example:
+              reason: Budget dépassé.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/quote-requests/{id}/cancel:
+    post:
+      tags:
+        - Nettoyage
+      operationId: cancelCleaningRequest
+      summary: Annuler une demande
+      description: |
+        UC-CL-05.
+
+        Erreurs : `CLEANING_INVALID_TRANSITION` (422).
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/CancelRequest
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningOptionalReasonRequest'
+            example:
+              reason: Je n’en ai plus besoin.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/missions:
+    get:
+      tags:
+        - Nettoyage
+      operationId: listMyCleaningMissions
+      summary: Mes missions
+      description: |
+        UC-CL-03.
+      x-ksp-grpc: ksp.cleaning.v1.MissionService/ListMyMissions
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMissionList'
+              example:
+                data:
+                  - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000
+                    requestId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                    quoteId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d3001
+                    customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                    status: scheduled
+                    serviceCode: home_cleaning
+                    commune: Abomey-Calavi
+                    address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                    chosenSlot:
+                      start: 2026-11-05T08:00:00Z
+                      end: 2026-11-05T11:00:00Z
+                    recurrence: null
+                    plannedInterventions: 1
+                    completedInterventions: 0
+                    interventions:
+                      - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d4001
+                        status: planned
+                        scheduledStart: 2026-11-05T08:00:00Z
+                        durationMinutes: 180
+                        agents:
+                          - agentId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+                            displayName: Awa B.
+                        checklist:
+                          - code: arrival
+                            label: Arrivée sur place et accueil du client
+                            done: false
+                        incidentNote: null
+                        beforePhotoFileIds: []
+                        afterPhotoFileIds: []
+                        startedAt: null
+                        completedAt: null
+                    payment:
+                      plan:
+                        option: deposit
+                        timing: before
+                        method: cash
+                      status: deposit_received
+                      total:
+                        amount: 35700
+                        currency: XOF
+                      depositPercent: 30
+                      depositAmount:
+                        amount: 10710
+                        currency: XOF
+                      paid:
+                        amount: 10710
+                        currency: XOF
+                      payments:
+                        - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001
+                          amount:
+                            amount: 10710
+                            currency: XOF
+                          method: cash
+                          reference: Reçu 0042
+                          recordedBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001
+                          recordedAt: 2026-10-24T09:00:00Z
+                    cancellationReason: null
+                    createdAt: 2026-10-23T09:00:00Z
+                    updatedAt: 2026-10-24T09:00:00Z
+                nextCursor: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/missions/{id}:
+    get:
+      tags:
+        - Nettoyage
+      operationId: getMyCleaningMission
+      summary: Détail d’une mission
+      description: |
+        UC-CL-03.
+
+        Erreurs : `CLEANING_MISSION_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.cleaning.v1.MissionService/GetMission
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+              example:
+                id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000
+                requestId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                quoteId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d3001
+                customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                status: scheduled
+                serviceCode: home_cleaning
+                commune: Abomey-Calavi
+                address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                chosenSlot:
+                  start: 2026-11-05T08:00:00Z
+                  end: 2026-11-05T11:00:00Z
+                recurrence: null
+                plannedInterventions: 1
+                completedInterventions: 0
+                interventions:
+                  - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d4001
+                    status: planned
+                    scheduledStart: 2026-11-05T08:00:00Z
+                    durationMinutes: 180
+                    agents:
+                      - agentId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+                        displayName: Awa B.
+                    checklist:
+                      - code: arrival
+                        label: Arrivée sur place et accueil du client
+                        done: false
+                    incidentNote: null
+                    beforePhotoFileIds: []
+                    afterPhotoFileIds: []
+                    startedAt: null
+                    completedAt: null
+                payment:
+                  plan:
+                    option: deposit
+                    timing: before
+                    method: cash
+                  status: deposit_received
+                  total:
+                    amount: 35700
+                    currency: XOF
+                  depositPercent: 30
+                  depositAmount:
+                    amount: 10710
+                    currency: XOF
+                  paid:
+                    amount: 10710
+                    currency: XOF
+                  payments:
+                    - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001
+                      amount:
+                        amount: 10710
+                        currency: XOF
+                      method: cash
+                      reference: Reçu 0042
+                      recordedBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001
+                      recordedAt: 2026-10-24T09:00:00Z
+                cancellationReason: null
+                createdAt: 2026-10-23T09:00:00Z
+                updatedAt: 2026-10-24T09:00:00Z
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/missions/{id}/cancel:
+    post:
+      tags:
+        - Nettoyage
+      operationId: cancelMyCleaningMission
+      summary: Annuler une mission
+      description: |
+        UC-CL-05. Sans frais jusqu’à 24 heures avant le premier passage ; au-delà, l’annulation passe par le support.
+
+        Erreurs : `CLEANING_CANCELLATION_TOO_LATE`, `CLEANING_INVALID_TRANSITION` (422).
+      x-ksp-grpc: ksp.cleaning.v1.MissionService/CancelMission
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningOptionalReasonRequest'
+            example:
+              reason: Déménagement reporté.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-requests:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: listCleaningQuoteRequests
+      summary: Demandes de devis (back-office)
+      description: |
+        UC-CL-06.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListQuoteRequests
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/CleaningRequestStatus'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequestList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-requests/{id}:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: getCleaningQuoteRequest
+      summary: Détail d’une demande (back-office)
+      description: |
+        UC-CL-06.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/GetQuoteRequest
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-requests/{id}/reject:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: rejectCleaningQuoteRequest
+      summary: Refuser une demande
+      description: |
+        UC-CL-06.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RejectQuoteRequest
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningRequiredReasonRequest'
+            example:
+              reason: Zone non desservie pour le moment.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-requests/{id}/visits:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: scheduleCleaningVisit
+      summary: Planifier la visite technique
+      description: |
+        UC-CL-07. Obligatoire pour un client entreprise ou au-delà de 300 m². Le client est prévenu (`cleaning.visit.scheduled`).
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ScheduleVisit
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleCleaningVisitRequest'
+            example:
+              scheduledAt: 2026-10-27T09:00:00Z
+              agentId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/visits/{id}/complete:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: completeCleaningVisit
+      summary: Compte rendu de visite
+      description: |
+        UC-CL-07.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CompleteVisit
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteCleaningVisitRequest'
+            example:
+              report: Deux étages, accès facile, 6 pièces confirmées.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-requests/{id}/quote:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: sendCleaningQuote
+      summary: Établir et envoyer le devis
+      description: |
+        UC-CL-08. Lignes préremplies depuis la grille en vigueur (ajustement de commune et minimum de commande compris), modifiables ; 1 à 3 créneaux ; prix figé à l’envoi.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `CLEANING_VISIT_REQUIRED`, `CLEANING_PRICE_NOT_SET`, `CLEANING_LEAD_TIME_TOO_SHORT` (422).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SendQuote
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendCleaningQuoteRequest'
+            example:
+              proposedSlots:
+                - start: 2026-11-05T08:00:00Z
+                  end: 2026-11-05T11:00:00Z
+              durationMinutes: 180
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/missions:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: listCleaningMissions
+      summary: Missions (back-office)
+      description: |
+        UC-CL-09, 10. Un agent ne voit que les missions où il est affecté.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListMissions
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/CleaningMissionStatus'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMissionList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/missions/{id}:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: getCleaningMission
+      summary: Détail d’une mission (back-office)
+      description: |
+        UC-CL-09, 10.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/GetMissionDetail
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/missions/{id}/interventions:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: scheduleCleaningIntervention
+      summary: Planifier un passage
+      description: |
+        UC-CL-09. Date, durée et agents (choisis un à un et/ou par équipe). Un contrat récurrent peut avoir d’autres agents à chaque passage.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `CLEANING_TEAM_UNAVAILABLE` (409, `details.agentIds`), `CLEANING_NO_INTERVENTION_LEFT` (422).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ScheduleIntervention
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleCleaningInterventionRequest'
+            example:
+              scheduledStart: 2026-11-05T08:00:00Z
+              durationMinutes: 180
+              agentIds:
+                - 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/missions/{id}/payments:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: recordCleaningPayment
+      summary: Enregistrer un paiement manuel
+      description: |
+        UC-CL-09. Espèces ou Mobile Money hors ligne, coché par le superviseur. Jamais au-delà du reste dû.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `CLEANING_PAYMENT_INVALID` (400).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RecordPayment
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordCleaningPaymentRequest'
+            example:
+              amount: 11220
+              method: cash
+              reference: Reçu 0042
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/missions/{id}/cancel:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: cancelCleaningMission
+      summary: Annuler une mission (back-office)
+      description: |
+        UC-CL-05.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CancelMissionAsSupervisor
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningRequiredReasonRequest'
+            example:
+              reason: Client injoignable.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/interventions/{id}/start:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: startCleaningIntervention
+      summary: Démarrer un passage
+      description: |
+        UC-CL-10.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/StartIntervention
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/interventions/{id}/checklist:
+    put:
+      tags:
+        - Nettoyage (back-office)
+      operationId: updateCleaningChecklist
+      summary: Cocher la liste de contrôle
+      description: |
+        UC-CL-10. Codes cochés ; les autres sont décochés.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/UpdateChecklist
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCleaningChecklistRequest'
+            example:
+              doneCodes:
+                - arrival
+                - cleaning_done
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/interventions/{id}/incident:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: reportCleaningIncident
+      summary: Signaler un incident
+      description: |
+        UC-CL-10. Le passage est mis en attente.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ReportIncident
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportCleaningIncidentRequest'
+            example:
+              note: Coupure d’eau sur place.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/interventions/{id}/resume:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: resumeCleaningIntervention
+      summary: Reprendre un passage en attente
+      description: |
+        UC-CL-10.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ResumeIntervention
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/interventions/{id}/complete:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: completeCleaningIntervention
+      summary: Clôturer un passage
+      description: |
+        UC-CL-10. Liste de contrôle complète exigée ; la mission se termine au dernier passage (`cleaning.mission.completed`).
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `CLEANING_CHECKLIST_INCOMPLETE`, `CLEANING_INVALID_TRANSITION` (422).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CompleteIntervention
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/catalog:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: getCleaningCatalog
+      summary: Catalogue, grille et réglages
+      description: |
+        UC-CL-11.
+
+        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/GetCatalog
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningCatalog'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/catalog/services/{code}:
+    put:
+      tags:
+        - Nettoyage (back-office)
+      operationId: saveCleaningService
+      summary: Créer ou modifier une prestation et sa grille
+      description: |
+        UC-CL-11. Chaque enregistrement crée une nouvelle version datée de la grille, avec son auteur ; les devis déjà envoyés gardent leur prix. Prix `null` : non fixé.
+
+        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SaveService
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningServiceCode'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveCleaningServiceRequest'
+            example:
+              name: Nettoyage à domicile
+              description: Ménage complet du logement.
+              unit: room
+              active: true
+              pricing:
+                unitPrice: null
+                minimumPrice: null
+                options:
+                  - code: windows
+                    label: Vitres
+                    price: null
+                communeCoefficients:
+                  - commune: Abomey-Calavi
+                    coefficientBp: 10500
+                teamSize:
+                  unitsPerAgent: 3
+                  minAgents: 1
+                  maxAgents: 6
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningServiceDefinition'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/catalog/settings:
+    put:
+      tags:
+        - Nettoyage (back-office)
+      operationId: updateCleaningSettings
+      summary: Réglages du Nettoyage
+      description: |
+        UC-CL-11. Validité des devis, délais, seuil de visite, demandes ouvertes, acompte.
+
+        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/UpdateSettings
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCleaningSettingsRequest'
+            example:
+              quoteValidityDays: 15
+              minimumLeadHours: 48
+              freeCancellationHours: 24
+              visitThresholdSquareMeters: 300
+              maxOpenRequests: 5
+              depositPercent: 30
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/agents:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: listCleaningAgents
+      summary: Agents
+      description: |
+        UC-CL-12.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListAgents
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningAgentList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: registerCleaningAgent
+      summary: Rattacher un compte comme agent
+      description: |
+        UC-CL-12. Le rôle `cleaning_agent` s’attribue dans identity.
+
+        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RegisterAgent
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterCleaningAgentRequest'
+            example:
+              agentId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+              displayName: Awa B.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningAgent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/agents/{id}/unavailabilities:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: declareCleaningUnavailability
+      summary: Déclarer une indisponibilité
+      description: |
+        UC-CL-12.
+
+        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/DeclareUnavailability
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeclareCleaningUnavailabilityRequest'
+            example:
+              start: 2026-11-10T00:00:00Z
+              end: 2026-11-17T00:00:00Z
+              reason: Congé
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningAgent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/teams:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: listCleaningTeams
+      summary: Équipes
+      description: |
+        UC-CL-12.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListTeams
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningTeamList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: createCleaningTeam
+      summary: Composer une équipe
+      description: |
+        UC-CL-12.
+
+        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CreateTeam
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningTeamRequest'
+            example:
+              name: Équipe Calavi
+              memberIds:
+                - 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningTeam'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/teams/{id}:
+    put:
+      tags:
+        - Nettoyage (back-office)
+      operationId: updateCleaningTeam
+      summary: Modifier une équipe
+      description: |
+        UC-CL-12.
+
+        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/UpdateTeam
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningTeamRequest'
+            example:
+              name: Équipe Calavi
+              memberIds:
+                - 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningTeam'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -768,6 +3170,76 @@ components:
       schema:
         type: integer
         minimum: 1
+
+  parameters:
+    CleaningId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant (UUID).
+      schema:
+        type: string
+        format: uuid
+    CleaningServiceCode:
+      name: code
+      in: path
+      required: true
+      description: Code de la prestation.
+      schema:
+        type: string
+        pattern: ^[a-z][a-z0-9_]{1,49}$
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: 20 par défaut, 100 au plus.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Valeur `nextCursor` de la page précédente.
+      schema:
+        type: string
+        format: uuid
+    CleaningRequestStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        enum:
+          - received
+          - visit_scheduled
+          - quote_sent
+          - accepted
+          - declined
+          - rejected
+          - expired
+          - cancelled
+    CleaningMissionStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        enum:
+          - to_schedule
+          - scheduled
+          - in_progress
+          - on_hold
+          - completed
+          - cancelled
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 'Clé unique par opération (8 à 100 caractères) : un second envoi avec la même clé ne crée rien de plus.'
+      schema:
+        type: string
+        pattern: ^[A-Za-z0-9_-]{8,100}$
 
   responses:
     BadRequest:
@@ -878,6 +3350,24 @@ components:
               code: IDENTITY_UNAVAILABLE
               message: Le service est momentanément indisponible, réessayez dans quelques instants.
               details: {}
+              correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+
+    Conflict:
+      description: Conflit (`CLEANING_TEAM_UNAVAILABLE`, `CLEANING_CONCURRENT_UPDATE`, `CLEANING_AGENT_ALREADY_REGISTERED`)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/X-Correlation-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: CLEANING_TEAM_UNAVAILABLE
+              message: Un ou plusieurs agents sont déjà pris sur ce créneau.
+              details:
+                agentIds:
+                  - 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
 
     PayloadTooLarge:
@@ -1358,3 +3848,1376 @@ components:
                 const: ES256
               use:
                 const: sig
+
+    Money:
+      type: object
+      additionalProperties: false
+      required:
+        - amount
+        - currency
+      properties:
+        amount:
+          type: integer
+          description: Entier en FCFA, jamais de décimales.
+        currency:
+          const: XOF
+      description: Montant en entiers XOF.
+    TimeSlot:
+      type: object
+      additionalProperties: false
+      required:
+        - start
+        - end
+      properties:
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+      description: Créneau horaire, début inclus, fin exclue.
+    CleaningRecurrence:
+      type: object
+      additionalProperties: false
+      required:
+        - period
+        - visitsPerPeriod
+        - durationMonths
+      properties:
+        period:
+          enum:
+            - week
+            - month
+        visitsPerPeriod:
+          type: integer
+          minimum: 1
+          maximum: 31
+        durationMonths:
+          type: integer
+          minimum: 1
+          maximum: 36
+      description: 'Contrat récurrent : passages par période, pendant une durée en mois (facture mensuelle avec billing).'
+    CleaningPremisesType:
+      type: string
+      enum:
+        - apartment
+        - house
+        - office
+        - shop
+        - warehouse
+        - other
+    CleaningUnit:
+      type: string
+      enum:
+        - square_meter
+        - room
+        - septic_tank
+        - cubic_meter
+    CleaningPriceLine:
+      type: object
+      additionalProperties: false
+      required:
+        - label
+        - quantity
+        - unitPrice
+        - amount
+      properties:
+        label:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          $ref: '#/components/schemas/Money'
+        amount:
+          $ref: '#/components/schemas/Money'
+    CleaningPriceRange:
+      type: object
+      additionalProperties: false
+      required:
+        - low
+        - high
+      properties:
+        low:
+          $ref: '#/components/schemas/Money'
+        high:
+          $ref: '#/components/schemas/Money'
+    CleaningOption:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - price
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+        price:
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+    CleaningServiceOffer:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+        - description
+        - unit
+        - options
+        - priced
+        - minimumPrice
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        name:
+          type: string
+        description:
+          type: string
+        unit:
+          $ref: '#/components/schemas/CleaningUnit'
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningOption'
+        priced:
+          type: boolean
+          description: Faux tant que le prix n’est pas fixé par l’équipe Nettoyage.
+        minimumPrice:
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+    CleaningServiceList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningServiceOffer'
+    SimulateCleaningRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - serviceCode
+        - premisesType
+        - quantity
+        - commune
+      properties:
+        serviceCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        premisesType:
+          $ref: '#/components/schemas/CleaningPremisesType'
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        options:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{1,49}$
+        commune:
+          type: string
+          minLength: 1
+          maxLength: 100
+        frequency:
+          enum:
+            - once
+            - weekly
+            - monthly
+          description: 'Informatif : le prix est celui d’un passage.'
+    CleaningSimulation:
+      type: object
+      additionalProperties: false
+      required:
+        - serviceCode
+        - priced
+        - estimate
+        - computedPrice
+        - breakdown
+        - minimumApplied
+        - communeCoefficientBp
+        - recommendedTeamSize
+        - notice
+      properties:
+        serviceCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        priced:
+          type: boolean
+        estimate:
+          oneOf:
+            - $ref: '#/components/schemas/CleaningPriceRange'
+            - type: 'null'
+        computedPrice:
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        breakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningPriceLine'
+        minimumApplied:
+          type: boolean
+        communeCoefficientBp:
+          type: integer
+          description: Coefficient de la commune en points de base (10000 = 1), 0 sans prix.
+        recommendedTeamSize:
+          type: integer
+          minimum: 1
+        notice:
+          type: string
+          description: Mention « estimation non contractuelle », ou raison de l’absence de prix.
+    CleaningSiteVisit:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - scheduledAt
+        - agentId
+        - report
+        - completedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          enum:
+            - scheduled
+            - completed
+            - cancelled
+        scheduledAt:
+          type: string
+          format: date-time
+        agentId:
+          type: string
+          format: uuid
+        report:
+          type:
+            - string
+            - 'null'
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    CleaningQuote:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - lines
+        - subtotal
+        - interventionCount
+        - total
+        - proposedSlots
+        - validUntil
+        - depositPercent
+        - depositAmount
+        - recurrence
+        - teamSize
+        - durationMinutes
+        - sentAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningPriceLine'
+        subtotal:
+          $ref: '#/components/schemas/Money'
+        interventionCount:
+          type: integer
+          minimum: 1
+        total:
+          $ref: '#/components/schemas/Money'
+        proposedSlots:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+        validUntil:
+          type: string
+          format: date-time
+        depositPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        depositAmount:
+          $ref: '#/components/schemas/Money'
+        recurrence:
+          oneOf:
+            - $ref: '#/components/schemas/CleaningRecurrence'
+            - type: 'null'
+        teamSize:
+          type: integer
+          minimum: 1
+        durationMinutes:
+          type: integer
+          minimum: 1
+        sentAt:
+          type: string
+          format: date-time
+    CleaningQuoteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - customerId
+        - customerKind
+        - organizationId
+        - serviceCode
+        - premisesType
+        - quantity
+        - options
+        - commune
+        - address
+        - preferredSlots
+        - comment
+        - recurrence
+        - requestedTeamSize
+        - recommendedTeamSize
+        - estimate
+        - visit
+        - quote
+        - missionId
+        - closingReason
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          enum:
+            - received
+            - visit_scheduled
+            - quote_sent
+            - accepted
+            - declined
+            - rejected
+            - expired
+            - cancelled
+        customerId:
+          type: string
+          format: uuid
+        customerKind:
+          enum:
+            - individual
+            - business
+        organizationId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        serviceCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        premisesType:
+          $ref: '#/components/schemas/CleaningPremisesType'
+        quantity:
+          type: integer
+          minimum: 1
+        options:
+          type: array
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{1,49}$
+        commune:
+          type: string
+        address:
+          type: string
+        preferredSlots:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+        comment:
+          type:
+            - string
+            - 'null'
+        recurrence:
+          oneOf:
+            - $ref: '#/components/schemas/CleaningRecurrence'
+            - type: 'null'
+        requestedTeamSize:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+        recommendedTeamSize:
+          type: integer
+          minimum: 1
+        estimate:
+          oneOf:
+            - $ref: '#/components/schemas/CleaningPriceRange'
+            - type: 'null'
+        visit:
+          oneOf:
+            - $ref: '#/components/schemas/CleaningSiteVisit'
+            - type: 'null'
+        quote:
+          oneOf:
+            - $ref: '#/components/schemas/CleaningQuote'
+            - type: 'null'
+        missionId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        closingReason:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CleaningQuoteRequestList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningQuoteRequest'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    CleaningAgentRef:
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - displayName
+      properties:
+        agentId:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+    CleaningChecklistItem:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - done
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+        done:
+          type: boolean
+    CleaningIntervention:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - scheduledStart
+        - durationMinutes
+        - agents
+        - checklist
+        - incidentNote
+        - beforePhotoFileIds
+        - afterPhotoFileIds
+        - startedAt
+        - completedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          enum:
+            - planned
+            - in_progress
+            - on_hold
+            - completed
+            - cancelled
+        scheduledStart:
+          type: string
+          format: date-time
+        durationMinutes:
+          type: integer
+          minimum: 1
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningAgentRef'
+        checklist:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningChecklistItem'
+        incidentNote:
+          type:
+            - string
+            - 'null'
+        beforePhotoFileIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Références du service file (photos avant).
+        afterPhotoFileIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Références du service file (photos après).
+        startedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    CleaningPaymentPlan:
+      type: object
+      additionalProperties: false
+      required:
+        - option
+        - timing
+        - method
+      properties:
+        option:
+          enum:
+            - deposit
+            - full
+          description: Acompte (30 % par défaut) ou totalité.
+        timing:
+          enum:
+            - before
+            - after
+        method:
+          enum:
+            - cash
+            - mobile_money_offline
+            - mobile_money_online
+          description: 'mobile_money_online : encaissé par le service payment, branché plus tard.'
+    CleaningPaymentRecord:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - amount
+        - method
+        - reference
+        - recordedBy
+        - recordedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        amount:
+          $ref: '#/components/schemas/Money'
+        method:
+          enum:
+            - cash
+            - mobile_money_offline
+            - mobile_money_online
+        reference:
+          type:
+            - string
+            - 'null'
+        recordedBy:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    CleaningPaymentState:
+      type: object
+      additionalProperties: false
+      required:
+        - plan
+        - status
+        - total
+        - depositPercent
+        - depositAmount
+        - paid
+        - payments
+      properties:
+        plan:
+          $ref: '#/components/schemas/CleaningPaymentPlan'
+        status:
+          enum:
+            - due
+            - deposit_received
+            - paid
+        total:
+          $ref: '#/components/schemas/Money'
+        depositPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        depositAmount:
+          $ref: '#/components/schemas/Money'
+        paid:
+          $ref: '#/components/schemas/Money'
+        payments:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningPaymentRecord'
+    CleaningMission:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - requestId
+        - quoteId
+        - customerId
+        - status
+        - serviceCode
+        - commune
+        - address
+        - chosenSlot
+        - recurrence
+        - plannedInterventions
+        - completedInterventions
+        - interventions
+        - payment
+        - cancellationReason
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        requestId:
+          type: string
+          format: uuid
+        quoteId:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+          format: uuid
+        status:
+          enum:
+            - to_schedule
+            - scheduled
+            - in_progress
+            - on_hold
+            - completed
+            - cancelled
+        serviceCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        commune:
+          type: string
+        address:
+          type: string
+        chosenSlot:
+          $ref: '#/components/schemas/TimeSlot'
+        recurrence:
+          oneOf:
+            - $ref: '#/components/schemas/CleaningRecurrence'
+            - type: 'null'
+        plannedInterventions:
+          type: integer
+          minimum: 1
+        completedInterventions:
+          type: integer
+          minimum: 0
+        interventions:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningIntervention'
+        payment:
+          $ref: '#/components/schemas/CleaningPaymentState'
+        cancellationReason:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CleaningMissionList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningMission'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    AcceptCleaningQuoteResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - request
+        - mission
+      properties:
+        request:
+          $ref: '#/components/schemas/CleaningQuoteRequest'
+        mission:
+          $ref: '#/components/schemas/CleaningMission'
+    CleaningTeamSizeRule:
+      type: object
+      additionalProperties: false
+      required:
+        - unitsPerAgent
+        - minAgents
+        - maxAgents
+      properties:
+        unitsPerAgent:
+          type: integer
+          minimum: 1
+        minAgents:
+          type: integer
+          minimum: 1
+        maxAgents:
+          type: integer
+          minimum: 1
+    CleaningCommuneCoefficient:
+      type: object
+      additionalProperties: false
+      required:
+        - commune
+        - coefficientBp
+      properties:
+        commune:
+          type: string
+          minLength: 1
+          maxLength: 100
+        coefficientBp:
+          type: integer
+          minimum: 1
+          maximum: 100000
+    CleaningChecklistTemplateItem:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+          minLength: 1
+          maxLength: 200
+    CleaningPricing:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - unitPrice
+        - minimumPrice
+        - options
+        - communeCoefficients
+        - defaultCoefficientBp
+        - teamSize
+        - checklist
+        - updatedBy
+        - updatedAt
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        unitPrice:
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        minimumPrice:
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningOption'
+        communeCoefficients:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningCommuneCoefficient'
+        defaultCoefficientBp:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        teamSize:
+          $ref: '#/components/schemas/CleaningTeamSizeRule'
+        checklist:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningChecklistTemplateItem'
+        updatedBy:
+          type:
+            - string
+            - 'null'
+        updatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    CleaningServiceDefinition:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+        - description
+        - unit
+        - active
+        - pricing
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        name:
+          type: string
+        description:
+          type: string
+        unit:
+          $ref: '#/components/schemas/CleaningUnit'
+        active:
+          type: boolean
+        pricing:
+          $ref: '#/components/schemas/CleaningPricing'
+    CleaningSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - quoteValidityDays
+        - minimumLeadHours
+        - freeCancellationHours
+        - visitThresholdSquareMeters
+        - maxOpenRequests
+        - depositPercent
+        - updatedBy
+        - updatedAt
+      properties:
+        quoteValidityDays:
+          type: integer
+          minimum: 1
+          maximum: 90
+        minimumLeadHours:
+          type: integer
+          minimum: 0
+          maximum: 720
+        freeCancellationHours:
+          type: integer
+          minimum: 0
+          maximum: 720
+        visitThresholdSquareMeters:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        maxOpenRequests:
+          type: integer
+          minimum: 1
+          maximum: 100
+        depositPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        updatedBy:
+          type:
+            - string
+            - 'null'
+        updatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    CleaningCatalog:
+      type: object
+      additionalProperties: false
+      required:
+        - services
+        - settings
+      properties:
+        services:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningServiceDefinition'
+        settings:
+          $ref: '#/components/schemas/CleaningSettings'
+    CleaningUnavailability:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - start
+        - end
+        - reason
+      properties:
+        id:
+          type: string
+          format: uuid
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+        reason:
+          type:
+            - string
+            - 'null'
+    CleaningAgent:
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - displayName
+        - active
+        - unavailabilities
+      properties:
+        agentId:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        active:
+          type: boolean
+        unavailabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningUnavailability'
+    CleaningAgentList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningAgent'
+    CleaningTeam:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - members
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningAgentRef'
+    CleaningTeamList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningTeam'
+    RequestCleaningQuoteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - serviceCode
+        - premisesType
+        - quantity
+        - commune
+        - address
+        - preferredSlots
+      properties:
+        serviceCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        premisesType:
+          $ref: '#/components/schemas/CleaningPremisesType'
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        options:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{1,49}$
+        commune:
+          type: string
+          minLength: 1
+          maxLength: 100
+        address:
+          type: string
+          minLength: 1
+          maxLength: 500
+        preferredSlots:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+        comment:
+          type: string
+          minLength: 0
+          maxLength: 2000
+        recurrence:
+          $ref: '#/components/schemas/CleaningRecurrence'
+        requestedTeamSize:
+          type: integer
+          minimum: 1
+          maximum: 50
+    AcceptCleaningQuoteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - slotStart
+        - paymentPlan
+      properties:
+        slotStart:
+          type: string
+          format: date-time
+          description: Début d’un des créneaux proposés dans le devis.
+        paymentPlan:
+          $ref: '#/components/schemas/CleaningPaymentPlan'
+    CleaningOptionalReasonRequest:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        reason:
+          type: string
+          minLength: 0
+          maxLength: 500
+    CleaningRequiredReasonRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+    ScheduleCleaningVisitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - scheduledAt
+        - agentId
+      properties:
+        scheduledAt:
+          type: string
+          format: date-time
+        agentId:
+          type: string
+          format: uuid
+    CompleteCleaningVisitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - report
+      properties:
+        report:
+          type: string
+          minLength: 1
+          maxLength: 5000
+    SendCleaningQuoteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - proposedSlots
+        - durationMinutes
+      properties:
+        lines:
+          type: array
+          maxItems: 50
+          description: 'Vide ou absent : lignes préremplies depuis la grille en vigueur. Prix négatif : remise (quantité 1).'
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - label
+              - quantity
+              - unitPrice
+            properties:
+              label:
+                type: string
+                minLength: 1
+                maxLength: 200
+              quantity:
+                type: integer
+                minimum: 1
+                maximum: 1000000
+              unitPrice:
+                type: integer
+        proposedSlots:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+        validityDays:
+          type: integer
+          minimum: 1
+          maximum: 90
+        recurrence:
+          $ref: '#/components/schemas/CleaningRecurrence'
+        teamSize:
+          type: integer
+          minimum: 1
+          maximum: 50
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+    ScheduleCleaningInterventionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - scheduledStart
+        - durationMinutes
+      properties:
+        scheduledStart:
+          type: string
+          format: date-time
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+        agentIds:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+        teamId:
+          type: string
+          format: uuid
+    RecordCleaningPaymentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - amount
+        - method
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          description: Entier en FCFA.
+        method:
+          enum:
+            - cash
+            - mobile_money_offline
+        reference:
+          type: string
+          minLength: 0
+          maxLength: 100
+    UpdateCleaningChecklistRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - doneCodes
+      properties:
+        doneCodes:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{1,49}$
+    ReportCleaningIncidentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - note
+      properties:
+        note:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    SaveCleaningServiceRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - unit
+        - active
+        - pricing
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          minLength: 0
+          maxLength: 1000
+        unit:
+          $ref: '#/components/schemas/CleaningUnit'
+        active:
+          type: boolean
+        pricing:
+          type: object
+          additionalProperties: false
+          required:
+            - unitPrice
+            - minimumPrice
+          properties:
+            unitPrice:
+              type:
+                - integer
+                - 'null'
+              minimum: 0
+            minimumPrice:
+              type:
+                - integer
+                - 'null'
+              minimum: 0
+            options:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required:
+                  - code
+                  - label
+                  - price
+                properties:
+                  code:
+                    type: string
+                    pattern: ^[a-z][a-z0-9_]{1,49}$
+                  label:
+                    type: string
+                    minLength: 1
+                    maxLength: 100
+                  price:
+                    type:
+                      - integer
+                      - 'null'
+                    minimum: 0
+            communeCoefficients:
+              type: array
+              items:
+                $ref: '#/components/schemas/CleaningCommuneCoefficient'
+            defaultCoefficientBp:
+              type: integer
+              minimum: 1
+              maximum: 100000
+            teamSize:
+              $ref: '#/components/schemas/CleaningTeamSizeRule'
+            checklist:
+              type: array
+              items:
+                $ref: '#/components/schemas/CleaningChecklistTemplateItem'
+    UpdateCleaningSettingsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - quoteValidityDays
+        - minimumLeadHours
+        - freeCancellationHours
+        - visitThresholdSquareMeters
+        - maxOpenRequests
+        - depositPercent
+      properties:
+        quoteValidityDays:
+          type: integer
+          minimum: 1
+          maximum: 90
+        minimumLeadHours:
+          type: integer
+          minimum: 0
+          maximum: 720
+        freeCancellationHours:
+          type: integer
+          minimum: 0
+          maximum: 720
+        visitThresholdSquareMeters:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        maxOpenRequests:
+          type: integer
+          minimum: 1
+          maximum: 100
+        depositPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+    RegisterCleaningAgentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - displayName
+      properties:
+        agentId:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 100
+    DeclareCleaningUnavailabilityRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - start
+        - end
+      properties:
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          minLength: 0
+          maxLength: 200
+    CleaningTeamRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - memberIds
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        memberIds:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid

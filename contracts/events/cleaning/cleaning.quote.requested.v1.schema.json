@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.quote.requested.v1.schema.json",
+  "title": "cleaning.quote.requested",
+  "description": "Demande de devis reçue (UC-CL-02). Identifiants seulement : ni adresse, ni commentaire.",
+  "x-event-type": "cleaning.quote.requested",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "customerId", "organizationId", "customerKind", "serviceCode", "visitRequired"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente, null pour un particulier"
+    },
+    "customerKind": { "enum": ["individual", "business"] },
+    "serviceCode": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "visitRequired": {
+      "type": "boolean",
+      "description": "Visite technique obligatoire avant le devis (entreprise ou grande surface)"
+    }
+  }
+}

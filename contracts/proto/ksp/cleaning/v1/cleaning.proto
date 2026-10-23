@@ -1,0 +1,788 @@
+syntax = "proto3";
+
+package ksp.cleaning.v1;
+
+import "ksp/common/v1/money.proto";
+
+// Contrats du service cleaning (cahier des charges Nettoyage, parties 3, 5 et 6).
+//
+// - CatalogService : catalogue et simulateur publics (UC-CL-01).
+// - QuoteService et MissionService : espace client (UC-CL-02 à 05).
+// - CleaningAdminService : back-office (UC-CL-06 à 12).
+// - ksp.common.v1.ObligationService (obligation.proto) : également implémenté par cleaning ;
+//   une mission non terminée bloque la suppression du compte.
+//
+// L'utilisateur connecté n'est jamais dans les messages : la gateway le transmet dans les
+// métadonnées gRPC (x-user-id, x-active-context, x-user-roles, x-user-mfa…). Le service
+// revérifie toujours ses droits : client propriétaire, agent affecté, rôles du back-office.
+//
+// Conventions :
+// - dates : chaînes ISO 8601 en UTC ; chaîne vide = absente ;
+// - montants : ksp.common.v1.Money, entiers en XOF ; message absent = montant non fixé ;
+// - valeurs énumérées : chaînes en snake_case, identiques à celles de l'API REST
+//   (valeurs listées sur chaque champ) ;
+// - coefficients : en points de base (10000 = coefficient 1).
+//
+// Erreurs (code AppError → statut gRPC) :
+//   CLEANING_SERVICE_NOT_FOUND          NOT_FOUND           prestation inconnue ou inactive
+//   CLEANING_REQUEST_NOT_FOUND          NOT_FOUND           demande inconnue ou hors du périmètre de l'appelant
+//   CLEANING_MISSION_NOT_FOUND          NOT_FOUND           mission inconnue ou hors du périmètre de l'appelant
+//   CLEANING_VISIT_NOT_FOUND            NOT_FOUND
+//   CLEANING_INTERVENTION_NOT_FOUND     NOT_FOUND
+//   CLEANING_AGENT_NOT_FOUND            NOT_FOUND
+//   CLEANING_TEAM_NOT_FOUND             NOT_FOUND
+//   CLEANING_VALIDATION_FAILED          INVALID_ARGUMENT    details.field
+//   CLEANING_SLOT_INVALID               INVALID_ARGUMENT    créneau mal formé, ou hors des créneaux proposés
+//   CLEANING_INVALID_TRANSITION         FAILED_PRECONDITION details.from, details.to
+//   CLEANING_QUOTE_EXPIRED              FAILED_PRECONDITION devis au-delà de sa date de validité
+//   CLEANING_PRICE_NOT_SET              FAILED_PRECONDITION prestation sans prix dans la grille (devis)
+//   CLEANING_VISIT_REQUIRED             FAILED_PRECONDITION visite technique obligatoire avant le devis
+//   CLEANING_LEAD_TIME_TOO_SHORT        FAILED_PRECONDITION details.minimumHours
+//   CLEANING_CANCELLATION_TOO_LATE      FAILED_PRECONDITION details.freeCancellationHours
+//   CLEANING_TOO_MANY_OPEN_REQUESTS     FAILED_PRECONDITION details.maximum
+//   CLEANING_CHECKLIST_INCOMPLETE       FAILED_PRECONDITION liste de contrôle non cochée à la clôture
+//   CLEANING_NO_INTERVENTION_LEFT       FAILED_PRECONDITION tous les passages prévus sont déjà planifiés
+//   CLEANING_TEAM_UNAVAILABLE           ALREADY_EXISTS      details.agentIds : agents déjà pris sur le créneau
+//   CLEANING_CONCURRENT_UPDATE          ALREADY_EXISTS      dossier modifié en même temps par un autre appel
+//   CLEANING_AGENT_ALREADY_REGISTERED   ALREADY_EXISTS
+//   CLEANING_PAYMENT_INVALID            INVALID_ARGUMENT    montant ou moyen de paiement refusé
+//   CLEANING_CALLER_FORBIDDEN           PERMISSION_DENIED   HasPendingObligations appelé par un autre service qu'identity
+//   AUTH_REQUIRED                       UNAUTHENTICATED
+//   AUTH_FORBIDDEN                      PERMISSION_DENIED   rôle du back-office manquant
+//   AUTH_MFA_REQUIRED                   PERMISSION_DENIED   double authentification absente
+
+// ---------------------------------------------------------------------------
+// Catalogue et simulateur — public (UC-CL-01).
+// ---------------------------------------------------------------------------
+service CatalogService {
+  // Prestations actives, avec leurs options et leur minimum de commande quand ils sont fixés.
+  rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+  // Estimation non contractuelle, sans donnée personnelle ; rien n'est enregistré.
+  // Une prestation sans prix répond priced = false, sans erreur.
+  rpc Simulate(SimulateRequest) returns (SimulateResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Demandes de devis — client connecté (UC-CL-02 à 05).
+// ---------------------------------------------------------------------------
+service QuoteService {
+  // Profil complet exigé : contrôlé par la gateway avant l'appel (IDENTITY_PROFILE_INCOMPLETE).
+  // Idempotent par idempotency_key et par client.
+  rpc RequestQuote(RequestQuoteRequest) returns (RequestQuoteResponse);
+  rpc ListMyRequests(ListMyRequestsRequest) returns (ListMyRequestsResponse);
+  rpc GetRequest(GetRequestRequest) returns (GetRequestResponse);
+  // Le client choisit un créneau proposé et son option de paiement ; la mission est créée.
+  // Idempotent par idempotency_key.
+  rpc AcceptQuote(AcceptQuoteRequest) returns (AcceptQuoteResponse);
+  rpc DeclineQuote(DeclineQuoteRequest) returns (DeclineQuoteResponse);
+  rpc CancelRequest(CancelRequestRequest) returns (CancelRequestResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Missions — client connecté (UC-CL-03, 05).
+// ---------------------------------------------------------------------------
+service MissionService {
+  rpc ListMyMissions(ListMyMissionsRequest) returns (ListMyMissionsResponse);
+  rpc GetMission(GetMissionRequest) returns (GetMissionResponse);
+  // Sans frais jusqu'au délai limite avant le premier passage ; au-delà, refus (support).
+  rpc CancelMission(CancelMissionRequest) returns (CancelMissionResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Back-office (UC-CL-06 à 12). Rôles : cleaning_supervisor, cleaning_agent (ses passages
+// uniquement), cleaning_admin ; double authentification exigée.
+// ---------------------------------------------------------------------------
+service CleaningAdminService {
+  // Demandes, visites, devis (cleaning_supervisor, cleaning_admin).
+  rpc ListQuoteRequests(ListQuoteRequestsRequest) returns (ListQuoteRequestsResponse);
+  rpc GetQuoteRequest(GetQuoteRequestRequest) returns (GetQuoteRequestResponse);
+  rpc RejectQuoteRequest(RejectQuoteRequestRequest) returns (RejectQuoteRequestResponse);
+  rpc ScheduleVisit(ScheduleVisitRequest) returns (ScheduleVisitResponse);
+  rpc CompleteVisit(CompleteVisitRequest) returns (CompleteVisitResponse);
+  rpc SendQuote(SendQuoteRequest) returns (SendQuoteResponse);
+
+  // Missions et passages (cleaning_supervisor, cleaning_admin ; cleaning_agent : ses passages).
+  rpc ListMissions(ListMissionsRequest) returns (ListMissionsResponse);
+  rpc GetMissionDetail(GetMissionDetailRequest) returns (GetMissionDetailResponse);
+  // Planifie un passage avec ses agents ; un passage d'une mission récurrente peut avoir
+  // d'autres agents que le précédent.
+  rpc ScheduleIntervention(ScheduleInterventionRequest) returns (ScheduleInterventionResponse);
+  rpc StartIntervention(StartInterventionRequest) returns (StartInterventionResponse);
+  rpc UpdateChecklist(UpdateChecklistRequest) returns (UpdateChecklistResponse);
+  rpc ReportIncident(ReportIncidentRequest) returns (ReportIncidentResponse);
+  rpc ResumeIntervention(ResumeInterventionRequest) returns (ResumeInterventionResponse);
+  rpc CompleteIntervention(CompleteInterventionRequest) returns (CompleteInterventionResponse);
+  // Paiement manuel coché par le superviseur (espèces, Mobile Money hors ligne).
+  rpc RecordPayment(RecordPaymentRequest) returns (RecordPaymentResponse);
+  rpc CancelMissionAsSupervisor(CancelMissionAsSupervisorRequest) returns (CancelMissionAsSupervisorResponse);
+
+  // Catalogue, grille tarifaire et réglages (cleaning_admin). Chaque modification de prix
+  // crée une nouvelle version datée, avec son auteur ; un devis envoyé garde son prix.
+  rpc GetCatalog(GetCatalogRequest) returns (GetCatalogResponse);
+  rpc SaveService(SaveServiceRequest) returns (SaveServiceResponse);
+  rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse);
+
+  // Agents et équipes (cleaning_admin).
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse);
+  rpc DeclareUnavailability(DeclareUnavailabilityRequest) returns (DeclareUnavailabilityResponse);
+  rpc ListTeams(ListTeamsRequest) returns (ListTeamsResponse);
+  rpc CreateTeam(CreateTeamRequest) returns (CreateTeamResponse);
+  rpc UpdateTeam(UpdateTeamRequest) returns (UpdateTeamResponse);
+}
+
+// ===========================================================================
+// Messages communs
+// ===========================================================================
+
+// Créneau horaire, début inclus et fin exclue.
+message TimeSlot {
+  string start = 1;
+  string end = 2;
+}
+
+// Contrat récurrent (client entreprise, ou particulier qui le demande) : nombre de passages
+// par période, pendant une durée en mois. La facture mensuelle viendra avec billing.
+message Recurrence {
+  // "week" ou "month".
+  string period = 1;
+  int32 visits_per_period = 2;
+  int32 duration_months = 3;
+}
+
+message PriceLine {
+  string label = 1;
+  // Quantité entière dans l'unité de la prestation (m², pièces, fosses…), 1 pour un forfait.
+  int32 quantity = 2;
+  ksp.common.v1.Money unit_price = 3;
+  ksp.common.v1.Money amount = 4;
+}
+
+message PriceRange {
+  ksp.common.v1.Money low = 1;
+  ksp.common.v1.Money high = 2;
+}
+
+// Option choisie par le client à l'acceptation du devis.
+message PaymentPlan {
+  // "deposit" (acompte) ou "full" (totalité).
+  string option = 1;
+  // "before" ou "after" la mission.
+  string timing = 2;
+  // "cash", "mobile_money_offline" (coché par le superviseur) ou "mobile_money_online"
+  // (encaissé par le service payment, branché plus tard).
+  string method = 3;
+}
+
+message PaymentRecord {
+  string id = 1;
+  ksp.common.v1.Money amount = 2;
+  // "cash", "mobile_money_offline" ou "mobile_money_online".
+  string method = 3;
+  string reference = 4;
+  string recorded_by = 5;
+  string recorded_at = 6;
+}
+
+message PaymentState {
+  PaymentPlan plan = 1;
+  // "due", "deposit_received" ou "paid".
+  string status = 2;
+  ksp.common.v1.Money total = 3;
+  // Pourcentage d'acompte figé à l'acceptation (30 par défaut, réglable).
+  int32 deposit_percent = 4;
+  ksp.common.v1.Money deposit_amount = 5;
+  ksp.common.v1.Money paid = 6;
+  repeated PaymentRecord payments = 7;
+}
+
+message SiteVisit {
+  string id = 1;
+  // "scheduled", "completed" ou "cancelled".
+  string status = 2;
+  string scheduled_at = 3;
+  string agent_id = 4;
+  string report = 5;
+  string completed_at = 6;
+}
+
+message Quote {
+  string id = 1;
+  // Lignes d'un passage, préremplies depuis la grille et modifiables par le superviseur.
+  repeated PriceLine lines = 2;
+  // Prix d'un passage.
+  ksp.common.v1.Money subtotal = 3;
+  // 1 pour une prestation ponctuelle ; nombre de passages prévus pour un contrat récurrent.
+  int32 intervention_count = 4;
+  ksp.common.v1.Money total = 5;
+  repeated TimeSlot proposed_slots = 6;
+  string valid_until = 7;
+  int32 deposit_percent = 8;
+  ksp.common.v1.Money deposit_amount = 9;
+  Recurrence recurrence = 10;
+  string sent_at = 11;
+  int32 team_size = 12;
+  int32 duration_minutes = 13;
+}
+
+message QuoteRequest {
+  string id = 1;
+  // "received", "visit_scheduled", "quote_sent", "accepted", "declined", "rejected",
+  // "expired" ou "cancelled".
+  string status = 2;
+  string customer_id = 3;
+  // "individual" ou "business".
+  string customer_kind = 4;
+  // Organisation au nom de laquelle la demande est faite, vide pour un particulier.
+  string organization_id = 5;
+  string service_code = 6;
+  // "apartment", "house", "office", "shop", "warehouse" ou "other".
+  string premises_type = 7;
+  int32 quantity = 8;
+  repeated string options = 9;
+  string commune = 10;
+  // Adresse d'intervention : jamais dans les journaux ni dans les événements.
+  string address = 11;
+  repeated TimeSlot preferred_slots = 12;
+  string comment = 13;
+  Recurrence recurrence = 14;
+  // Taille d'équipe demandée par le client, 0 si non précisée.
+  int32 requested_team_size = 15;
+  int32 recommended_team_size = 16;
+  // Fourchette du simulateur au moment de la demande, absente si la prestation n'a pas de prix.
+  PriceRange estimate = 17;
+  SiteVisit visit = 18;
+  Quote quote = 19;
+  string mission_id = 20;
+  string closing_reason = 21;
+  string created_at = 22;
+  string updated_at = 23;
+}
+
+message ChecklistItem {
+  string code = 1;
+  string label = 2;
+  bool done = 3;
+}
+
+message AgentRef {
+  string agent_id = 1;
+  string display_name = 2;
+}
+
+// Passage d'une mission : une prestation ponctuelle en a un, un contrat récurrent plusieurs,
+// chacun avec ses agents.
+message Intervention {
+  string id = 1;
+  // "planned", "in_progress", "on_hold", "completed" ou "cancelled".
+  string status = 2;
+  string scheduled_start = 3;
+  int32 duration_minutes = 4;
+  repeated AgentRef agents = 5;
+  repeated ChecklistItem checklist = 6;
+  string incident_note = 7;
+  // Références de fichiers du service file (photos avant et après), sans stockage ici.
+  repeated string before_photo_file_ids = 8;
+  repeated string after_photo_file_ids = 9;
+  string started_at = 10;
+  string completed_at = 11;
+}
+
+message Mission {
+  string id = 1;
+  string request_id = 2;
+  string quote_id = 3;
+  string customer_id = 4;
+  // "to_schedule", "scheduled", "in_progress", "on_hold", "completed" ou "cancelled".
+  string status = 5;
+  string service_code = 6;
+  string commune = 7;
+  // Adresse d'intervention : jamais dans les journaux ni dans les événements.
+  string address = 8;
+  TimeSlot chosen_slot = 9;
+  Recurrence recurrence = 10;
+  int32 planned_interventions = 11;
+  int32 completed_interventions = 12;
+  repeated Intervention interventions = 13;
+  PaymentState payment = 14;
+  string cancellation_reason = 15;
+  string created_at = 16;
+  string updated_at = 17;
+}
+
+message CatalogOption {
+  string code = 1;
+  string label = 2;
+  // Absent tant que l'option n'a pas de prix.
+  ksp.common.v1.Money price = 3;
+}
+
+message ServiceOffer {
+  string code = 1;
+  string name = 2;
+  string description = 3;
+  // Unité de calcul : "square_meter", "room", "septic_tank" ou "cubic_meter".
+  string unit = 4;
+  repeated CatalogOption options = 5;
+  // Faux tant que l'équipe Nettoyage n'a pas fixé le prix unitaire.
+  bool priced = 6;
+  ksp.common.v1.Money minimum_price = 7;
+}
+
+// ===========================================================================
+// CatalogService
+// ===========================================================================
+
+message ListServicesRequest {}
+
+message ListServicesResponse {
+  repeated ServiceOffer services = 1;
+}
+
+message SimulateRequest {
+  string service_code = 1;
+  string premises_type = 2;
+  // Quantité dans l'unité de la prestation (m², pièces…), entière et positive.
+  int32 quantity = 3;
+  repeated string options = 4;
+  string commune = 5;
+  // "once", "weekly" ou "monthly" : informatif, le prix est celui d'un passage.
+  string frequency = 6;
+}
+
+message SimulateResponse {
+  string service_code = 1;
+  bool priced = 2;
+  // Absents si priced = false.
+  PriceRange estimate = 3;
+  ksp.common.v1.Money computed_price = 4;
+  repeated PriceLine breakdown = 5;
+  bool minimum_applied = 6;
+  int32 commune_coefficient_bp = 7;
+  int32 recommended_team_size = 8;
+  // Mention « estimation non contractuelle », ou raison de l'absence de prix.
+  string notice = 9;
+}
+
+// ===========================================================================
+// QuoteService
+// ===========================================================================
+
+message Page {
+  // 20 par défaut, 100 au plus.
+  int32 limit = 1;
+  string cursor = 2;
+}
+
+message RequestQuoteRequest {
+  string idempotency_key = 1;
+  string service_code = 2;
+  string premises_type = 3;
+  int32 quantity = 4;
+  repeated string options = 5;
+  string commune = 6;
+  string address = 7;
+  repeated TimeSlot preferred_slots = 8;
+  string comment = 9;
+  Recurrence recurrence = 10;
+  int32 requested_team_size = 11;
+}
+
+message RequestQuoteResponse {
+  QuoteRequest request = 1;
+}
+
+message ListMyRequestsRequest {
+  Page page = 1;
+}
+
+message ListMyRequestsResponse {
+  repeated QuoteRequest requests = 1;
+  string next_cursor = 2;
+}
+
+message GetRequestRequest {
+  string request_id = 1;
+}
+
+message GetRequestResponse {
+  QuoteRequest request = 1;
+}
+
+message AcceptQuoteRequest {
+  string request_id = 1;
+  string idempotency_key = 2;
+  // Début d'un des créneaux proposés dans le devis.
+  string slot_start = 3;
+  PaymentPlan payment_plan = 4;
+}
+
+message AcceptQuoteResponse {
+  QuoteRequest request = 1;
+  Mission mission = 2;
+}
+
+message DeclineQuoteRequest {
+  string request_id = 1;
+  string reason = 2;
+}
+
+message DeclineQuoteResponse {
+  QuoteRequest request = 1;
+}
+
+message CancelRequestRequest {
+  string request_id = 1;
+  string reason = 2;
+}
+
+message CancelRequestResponse {
+  QuoteRequest request = 1;
+}
+
+// ===========================================================================
+// MissionService
+// ===========================================================================
+
+message ListMyMissionsRequest {
+  Page page = 1;
+}
+
+message ListMyMissionsResponse {
+  repeated Mission missions = 1;
+  string next_cursor = 2;
+}
+
+message GetMissionRequest {
+  string mission_id = 1;
+}
+
+message GetMissionResponse {
+  Mission mission = 1;
+}
+
+message CancelMissionRequest {
+  string mission_id = 1;
+  string reason = 2;
+}
+
+message CancelMissionResponse {
+  Mission mission = 1;
+}
+
+// ===========================================================================
+// CleaningAdminService — demandes, visites, devis
+// ===========================================================================
+
+message ListQuoteRequestsRequest {
+  Page page = 1;
+  // Filtre facultatif sur l'état.
+  string status = 2;
+}
+
+message ListQuoteRequestsResponse {
+  repeated QuoteRequest requests = 1;
+  string next_cursor = 2;
+}
+
+message GetQuoteRequestRequest {
+  string request_id = 1;
+}
+
+message GetQuoteRequestResponse {
+  QuoteRequest request = 1;
+}
+
+message RejectQuoteRequestRequest {
+  string request_id = 1;
+  string reason = 2;
+}
+
+message RejectQuoteRequestResponse {
+  QuoteRequest request = 1;
+}
+
+message ScheduleVisitRequest {
+  string request_id = 1;
+  string scheduled_at = 2;
+  string agent_id = 3;
+}
+
+message ScheduleVisitResponse {
+  QuoteRequest request = 1;
+}
+
+message CompleteVisitRequest {
+  string visit_id = 1;
+  string report = 2;
+}
+
+message CompleteVisitResponse {
+  QuoteRequest request = 1;
+}
+
+message SendQuoteRequest {
+  string request_id = 1;
+  // Vide : lignes préremplies depuis la grille en vigueur.
+  repeated PriceLine lines = 2;
+  repeated TimeSlot proposed_slots = 3;
+  // 0 : validité par défaut (réglages).
+  int32 validity_days = 4;
+  Recurrence recurrence = 5;
+  // 0 : taille recommandée.
+  int32 team_size = 6;
+  int32 duration_minutes = 7;
+}
+
+message SendQuoteResponse {
+  QuoteRequest request = 1;
+}
+
+// ===========================================================================
+// CleaningAdminService — missions et passages
+// ===========================================================================
+
+message ListMissionsRequest {
+  Page page = 1;
+  string status = 2;
+}
+
+message ListMissionsResponse {
+  repeated Mission missions = 1;
+  string next_cursor = 2;
+}
+
+message GetMissionDetailRequest {
+  string mission_id = 1;
+}
+
+message GetMissionDetailResponse {
+  Mission mission = 1;
+}
+
+message ScheduleInterventionRequest {
+  string mission_id = 1;
+  string scheduled_start = 2;
+  int32 duration_minutes = 3;
+  repeated string agent_ids = 4;
+  // Facultatif : les membres de l'équipe s'ajoutent à agent_ids.
+  string team_id = 5;
+}
+
+message ScheduleInterventionResponse {
+  Mission mission = 1;
+}
+
+message StartInterventionRequest {
+  string intervention_id = 1;
+}
+
+message StartInterventionResponse {
+  Mission mission = 1;
+}
+
+message UpdateChecklistRequest {
+  string intervention_id = 1;
+  // Codes des éléments cochés ; les autres sont décochés.
+  repeated string done_codes = 2;
+}
+
+message UpdateChecklistResponse {
+  Mission mission = 1;
+}
+
+message ReportIncidentRequest {
+  string intervention_id = 1;
+  string note = 2;
+}
+
+message ReportIncidentResponse {
+  Mission mission = 1;
+}
+
+message ResumeInterventionRequest {
+  string intervention_id = 1;
+}
+
+message ResumeInterventionResponse {
+  Mission mission = 1;
+}
+
+message CompleteInterventionRequest {
+  string intervention_id = 1;
+}
+
+message CompleteInterventionResponse {
+  Mission mission = 1;
+}
+
+message RecordPaymentRequest {
+  string mission_id = 1;
+  ksp.common.v1.Money amount = 2;
+  // "cash" ou "mobile_money_offline".
+  string method = 3;
+  string reference = 4;
+}
+
+message RecordPaymentResponse {
+  Mission mission = 1;
+}
+
+message CancelMissionAsSupervisorRequest {
+  string mission_id = 1;
+  string reason = 2;
+}
+
+message CancelMissionAsSupervisorResponse {
+  Mission mission = 1;
+}
+
+// ===========================================================================
+// CleaningAdminService — catalogue, grille, réglages
+// ===========================================================================
+
+message CommuneCoefficient {
+  string commune = 1;
+  int32 coefficient_bp = 2;
+}
+
+message TeamSizeRule {
+  // Une personne pour ce nombre d'unités (m², pièces…).
+  int32 units_per_agent = 1;
+  int32 min_agents = 2;
+  int32 max_agents = 3;
+}
+
+message PricingRule {
+  int32 version = 1;
+  // Absents tant que non fixés.
+  ksp.common.v1.Money unit_price = 2;
+  ksp.common.v1.Money minimum_price = 3;
+  repeated CatalogOption options = 4;
+  repeated CommuneCoefficient commune_coefficients = 5;
+  // Coefficient d'une commune absente de la liste.
+  int32 default_coefficient_bp = 6;
+  TeamSizeRule team_size = 7;
+  repeated ChecklistItem checklist = 8;
+  string updated_by = 9;
+  string updated_at = 10;
+}
+
+message ServiceDefinition {
+  string code = 1;
+  string name = 2;
+  string description = 3;
+  string unit = 4;
+  bool active = 5;
+  PricingRule pricing = 6;
+}
+
+message Settings {
+  int32 quote_validity_days = 1;
+  int32 minimum_lead_hours = 2;
+  int32 free_cancellation_hours = 3;
+  int32 visit_threshold_square_meters = 4;
+  int32 max_open_requests = 5;
+  int32 deposit_percent = 6;
+  string updated_by = 7;
+  string updated_at = 8;
+}
+
+message GetCatalogRequest {}
+
+message GetCatalogResponse {
+  repeated ServiceDefinition services = 1;
+  Settings settings = 2;
+}
+
+message SaveServiceRequest {
+  ServiceDefinition service = 1;
+}
+
+message SaveServiceResponse {
+  ServiceDefinition service = 1;
+}
+
+message UpdateSettingsRequest {
+  Settings settings = 1;
+}
+
+message UpdateSettingsResponse {
+  Settings settings = 1;
+}
+
+// ===========================================================================
+// CleaningAdminService — agents et équipes
+// ===========================================================================
+
+message Unavailability {
+  string id = 1;
+  string start = 2;
+  string end = 3;
+  string reason = 4;
+}
+
+message Agent {
+  // Identifiant du compte KSP de l'agent (identity).
+  string agent_id = 1;
+  string display_name = 2;
+  bool active = 3;
+  repeated Unavailability unavailabilities = 4;
+}
+
+message Team {
+  string id = 1;
+  string name = 2;
+  repeated AgentRef members = 3;
+}
+
+message ListAgentsRequest {}
+
+message ListAgentsResponse {
+  repeated Agent agents = 1;
+}
+
+message RegisterAgentRequest {
+  string agent_id = 1;
+  string display_name = 2;
+}
+
+message RegisterAgentResponse {
+  Agent agent = 1;
+}
+
+message DeclareUnavailabilityRequest {
+  string agent_id = 1;
+  string start = 2;
+  string end = 3;
+  string reason = 4;
+}
+
+message DeclareUnavailabilityResponse {
+  Agent agent = 1;
+}
+
+message ListTeamsRequest {}
+
+message ListTeamsResponse {
+  repeated Team teams = 1;
+}
+
+message CreateTeamRequest {
+  string name = 1;
+  repeated string member_ids = 2;
+}
+
+message CreateTeamResponse {
+  Team team = 1;
+}
+
+message UpdateTeamRequest {
+  string team_id = 1;
+  string name = 2;
+  repeated string member_ids = 3;
+}
+
+message UpdateTeamResponse {
+  Team team = 1;
+}

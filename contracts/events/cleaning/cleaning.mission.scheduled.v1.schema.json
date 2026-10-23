@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.mission.scheduled.v1.schema.json",
+  "title": "cleaning.mission.scheduled",
+  "description": "Un passage de la mission est planifié avec ses agents (UC-CL-09) ; publié à chaque passage d'un contrat récurrent.",
+  "x-event-type": "cleaning.mission.scheduled",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["missionId", "interventionId", "customerId", "scheduledStart", "durationMinutes", "agentIds"],
+  "properties": {
+    "missionId": { "type": "string", "format": "uuid" },
+    "interventionId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "scheduledStart": { "type": "string", "format": "date-time" },
+    "durationMinutes": { "type": "integer", "minimum": 1 },
+    "agentIds": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uuid" }
+    }
+  }
+}

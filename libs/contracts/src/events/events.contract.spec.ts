@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
+import { type CleaningEventPayloads, type CleaningEventType } from './cleaning.events';
 import { type IdentityEventPayloads, type IdentityEventType } from './identity.events';
 import { type NotificationEventPayloads, type NotificationEventType } from './notification.events';
 
@@ -117,4 +118,97 @@ describe('Contrats des événements notification', () => {
       );
     },
   );
+});
+
+const xof = (amount: number) => ({ amount, currency: 'XOF' as const });
+
+const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } = {
+  'cleaning.quote.requested': {
+    requestId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    customerKind: 'individual',
+    serviceCode: 'home_cleaning',
+    visitRequired: false,
+  },
+  'cleaning.visit.scheduled': {
+    requestId: uuid,
+    visitId: uuid,
+    customerId: uuid,
+    agentId: uuid,
+    scheduledAt: '2026-11-02T09:00:00Z',
+  },
+  'cleaning.quote.sent': {
+    requestId: uuid,
+    quoteId: uuid,
+    customerId: uuid,
+    total: xof(45000),
+    validUntil: '2026-11-17T09:00:00Z',
+  },
+  'cleaning.booking.confirmed': {
+    requestId: uuid,
+    quoteId: uuid,
+    missionId: uuid,
+    customerId: uuid,
+    organizationId: uuid,
+    total: xof(480000),
+    plannedInterventions: 12,
+    recurrence: { period: 'week', visitsPerPeriod: 1, durationMonths: 3 },
+    paymentPlan: { option: 'deposit', timing: 'before', method: 'cash' },
+    depositAmount: xof(144000),
+  },
+  'cleaning.mission.scheduled': {
+    missionId: uuid,
+    interventionId: uuid,
+    customerId: uuid,
+    scheduledStart: '2026-11-05T08:00:00Z',
+    durationMinutes: 180,
+    agentIds: [uuid],
+  },
+  'cleaning.mission.completed': {
+    missionId: uuid,
+    customerId: uuid,
+    completedInterventions: 1,
+    completedAt: '2026-11-05T11:00:00Z',
+  },
+  'cleaning.request.cancelled': {
+    requestId: uuid,
+    missionId: null,
+    customerId: uuid,
+    cancelledBy: 'customer',
+    outcome: 'cancelled',
+  },
+};
+
+describe('Contrats des événements cleaning', () => {
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  addFormats(ajv);
+  ajv.addKeyword('x-event-type').addKeyword('x-event-version');
+  const schemas = loadSchemas('cleaning');
+
+  it('chaque type TypeScript a un schéma, et inversement', () => {
+    expect([...schemas.keys()].sort()).toEqual(Object.keys(cleaningExamples).sort());
+  });
+
+  it.each(Object.entries(cleaningExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
+    const validate = ajv.compile(schemas.get(type)!);
+    expect(validate(payload)).toBe(true);
+  });
+
+  it.each(['address', 'comment', 'reason'])(
+    'aucun événement cleaning n’accepte le champ « %s » (données personnelles)',
+    (field) => {
+      for (const [type, payload] of Object.entries(cleaningExamples)) {
+        const validate = ajv.compile(schemas.get(type)!);
+        expect(validate({ ...payload, [field]: 'Rue 12, Cotonou' })).toBe(false);
+      }
+    },
+  );
+
+  it('les montants sont des entiers en XOF', () => {
+    const validate = ajv.compile(schemas.get('cleaning.quote.sent')!);
+    const base = cleaningExamples['cleaning.quote.sent'];
+    expect(validate({ ...base, total: { amount: 450.5, currency: 'XOF' } })).toBe(false);
+    expect(validate({ ...base, total: { amount: 450, currency: 'EUR' } })).toBe(false);
+  });
 });
