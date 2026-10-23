@@ -1,4 +1,4 @@
-# Service **name**
+# Service `__name__`
 
 Cahier des charges : `docs/services/__name__/`. Contrat gRPC : `contracts/proto/ksp/__proto_name__/v1/`.
 
