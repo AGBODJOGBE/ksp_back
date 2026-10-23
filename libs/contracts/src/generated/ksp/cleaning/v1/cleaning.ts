@@ -148,6 +148,8 @@ export interface QuoteRequest {
   closingReason: string;
   createdAt: string;
   updatedAt: string;
+  /** Entreprise : jours d'intervention par semaine indiqués, 0 si non précisés. */
+  daysPerWeek: number;
 }
 
 export interface ChecklistItem {
@@ -179,6 +181,8 @@ export interface Intervention {
   afterPhotoFileIds: string[];
   startedAt: string;
   completedAt: string;
+  /** Passage annulé : "suspension" (impayés, reprogrammable au déblocage) ou "manual" ; vide sinon. */
+  cancellationCause: string;
 }
 
 export interface Mission {
@@ -201,6 +205,19 @@ export interface Mission {
   cancellationReason: string;
   createdAt: string;
   updatedAt: string;
+  /** Suspension pour impayés en cours, absente sinon (CDC Nettoyage, partie 10). */
+  suspension?:
+    | Suspension
+    | undefined;
+  /** Jours d'intervention par semaine indiqués par l'entreprise, 0 si non précisés. */
+  daysPerWeek: number;
+}
+
+export interface Suspension {
+  /** "unpaid_invoices" (entreprise) ou "unpaid_interventions" (particulier). */
+  cause: string;
+  since: string;
+  unpaidCount: number;
 }
 
 export interface CatalogOption {
@@ -252,6 +269,8 @@ export interface SimulateResponse {
   recommendedTeamSize: number;
   /** Mention « estimation non contractuelle », ou raison de l'absence de prix. */
   notice: string;
+  /** Vrai si la commune est dans une zone desservie ; l'estimation est donnée dans tous les cas. */
+  covered: boolean;
 }
 
 export interface Page {
@@ -272,6 +291,8 @@ export interface RequestQuoteRequest {
   comment: string;
   recurrence?: Recurrence | undefined;
   requestedTeamSize: number;
+  /** Entreprise : jours d'intervention par semaine, si connus (1 à 7) ; 0 si non précisés. */
+  daysPerWeek: number;
 }
 
 export interface RequestQuoteResponse {
@@ -557,11 +578,24 @@ export interface Settings {
   quoteValidityDays: number;
   minimumLeadHours: number;
   freeCancellationHours: number;
+  /** Sans effet depuis la décision du 2026-10-23 : visite des lieux obligatoire pour toute demande. */
   visitThresholdSquareMeters: number;
   maxOpenRequests: number;
   depositPercent: number;
   updatedBy: string;
   updatedAt: string;
+  /**
+   * Règles de paiement et de suspension (CDC Nettoyage, partie 10). À l'écriture, 0 laisse la
+   * valeur en vigueur inchangée (aucune n'accepte 0).
+   * Factures d'entreprise impayées à partir desquelles le client est averti (1 par défaut).
+   */
+  businessWarningUnpaidInvoices: number;
+  /** Factures d'entreprise impayées qui suspendent le contrat (2 par défaut). */
+  businessSuspensionUnpaidInvoices: number;
+  /** Passages impayés d'un particulier en récurrent qui suspendent le service (1 par défaut). */
+  individualSuspensionUnpaidInterventions: number;
+  /** Heures laissées après la fin d'un passage pour enregistrer son paiement (24 par défaut). */
+  individualPaymentGraceHours: number;
 }
 
 export interface GetCatalogRequest {
@@ -586,6 +620,43 @@ export interface UpdateSettingsRequest {
 
 export interface UpdateSettingsResponse {
   settings?: Settings | undefined;
+}
+
+/**
+ * Zone desservie : une commune, identifiée par sa clé normalisée (minuscules, sans accents,
+ * tirets), la même que celle des coefficients de commune de la grille tarifaire.
+ */
+export interface Zone {
+  /** Clé normalisée, par exemple "abomey-calavi". */
+  code: string;
+  /** Nom affiché, par exemple "Abomey-Calavi". */
+  commune: string;
+  active: boolean;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface ListZonesRequest {
+}
+
+export interface ListZonesResponse {
+  zones: Zone[];
+}
+
+export interface SaveZoneRequest {
+  commune: string;
+}
+
+export interface SaveZoneResponse {
+  zone?: Zone | undefined;
+}
+
+export interface DeactivateZoneRequest {
+  code: string;
+}
+
+export interface DeactivateZoneResponse {
+  zone?: Zone | undefined;
 }
 
 export interface Unavailability {
@@ -960,6 +1031,16 @@ export interface CleaningAdminServiceClient {
 
   updateSettings(request: UpdateSettingsRequest, metadata?: Metadata): Observable<UpdateSettingsResponse>;
 
+  /** Zones desservies (cleaning_admin) : une demande de devis hors zone est refusée. */
+
+  listZones(request: ListZonesRequest, metadata?: Metadata): Observable<ListZonesResponse>;
+
+  /** Ajoute la commune, ou la réactive si elle existe déjà. */
+
+  saveZone(request: SaveZoneRequest, metadata?: Metadata): Observable<SaveZoneResponse>;
+
+  deactivateZone(request: DeactivateZoneRequest, metadata?: Metadata): Observable<DeactivateZoneResponse>;
+
   /** Agents et équipes (cleaning_admin). */
 
   listAgents(request: ListAgentsRequest, metadata?: Metadata): Observable<ListAgentsResponse>;
@@ -1100,6 +1181,25 @@ export interface CleaningAdminServiceController {
     metadata?: Metadata,
   ): Promise<UpdateSettingsResponse> | Observable<UpdateSettingsResponse> | UpdateSettingsResponse;
 
+  /** Zones desservies (cleaning_admin) : une demande de devis hors zone est refusée. */
+
+  listZones(
+    request: ListZonesRequest,
+    metadata?: Metadata,
+  ): Promise<ListZonesResponse> | Observable<ListZonesResponse> | ListZonesResponse;
+
+  /** Ajoute la commune, ou la réactive si elle existe déjà. */
+
+  saveZone(
+    request: SaveZoneRequest,
+    metadata?: Metadata,
+  ): Promise<SaveZoneResponse> | Observable<SaveZoneResponse> | SaveZoneResponse;
+
+  deactivateZone(
+    request: DeactivateZoneRequest,
+    metadata?: Metadata,
+  ): Promise<DeactivateZoneResponse> | Observable<DeactivateZoneResponse> | DeactivateZoneResponse;
+
   /** Agents et équipes (cleaning_admin). */
 
   listAgents(
@@ -1155,6 +1255,9 @@ export function CleaningAdminServiceControllerMethods() {
       "getCatalog",
       "saveService",
       "updateSettings",
+      "listZones",
+      "saveZone",
+      "deactivateZone",
       "listAgents",
       "registerAgent",
       "declareUnavailability",

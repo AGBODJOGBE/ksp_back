@@ -1,0 +1,177 @@
+syntax = "proto3";
+
+package ksp.billing.v1;
+
+import "ksp/common/v1/money.proto";
+
+// Contrats du service billing (minimal, lot 2) : factures mensuelles des contrats d'entreprise
+// du Nettoyage (CDC Nettoyage, partie 10).
+//
+// - BillingService : espace client (« Mes factures »).
+// - BillingAdminService : back-office (factures, paiement manuel, réglages).
+//
+// Les factures naissent d'une tâche planifiée interne au service, à partir des contrats appris
+// par l'événement cleaning.booking.confirmed : aucune méthode ne crée de facture.
+//
+// L'utilisateur connecté n'est jamais dans les messages : la gateway le transmet dans les
+// métadonnées gRPC (x-user-id, x-active-context, x-user-roles, x-user-mfa…). Le service
+// revérifie toujours ses droits.
+//
+// Conventions : dates ISO 8601 en UTC (chaîne vide = absente) ; montants ksp.common.v1.Money,
+// entiers en XOF ; valeurs énumérées en snake_case, identiques à l'API REST.
+//
+// Erreurs (code AppError → statut gRPC) :
+//   BILLING_INVOICE_NOT_FOUND     NOT_FOUND           facture inconnue ou hors du périmètre de l'appelant
+//   BILLING_VALIDATION_FAILED     INVALID_ARGUMENT    details.field
+//   BILLING_PAYMENT_INVALID       INVALID_ARGUMENT    details.reason : amount_invalid, method_not_allowed,
+//                                                     exceeds_balance
+//   BILLING_INVALID_TRANSITION    FAILED_PRECONDITION facture déjà payée ou annulée
+//   BILLING_CONCURRENT_UPDATE     ALREADY_EXISTS      facture modifiée en même temps par un autre appel
+//   AUTH_REQUIRED                 UNAUTHENTICATED
+//   AUTH_FORBIDDEN                PERMISSION_DENIED   rôle du back-office manquant
+//   AUTH_MFA_REQUIRED             PERMISSION_DENIED   double authentification absente
+
+// Espace client : factures du client connecté (contexte personnel) ou de son organisation
+// active (contexte entreprise).
+service BillingService {
+  rpc ListMyInvoices(ListMyInvoicesRequest) returns (ListMyInvoicesResponse);
+  rpc GetMyInvoice(GetMyInvoiceRequest) returns (GetMyInvoiceResponse);
+}
+
+// Back-office : finance_officer, cleaning_supervisor, cleaning_admin, super_admin, avec double
+// authentification. Réglages : cleaning_admin, finance_officer, super_admin.
+service BillingAdminService {
+  rpc ListInvoices(ListInvoicesRequest) returns (ListInvoicesResponse);
+  rpc GetInvoice(GetInvoiceRequest) returns (GetInvoiceResponse);
+  // Paiement reçu hors ligne (espèces, virement, Mobile Money hors ligne). La facture passe
+  // « payée » quand le total est atteint (billing.invoice.paid).
+  rpc RecordInvoicePayment(RecordInvoicePaymentRequest) returns (RecordInvoicePaymentResponse);
+  rpc GetBillingSettings(GetBillingSettingsRequest) returns (GetBillingSettingsResponse);
+  rpc UpdateBillingSettings(UpdateBillingSettingsRequest) returns (UpdateBillingSettingsResponse);
+}
+
+message Page {
+  // 20 par défaut, 100 au plus.
+  int32 limit = 1;
+  string cursor = 2;
+}
+
+message InvoiceLine {
+  string label = 1;
+  int32 quantity = 2;
+  ksp.common.v1.Money unit_price = 3;
+  ksp.common.v1.Money amount = 4;
+}
+
+message InvoicePayment {
+  string id = 1;
+  ksp.common.v1.Money amount = 2;
+  // "cash", "bank_transfer" ou "mobile_money_offline".
+  string method = 3;
+  string reference = 4;
+  string recorded_by = 5;
+  string recorded_at = 6;
+}
+
+message Invoice {
+  string id = 1;
+  // FAC-<année>-<numéro sur 6 chiffres>, unique et sans trou par année.
+  string number = 2;
+  // "pending_payment", "overdue", "paid" ou "cancelled".
+  string status = 3;
+  string customer_id = 4;
+  // Organisation facturée, vide pour un particulier.
+  string organization_id = 5;
+  // Service à l'origine du contrat : "cleaning".
+  string source = 6;
+  // Contrat chez le service source (pour cleaning : la mission).
+  string contract_id = 7;
+  // Rang du mois civil facturé dans le contrat (1 pour le premier). Une facture par mois civil
+  // (heure du Bénin), émise le 1er du mois suivant à 00:00 ; mois partiels et jours de
+  // suspension au prorata des jours.
+  int32 period_index = 8;
+  string period_start = 9;
+  string period_end = 10;
+  repeated InvoiceLine lines = 11;
+  ksp.common.v1.Money total = 12;
+  ksp.common.v1.Money paid = 13;
+  ksp.common.v1.Money balance = 14;
+  string issued_at = 15;
+  string due_at = 16;
+  string paid_at = 17;
+  repeated InvoicePayment payments = 18;
+}
+
+message ListMyInvoicesRequest {
+  Page page = 1;
+  // Filtre facultatif : "pending_payment", "overdue", "paid" ou "cancelled".
+  string status = 2;
+}
+
+message ListMyInvoicesResponse {
+  repeated Invoice invoices = 1;
+  string next_cursor = 2;
+}
+
+message GetMyInvoiceRequest {
+  string invoice_id = 1;
+}
+
+message GetMyInvoiceResponse {
+  Invoice invoice = 1;
+}
+
+message ListInvoicesRequest {
+  Page page = 1;
+  string status = 2;
+  // Filtres facultatifs.
+  string customer_id = 3;
+  string organization_id = 4;
+  string contract_id = 5;
+}
+
+message ListInvoicesResponse {
+  repeated Invoice invoices = 1;
+  string next_cursor = 2;
+}
+
+message GetInvoiceRequest {
+  string invoice_id = 1;
+}
+
+message GetInvoiceResponse {
+  Invoice invoice = 1;
+}
+
+message RecordInvoicePaymentRequest {
+  string invoice_id = 1;
+  ksp.common.v1.Money amount = 2;
+  // "cash", "bank_transfer" ou "mobile_money_offline".
+  string method = 3;
+  string reference = 4;
+}
+
+message RecordInvoicePaymentResponse {
+  Invoice invoice = 1;
+}
+
+message BillingSettings {
+  // Délai de règlement après l'émission (10 jours par défaut).
+  int32 payment_term_days = 1;
+  string updated_by = 2;
+  string updated_at = 3;
+}
+
+message GetBillingSettingsRequest {}
+
+message GetBillingSettingsResponse {
+  BillingSettings settings = 1;
+}
+
+message UpdateBillingSettingsRequest {
+  BillingSettings settings = 1;
+}
+
+message UpdateBillingSettingsResponse {
+  BillingSettings settings = 1;
+}

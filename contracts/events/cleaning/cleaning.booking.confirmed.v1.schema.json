@@ -64,6 +64,11 @@
         "method": { "enum": ["cash", "mobile_money_offline", "mobile_money_online"] }
       }
     },
-    "depositAmount": { "$ref": "#/$defs/money" }
+    "depositAmount": { "$ref": "#/$defs/money" },
+    "startsAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Début du créneau choisi : point de départ des mois de facturation d'un contrat d'entreprise (ajout, facultatif)"
+    }
   }
 }

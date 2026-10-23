@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.contract.suspension_warning.v1.schema.json",
+  "title": "cleaning.contract.suspension_warning",
+  "description": "Contrat d'entreprise avec des factures impayées, sous le seuil de suspension : le client est prévenu que le service sera suspendu au seuil (CDC Nettoyage, partie 10). Écouté par notification.",
+  "x-event-type": "cleaning.contract.suspension_warning",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["missionId", "customerId", "organizationId", "unpaidCount", "suspensionThreshold"],
+  "properties": {
+    "missionId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": { "type": ["string", "null"], "format": "uuid" },
+    "unpaidCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Factures impayées (échéance dépassée) du contrat"
+    },
+    "suspensionThreshold": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre d'impayés qui suspend le contrat (réglage de l'admin)"
+    }
+  }
+}

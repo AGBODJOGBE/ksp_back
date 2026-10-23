@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.contract.resumed.v1.schema.json",
+  "title": "cleaning.contract.resumed",
+  "description": "Mission débloquée : les impayés sont repassés sous le seuil ; les passages annulés par la suspension ont été reprogrammés automatiquement quand des agents étaient libres (CDC Nettoyage, partie 10). Écouté par notification (admin, superviseur, client) et billing (reprise de la facturation).",
+  "x-event-type": "cleaning.contract.resumed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "missionId",
+    "customerId",
+    "organizationId",
+    "cause",
+    "unpaidCount",
+    "resumedAt",
+    "rescheduledCount",
+    "failedCount"
+  ],
+  "properties": {
+    "missionId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": { "type": ["string", "null"], "format": "uuid" },
+    "cause": { "enum": ["unpaid_invoices", "unpaid_interventions"] },
+    "unpaidCount": { "type": "integer", "minimum": 0 },
+    "resumedAt": { "type": "string", "format": "date-time" },
+    "rescheduledCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Passages reprogrammés automatiquement (chacun publie aussi cleaning.mission.scheduled)"
+    },
+    "failedCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Passages non reprogrammés, à replanifier à la main (voir cleaning.rescheduling.failed)"
+    }
+  }
+}

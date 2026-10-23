@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/billing/billing.invoice.issued.v1.schema.json",
+  "title": "billing.invoice.issued",
+  "description": "Facture mensuelle émise, en attente de paiement jusqu'à l'échéance. Écouté par notification (espace client et e-mail avec la date limite).",
+  "x-event-type": "billing.invoice.issued",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "invoiceId",
+    "invoiceNumber",
+    "customerId",
+    "organizationId",
+    "source",
+    "contractId",
+    "periodStart",
+    "periodEnd",
+    "total",
+    "issuedAt",
+    "dueAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "integer", "minimum": 0 },
+        "currency": { "const": "XOF" }
+      }
+    }
+  },
+  "properties": {
+    "invoiceId": { "type": "string", "format": "uuid" },
+    "invoiceNumber": { "type": "string", "pattern": "^FAC-[0-9]{4}-[0-9]{6}$" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": { "type": ["string", "null"], "format": "uuid" },
+    "source": { "enum": ["cleaning"], "description": "Service métier à l'origine du contrat facturé" },
+    "contractId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Contrat chez le service source (pour cleaning : la mission)"
+    },
+    "periodStart": { "type": "string", "format": "date-time" },
+    "periodEnd": { "type": "string", "format": "date-time" },
+    "total": { "$ref": "#/$defs/money" },
+    "issuedAt": { "type": "string", "format": "date-time" },
+    "dueAt": { "type": "string", "format": "date-time" }
+  }
+}

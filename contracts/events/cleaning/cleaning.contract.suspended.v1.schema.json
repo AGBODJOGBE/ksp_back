@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.contract.suspended.v1.schema.json",
+  "title": "cleaning.contract.suspended",
+  "description": "Mission suspendue pour impayés : passages à venir annulés, agents libérés (CDC Nettoyage, partie 10). Écouté par notification (client, admin, superviseur) et billing (pause de la facturation).",
+  "x-event-type": "cleaning.contract.suspended",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "missionId",
+    "customerId",
+    "organizationId",
+    "cause",
+    "unpaidCount",
+    "threshold",
+    "cancelledInterventionIds",
+    "releasedAgentIds",
+    "suspendedAt"
+  ],
+  "properties": {
+    "missionId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": { "type": ["string", "null"], "format": "uuid" },
+    "cause": {
+      "enum": ["unpaid_invoices", "unpaid_interventions"],
+      "description": "unpaid_invoices : factures d'entreprise ; unpaid_interventions : passages d'un particulier"
+    },
+    "unpaidCount": { "type": "integer", "minimum": 1 },
+    "threshold": { "type": "integer", "minimum": 1 },
+    "cancelledInterventionIds": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "releasedAgentIds": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "suspendedAt": { "type": "string", "format": "date-time" }
+  }
+}

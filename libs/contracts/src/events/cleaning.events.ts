@@ -53,6 +53,8 @@ export interface CleaningEventPayloads {
       method: 'cash' | 'mobile_money_offline' | 'mobile_money_online';
     };
     depositAmount: CleaningMoney;
+    /** Début du créneau choisi : départ des mois de facturation d'un contrat d'entreprise. */
+    startsAt?: string;
   };
   'cleaning.mission.scheduled': {
     missionId: string;
@@ -75,6 +77,44 @@ export interface CleaningEventPayloads {
     cancelledBy: 'customer' | 'supervisor';
     outcome: 'cancelled' | 'rejected' | 'declined';
   };
+  'cleaning.contract.suspension_warning': {
+    missionId: string;
+    customerId: string;
+    organizationId: string | null;
+    unpaidCount: number;
+    suspensionThreshold: number;
+  };
+  'cleaning.contract.suspended': {
+    missionId: string;
+    customerId: string;
+    organizationId: string | null;
+    cause: CleaningSuspensionCause;
+    unpaidCount: number;
+    threshold: number;
+    cancelledInterventionIds: string[];
+    releasedAgentIds: string[];
+    suspendedAt: string;
+  };
+  'cleaning.contract.resumed': {
+    missionId: string;
+    customerId: string;
+    organizationId: string | null;
+    cause: CleaningSuspensionCause;
+    unpaidCount: number;
+    resumedAt: string;
+    rescheduledCount: number;
+    failedCount: number;
+  };
+  'cleaning.rescheduling.failed': {
+    missionId: string;
+    customerId: string;
+    organizationId: string | null;
+    interventionIds: string[];
+    failedCount: number;
+  };
 }
+
+/** Factures d'entreprise impayées, ou passages impayés d'un particulier en récurrent. */
+export type CleaningSuspensionCause = 'unpaid_invoices' | 'unpaid_interventions';
 
 export type CleaningEventType = keyof CleaningEventPayloads;
