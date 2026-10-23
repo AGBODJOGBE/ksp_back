@@ -18,5 +18,10 @@
     "grpcPort": 50053,
     "httpPort": 3103,
     "database": true
+  },
+  "billing": {
+    "grpcPort": 50054,
+    "httpPort": 3104,
+    "database": true
   }
 }

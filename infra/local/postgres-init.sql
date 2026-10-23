@@ -11,3 +11,6 @@ CREATE DATABASE notification OWNER notification;
 
 CREATE USER cleaning WITH PASSWORD 'cleaning' CREATEDB;
 CREATE DATABASE cleaning OWNER cleaning;
+
+CREATE USER billing WITH PASSWORD 'billing' CREATEDB;
+CREATE DATABASE billing OWNER billing;

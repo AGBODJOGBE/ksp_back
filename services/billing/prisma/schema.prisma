@@ -1,0 +1,120 @@
+// Base de données du service billing. Aucun autre service n'y accède (règle d'or n° 1).
+// Montants en entiers de FCFA (XOF). Les contrats sont appris par les événements de cleaning.
+
+generator client {
+  provider = "prisma-client-js"
+  // Client propre à ce service : plusieurs services cohabitent dans le dépôt.
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Événements à publier (pattern outbox, règle d'or n° 4). Écrits dans la même transaction que la donnée métier.
+model OutboxEvent {
+  id          String    @id @db.Uuid
+  eventType   String    @map("event_type")
+  payload     Json
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(3)
+  attempts    Int       @default(0)
+
+  @@map("outbox")
+}
+
+/// Événements déjà traités par ce service (inbox) : un événement reçu deux fois n'a qu'un effet.
+model ProcessedEvent {
+  eventId     String   @map("event_id") @db.Uuid
+  consumer    String
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@id([eventId, consumer])
+  @@map("processed_events")
+}
+
+/// Réglages de la facturation (une seule ligne, id = 1).
+model BillingSettings {
+  id              Int       @id @default(1)
+  /// Délai de règlement après l'émission (10 jours par défaut, CDC Nettoyage partie 10).
+  paymentTermDays Int       @default(10) @map("payment_term_days")
+  updatedBy       String?   @map("updated_by")
+  updatedAt       DateTime? @map("updated_at") @db.Timestamptz(3)
+
+  @@map("billing_settings")
+}
+
+/// Contrat facturé chaque mois, appris par cleaning.booking.confirmed (id = mission de cleaning).
+model BillingContract {
+  id             String    @id @db.Uuid
+  source         String
+  customerId     String    @map("customer_id") @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
+  total          Int
+  durationMonths Int       @map("duration_months")
+  startsAt       DateTime  @map("starts_at") @db.Timestamptz(3)
+  /// Fin anticipée (mission annulée) : plus aucun mois facturé au-delà.
+  terminatedAt   DateTime? @map("terminated_at") @db.Timestamptz(3)
+  /// Suspension en cours (cleaning.contract.suspended), null sinon.
+  suspendedSince DateTime? @map("suspended_since") @db.Timestamptz(3)
+  /// Suspensions terminées : [{ from, to }] ; un mois qui finit pendant l'une d'elles n'est pas facturé.
+  suspensions    Json      @default("[]")
+  lastResumedAt  DateTime? @map("last_resumed_at") @db.Timestamptz(3)
+  createdAt      DateTime  @map("created_at") @db.Timestamptz(3)
+  invoices       Invoice[]
+
+  @@index([terminatedAt])
+  @@map("billing_contracts")
+}
+
+/// Facture mensuelle : une seule par (contrat, mois).
+model Invoice {
+  id             String           @id @db.Uuid
+  number         String           @unique
+  status         String
+  contractId     String           @map("contract_id") @db.Uuid
+  customerId     String           @map("customer_id") @db.Uuid
+  organizationId String?          @map("organization_id") @db.Uuid
+  source         String
+  periodIndex    Int              @map("period_index")
+  periodStart    DateTime         @map("period_start") @db.Timestamptz(3)
+  periodEnd      DateTime         @map("period_end") @db.Timestamptz(3)
+  lines          Json
+  total          Int
+  issuedAt       DateTime         @map("issued_at") @db.Timestamptz(3)
+  dueAt          DateTime         @map("due_at") @db.Timestamptz(3)
+  paidAt         DateTime?        @map("paid_at") @db.Timestamptz(3)
+  version        Int              @default(0)
+  contract       BillingContract  @relation(fields: [contractId], references: [id])
+  payments       InvoicePayment[]
+
+  @@unique([contractId, periodIndex])
+  @@index([customerId, id])
+  @@index([organizationId, id])
+  @@index([status, dueAt])
+  @@map("invoices")
+}
+
+/// Paiement enregistré au back-office ; jamais modifié.
+model InvoicePayment {
+  id         String   @id @db.Uuid
+  invoiceId  String   @map("invoice_id") @db.Uuid
+  amount     Int
+  method     String
+  reference  String?
+  recordedBy String   @map("recorded_by")
+  recordedAt DateTime @map("recorded_at") @db.Timestamptz(3)
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
+  @@map("invoice_payments")
+}
+
+/// Compteur des numéros de facture, par année : numérotation continue, sans trou.
+model InvoiceCounter {
+  year       Int @id
+  lastNumber Int @map("last_number")
+
+  @@map("invoice_counters")
+}

@@ -1,0 +1,40 @@
+{
+  "name": "@ksp/billing-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Service de facturation de l'écosystème KSP : factures mensuelles des contrats d'entreprise, paiements manuels.",
+  "main": "dist/main.js",
+  "files": [
+    "dist",
+    "prisma"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "jest",
+    "dev": "node --watch --env-file=.env -r ../../tools/dev/register.cjs -r ./src/tracing.ts src/main.ts",
+    "start": "node dist/main.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "1.14.6",
+    "@ksp/contracts": "workspace:*",
+    "@ksp/platform": "workspace:*",
+    "@nestjs/common": "11.2.7",
+    "@nestjs/core": "11.2.7",
+    "@nestjs/microservices": "11.2.7",
+    "@prisma/client": "6.19.3",
+    "prisma": "6.19.3",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "uuid": "11.1.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "11.2.7",
+    "@types/pg": "8.15.6",
+    "pg": "8.16.3"
+  }
+}
