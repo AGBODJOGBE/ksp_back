@@ -1,6 +1,12 @@
 /** Catégories de limites d'appels (extension x-ksp-rate-limits du contrat OpenAPI). */
 export type RateLimitCategory =
-  'public' | 'authenticated' | 'otp_request' | 'otp_verify' | 'mfa_verify' | 'refresh' | 'cleaning_simulation';
+  | 'public'
+  | 'authenticated'
+  | 'otp_request'
+  | 'otp_verify'
+  | 'mfa_verify'
+  | 'refresh'
+  | 'cleaning_simulation';
 
 export interface RateLimitRule {
   limit: number;
