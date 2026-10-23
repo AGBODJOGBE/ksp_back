@@ -1,4 +1,4 @@
-import { identityV1 } from '@ksp/contracts';
+import { cleaningV1, identityV1 } from '@ksp/contracts';
 import {
   AccessTokenVerifier,
   createLoggerModule,
@@ -13,6 +13,8 @@ import {
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { type Clock, type RateLimiter } from './application/access/access.ports';
+import { type CleaningApi } from './application/cleaning/cleaning.ports';
+import { RequestCleaningQuoteUseCase } from './application/cleaning/request-cleaning-quote.use-case';
 import { AuthorizeRequestUseCase } from './application/access/authorize-request.use-case';
 import {
   ConfirmTotpUseCase,
@@ -27,17 +29,27 @@ import {
 } from './application/identity/identity.use-cases';
 import { GetPublicKeysUseCase } from './application/keys/public-keys';
 import { clientOriginsFrom, DEV_IDENTITY_JWKS_URL, type GatewayConfig, rateLimitsFrom } from './config';
+import { CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
 import { IdentityGrpcAdapter } from './infrastructure/grpc/identity-grpc.adapter';
 import { HttpJwksSource } from './infrastructure/keys/http-jwks.source';
 import { KeysReadiness } from './infrastructure/keys/keys-readiness';
 import { type JwksSource, SigningKeysCache } from './infrastructure/keys/signing-keys-cache';
 import { InMemoryRateLimiter } from './infrastructure/rate-limit/in-memory-rate-limiter';
 import { SystemClock } from './infrastructure/system/system-clock';
+import { CleaningAdminHttpController } from './interfaces/http/cleaning-admin.controller';
+import { CleaningHttpController } from './interfaces/http/cleaning.controller';
 import { IdentityHttpController } from './interfaces/http/identity.controller';
 import { JwksHttpController } from './interfaces/http/jwks.controller';
 import { RefreshCookies } from './interfaces/http/refresh-cookie';
 import { RouteGuard } from './interfaces/http/route.guard';
-import { CLOCK, IDENTITY_GRPC_CLIENT, JWKS_SOURCE, RATE_LIMITER } from './tokens';
+import {
+  CLEANING_API,
+  CLEANING_GRPC_CLIENT,
+  CLOCK,
+  IDENTITY_GRPC_CLIENT,
+  JWKS_SOURCE,
+  RATE_LIMITER,
+} from './tokens';
 
 /** Racine de composition : relie chaque cas d'usage à ses adaptateurs. Aucune base, aucun serveur gRPC. */
 @Module({})
@@ -55,9 +67,16 @@ export class AppModule {
         createLoggerModule(config.SERVICE_NAME, config.LOG_LEVEL),
         ClientsModule.register([
           grpcClientOptions(IDENTITY_GRPC_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
+          grpcClientOptions(CLEANING_GRPC_CLIENT, 'cleaning', config.CLEANING_GRPC_URL),
         ]),
       ],
-      controllers: [HealthController, IdentityHttpController, JwksHttpController],
+      controllers: [
+        HealthController,
+        IdentityHttpController,
+        JwksHttpController,
+        CleaningHttpController,
+        CleaningAdminHttpController,
+      ],
       providers: [
         ReadinessRegistry,
         { provide: CLOCK, useValue: new SystemClock() },
@@ -111,6 +130,33 @@ export class AppModule {
                 ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
               }),
             ),
+        },
+        {
+          provide: CLEANING_API,
+          inject: [CLEANING_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
+          useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): CleaningApi =>
+            new CleaningGrpcAdapter(
+              {
+                catalog: grpc.getService<cleaningV1.CatalogServiceClient>(cleaningV1.CATALOG_SERVICE_NAME),
+                quotes: grpc.getService<cleaningV1.QuoteServiceClient>(cleaningV1.QUOTE_SERVICE_NAME),
+                missions: grpc.getService<cleaningV1.MissionServiceClient>(cleaningV1.MISSION_SERVICE_NAME),
+                admin: grpc.getService<cleaningV1.CleaningAdminServiceClient>(
+                  cleaningV1.CLEANING_ADMIN_SERVICE_NAME,
+                ),
+              },
+              // Coupe-circuit propre à cleaning : une panne n'affecte pas les autres routes (UC-GW-07).
+              new GrpcCaller({
+                target: 'cleaning',
+                defaultDeadlineMs: config.GRPC_DEADLINE_MS,
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        {
+          provide: RequestCleaningQuoteUseCase,
+          inject: [IdentityGrpcAdapter, CLEANING_API],
+          useFactory: (identity: IdentityGrpcAdapter, cleaning: CleaningApi) =>
+            new RequestCleaningQuoteUseCase(identity, cleaning),
         },
         {
           provide: RATE_LIMITER,

@@ -11,11 +11,22 @@ import { z } from 'zod';
 import { DEFAULT_RATE_LIMITS } from '../src/domain/rate-limit/rate-limits';
 import { ROUTE_MANIFEST, type RouteDefinition } from '../src/domain/routing/route-manifest';
 import { RESERVED_PREFIXES } from '../src/domain/routing/manifest-rules';
+import { CleaningAdminHttpController } from '../src/interfaces/http/cleaning-admin.controller';
+import { CleaningHttpController } from '../src/interfaces/http/cleaning.controller';
 import { IdentityHttpController } from '../src/interfaces/http/identity.controller';
 import { JwksHttpController } from '../src/interfaces/http/jwks.controller';
+import { expressPath } from '../src/interfaces/http/route.decorator';
 import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
 import { requestBodies } from '../src/interfaces/http/schemas';
-import { type IdentityServer, ORIGINS, startGateway, startIdentityStub, TestKeys } from './support/harness';
+import { type CleaningServer, startCleaningStub } from './support/cleaning-stub';
+import {
+  type IdentityServer,
+  ORIGINS,
+  protoUser,
+  startGateway,
+  startIdentityStub,
+  TestKeys,
+} from './support/harness';
 
 /**
  * La gateway face au contrat qui fait foi (contracts/openapi/ksp-api.v1.yaml) : mêmes routes, mêmes
@@ -33,6 +44,9 @@ interface Operation extends Json {
   'x-ksp-grpc': string;
   'x-ksp-access': string;
   'x-ksp-rate-limit': string;
+  'x-ksp-roles'?: string[];
+  'x-ksp-mfa-max-age'?: number;
+  parameters?: { $ref?: string }[];
 }
 
 const doc = parse(
@@ -108,6 +122,11 @@ describe('contrat OpenAPI : manifeste de routage', () => {
         grpc: op['x-ksp-grpc'],
         access: op['x-ksp-access'],
         rateLimit: op['x-ksp-rate-limit'],
+        roles: op['x-ksp-roles'] ?? null,
+        mfaMaxAge: op['x-ksp-mfa-max-age'] ?? null,
+        idempotencyKey: (op.parameters ?? []).some((p) => p.$ref?.endsWith('/IdempotencyKey'))
+          ? 'required'
+          : null,
       }))
       .sort((a, b) => a.operationId.localeCompare(b.operationId));
     const fromManifest = (ROUTE_MANIFEST as readonly RouteDefinition[])
@@ -118,6 +137,9 @@ describe('contrat OpenAPI : manifeste de routage', () => {
         grpc: route.grpc,
         access: route.access.level,
         rateLimit: route.rateLimit,
+        roles: route.access.anyRole ? [...route.access.anyRole] : null,
+        mfaMaxAge: route.access.recentMfaSeconds ?? null,
+        idempotencyKey: route.idempotencyKey ?? null,
       }))
       .sort((a, b) => a.operationId.localeCompare(b.operationId));
     expect(fromManifest).toEqual(fromContract);
@@ -139,7 +161,12 @@ describe('contrat OpenAPI : manifeste de routage', () => {
 
   it('chaque point d’entrée des contrôleurs vient du manifeste, et chaque route du manifeste a le sien', () => {
     const exposed: { operationId: string; method: string; path: string }[] = [];
-    for (const controller of [IdentityHttpController, JwksHttpController]) {
+    for (const controller of [
+      IdentityHttpController,
+      JwksHttpController,
+      CleaningHttpController,
+      CleaningAdminHttpController,
+    ]) {
       expect(Reflect.getMetadata(PATH_METADATA, controller)).toBe('/');
       for (const handler of handlers(controller)) {
         const path = Reflect.getMetadata(PATH_METADATA, handler);
@@ -147,8 +174,8 @@ describe('contrat OpenAPI : manifeste de routage', () => {
         const route = Reflect.getMetadata(ROUTE_DEFINITION, handler) as RouteDefinition | undefined;
         expect(route).toBeDefined();
         const method = Reflect.getMetadata(METHOD_METADATA, handler);
-        expect({ method, path }).toEqual({ method: expect.any(Number), path: route!.path });
-        exposed.push({ operationId: route!.operationId, method: route!.method, path });
+        expect({ method, path }).toEqual({ method: expect.any(Number), path: expressPath(route!.path) });
+        exposed.push({ operationId: route!.operationId, method: route!.method, path: route!.path });
       }
     }
     expect(exposed.map((e) => e.operationId).sort()).toEqual(
@@ -221,23 +248,44 @@ describe('contrat OpenAPI : corps des requêtes', () => {
 describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   let keys: TestKeys;
   let identity: IdentityServer;
+  let cleaning: CleaningServer;
   let app: NestExpressApplication;
   let token: string;
+  let staffToken: string;
+  let staffWithoutMfa: string;
   let ip = 0;
 
   beforeAll(async () => {
     keys = await TestKeys.create();
     identity = await startIdentityStub(keys);
-    app = await startGateway({ identityUrl: identity.url, keys });
+    cleaning = await startCleaningStub(keys);
+    app = await startGateway({ identityUrl: identity.url, cleaningUrl: cleaning.url, keys });
     token = await keys.accessToken();
+    const staff = (mfa: boolean) =>
+      keys.accessToken({
+        claims: {
+          client_id: 'backoffice',
+          mfa,
+          roles: ['cleaning_supervisor', 'cleaning_agent', 'cleaning_admin'].map((role) => ({
+            role,
+            scopeType: 'global',
+          })),
+        },
+      });
+    staffToken = await staff(true);
+    staffWithoutMfa = await staff(false);
   });
 
   afterAll(async () => {
     await app?.close();
     await identity?.close();
+    await cleaning?.close();
   });
 
-  beforeEach(() => identity.stub.reset());
+  beforeEach(() => {
+    identity.stub.reset();
+    cleaning.stub.reset();
+  });
 
   const http = () => request(app.getHttpServer());
   const from = (req: request.Test, client: 'web' | 'mobile' | 'backoffice' | 'none' = 'web') => {
@@ -542,7 +590,156 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       () => from(http().patch('/api/v1/identity/me'), 'none').send({ firstName: 'Koffi' }),
     ],
     ['clés publiques', 'getJwks', 200, () => from(http().get('/.well-known/jwks.json'), 'none')],
+    ...cleaningScenarios(),
   ];
+
+  /**
+   * Nettoyage : un succès par opération, construit depuis le contrat (exemple de corps, en-tête
+   * Idempotency-Key, jeton client ou back-office), puis les erreurs propres aux routes.
+   */
+  function cleaningScenarios(): typeof scenarios {
+    const ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001';
+    type Auth = 'customer' | 'staff' | 'staff_no_mfa' | 'none';
+    const call = (operationId: string, options: { auth?: Auth; body?: unknown; key?: boolean } = {}) => {
+      const { path, method, op } = operation(operationId);
+      const backoffice = path.startsWith('/api/v1/admin/');
+      const url = path.replace('{id}', ID).replace('{code}', 'home_cleaning');
+      let req = from(
+        http()[method.toLowerCase() as 'get' | 'post' | 'put'](url),
+        backoffice ? 'backoffice' : 'web',
+      );
+      const auth: Auth =
+        options.auth ?? (op['x-ksp-access'] === 'public' ? 'none' : backoffice ? 'staff' : 'customer');
+      const bearer = { customer: token, staff: staffToken, staff_no_mfa: staffWithoutMfa, none: null }[auth];
+      if (bearer) req = req.set('Authorization', `Bearer ${bearer}`);
+      const needsKey = (op.parameters ?? []).some((p) => p.$ref?.endsWith('/IdempotencyKey'));
+      if (options.key ?? needsKey) req = req.set('Idempotency-Key', 'cle-0192f1c4-0001');
+      const body = options.body ?? op.requestBody?.content['application/json'].example;
+      return body === undefined ? req : req.send(body as object);
+    };
+    const completeProfile = () =>
+      identity.stub.on('getMe', async () => ({ user: protoUser, profileIncomplete: false }));
+    const cleaningFails = (method: Parameters<typeof cleaning.stub.on>[0], error: AppError) =>
+      cleaning.stub.on(method, () => Promise.reject(error));
+    const simulationBody = () =>
+      operation('simulateCleaning').op.requestBody!.content['application/json'].example as object;
+
+    const successes = operations
+      .filter(({ path }) => path.includes('/cleaning'))
+      .map(
+        ({ op }) =>
+          [
+            `succès ${op.operationId}`,
+            op.operationId,
+            200,
+            () => {
+              if (op.operationId === 'requestCleaningQuote') completeProfile();
+              return call(op.operationId);
+            },
+          ] as (typeof scenarios)[number],
+      );
+    const errors: typeof scenarios = [
+      [
+        'simulateur : champ inconnu',
+        'simulateCleaning',
+        400,
+        () => call('simulateCleaning', { body: { serviceCode: 'home_cleaning', surprise: 1 } }),
+      ],
+      [
+        'simulateur : limite de 20 par minute et par adresse',
+        'simulateCleaning',
+        429,
+        async () => {
+          const send = () =>
+            http()
+              .post('/api/v1/cleaning/simulations')
+              .set('X-Forwarded-For', '198.51.100.7')
+              .send(simulationBody());
+          for (let i = 0; i < 20; i += 1) await send();
+          // La 21e requête de la même adresse dans la minute est refusée.
+          return send() as never;
+        },
+      ],
+      [
+        'demande sans Idempotency-Key',
+        'requestCleaningQuote',
+        400,
+        () => call('requestCleaningQuote', { key: false }),
+      ],
+      ['demande avec un profil incomplet', 'requestCleaningQuote', 422, () => call('requestCleaningQuote')],
+      [
+        'mes demandes sans jeton',
+        'listMyCleaningRequests',
+        401,
+        () => call('listMyCleaningRequests', { auth: 'none' }),
+      ],
+      [
+        'demande d\u2019un autre client',
+        'getMyCleaningRequest',
+        404,
+        () => {
+          cleaningFails(
+            'getRequest',
+            AppError.notFound('CLEANING_REQUEST_NOT_FOUND', 'Demande introuvable.'),
+          );
+          return call('getMyCleaningRequest');
+        },
+      ],
+      [
+        'devis expiré',
+        'acceptCleaningQuote',
+        422,
+        () => {
+          cleaningFails('acceptQuote', AppError.precondition('CLEANING_QUOTE_EXPIRED', 'Ce devis a expiré.'));
+          return call('acceptCleaningQuote');
+        },
+      ],
+      [
+        'back-office sans rôle',
+        'listCleaningQuoteRequests',
+        403,
+        () => call('listCleaningQuoteRequests', { auth: 'customer' }),
+      ],
+      [
+        'back-office sans double authentification',
+        'listCleaningMissions',
+        403,
+        () => call('listCleaningMissions', { auth: 'staff_no_mfa' }),
+      ],
+      [
+        'agent déjà pris sur le créneau',
+        'scheduleCleaningIntervention',
+        409,
+        () => {
+          cleaningFails(
+            'scheduleIntervention',
+            AppError.conflict('CLEANING_TEAM_UNAVAILABLE', 'Agent déjà pris.', { agentIds: [ID] }),
+          );
+          return call('scheduleCleaningIntervention');
+        },
+      ],
+      [
+        'cleaning indisponible',
+        'getMyCleaningMission',
+        503,
+        () => {
+          cleaningFails('getMission', AppError.unavailable('CLEANING_UNAVAILABLE', 'Indisponible.'));
+          return call('getMyCleaningMission');
+        },
+      ],
+      [
+        'identifiant mal formé',
+        'getCleaningMission',
+        400,
+        () =>
+          from(http().get('/api/v1/admin/cleaning/missions/abc'), 'backoffice').set(
+            'Authorization',
+            `Bearer ${staffToken}`,
+          ),
+      ],
+    ];
+    return [...successes, ...errors];
+  }
 
   it('chaque opération du contrat a au moins un scénario de succès', () => {
     const succeeded = new Set(scenarios.filter(([, , status]) => status === 200).map(([, id]) => id));

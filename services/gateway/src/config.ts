@@ -47,6 +47,8 @@ export const configSchema = z
     /** Route d'émission des jetons de service d'identity (ADR-022) et secret de la gateway. */
     IDENTITY_TOKEN_URL: optionalUrl,
     SERVICE_CLIENT_SECRET: optionalText,
+    /** Adresse gRPC de cleaning (lot 2). */
+    CLEANING_GRPC_URL: z.string().min(1).default('localhost:50053'),
     JWKS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(600),
     JWKS_RELOAD_COOLDOWN_SECONDS: z.coerce.number().int().nonnegative().default(30),
 
@@ -79,6 +81,7 @@ export const configSchema = z
     RATE_LIMIT_OTP_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.otp_verify.limit),
     RATE_LIMIT_MFA_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.mfa_verify.limit),
     RATE_LIMIT_REFRESH_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.refresh.limit),
+    RATE_LIMIT_CLEANING_SIMULATION_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.cleaning_simulation.limit),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV !== 'production') return;
@@ -131,6 +134,10 @@ export function rateLimitsFrom(config: GatewayConfig): RateLimitTable {
     otp_verify: { ...DEFAULT_RATE_LIMITS.otp_verify, limit: config.RATE_LIMIT_OTP_VERIFY_PER_MINUTE },
     mfa_verify: { ...DEFAULT_RATE_LIMITS.mfa_verify, limit: config.RATE_LIMIT_MFA_VERIFY_PER_MINUTE },
     refresh: { ...DEFAULT_RATE_LIMITS.refresh, limit: config.RATE_LIMIT_REFRESH_PER_MINUTE },
+    cleaning_simulation: {
+      ...DEFAULT_RATE_LIMITS.cleaning_simulation,
+      limit: config.RATE_LIMIT_CLEANING_SIMULATION_PER_MINUTE,
+    },
   };
 }
 

@@ -34,6 +34,16 @@ curl -s -X POST localhost:3000/api/v1/identity/otp/request \
 | `PATCH /api/v1/identity/me`           | `AccountService/UpdateMe`                           | connecté         | 300 par utilisateur |
 | `GET /.well-known/jwks.json`          | cache de la gateway (JWKS HTTP d'identity, ADR-020) | public           | 60 par IP           |
 
+## Routes du Nettoyage (lot 2)
+
+36 routes vers `cleaning` (`CLEANING_GRPC_URL`, `localhost:50053` par défaut), déclarées dans `src/domain/routing/cleaning-routes.ts` :
+
+- `/api/v1/cleaning/services` (public) et `/api/v1/cleaning/simulations` (public, 20 par minute et par IP) ;
+- `/api/v1/cleaning/quote-requests…` et `/api/v1/cleaning/missions…` : connecté ; la demande de devis exige un profil complet (vérifié auprès d'identity par la gateway) et, comme l'acceptation, l'en-tête `Idempotency-Key` ;
+- `/api/v1/admin/cleaning/…` : rôles `cleaning_supervisor`, `cleaning_agent` ou `cleaning_admin` selon la route (extension `x-ksp-roles`) et double authentification faite pendant la session (`x-ksp-mfa-max-age`, 12 heures).
+
+Le détail (corps, réponses, erreurs) est dans le contrat OpenAPI, étiquettes « Nettoyage » et « Nettoyage (back-office) ».
+
 Le **manifeste de routage** (`src/domain/routing/route-manifest.ts`) est la seule source des routes : le décorateur `@Route('<operationId>')` en tire chemin, méthode, exigence d'accès et limite. Un test (`test/openapi.contract.spec.ts`) vérifie qu'il correspond exactement au contrat OpenAPI, que chaque point d'entrée en vient, et que les réponses réelles (succès et erreurs) respectent les schémas du contrat.
 
 ## Fonctionnement
