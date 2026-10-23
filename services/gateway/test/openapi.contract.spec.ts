@@ -358,6 +358,108 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       },
     ],
     [
+      'configuration de l’application',
+      'enrollTotp',
+      200,
+      () => from(http().post('/api/v1/identity/mfa/totp/enroll'), 'backoffice').send({ mfaToken: 'mfa' }),
+    ],
+    [
+      'jeton de double authentification absent',
+      'enrollTotp',
+      400,
+      () => from(http().post('/api/v1/identity/mfa/totp/enroll'), 'backoffice').send({}),
+    ],
+    [
+      'jeton de double authentification expiré',
+      'enrollTotp',
+      401,
+      () => {
+        fail('enrollTotp', AppError.unauthenticated('IDENTITY_MFA_TOKEN_INVALID', 'Étape expirée.'));
+        return from(http().post('/api/v1/identity/mfa/totp/enroll'), 'backoffice').send({ mfaToken: 'mfa' });
+      },
+    ],
+    [
+      'application déjà configurée',
+      'enrollTotp',
+      422,
+      () => {
+        fail('enrollTotp', AppError.precondition('IDENTITY_MFA_ALREADY_ENROLLED', 'Déjà configurée.'));
+        return from(http().post('/api/v1/identity/mfa/totp/enroll'), 'backoffice').send({ mfaToken: 'mfa' });
+      },
+    ],
+    [
+      'configuration confirmée',
+      'confirmTotp',
+      200,
+      () =>
+        from(http().post('/api/v1/identity/mfa/totp/confirm'), 'backoffice').send({
+          mfaToken: 'mfa',
+          code: '287082',
+        }),
+    ],
+    [
+      'premier code faux',
+      'confirmTotp',
+      400,
+      () => {
+        fail(
+          'confirmTotp',
+          AppError.invalid('IDENTITY_MFA_CODE_INVALID', 'Code incorrect.', { attemptsRemaining: 4 }),
+        );
+        return from(http().post('/api/v1/identity/mfa/totp/confirm'), 'backoffice').send({
+          mfaToken: 'mfa',
+          code: '000000',
+        });
+      },
+    ],
+    [
+      'compte sans rôle du back-office',
+      'confirmTotp',
+      403,
+      () => {
+        fail('confirmTotp', AppError.forbidden('IDENTITY_BACKOFFICE_FORBIDDEN', 'Accès refusé.'));
+        return from(http().post('/api/v1/identity/mfa/totp/confirm'), 'backoffice').send({
+          mfaToken: 'mfa',
+          code: '287082',
+        });
+      },
+    ],
+    [
+      'seconde étape réussie',
+      'verifyMfa',
+      200,
+      () =>
+        from(http().post('/api/v1/identity/mfa/verify'), 'backoffice').send({
+          mfaToken: 'mfa',
+          method: 'totp',
+          code: '081804',
+        }),
+    ],
+    [
+      'méthode SMS refusée',
+      'verifyMfa',
+      400,
+      () =>
+        from(http().post('/api/v1/identity/mfa/verify'), 'backoffice').send({
+          mfaToken: 'mfa',
+          method: 'sms',
+          code: '081804',
+        }),
+    ],
+    [
+      'trop de codes faux',
+      'verifyMfa',
+      422,
+      () => {
+        fail('verifyMfa', AppError.precondition('IDENTITY_MFA_TOO_MANY_ATTEMPTS', 'Recommencez.'));
+        return from(http().post('/api/v1/identity/mfa/verify'), 'backoffice').send({
+          mfaToken: 'mfa',
+          method: 'recovery_code',
+          code: '7KQ2M-X9PDA',
+        });
+      },
+    ],
+    [
       'renouvellement web',
       'refreshSession',
       200,

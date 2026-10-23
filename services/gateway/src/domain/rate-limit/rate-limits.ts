@@ -1,5 +1,6 @@
 /** Catégories de limites d'appels (extension x-ksp-rate-limits du contrat OpenAPI). */
-export type RateLimitCategory = 'public' | 'authenticated' | 'otp_request' | 'otp_verify' | 'refresh';
+export type RateLimitCategory =
+  'public' | 'authenticated' | 'otp_request' | 'otp_verify' | 'mfa_verify' | 'refresh';
 
 export interface RateLimitRule {
   limit: number;
@@ -16,6 +17,8 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   authenticated: { limit: 300, windowSeconds: 60, key: 'user' },
   otp_request: { limit: 5, windowSeconds: 60, key: 'ip' },
   otp_verify: { limit: 10, windowSeconds: 60, key: 'ip' },
+  /** identity limite aussi les essais par jeton de double authentification (5). */
+  mfa_verify: { limit: 10, windowSeconds: 60, key: 'ip' },
   refresh: { limit: 60, windowSeconds: 60, key: 'ip' },
 };
 

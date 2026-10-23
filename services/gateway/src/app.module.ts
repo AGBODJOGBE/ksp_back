@@ -15,11 +15,14 @@ import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { type Clock, type RateLimiter } from './application/access/access.ports';
 import { AuthorizeRequestUseCase } from './application/access/authorize-request.use-case';
 import {
+  ConfirmTotpUseCase,
+  EnrollTotpUseCase,
   GetMeUseCase,
   LogoutUseCase,
   RefreshSessionUseCase,
   RequestOtpUseCase,
   UpdateMeUseCase,
+  VerifyMfaUseCase,
   VerifyOtpUseCase,
 } from './application/identity/identity.use-cases';
 import { GetPublicKeysUseCase } from './application/keys/public-keys';
@@ -134,6 +137,9 @@ export class AppModule {
         identityUseCase(LogoutUseCase),
         identityUseCase(GetMeUseCase),
         identityUseCase(UpdateMeUseCase),
+        identityUseCase(EnrollTotpUseCase),
+        identityUseCase(ConfirmTotpUseCase),
+        identityUseCase(VerifyMfaUseCase),
         {
           provide: GetPublicKeysUseCase,
           inject: [SigningKeysCache],

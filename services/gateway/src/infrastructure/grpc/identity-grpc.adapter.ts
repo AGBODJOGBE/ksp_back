@@ -13,7 +13,9 @@ import {
   type OtpChannel,
   type Profile,
   type ProfileChanges,
+  type SecondFactorMethod,
   type SessionTokens,
+  type TotpEnrollment,
   type UserProfile,
   type UserStatus,
 } from '../../application/identity/identity.ports';
@@ -54,6 +56,11 @@ const MFA_METHOD: Partial<Record<identityV1.MfaMethod, MfaMethod>> = {
   [identityV1.MfaMethod.MFA_METHOD_TOTP]: 'totp',
   [identityV1.MfaMethod.MFA_METHOD_RECOVERY_CODE]: 'recovery_code',
   [identityV1.MfaMethod.MFA_METHOD_SMS]: 'sms',
+};
+
+const SECOND_FACTOR: Record<SecondFactorMethod, identityV1.MfaMethod> = {
+  totp: identityV1.MfaMethod.MFA_METHOD_TOTP,
+  recovery_code: identityV1.MfaMethod.MFA_METHOD_RECOVERY_CODE,
 };
 
 /** Réponse d'identity qui ne respecte pas le contrat : erreur interne, jamais transmise telle quelle. */
@@ -180,6 +187,54 @@ export class IdentityGrpcAdapter implements IdentityAuth, IdentityAccount {
       this.auth.logout({ scope: LOGOUT_SCOPE[scope] }, metadata),
     );
     return response.revokedSessions;
+  }
+
+  async enrollTotp(input: { mfaToken: string; clientKind: ClientKind }): Promise<TotpEnrollment> {
+    const response = await this.call('enrollTotp', (metadata) =>
+      this.auth.enrollTotp({ mfaToken: input.mfaToken, clientKind: CLIENT_KIND[input.clientKind] }, metadata),
+    );
+    return {
+      secret: response.secret,
+      otpauthUri: response.otpauthUri,
+      issuer: response.issuer,
+      accountName: response.accountName,
+      digits: response.digits,
+      periodSeconds: response.periodSeconds,
+    };
+  }
+
+  async confirmTotp(input: {
+    mfaToken: string;
+    code: string;
+    clientKind: ClientKind;
+  }): Promise<{ session: SessionTokens; recoveryCodes: string[] }> {
+    const response = await this.call('confirmTotp', (metadata) =>
+      this.auth.confirmTotp(
+        { mfaToken: input.mfaToken, code: input.code, clientKind: CLIENT_KIND[input.clientKind] },
+        metadata,
+      ),
+    );
+    return { session: toSession(response.session), recoveryCodes: response.recoveryCodes };
+  }
+
+  async verifyMfa(input: {
+    mfaToken: string;
+    method: SecondFactorMethod;
+    code: string;
+    clientKind: ClientKind;
+  }): Promise<{ session: SessionTokens; recoveryCodesRemaining: number }> {
+    const response = await this.call('verifyMfa', (metadata) =>
+      this.auth.verifyMfa(
+        {
+          mfaToken: input.mfaToken,
+          method: SECOND_FACTOR[input.method],
+          code: input.code,
+          clientKind: CLIENT_KIND[input.clientKind],
+        },
+        metadata,
+      ),
+    );
+    return { session: toSession(response.session), recoveryCodesRemaining: response.recoveryCodesRemaining };
   }
 
   async getMe(): Promise<Profile> {

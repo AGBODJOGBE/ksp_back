@@ -104,6 +104,20 @@ export class IdentityStub {
       revokedSessions: request['scope'] === identityV1.LogoutScope.LOGOUT_SCOPE_ALL_DEVICES ? 3 : 1,
     }),
     getSigningKeys: () => ({ keys: [] }),
+    enrollTotp: () => ({
+      secret: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+      otpauthUri:
+        'otpauth://totp/KSP:%2B2290197000045?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=KSP&algorithm=SHA1&digits=6&period=30',
+      issuer: 'KSP',
+      accountName: '+2290197000045',
+      digits: 6,
+      periodSeconds: 30,
+    }),
+    confirmTotp: () => ({
+      session: protoSession('rt-admin'),
+      recoveryCodes: Array.from({ length: 10 }, (_, index) => `7KQ2M-X9PD${index}`),
+    }),
+    verifyMfa: () => ({ session: protoSession('rt-admin'), recoveryCodesRemaining: 9 }),
     getMe: () => ({ user: protoUser, profileIncomplete: true }),
     updateMe: (request) => ({
       user: { ...protoUser, ...request },
@@ -152,6 +166,15 @@ class StubAuthController implements identityV1.AuthServiceController {
   }
   getSigningKeys(request: identityV1.GetSigningKeysRequest) {
     return this.stub.handle('getSigningKeys', { ...request });
+  }
+  enrollTotp(request: identityV1.EnrollTotpRequest) {
+    return this.stub.handle('enrollTotp', { ...request });
+  }
+  confirmTotp(request: identityV1.ConfirmTotpRequest) {
+    return this.stub.handle('confirmTotp', { ...request });
+  }
+  verifyMfa(request: identityV1.VerifyMfaRequest) {
+    return this.stub.handle('verifyMfa', { ...request });
   }
 }
 

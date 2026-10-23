@@ -9,7 +9,9 @@ import {
   type OtpChannel,
   type Profile,
   type ProfileChanges,
+  type SecondFactorMethod,
   type SessionTokens,
+  type TotpEnrollment,
 } from './identity.ports';
 
 /**
@@ -77,6 +79,43 @@ export class LogoutUseCase {
   /** Non précisé : cet appareil (contrat OpenAPI). */
   execute(input: { scope?: LogoutScope | undefined }): Promise<number> {
     return this.identity.logout(input.scope ?? 'this_device');
+  }
+}
+
+/**
+ * Double authentification du back-office (UC-ID-09) : le jeton voyage dans le corps et identity le
+ * vérifie, avec le type de client déduit de l'origine (le jeton ne sert qu'au client qui l'a obtenu).
+ */
+export class EnrollTotpUseCase {
+  constructor(private readonly identity: IdentityAuth) {}
+
+  execute(input: { mfaToken: string; clientKind: ClientKind }): Promise<TotpEnrollment> {
+    return this.identity.enrollTotp(input);
+  }
+}
+
+export class ConfirmTotpUseCase {
+  constructor(private readonly identity: IdentityAuth) {}
+
+  execute(input: {
+    mfaToken: string;
+    code: string;
+    clientKind: ClientKind;
+  }): Promise<{ session: SessionTokens; recoveryCodes: string[] }> {
+    return this.identity.confirmTotp(input);
+  }
+}
+
+export class VerifyMfaUseCase {
+  constructor(private readonly identity: IdentityAuth) {}
+
+  execute(input: {
+    mfaToken: string;
+    method: SecondFactorMethod;
+    code: string;
+    clientKind: ClientKind;
+  }): Promise<{ session: SessionTokens; recoveryCodesRemaining: number }> {
+    return this.identity.verifyMfa(input);
   }
 }
 

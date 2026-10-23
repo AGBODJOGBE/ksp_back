@@ -77,6 +77,7 @@ export const configSchema = z
     RATE_LIMIT_AUTHENTICATED_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.authenticated.limit),
     RATE_LIMIT_OTP_REQUEST_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.otp_request.limit),
     RATE_LIMIT_OTP_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.otp_verify.limit),
+    RATE_LIMIT_MFA_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.mfa_verify.limit),
     RATE_LIMIT_REFRESH_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.refresh.limit),
   })
   .superRefine((cfg, ctx) => {
@@ -128,6 +129,7 @@ export function rateLimitsFrom(config: GatewayConfig): RateLimitTable {
     },
     otp_request: { ...DEFAULT_RATE_LIMITS.otp_request, limit: config.RATE_LIMIT_OTP_REQUEST_PER_MINUTE },
     otp_verify: { ...DEFAULT_RATE_LIMITS.otp_verify, limit: config.RATE_LIMIT_OTP_VERIFY_PER_MINUTE },
+    mfa_verify: { ...DEFAULT_RATE_LIMITS.mfa_verify, limit: config.RATE_LIMIT_MFA_VERIFY_PER_MINUTE },
     refresh: { ...DEFAULT_RATE_LIMITS.refresh, limit: config.RATE_LIMIT_REFRESH_PER_MINUTE },
   };
 }
