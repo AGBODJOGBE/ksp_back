@@ -1,11 +1,18 @@
 import { identityV1 } from '@ksp/contracts';
 import { AppError, currentContext, requireUser } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
+import { type BackofficeSession } from '../../application/mfa/backoffice-session-opener';
+import { ConfirmTotpUseCase } from '../../application/mfa/confirm-totp.use-case';
+import { EnrollTotpUseCase } from '../../application/mfa/enroll-totp.use-case';
+import { mfaErrors } from '../../application/mfa/mfa-errors';
+import { type MfaRequired } from '../../application/mfa/open-mfa-challenge';
+import { VerifyMfaUseCase } from '../../application/mfa/verify-mfa.use-case';
 import { RequestOtpUseCase } from '../../application/otp/request-otp.use-case';
 import { LogoutUseCase } from '../../application/session/logout.use-case';
 import { RefreshSessionUseCase } from '../../application/session/refresh-session.use-case';
 import { type OpenedSession, VerifyOtpUseCase } from '../../application/session/verify-otp.use-case';
 import { GetSigningKeysUseCase } from '../../application/token/get-signing-keys.use-case';
+import { type SecondFactorMethod } from '../../domain/mfa/mfa-challenge';
 import { type OtpChannel } from '../../domain/otp/otp-challenge';
 import { type ClientKind } from '../../domain/session/session-policy';
 import { toUserMessage } from './mappers';
@@ -26,6 +33,17 @@ const CLIENT_KIND: Partial<Record<identityV1.ClientKind, ClientKind>> = {
   [identityV1.ClientKind.CLIENT_KIND_BACKOFFICE]: 'backoffice',
 };
 
+const MFA_METHOD_OUT: Record<SecondFactorMethod, identityV1.MfaMethod> = {
+  totp: identityV1.MfaMethod.MFA_METHOD_TOTP,
+  recovery_code: identityV1.MfaMethod.MFA_METHOD_RECOVERY_CODE,
+};
+
+/** Le SMS n'est jamais une seconde étape pour un compte interne (ADR-023). */
+const MFA_METHOD_IN: Partial<Record<identityV1.MfaMethod, SecondFactorMethod>> = {
+  [identityV1.MfaMethod.MFA_METHOD_TOTP]: 'totp',
+  [identityV1.MfaMethod.MFA_METHOD_RECOVERY_CODE]: 'recovery_code',
+};
+
 /**
  * Adaptateur gRPC de la connexion et des sessions, réservé à la gateway.
  * Aucune règle métier ici : chaque méthode traduit l'appel et délègue à son cas d'usage.
@@ -39,6 +57,9 @@ export class AuthGrpcController implements identityV1.AuthServiceController {
     private readonly refreshSessionUseCase: RefreshSessionUseCase,
     private readonly logoutUseCase: LogoutUseCase,
     private readonly getSigningKeysUseCase: GetSigningKeysUseCase,
+    private readonly enrollTotpUseCase: EnrollTotpUseCase,
+    private readonly confirmTotpUseCase: ConfirmTotpUseCase,
+    private readonly verifyMfaUseCase: VerifyMfaUseCase,
   ) {}
 
   async requestOtp(request: identityV1.RequestOtpRequest): Promise<identityV1.RequestOtpResponse> {
@@ -56,12 +77,9 @@ export class AuthGrpcController implements identityV1.AuthServiceController {
   }
 
   async verifyOtp(request: identityV1.VerifyOtpRequest): Promise<identityV1.VerifyOtpResponse> {
-    const clientKind = CLIENT_KIND[request.clientKind];
-    if (!clientKind) {
-      throw AppError.invalid('IDENTITY_CLIENT_KIND_INVALID', 'Le type de client est invalide.');
-    }
+    const clientKind = clientKindOf(request.clientKind);
     const client = currentContext()?.client;
-    const opened = await this.verifyOtpUseCase.execute({
+    const outcome = await this.verifyOtpUseCase.execute({
       challengeId: request.challengeId,
       code: request.code,
       clientKind,
@@ -69,7 +87,10 @@ export class AuthGrpcController implements identityV1.AuthServiceController {
       ip: client?.ip ?? null,
       userAgent: client?.userAgent ?? null,
     });
-    return { result: { session: toSessionTokens(opened) }, isNewUser: opened.isNewUser };
+    if (outcome.status === 'mfa_required') {
+      return { result: { mfaRequired: toMfaChallenge(outcome.challenge) }, isNewUser: false };
+    }
+    return { result: { session: toSessionTokens(outcome.session) }, isNewUser: outcome.session.isNewUser };
   }
 
   async refreshSession(
@@ -93,9 +114,64 @@ export class AuthGrpcController implements identityV1.AuthServiceController {
   getSigningKeys(): identityV1.GetSigningKeysResponse {
     return { keys: this.getSigningKeysUseCase.execute() };
   }
+
+  async enrollTotp(request: identityV1.EnrollTotpRequest): Promise<identityV1.EnrollTotpResponse> {
+    return this.enrollTotpUseCase.execute({
+      mfaToken: request.mfaToken,
+      clientKind: clientKindOf(request.clientKind),
+    });
+  }
+
+  async confirmTotp(request: identityV1.ConfirmTotpRequest): Promise<identityV1.ConfirmTotpResponse> {
+    const result = await this.confirmTotpUseCase.execute({
+      mfaToken: request.mfaToken,
+      code: request.code,
+      clientKind: clientKindOf(request.clientKind),
+      ...clientDetails(),
+    });
+    return { session: toSessionTokens(result.session), recoveryCodes: result.recoveryCodes };
+  }
+
+  async verifyMfa(request: identityV1.VerifyMfaRequest): Promise<identityV1.VerifyMfaResponse> {
+    const method = MFA_METHOD_IN[request.method];
+    if (!method) throw mfaErrors.methodInvalid();
+    const session = await this.verifyMfaUseCase.execute({
+      mfaToken: request.mfaToken,
+      method,
+      code: request.code,
+      clientKind: clientKindOf(request.clientKind),
+      ...clientDetails(),
+    });
+    return { session: toSessionTokens(session), recoveryCodesRemaining: session.recoveryCodesRemaining };
+  }
 }
 
-function toSessionTokens(opened: Omit<OpenedSession, 'isNewUser'>): identityV1.SessionTokens {
+function clientKindOf(kind: identityV1.ClientKind): ClientKind {
+  const clientKind = CLIENT_KIND[kind];
+  if (!clientKind) {
+    throw AppError.invalid('IDENTITY_CLIENT_KIND_INVALID', 'Le type de client est invalide.');
+  }
+  return clientKind;
+}
+
+/** Adresse IP et appareil du client, transmis par la gateway dans les métadonnées. */
+function clientDetails(): { ip: string | null; userAgent: string | null } {
+  const client = currentContext()?.client;
+  return { ip: client?.ip ?? null, userAgent: client?.userAgent ?? null };
+}
+
+function toMfaChallenge(challenge: MfaRequired): identityV1.MfaChallenge {
+  return {
+    mfaToken: challenge.mfaToken,
+    expiresAt: challenge.expiresAt.toISOString(),
+    methods: challenge.methods.map((method) => MFA_METHOD_OUT[method]),
+    enrollmentRequired: challenge.enrollmentRequired,
+  };
+}
+
+function toSessionTokens(
+  opened: Omit<OpenedSession, 'isNewUser'> | BackofficeSession,
+): identityV1.SessionTokens {
   return {
     accessToken: opened.accessToken,
     accessTokenExpiresAt: opened.accessTokenExpiresAt.toISOString(),

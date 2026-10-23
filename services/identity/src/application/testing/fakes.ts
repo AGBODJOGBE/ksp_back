@@ -3,6 +3,7 @@
  * Elles reproduisent les garanties des vrais dépôts (atomicité, unicité) sans base de données.
  */
 import { type OtpChallenge, type OtpChannel } from '../../domain/otp/otp-challenge';
+import { clientKindsOf, sessionCategory } from '../../domain/session/session-policy';
 import { type StoredOtpChallenge } from '../../domain/otp/otp-verification';
 import { type PhoneNumber } from '../../domain/user/phone-number';
 import { type OtpChallengeRepository, type OtpRequestedEvent } from '../otp/otp.ports';
@@ -15,6 +16,7 @@ import {
   type Account,
   type AccountRepository,
   ChallengeAlreadyConsumedError,
+  type FailedLogin,
   type LoginRepository,
   type PhoneLoginPlan,
   type ProfileChanges,
@@ -70,19 +72,28 @@ export class InMemoryChallenges implements OtpChallengeRepository {
 export interface StoredSession {
   id: string;
   userId: string;
-  clientKind: string;
+  clientKind: 'web' | 'mobile' | 'backoffice';
+  deviceLabel?: string | null;
   lastSeenAt: Date;
   expiresAt: Date;
   revokedAt?: Date;
   revokeReason?: string;
   refreshTokenHash: string;
+  mfaAt?: Date;
+}
+
+export interface FakeLoginEvent {
+  userId: string | null;
+  success: boolean;
+  reason?: string;
+  method?: string;
 }
 
 /** Comptes, sessions et historique en mémoire ; partage la table des demandes pour les consommer. */
 export class InMemoryIdentityStore implements AccountRepository, LoginRepository {
   readonly accounts: Account[] = [];
   readonly sessions: StoredSession[] = [];
-  readonly loginEvents: { userId: string | null; success: boolean; reason?: string }[] = [];
+  readonly loginEvents: FakeLoginEvent[] = [];
   readonly registered: string[] = [];
 
   constructor(private readonly challenges: InMemoryChallenges) {}
@@ -124,13 +135,7 @@ export class InMemoryIdentityStore implements AccountRepository, LoginRepository
       this.registered.push(account.id);
     }
 
-    const active = this.sessions
-      .filter((session) => session.userId === account.id && !session.revokedAt)
-      .sort((a, b) => a.lastSeenAt.getTime() - b.lastSeenAt.getTime());
-    for (const session of active.slice(0, Math.max(0, active.length + 1 - plan.maxSessions))) {
-      session.revokedAt = plan.now;
-      session.revokeReason = 'session_limit';
-    }
+    this.applySessionLimit(account.id, plan.session.clientKind, plan.maxSessions, plan.now);
     this.sessions.push({
       id: plan.session.id,
       userId: account.id,
@@ -143,8 +148,27 @@ export class InMemoryIdentityStore implements AccountRepository, LoginRepository
     return { account, isNewUser };
   }
 
-  async recordFailedLogin(event: { userId: string | null; reason: string }): Promise<void> {
-    this.loginEvents.push({ userId: event.userId, success: false, reason: event.reason });
+  async recordFailedLogin(event: FailedLogin): Promise<void> {
+    this.loginEvents.push({
+      userId: event.userId,
+      success: false,
+      reason: event.reason,
+      ...(event.method ? { method: event.method } : {}),
+    });
+  }
+
+  /** Révoque les sessions de la même catégorie au-delà de la limite, les moins récentes d'abord. */
+  applySessionLimit(userId: string, clientKind: StoredSession['clientKind'], max: number, now: Date): void {
+    const kinds = clientKindsOf(sessionCategory(clientKind));
+    const active = this.sessions
+      .filter(
+        (session) => session.userId === userId && !session.revokedAt && kinds.includes(session.clientKind),
+      )
+      .sort((a, b) => a.lastSeenAt.getTime() - b.lastSeenAt.getTime());
+    for (const session of active.slice(0, Math.max(0, active.length + 1 - max))) {
+      session.revokedAt = now;
+      session.revokeReason = 'session_limit';
+    }
   }
 }
 
@@ -165,6 +189,7 @@ interface FakeSession {
   expiresAt: Date;
   revokedAt: Date | null;
   revokeReason?: string;
+  mfaAt?: Date | null;
 }
 
 /** Sessions et jetons de renouvellement en mémoire, avec la même atomicité que le vrai dépôt. */
@@ -186,8 +211,10 @@ export class InMemorySessionStore implements SessionStore {
         id: session.id,
         clientKind: session.clientKind,
         createdAt: session.createdAt,
+        lastSeenAt: session.lastSeenAt,
         expiresAt: session.expiresAt,
         revokedAt: session.revokedAt,
+        mfaAt: session.mfaAt ?? null,
       },
       account: this.accounts.get(session.userId)!,
     };

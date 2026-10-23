@@ -3,6 +3,12 @@ import { GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { GetMeUseCase, UpdateMeUseCase } from './application/account/account.use-cases';
+import { BackofficeSessionOpener } from './application/mfa/backoffice-session-opener';
+import { ConfirmTotpUseCase } from './application/mfa/confirm-totp.use-case';
+import { EnrollTotpUseCase } from './application/mfa/enroll-totp.use-case';
+import { MfaStepGuard } from './application/mfa/mfa-step-guard';
+import { OpenMfaChallenge } from './application/mfa/open-mfa-challenge';
+import { VerifyMfaUseCase } from './application/mfa/verify-mfa.use-case';
 import { RequestOtpUseCase } from './application/otp/request-otp.use-case';
 import { IssueServiceTokenUseCase } from './application/service-token/issue-service-token.use-case';
 import { LogoutUseCase } from './application/session/logout.use-case';
@@ -10,7 +16,20 @@ import { RefreshSessionUseCase } from './application/session/refresh-session.use
 import { VerifyOtpUseCase } from './application/session/verify-otp.use-case';
 import { AccessTokenIssuer } from './application/token/access-token-issuer';
 import { GetSigningKeysUseCase } from './application/token/get-signing-keys.use-case';
-import { otpPolicyFrom, type ServiceConfig, sessionPolicyFrom } from './config';
+import {
+  backofficeSessionPolicyFrom,
+  mfaPolicyFrom,
+  otpPolicyFrom,
+  type ServiceConfig,
+  sessionPoliciesFrom,
+  sessionPolicyFrom,
+} from './config';
+import { TOTP_DEFAULTS } from './domain/mfa/totp';
+import { AesGcmSecretCipher } from './infrastructure/mfa/aes-gcm-secret-cipher';
+import { CryptoMfaTokenGenerator, CryptoRecoveryCodes } from './infrastructure/mfa/crypto-mfa-secrets';
+import { HmacTotpGenerator } from './infrastructure/mfa/hmac-totp-generator';
+import { PrismaMfaRepository } from './infrastructure/mfa/prisma-mfa.repository';
+import { PrismaRoleRepository } from './infrastructure/role/prisma-role.repository';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { CryptoOtpCodeGenerator } from './infrastructure/otp/crypto-otp-code-generator';
 import { HmacOtpHasher } from './infrastructure/otp/hmac-otp-hasher';
@@ -36,6 +55,7 @@ import { OAuthTokenHttpController } from './interfaces/http/oauth-token.controll
 const NOTIFICATION_CLIENT = Symbol('NOTIFICATION_CLIENT');
 const OTP_SENDER = Symbol('OTP_SENDER');
 const TOKEN_SIGNER = Symbol('TOKEN_SIGNER');
+const SECRET_CIPHER = Symbol('SECRET_CIPHER');
 
 /** Racine de composition : relie chaque cas d'usage à ses adaptateurs. */
 @Module({})
@@ -130,13 +150,130 @@ export class AppModule {
             ),
         },
         PrismaLoginRepository,
+        PrismaRoleRepository,
+        PrismaMfaRepository,
+        {
+          // Chargée au démarrage : une clé absente en production empêche le service de démarrer.
+          provide: SECRET_CIPHER,
+          useFactory: () => {
+            const cipher = AesGcmSecretCipher.fromConfig(config.IDENTITY_MFA_ENCRYPTION_KEY, config.NODE_ENV);
+            if (cipher.ephemeral) {
+              new Logger('AesGcmSecretCipher').warn(
+                "Aucune clé de chiffrement configurée : clé temporaire, les applications d'authentification configurées ne survivront pas au redémarrage.",
+              );
+            }
+            return cipher;
+          },
+        },
+        {
+          provide: OpenMfaChallenge,
+          inject: [PrismaRoleRepository, PrismaMfaRepository],
+          useFactory: (roles: PrismaRoleRepository, mfa: PrismaMfaRepository) =>
+            new OpenMfaChallenge(
+              roles,
+              mfa,
+              mfa,
+              new CryptoMfaTokenGenerator(),
+              new UuidV7Generator(),
+              mfaPolicyFrom(config),
+            ),
+        },
+        {
+          provide: MfaStepGuard,
+          inject: [PrismaMfaRepository, PrismaLoginRepository, PrismaRoleRepository],
+          useFactory: (
+            mfa: PrismaMfaRepository,
+            logins: PrismaLoginRepository,
+            roles: PrismaRoleRepository,
+          ) =>
+            new MfaStepGuard(
+              mfa,
+              new CryptoMfaTokenGenerator(),
+              logins,
+              roles,
+              logins,
+              new UuidV7Generator(),
+              mfaPolicyFrom(config),
+            ),
+        },
+        {
+          provide: BackofficeSessionOpener,
+          inject: [PrismaMfaRepository, AccessTokenIssuer],
+          useFactory: (mfa: PrismaMfaRepository, accessTokens: AccessTokenIssuer) =>
+            new BackofficeSessionOpener(
+              mfa,
+              new CryptoRefreshTokenGenerator(),
+              accessTokens,
+              new UuidV7Generator(),
+              backofficeSessionPolicyFrom(config),
+            ),
+        },
+        {
+          provide: EnrollTotpUseCase,
+          inject: [MfaStepGuard, PrismaMfaRepository, SECRET_CIPHER],
+          useFactory: (guard: MfaStepGuard, mfa: PrismaMfaRepository, cipher: AesGcmSecretCipher) =>
+            new EnrollTotpUseCase(
+              guard,
+              mfa,
+              new HmacTotpGenerator(),
+              cipher,
+              new UuidV7Generator(),
+              new SystemClock(),
+              TOTP_DEFAULTS,
+            ),
+        },
+        {
+          provide: ConfirmTotpUseCase,
+          inject: [MfaStepGuard, PrismaMfaRepository, SECRET_CIPHER, BackofficeSessionOpener],
+          useFactory: (
+            guard: MfaStepGuard,
+            mfa: PrismaMfaRepository,
+            cipher: AesGcmSecretCipher,
+            opener: BackofficeSessionOpener,
+          ) => {
+            const recoveryCodes = new CryptoRecoveryCodes(config.OTP_HMAC_SECRET);
+            return new ConfirmTotpUseCase(
+              guard,
+              mfa,
+              new HmacTotpGenerator(),
+              cipher,
+              recoveryCodes,
+              recoveryCodes,
+              opener,
+              new UuidV7Generator(),
+              new SystemClock(),
+              TOTP_DEFAULTS,
+            );
+          },
+        },
+        {
+          provide: VerifyMfaUseCase,
+          inject: [MfaStepGuard, PrismaMfaRepository, SECRET_CIPHER, BackofficeSessionOpener],
+          useFactory: (
+            guard: MfaStepGuard,
+            mfa: PrismaMfaRepository,
+            cipher: AesGcmSecretCipher,
+            opener: BackofficeSessionOpener,
+          ) =>
+            new VerifyMfaUseCase(
+              guard,
+              mfa,
+              new HmacTotpGenerator(),
+              cipher,
+              new CryptoRecoveryCodes(config.OTP_HMAC_SECRET),
+              opener,
+              new SystemClock(),
+              TOTP_DEFAULTS,
+            ),
+        },
         {
           provide: VerifyOtpUseCase,
-          inject: [PrismaOtpChallengeRepository, PrismaLoginRepository, AccessTokenIssuer],
+          inject: [PrismaOtpChallengeRepository, PrismaLoginRepository, AccessTokenIssuer, OpenMfaChallenge],
           useFactory: (
             challenges: PrismaOtpChallengeRepository,
             logins: PrismaLoginRepository,
             accessTokens: AccessTokenIssuer,
+            mfa: OpenMfaChallenge,
           ) =>
             new VerifyOtpUseCase(
               challenges,
@@ -149,13 +286,18 @@ export class AppModule {
               new SystemClock(),
               otpPolicyFrom(config),
               sessionPolicyFrom(config),
+              mfa,
             ),
         },
         PrismaSessionStore,
         {
           provide: RefreshSessionUseCase,
-          inject: [PrismaSessionStore, AccessTokenIssuer],
-          useFactory: (sessions: PrismaSessionStore, accessTokens: AccessTokenIssuer) =>
+          inject: [PrismaSessionStore, AccessTokenIssuer, PrismaRoleRepository],
+          useFactory: (
+            sessions: PrismaSessionStore,
+            accessTokens: AccessTokenIssuer,
+            roles: PrismaRoleRepository,
+          ) =>
             new RefreshSessionUseCase(
               sessions,
               new CryptoRefreshTokenGenerator(),
@@ -163,7 +305,8 @@ export class AppModule {
               accessTokens,
               new UuidV7Generator(),
               new SystemClock(),
-              sessionPolicyFrom(config),
+              sessionPoliciesFrom(config),
+              roles,
             ),
         },
         {

@@ -1,4 +1,9 @@
-import { ACCESS_TOKEN, type AccessTokenClaims, type AccessTokenRoleClaim } from '@ksp/contracts';
+import {
+  ACCESS_TOKEN,
+  type AccessTokenAuthMethod,
+  type AccessTokenClaims,
+  type AccessTokenRoleClaim,
+} from '@ksp/contracts';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { type TokenSigner } from './token.ports';
 
@@ -12,6 +17,8 @@ export interface AccessTokenSubject {
   mfa: boolean;
   /** Dernière authentification forte. */
   authTime: Date;
+  /** Méthodes d'authentification de la session (RFC 8176). */
+  amr: AccessTokenAuthMethod[];
 }
 
 export interface IssuedAccessToken {
@@ -48,6 +55,7 @@ export class AccessTokenIssuer {
       roles: subject.roles,
       mfa: subject.mfa,
       auth_time: Math.floor(subject.authTime.getTime() / 1000),
+      amr: subject.amr,
     };
     const token = await this.signer.sign({ ...claims }, ACCESS_TOKEN.type);
     return { token, tokenId: claims.jti, expiresAt: new Date(claims.exp * 1000) };

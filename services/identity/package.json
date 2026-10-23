@@ -18,7 +18,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "keys:generate": "tsx scripts/generate-signing-key.ts",
-    "keys:service-client": "tsx scripts/generate-service-client.ts"
+    "keys:service-client": "tsx scripts/generate-service-client.ts",
+    "roles:grant": "node --env-file-if-exists=.env dist/cli/grant-role.js"
   },
   "dependencies": {
     "@ksp/contracts": "workspace:*",

@@ -114,6 +114,7 @@ describe('Chaîne complète : émission par identity, vérification par le kit, 
       roles: [{ role: 'customer', scopeType: 'personal' }],
       mfa: false,
       authTime: new Date(),
+      amr: ['otp'],
     });
 
     expect(validateClaims(decodeJwt(issued.token)) ? [] : validateClaims.errors).toEqual([]);
@@ -124,5 +125,35 @@ describe('Chaîne complète : émission par identity, vérification par le kit, 
     expect(verified.clientId).toBe('mobile');
     expect(verified.tokenId).toBe(issued.tokenId);
     expect(issued.expiresAt.getTime() - Date.now()).toBeGreaterThan(890_000);
+  });
+
+  it('un jeton du back-office (rôles internes, double authentification) respecte le contrat', async () => {
+    const signer = await KeyRingSigner.fromConfig(undefined, 'test');
+    const issuer = new AccessTokenIssuer(
+      signer,
+      { next: () => '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e98' },
+      { now: () => new Date() },
+      900,
+    );
+    const issued = await issuer.issue({
+      userId,
+      sessionId,
+      clientId: 'backoffice',
+      activeContext: 'personal',
+      roles: [
+        { role: 'customer', scopeType: 'personal' },
+        { role: 'cleaning_supervisor', scopeType: 'domain', scopeId: 'cleaning' },
+        { role: 'super_admin', scopeType: 'global', scopeId: null },
+      ],
+      mfa: true,
+      authTime: new Date(),
+      amr: ['otp', 'mfa'],
+    });
+    expect(validateClaims(decodeJwt(issued.token)) ? [] : validateClaims.errors).toEqual([]);
+    const verified = await new AccessTokenVerifier({
+      keys: createLocalJWKSet({ keys: signer.publicKeys() }),
+    }).verify(issued.token);
+    expect(verified.user).toMatchObject({ mfa: true, roles: expect.arrayContaining([expect.anything()]) });
+    expect(verified.clientId).toBe('backoffice');
   });
 });

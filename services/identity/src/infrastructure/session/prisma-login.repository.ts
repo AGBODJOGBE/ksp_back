@@ -4,14 +4,15 @@ import {
   type Account,
   type AccountRepository,
   ChallengeAlreadyConsumedError,
+  type FailedLogin,
   type LoginRepository,
   PhoneAlreadyRegisteredError,
   type PhoneLoginPlan,
   type ProfileChanges,
 } from '../../application/session/session.ports';
-import { sessionsToRevoke } from '../../domain/session/session-policy';
 import { Prisma } from '../../../prisma/generated';
 import { PrismaService } from '../prisma/prisma.service';
+import { openSession } from './session-writes';
 
 export const ACCOUNT_SELECT = {
   id: true,
@@ -101,44 +102,15 @@ export class PrismaLoginRepository implements AccountRepository, LoginRepository
           );
         }
 
-        const active = await tx.session.findMany({
-          where: { userId: userId as string, revokedAt: null, expiresAt: { gt: plan.now } },
-          select: { id: true, lastSeenAt: true },
-        });
-        const toRevoke = sessionsToRevoke(active, plan.maxSessions);
-        if (toRevoke.length > 0) {
-          await tx.session.updateMany({
-            where: { id: { in: toRevoke } },
-            data: { revokedAt: plan.now, revokeReason: 'session_limit' },
-          });
-        }
-
-        await tx.session.create({
-          data: {
-            id: plan.session.id,
-            userId: userId as string,
-            clientKind: plan.session.clientKind,
-            deviceLabel: plan.session.deviceLabel,
-            userAgent: plan.session.userAgent,
-            ip: plan.session.ip,
-            createdAt: plan.now,
-            lastSeenAt: plan.now,
-            expiresAt: plan.session.expiresAt,
-            refreshTokens: {
-              create: { id: plan.refreshToken.id, tokenHash: plan.refreshToken.hash, issuedAt: plan.now },
-            },
-          },
-        });
-        await tx.loginEvent.create({
-          data: {
-            id: plan.loginEventId,
-            userId,
-            method: 'phone_otp',
-            success: true,
-            ip: plan.session.ip,
-            userAgent: plan.session.userAgent,
-            createdAt: plan.now,
-          },
+        await openSession(tx, {
+          userId: userId as string,
+          session: plan.session,
+          refreshToken: plan.refreshToken,
+          loginEventId: plan.loginEventId,
+          method: 'phone_otp',
+          maxSessions: plan.maxSessions,
+          mfaAt: null,
+          now: plan.now,
         });
 
         const user = await tx.user.findUniqueOrThrow({
@@ -159,18 +131,12 @@ export class PrismaLoginRepository implements AccountRepository, LoginRepository
     }
   }
 
-  async recordFailedLogin(event: {
-    id: string;
-    userId: string | null;
-    reason: string;
-    ip: string | null;
-    userAgent: string | null;
-  }): Promise<void> {
+  async recordFailedLogin(event: FailedLogin): Promise<void> {
     await this.prisma.loginEvent.create({
       data: {
         id: event.id,
         userId: event.userId,
-        method: 'phone_otp',
+        method: event.method ?? 'phone_otp',
         success: false,
         failureReason: event.reason,
         ip: event.ip,

@@ -3,7 +3,10 @@ import { AppError } from '@ksp/platform';
 import { type OtpPolicy } from '../../domain/otp/otp-policy';
 import { challengeState } from '../../domain/otp/otp-verification';
 import { type ClientKind, type SessionPolicy } from '../../domain/session/session-policy';
+import { mfaErrors } from '../mfa/mfa-errors';
+import { type MfaRequired, type OpenMfaChallenge } from '../mfa/open-mfa-challenge';
 import { type OtpChallengeRepository, type OtpHasher } from '../otp/otp.ports';
+import { CUSTOMER_ROLE } from '../role/role-claims';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { type AccessTokenIssuer } from '../token/access-token-issuer';
 import {
@@ -35,6 +38,10 @@ export interface OpenedSession {
   isNewUser: boolean;
 }
 
+/** Issue de la validation du code : une session, ou la double authentification à passer (back-office). */
+export type VerifyOtpOutcome =
+  { status: 'authenticated'; session: OpenedSession } | { status: 'mfa_required'; challenge: MfaRequired };
+
 const expired = () =>
   AppError.precondition('IDENTITY_OTP_EXPIRED', 'Le code a expiré, demandez-en un nouveau.');
 const exhausted = () =>
@@ -46,6 +53,8 @@ const exhausted = () =>
 /**
  * UC-ID-01, seconde étape : valider le code. Un numéro inconnu crée le compte (actif et vérifié :
  * le code vaut vérification) ; puis une session est ouverte avec ses jetons.
+ * Back-office (UC-ID-09) : un compte qui a un rôle du back-office reçoit l'étape de double
+ * authentification au lieu d'une session ; les autres sont refusés, et aucun compte n'est créé.
  */
 export class VerifyOtpUseCase {
   constructor(
@@ -59,14 +68,10 @@ export class VerifyOtpUseCase {
     private readonly clock: Clock,
     private readonly otpPolicy: OtpPolicy,
     private readonly sessionPolicy: SessionPolicy,
+    private readonly mfa: OpenMfaChallenge,
   ) {}
 
-  async execute(input: VerifyOtpInput): Promise<OpenedSession> {
-    if (input.clientKind === 'backoffice') {
-      // Lot 1 : aucun compte interne n'existe encore ; le back-office exigera la double authentification.
-      throw AppError.forbidden('IDENTITY_BACKOFFICE_FORBIDDEN', "Ce compte n'a pas accès au back-office.");
-    }
-
+  async execute(input: VerifyOtpInput): Promise<VerifyOtpOutcome> {
     const now = this.clock.now();
     const challenge = await this.challenges.findById(input.challengeId);
     if (!challenge) throw expired();
@@ -88,7 +93,35 @@ export class VerifyOtpUseCase {
       throw AppError.forbidden('IDENTITY_ACCOUNT_SUSPENDED', 'Ce compte est suspendu.');
     }
 
-    return this.openSession(input, challenge.id, challenge.target, account, now, true);
+    if (input.clientKind === 'backoffice') return this.startMfa(input, challenge.id, account, now);
+    const session = await this.openSession(input, challenge.id, challenge.target, account, now, true);
+    return { status: 'authenticated', session };
+  }
+
+  private async startMfa(
+    input: VerifyOtpInput,
+    challengeId: string,
+    account: Account | null,
+    now: Date,
+  ): Promise<VerifyOtpOutcome> {
+    if (!account || !(await this.mfa.hasBackofficeAccess(account.id))) {
+      await this.recordFailure(account?.id ?? null, 'backoffice_forbidden', input);
+      throw mfaErrors.backofficeForbidden();
+    }
+    try {
+      const challenge = await this.mfa.open({
+        otpChallengeId: challengeId,
+        userId: account.id,
+        clientKind: input.clientKind,
+        deviceLabel: input.deviceLabel,
+        ip: input.ip,
+        now,
+      });
+      return { status: 'mfa_required', challenge };
+    } catch (error) {
+      if (error instanceof ChallengeAlreadyConsumedError) throw expired();
+      throw error;
+    }
   }
 
   private async openSession(
@@ -138,10 +171,11 @@ export class VerifyOtpUseCase {
       sessionId,
       clientId: input.clientKind,
       activeContext: 'personal',
-      // Lot 1 : tout compte a le rôle client ; les rôles attribués viendront avec l'administration.
-      roles: [{ role: 'customer', scopeType: 'personal' }],
+      // Sites et applications : le rôle client ; les rôles internes ne servent qu'au back-office.
+      roles: [CUSTOMER_ROLE],
       mfa: false,
       authTime: now,
+      amr: ['otp'],
     });
     return {
       accessToken: access.token,
