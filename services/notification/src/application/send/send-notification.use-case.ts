@@ -1,16 +1,14 @@
-import { type AppError } from '@ksp/platform';
 import { isDirectSendCaller } from '../../domain/caller-policy';
 import { channelPlan, type ChannelName, DEFAULT_CHANNEL } from '../../domain/channel';
-import { type ChannelAttempt, expiryOf, isExpired, summarizeFailure } from '../../domain/delivery';
+import { expiryOf } from '../../domain/delivery';
 import { parseRecipientUserId, PhoneNumber } from '../../domain/recipient';
-import { findTemplate, invalidVariables } from '../../domain/template';
+import { findTemplate, invalidVariables, isEventTemplate } from '../../domain/template';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
+import { failureError, MessageDispatcher } from './message-dispatcher';
 import { NotificationErrors } from './notification.errors';
 import {
   type ChannelProvider,
   type NotificationRepository,
-  type OutgoingMessage,
-  type ProviderResult,
   type StoredNotification,
 } from './notification.ports';
 
@@ -51,15 +49,15 @@ const DEFAULT_LOCALE = 'fr';
  * - Échec de tous les canaux : statut et événement notification.message.failed dans la même transaction.
  */
 export class SendNotificationUseCase {
-  private readonly providers: ReadonlyMap<ChannelName, ChannelProvider>;
+  private readonly dispatcher: MessageDispatcher;
 
   constructor(
-    private readonly notifications: NotificationRepository,
+    notifications: NotificationRepository,
     providers: readonly ChannelProvider[],
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
   ) {
-    this.providers = new Map(providers.map((provider) => [provider.channel, provider]));
+    this.dispatcher = new MessageDispatcher(notifications, providers, clock);
   }
 
   async execute(input: SendNotificationInput): Promise<SendNotificationOutput> {
@@ -67,8 +65,9 @@ export class SendNotificationUseCase {
       throw NotificationErrors.callerForbidden();
     }
 
+    // Les modèles des événements métier ne s'envoient pas par appel direct.
     const template = findTemplate(input.templateCode);
-    if (!template) throw NotificationErrors.templateUnknown();
+    if (!template || isEventTemplate(template)) throw NotificationErrors.templateUnknown();
     const plan = channelPlan(input.channel, input.fallbackChannels, template.channels);
     if (plan.length === 0) throw NotificationErrors.templateUnknown();
 
@@ -82,84 +81,31 @@ export class SendNotificationUseCase {
 
     const createdAt = this.clock.now();
     const id = this.ids.next();
-    const notification = {
-      id,
-      // Sans clé, l'appel n'est pas dédoublonné : la notification est sa propre clé.
-      idempotencyKey: input.idempotencyKey.trim() || id,
-      templateCode: template.code,
-      requestedChannel: input.channel ?? DEFAULT_CHANNEL,
-      targetMasked: phone.masked(),
-      recipientUserId: recipientUser.userId,
-      createdAt,
-      expiresAt: expiryOf(createdAt, input.ttlSeconds),
-    };
-    const claim = await this.notifications.claim(notification);
-    if (!claim.created) return replay(claim.existing);
-
-    const attempts: ChannelAttempt[] = [];
-    let ttlExpired = false;
-    for (const channel of plan) {
-      // Le premier canal part au moment de l'appel ; le délai ne peut arrêter que les bascules.
-      if (attempts.length > 0 && isExpired(notification.expiresAt, this.clock.now())) {
-        ttlExpired = true;
-        break;
-      }
-      const provider = this.providers.get(channel);
-      if (!provider) {
-        attempts.push({ channel, outcome: 'skipped' });
-        continue;
-      }
-      const result = await send(provider, {
-        notificationId: id,
-        channel,
+    const outcome = await this.dispatcher.dispatch({
+      notification: {
+        id,
+        // Sans clé, l'appel n'est pas dédoublonné : la notification est sa propre clé.
+        idempotencyKey: input.idempotencyKey.trim() || id,
+        templateCode: template.code,
+        requestedChannel: input.channel ?? DEFAULT_CHANNEL,
+        targetMasked: phone.masked(),
+        recipientUserId: recipientUser.userId,
+        createdAt,
+        expiresAt: expiryOf(createdAt, input.ttlSeconds),
+      },
+      plan,
+      message: {
         templateCode: template.code,
         phoneE164: phone.e164,
+        email: null,
         variables: input.variables,
+        content: null,
         locale: input.locale.trim() || DEFAULT_LOCALE,
-      });
-      if (result.accepted) {
-        await this.notifications.markAccepted(id, {
-          channelUsed: channel,
-          channelsTried: [...attempts.map((attempt) => attempt.channel), channel],
-          providerMessageId: result.providerMessageId,
-          at: this.clock.now(),
-        });
-        return { notificationId: id, channelUsed: channel, status: 'accepted' };
-      }
-      attempts.push({ channel, outcome: 'failed', reason: result.reason });
-    }
-
-    const failure = summarizeFailure(attempts, ttlExpired);
-    const error: AppError = failure.recipientRejected
-      ? NotificationErrors.recipientInvalid()
-      : NotificationErrors.channelsExhausted(failure.channelsTried);
-    await this.notifications.markFailed(
-      id,
-      {
-        channelsTried: failure.channelsTried,
-        reason: failure.reason,
-        errorCode: error.code,
-        at: this.clock.now(),
       },
-      {
-        notificationId: id,
-        templateCode: template.code,
-        channelsTried: failure.channelsTried,
-        reason: failure.reason,
-        recipientUserId: recipientUser.userId,
-        targetMasked: notification.targetMasked,
-      },
-    );
-    throw error;
-  }
-}
-
-/** Un prestataire qui lève malgré tout une erreur est traité comme indisponible : on passe au canal suivant. */
-async function send(provider: ChannelProvider, message: OutgoingMessage): Promise<ProviderResult> {
-  try {
-    return await provider.send(message);
-  } catch {
-    return { accepted: false, reason: 'provider_unavailable' };
+    });
+    if (outcome.kind === 'replayed') return replay(outcome.existing);
+    if (outcome.kind === 'failed') throw failureError(outcome.failure);
+    return { notificationId: outcome.notificationId, channelUsed: outcome.channelUsed, status: 'accepted' };
   }
 }
 

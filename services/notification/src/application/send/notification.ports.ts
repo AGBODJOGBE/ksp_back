@@ -4,6 +4,7 @@ import {
   type NotificationStatus,
   type ProviderFailureReason,
 } from '../../domain/delivery';
+import { type RenderedMessage } from '../../domain/template';
 
 /**
  * Notification enregistrée avant tout envoi. Ne contient jamais le texte ni les variables du
@@ -66,8 +67,13 @@ export interface OutgoingMessage {
   notificationId: string;
   channel: ChannelName;
   templateCode: string;
-  phoneE164: string;
+  /** Numéro E.164 du destinataire, pour WhatsApp et SMS ; null s'il n'est pas connu. */
+  phoneE164: string | null;
+  /** Adresse e-mail du destinataire ; null si elle n'est pas connue. */
+  email: string | null;
   variables: Readonly<Record<string, string>>;
+  /** Texte du message (modèles des événements) ; null pour un modèle rendu par le prestataire (identity.otp). */
+  content: RenderedMessage | null;
   locale: string;
 }
 

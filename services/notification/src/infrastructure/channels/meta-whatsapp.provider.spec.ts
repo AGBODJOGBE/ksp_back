@@ -9,6 +9,8 @@ const message: OutgoingMessage = {
   channel: 'whatsapp',
   templateCode: 'identity.otp',
   phoneE164: '+2290197000045',
+  email: null,
+  content: null,
   variables: { code: '482913', expires_in_minutes: '5' },
   locale: 'fr',
 };
@@ -175,5 +177,61 @@ describe('MetaWhatsAppProvider', () => {
     expect(logs[0]).toContain('131026');
     expect(logs[0]).toContain('AbCdEf');
     for (const secret of [TOKEN, '0197000045', '482913']) expect(logs.join('\n')).not.toContain(secret);
+  });
+
+  it('message d’un événement : modèle « utility » approuvé, paramètres dans l’ordre du texte', async () => {
+    const { calls, whatsapp } = provider(() => json(200, { messages: [{ id: 'wamid.event' }] }));
+    const event: OutgoingMessage = {
+      ...message,
+      templateCode: 'cleaning.quote_sent.customer',
+      variables: {
+        first_name: '',
+        total: '150\u00a0000\u00a0FCFA',
+        valid_until: '15 novembre 2026',
+        link: 'https://ksp.bj/mon-espace/nettoyage/demandes/r-1',
+      },
+      content: { subject: 'Votre devis de nettoyage', text: 'Bonjour,' },
+    };
+    await expect(whatsapp.send(event)).resolves.toEqual({ accepted: true, providerMessageId: 'wamid.event' });
+    expect(JSON.parse(calls[0]!.init.body as string).template).toEqual({
+      name: 'ksp_cleaning_quote_sent',
+      language: { code: 'fr' },
+      components: [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: 'Madame, Monsieur' },
+            { type: 'text', text: '150\u00a0000\u00a0FCFA' },
+            { type: 'text', text: '15 novembre 2026' },
+            { type: 'text', text: 'https://ksp.bj/mon-espace/nettoyage/demandes/r-1' },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('modèle d’annulation choisi selon le motif', async () => {
+    const { calls, whatsapp } = provider(() => json(200, { messages: [{ id: 'wamid.c' }] }));
+    await whatsapp.send({
+      ...message,
+      templateCode: 'cleaning.request_cancelled.customer',
+      variables: { first_name: 'Awa', case: 'rejected', scope: 'request', link: 'https://ksp.bj/x' },
+    });
+    const template = JSON.parse(calls[0]!.init.body as string).template;
+    expect(template.name).toBe('ksp_cleaning_rejected');
+    expect(template.components[0].parameters.map((p: { text: string }) => p.text)).toEqual([
+      'Awa',
+      'votre demande',
+      'https://ksp.bj/x',
+    ]);
+  });
+
+  it('destinataire sans numéro : refus sans appel à Meta', async () => {
+    const { calls, whatsapp } = provider(() => json(200, { messages: [{ id: 'x' }] }));
+    await expect(whatsapp.send({ ...message, phoneE164: null })).resolves.toEqual({
+      accepted: false,
+      reason: 'recipient_invalid',
+    });
+    expect(calls).toHaveLength(0);
   });
 });

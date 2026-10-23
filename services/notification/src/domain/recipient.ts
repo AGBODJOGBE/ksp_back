@@ -27,3 +27,26 @@ export function parseRecipientUserId(value: string): { valid: boolean; userId: s
   if (!trimmed) return { valid: true, userId: null };
   return UUID.test(trimmed) ? { valid: true, userId: trimmed.toLowerCase() } : { valid: false, userId: null };
 }
+
+/** Forme volontairement simple : une partie locale, un @, un domaine avec au moins un point. */
+const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,253}\.[^\s@]{2,}$/;
+
+/** Adresse e-mail d'un destinataire. */
+export class EmailAddress {
+  private constructor(readonly value: string) {}
+
+  /** Renvoie null si la valeur n'est pas une adresse e-mail plausible (espaces retirés, minuscules). */
+  static parse(value: string | null | undefined): EmailAddress | null {
+    const compact = (value ?? '').trim().toLowerCase();
+    return compact.length <= 254 && EMAIL.test(compact) ? new EmailAddress(compact) : null;
+  }
+
+  /**
+   * Forme masquée, seule conservée en base, dans les événements et les journaux : première lettre
+   * de la partie locale et domaine, par exemple k***@exemple.com.
+   */
+  masked(): string {
+    const at = this.value.lastIndexOf('@');
+    return `${this.value.slice(0, 1)}***${this.value.slice(at)}`;
+  }
+}

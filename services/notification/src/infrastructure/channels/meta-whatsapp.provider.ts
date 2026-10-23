@@ -5,6 +5,7 @@ import {
   type ProviderResult,
 } from '../../application/send/notification.ports';
 import { type ProviderFailureReason } from '../../domain/delivery';
+import { WHATSAPP_EVENT_TEMPLATES } from './whatsapp-templates';
 
 export interface MetaWhatsAppOptions {
   /** Jeton de l'utilisateur système Meta. Jamais journalisé. */
@@ -35,7 +36,8 @@ interface GraphResponse {
 
 /**
  * Adaptateur WhatsApp Cloud API de Meta (ADR-021) : envoie le modèle d'authentification
- * « Copier le code ». Le code figure deux fois (corps et bouton), comme l'exige Meta.
+ * « Copier le code » (le code figure deux fois, corps et bouton, comme l'exige Meta), ou le modèle
+ * approuvé d'un message déclenché par un événement.
  *
  * Les journaux ne contiennent ni le jeton, ni le numéro, ni le code : seulement le statut HTTP,
  * le code d'erreur Graph et l'identifiant de trace de Meta.
@@ -52,6 +54,7 @@ export class MetaWhatsAppProvider implements ChannelProvider {
   }
 
   async send(message: OutgoingMessage): Promise<ProviderResult> {
+    if (!message.phoneE164) return { accepted: false, reason: 'recipient_invalid' };
     const template = this.templateFor(message);
     if (!template) {
       this.logger.error(`Aucun modèle WhatsApp pour ${message.templateCode}.`);
@@ -102,9 +105,27 @@ export class MetaWhatsAppProvider implements ChannelProvider {
     return { accepted: false, reason };
   }
 
-  /** Modèle WhatsApp correspondant au modèle KSP. Au lot 1 : identity.otp → modèle d'authentification. */
+  /**
+   * Modèle WhatsApp correspondant au modèle KSP : identity.otp → modèle d'authentification ;
+   * messages des événements → modèle « utility » approuvé (whatsapp-templates.ts).
+   */
   private templateFor(message: OutgoingMessage): object | null {
-    if (message.templateCode !== 'identity.otp') return null;
+    if (message.templateCode !== 'identity.otp') {
+      const spec = Object.hasOwn(WHATSAPP_EVENT_TEMPLATES, message.templateCode)
+        ? WHATSAPP_EVENT_TEMPLATES[message.templateCode]
+        : null;
+      if (!spec) return null;
+      return {
+        name: spec.name(message.variables),
+        language: { code: this.options.language },
+        components: [
+          {
+            type: 'body',
+            parameters: spec.parameters(message.variables).map((text) => ({ type: 'text', text })),
+          },
+        ],
+      };
+    }
     const code = message.variables['code'] ?? '';
     return {
       name: this.options.otpTemplate,

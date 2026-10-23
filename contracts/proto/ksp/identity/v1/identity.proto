@@ -13,6 +13,14 @@ package ksp.identity.v1;
 
 // Appelé par tous les services autorisés par la carte des services.
 service IdentityService {
+  // GetUser et GetUsersByIds — appelant autorisé : notification (destinataires des événements
+  // métier), qui reçoit le téléphone et l'e-mail. Un compte supprimé est traité comme introuvable ;
+  // GetUsersByIds omet les identifiants introuvables (100 au plus par appel).
+  // Erreurs :
+  //   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
+  //   IDENTITY_USER_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)
+  //   IDENTITY_TOO_MANY_USER_IDS   INVALID_ARGUMENT   plus de 100 identifiants
+  //   IDENTITY_USER_NOT_FOUND      NOT_FOUND          GetUser seulement
   rpc GetUser(GetUserRequest) returns (GetUserResponse);
   rpc GetUsersByIds(GetUsersByIdsRequest) returns (GetUsersByIdsResponse);
   // Réservé aux actions sensibles : les permissions courantes voyagent dans le jeton.

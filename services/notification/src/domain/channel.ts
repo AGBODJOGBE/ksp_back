@@ -24,3 +24,20 @@ export function channelPlan(
   }
   return plan;
 }
+
+/**
+ * Canaux d'un message déclenché par un événement (règle du lot 2), selon sa nature et les
+ * coordonnées connues du destinataire. Un seul message part par destinataire : le second canal
+ * ne sert qu'en bascule si le premier échoue.
+ * - message court (`short`) : WhatsApp, puis e-mail ;
+ * - document (`document` : devis, compte rendu) : e-mail, puis WhatsApp.
+ * Un canal sans coordonnée est retiré. La notification dans l'espace KSP est enregistrée à part,
+ * dans tous les cas.
+ */
+export function eventChannelPlan(
+  kind: 'short' | 'document',
+  contact: { hasPhone: boolean; hasEmail: boolean },
+): ChannelName[] {
+  const order: ChannelName[] = kind === 'document' ? ['email', 'whatsapp'] : ['whatsapp', 'email'];
+  return order.filter((channel) => (channel === 'email' ? contact.hasEmail : contact.hasPhone));
+}

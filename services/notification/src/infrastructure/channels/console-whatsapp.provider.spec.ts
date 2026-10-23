@@ -11,6 +11,8 @@ describe('ConsoleWhatsAppProvider (développement)', () => {
         channel: 'whatsapp',
         templateCode: 'identity.otp',
         phoneE164: '+2290197000045',
+        email: null,
+        content: null,
         variables: { code: '482913', expires_in_minutes: '5' },
         locale: 'fr',
       }),

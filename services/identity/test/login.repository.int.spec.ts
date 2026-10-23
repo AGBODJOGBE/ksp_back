@@ -147,6 +147,14 @@ describeWithDatabase('PrismaLoginRepository (PostgreSQL)', () => {
     expect(consumed.rows).toEqual([{ consumed_at: null }]);
   });
 
+  it('lit plusieurs comptes par leurs identifiants (GetUsersByIds), en omettant les inconnus', async () => {
+    const { account } = await repository.completePhoneLogin(plan(await sentChallenge(), null, base));
+    expect(await repository.findByIds([account.id, '0192f1c4-7a2b-7c3d-8e4f-ffffffffffff'])).toEqual([
+      account,
+    ]);
+    expect(await repository.findByIds([])).toEqual([]);
+  });
+
   it('lit un compte par son identifiant et met à jour seulement les champs donnés', async () => {
     const { account } = await repository.completePhoneLogin(plan(await sentChallenge(), null, base));
     expect(await repository.findById(account.id)).toEqual(account);

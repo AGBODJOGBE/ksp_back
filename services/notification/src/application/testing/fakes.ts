@@ -13,6 +13,12 @@ import {
   type OutgoingMessage,
   type ProviderResult,
 } from '../send/notification.ports';
+import {
+  type EventInbox,
+  type InAppNotification,
+  type RecipientContact,
+  type RecipientDirectory,
+} from '../events/event-notification.ports';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 
 export interface NotificationRow extends NewNotification {
@@ -125,5 +131,36 @@ export class SequentialIds implements IdGenerator {
   next(): string {
     this.seq += 1;
     return `0192f1c4-7a2b-7c3d-8e4f-${String(this.seq).padStart(12, '0')}`;
+  }
+}
+
+/** Annuaire scripté : les contacts connus ; `unavailable` simule une panne d'identity. */
+export class FakeDirectory implements RecipientDirectory {
+  readonly lookups: string[][] = [];
+  unavailable = false;
+
+  constructor(readonly contacts: RecipientContact[] = []) {}
+
+  async findContacts(userIds: readonly string[]): Promise<RecipientContact[]> {
+    this.lookups.push([...userIds]);
+    if (this.unavailable) throw new Error('identity indisponible');
+    return this.contacts.filter((contact) => userIds.includes(contact.userId));
+  }
+}
+
+/** Inbox en mémoire, avec les notifications dans l'espace enregistrées à la complétion. */
+export class InMemoryInbox implements EventInbox {
+  readonly processed = new Set<string>();
+  readonly inApp: InAppNotification[] = [];
+
+  async isProcessed(eventId: string): Promise<boolean> {
+    return this.processed.has(eventId);
+  }
+
+  async complete(eventId: string, inApp: readonly InAppNotification[]): Promise<'processed' | 'duplicate'> {
+    if (this.processed.has(eventId)) return 'duplicate';
+    this.processed.add(eventId);
+    this.inApp.push(...inApp);
+    return 'processed';
   }
 }
