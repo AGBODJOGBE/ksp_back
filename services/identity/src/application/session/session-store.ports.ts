@@ -9,8 +9,11 @@ export interface StoredRefreshToken {
     id: string;
     clientKind: ClientKind;
     createdAt: Date;
+    lastSeenAt: Date;
     expiresAt: Date;
     revokedAt: Date | null;
+    /** Double authentification passée à l'ouverture (back-office), sinon null. */
+    mfaAt: Date | null;
   };
   account: Account;
 }
@@ -19,7 +22,7 @@ export interface RefreshRotation {
   oldTokenId: string;
   newToken: { id: string; hash: string };
   sessionId: string;
-  /** Nouvelle échéance de la session (durée prolongée à chaque usage). */
+  /** Nouvelle échéance de la session (prolongée sur le web et le mobile, inchangée au back-office). */
   sessionExpiresAt: Date;
   now: Date;
 }

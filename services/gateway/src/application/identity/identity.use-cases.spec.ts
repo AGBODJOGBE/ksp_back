@@ -1,11 +1,14 @@
 import { FakeIdentity } from '../testing/fakes';
 import { GetPublicKeysUseCase } from '../keys/public-keys';
 import {
+  ConfirmTotpUseCase,
+  EnrollTotpUseCase,
   GetMeUseCase,
   LogoutUseCase,
   RefreshSessionUseCase,
   RequestOtpUseCase,
   UpdateMeUseCase,
+  VerifyMfaUseCase,
   VerifyOtpUseCase,
 } from './identity.use-cases';
 
@@ -67,6 +70,33 @@ describe('cas d’usage identity de la gateway', () => {
         code: 'GATEWAY_TOKEN_MISSING',
       });
     });
+  });
+
+  it('double authentification : jeton, code et type de client transmis tels quels à identity', async () => {
+    const identity = new FakeIdentity();
+    const mfaToken = 'mfa-1';
+    await new EnrollTotpUseCase(identity).execute({ mfaToken, clientKind: 'backoffice' });
+    const confirmed = await new ConfirmTotpUseCase(identity).execute({
+      mfaToken,
+      code: '287082',
+      clientKind: 'backoffice',
+    });
+    const verified = await new VerifyMfaUseCase(identity).execute({
+      mfaToken,
+      method: 'recovery_code',
+      code: '7KQ2M-X9PDA',
+      clientKind: 'backoffice',
+    });
+    expect(confirmed.recoveryCodes).toEqual(['7KQ2M-X9PDA']);
+    expect(verified.recoveryCodesRemaining).toBe(10);
+    expect(identity.calls).toEqual([
+      { method: 'enrollTotp', input: { mfaToken, clientKind: 'backoffice' } },
+      { method: 'confirmTotp', input: { mfaToken, code: '287082', clientKind: 'backoffice' } },
+      {
+        method: 'verifyMfa',
+        input: { mfaToken, method: 'recovery_code', code: '7KQ2M-X9PDA', clientKind: 'backoffice' },
+      },
+    ]);
   });
 
   it('déconnexion : cet appareil par défaut', async () => {

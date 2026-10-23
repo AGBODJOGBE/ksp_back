@@ -13,8 +13,8 @@ const schema = JSON.parse(
 
 const uuid = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0f';
 
-/** Un jeton typique du lot 1 : si le type TypeScript diverge du schéma, ce test casse. */
-const example: AccessTokenClaims = {
+/** Un jeton complet : si le type TypeScript diverge du schéma, ce test casse. */
+const example: Required<AccessTokenClaims> = {
   iss: 'ksp-identity',
   aud: 'ksp-api',
   sub: uuid,
@@ -28,7 +28,11 @@ const example: AccessTokenClaims = {
   roles: [{ role: 'customer', scopeType: 'personal' }],
   mfa: false,
   auth_time: 1792400000,
+  amr: ['otp'],
 };
+
+/** Champs facultatifs : ajoutés après la première version, absents des jetons plus anciens. */
+const OPTIONAL = ['amr'];
 
 describe('Contrat du jeton d’accès', () => {
   const ajv = new Ajv2020({ strict: true, allErrors: true });
@@ -47,8 +51,28 @@ describe('Contrat du jeton d’accès', () => {
   });
 
   it('les champs du type TypeScript sont exactement ceux du schéma', () => {
-    expect(Object.keys(example).sort()).toEqual([...schema.required].sort());
-    expect(Object.keys(schema.properties).sort()).toEqual([...schema.required].sort());
+    expect(Object.keys(example).sort()).toEqual(Object.keys(schema.properties).sort());
+    expect(Object.keys(schema.properties).sort()).toEqual([...schema.required, ...OPTIONAL].sort());
+  });
+
+  it('accepte un jeton du lot 1, sans amr', () => {
+    const { amr: _amr, ...lot1 } = example;
+    expect(validate(lot1)).toBe(true);
+  });
+
+  it('accepte un jeton du back-office : rôles internes, double authentification faite', () => {
+    expect(
+      validate({
+        ...example,
+        client_id: 'backoffice',
+        roles: [
+          { role: 'super_admin', scopeType: 'global', scopeId: null },
+          { role: 'cleaning_supervisor', scopeType: 'domain', scopeId: 'cleaning' },
+        ],
+        mfa: true,
+        amr: ['otp', 'mfa'],
+      }),
+    ).toBe(true);
   });
 
   it.each([
@@ -56,6 +80,8 @@ describe('Contrat du jeton d’accès', () => {
     ['un autre destinataire', { aud: 'autre' }],
     ['un champ non documenté', { email: 'a@b.c' }],
     ['un client inconnu', { client_id: 'tv' }],
+    ['une méthode d’authentification inconnue', { amr: ['pwd'] }],
+    ['une méthode en double', { amr: ['otp', 'otp'] }],
   ])('refuse %s', (_label, change) => {
     expect(validate({ ...example, ...change })).toBe(false);
   });

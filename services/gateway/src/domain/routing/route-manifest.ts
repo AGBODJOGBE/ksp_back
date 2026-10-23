@@ -3,7 +3,7 @@ import { type RateLimitCategory } from '../rate-limit/rate-limits';
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 /** Niveau d'accès d'une route (extension x-ksp-access du contrat OpenAPI). */
-export type AccessLevel = 'public' | 'refresh_token' | 'authenticated';
+export type AccessLevel = 'public' | 'refresh_token' | 'mfa_token' | 'authenticated';
 
 /** Exigence d'accès d'une route (UC-GW-03). Le service appelé revérifie toujours ses propres droits. */
 export interface AccessRequirement {
@@ -52,6 +52,34 @@ export const ROUTE_MANIFEST = [
     grpc: `${IDENTITY_AUTH}/VerifyOtp`,
     access: { level: 'public' },
     rateLimit: 'otp_verify',
+    requiresKnownClient: true,
+  },
+  {
+    // Jeton de double authentification dans le corps : identity le vérifie (UC-ID-09).
+    operationId: 'enrollTotp',
+    method: 'POST',
+    path: '/api/v1/identity/mfa/totp/enroll',
+    grpc: `${IDENTITY_AUTH}/EnrollTotp`,
+    access: { level: 'mfa_token' },
+    rateLimit: 'mfa_verify',
+    requiresKnownClient: true,
+  },
+  {
+    operationId: 'confirmTotp',
+    method: 'POST',
+    path: '/api/v1/identity/mfa/totp/confirm',
+    grpc: `${IDENTITY_AUTH}/ConfirmTotp`,
+    access: { level: 'mfa_token' },
+    rateLimit: 'mfa_verify',
+    requiresKnownClient: true,
+  },
+  {
+    operationId: 'verifyMfa',
+    method: 'POST',
+    path: '/api/v1/identity/mfa/verify',
+    grpc: `${IDENTITY_AUTH}/VerifyMfa`,
+    access: { level: 'mfa_token' },
+    rateLimit: 'mfa_verify',
     requiresKnownClient: true,
   },
   {

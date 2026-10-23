@@ -562,3 +562,114 @@ describe('gateway : mode dÃ©gradÃ© (UC-GW-07)', () => {
     }
   });
 });
+
+describe('gateway : double authentification du back-office (UC-ID-09)', () => {
+  const ENROLL = '/api/v1/identity/mfa/totp/enroll';
+  const CONFIRM = '/api/v1/identity/mfa/totp/confirm';
+  const MFA_VERIFY = '/api/v1/identity/mfa/verify';
+  let keys: TestKeys;
+  let identity: IdentityServer;
+  let app: NestExpressApplication;
+  let http: ReturnType<typeof request>;
+
+  beforeAll(async () => {
+    keys = await TestKeys.create();
+    identity = await startIdentityStub(keys);
+    app = await startGateway({ identityUrl: identity.url, keys });
+    http = request(app.getHttpServer());
+  });
+
+  afterAll(async () => {
+    await app?.close();
+    await identity?.close();
+  });
+
+  beforeEach(() => identity.stub.reset());
+
+  const backoffice = (req: request.Test) =>
+    req.set('Origin', ORIGINS.backoffice).set('X-Forwarded-For', nextIp()).set('User-Agent', 'Firefox');
+
+  it('configuration : jeton et type de client (déduit de l’origine) transmis à identity', async () => {
+    const res = await backoffice(http.post(ENROLL)).send({ mfaToken: 'mfa-1' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ issuer: 'KSP', digits: 6, periodSeconds: 30 });
+    expect(res.headers['set-cookie']).toBeUndefined();
+    expect(identity.stub.last('enrollTotp')?.request).toEqual({
+      mfaToken: 'mfa-1',
+      clientKind: identityV1.ClientKind.CLIENT_KIND_BACKOFFICE,
+    });
+  });
+
+  it('confirmation : codes de récupération et cookie __Secure-ksp_admin_rt, jamais le jeton dans le corps', async () => {
+    const res = await backoffice(http.post(CONFIRM)).send({ mfaToken: 'mfa-1', code: '287082' });
+    expect(res.status).toBe(200);
+    expect(res.body.recoveryCodes).toHaveLength(10);
+    expect(res.body.refreshToken).toBeUndefined();
+    const cookie = String(res.headers['set-cookie']);
+    expect(cookie).toMatch(/^__Secure-ksp_admin_rt=rt-admin; /);
+    expect(cookie).toMatch(/Path=\/api\/v1\/identity\/token/);
+    expect(cookie).toMatch(/HttpOnly/);
+    expect(cookie).toMatch(/SameSite=Strict/);
+  });
+
+  it('seconde étape : méthode, code, adresse IP et appareil transmis ; session dans le cookie', async () => {
+    const res = await backoffice(http.post(MFA_VERIFY)).send({
+      mfaToken: 'mfa-1',
+      method: 'recovery_code',
+      code: '7KQ2M-X9PDA',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'authenticated', recoveryCodesRemaining: 9 });
+    expect(String(res.headers['set-cookie'])).toMatch(/^__Secure-ksp_admin_rt=rt-admin; /);
+    const call = identity.stub.last('verifyMfa');
+    expect(call?.request).toEqual({
+      mfaToken: 'mfa-1',
+      method: identityV1.MfaMethod.MFA_METHOD_RECOVERY_CODE,
+      code: '7KQ2M-X9PDA',
+      clientKind: identityV1.ClientKind.CLIENT_KIND_BACKOFFICE,
+    });
+    expect(call?.context?.client).toMatchObject({ userAgent: 'Firefox' });
+  });
+
+  it('client inconnu refusé avant identity ; champ inconnu refusé', async () => {
+    const unknown = await http.post(MFA_VERIFY).set('X-Forwarded-For', nextIp()).send({
+      mfaToken: 'mfa-1',
+      method: 'totp',
+      code: '081804',
+    });
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error.code).toBe('GATEWAY_CLIENT_UNKNOWN');
+    const extra = await backoffice(http.post(ENROLL)).send({ mfaToken: 'mfa-1', clientKind: 'backoffice' });
+    expect(extra.status).toBe(400);
+    expect(identity.stub.calls).toHaveLength(0);
+  });
+
+  it('erreur d’identity relayée telle quelle, sans cookie', async () => {
+    identity.stub.on('verifyMfa', () =>
+      Promise.reject(AppError.invalid('IDENTITY_MFA_CODE_REUSED', 'Déjà utilisé.', { attemptsRemaining: 3 })),
+    );
+    const res = await backoffice(http.post(MFA_VERIFY)).send({
+      mfaToken: 'mfa-1',
+      method: 'totp',
+      code: '081804',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatchObject({
+      code: 'IDENTITY_MFA_CODE_REUSED',
+      details: { attemptsRemaining: 3 },
+    });
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('renouvellement refusé pour rôle retiré : cookie du back-office effacé', async () => {
+    identity.stub.on('refreshSession', () =>
+      Promise.reject(AppError.forbidden('IDENTITY_BACKOFFICE_FORBIDDEN', 'Accès refusé.')),
+    );
+    const res = await backoffice(http.post('/api/v1/identity/token/refresh')).set(
+      'Cookie',
+      '__Secure-ksp_admin_rt=rt-admin',
+    );
+    expect(res.status).toBe(403);
+    expect(String(res.headers['set-cookie'])).toMatch(/^__Secure-ksp_admin_rt=; .*Max-Age=0/);
+  });
+});

@@ -165,12 +165,23 @@ message GetCatalogResponse {
 //   IDENTITY_REFRESH_TOKEN_REUSED   UNAUTHENTICATED     ancien jeton réutilisé : session révoquée
 //   IDENTITY_SESSION_REVOKED        UNAUTHENTICATED
 //   IDENTITY_ACCOUNT_SUSPENDED      PERMISSION_DENIED
-//   IDENTITY_BACKOFFICE_FORBIDDEN   PERMISSION_DENIED   compte sans accès au back-office
+//   IDENTITY_BACKOFFICE_FORBIDDEN   PERMISSION_DENIED   compte sans rôle du back-office
+//
+// Double authentification (UC-ID-09, comptes internes sur le back-office) :
+//   IDENTITY_MFA_TOKEN_INVALID          UNAUTHENTICATED     jeton inconnu, expiré, déjà utilisé
+//                                                           ou obtenu par un autre type de client
+//   IDENTITY_MFA_METHOD_INVALID         INVALID_ARGUMENT    méthode non prise en charge
+//   IDENTITY_MFA_CODE_INVALID           INVALID_ARGUMENT    details.attemptsRemaining
+//   IDENTITY_MFA_CODE_REUSED            INVALID_ARGUMENT    code de l'application déjà utilisé,
+//                                                           attendre le suivant (details.attemptsRemaining)
+//   IDENTITY_MFA_TOO_MANY_ATTEMPTS      FAILED_PRECONDITION jeton annulé, recommencer la connexion
+//   IDENTITY_MFA_ENROLLMENT_REQUIRED    FAILED_PRECONDITION application d'authentification à configurer
+//   IDENTITY_MFA_ALREADY_ENROLLED       FAILED_PRECONDITION application déjà configurée
+//   IDENTITY_MFA_ENROLLMENT_NOT_STARTED FAILED_PRECONDITION EnrollTotp doit précéder ConfirmTotp
 //
 // Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
 // LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),
-// EnrollTotp et VerifyMfa (UC-ID-09), ListSessions et RevokeSession (UC-ID-10),
-// SwitchContext (UC-ID-15).
+// ListSessions et RevokeSession (UC-ID-10), SwitchContext (UC-ID-15).
 // ---------------------------------------------------------------------------
 service AuthService {
   // UC-ID-01. Envoie un code par appel gRPC à notification (ADR-014).
@@ -187,6 +198,17 @@ service AuthService {
   // UC-ID-22. Clés publiques de signature des jetons d'accès. La gateway les garde en cache
   // et les publie elle-même sur /.well-known/jwks.json.
   rpc GetSigningKeys(GetSigningKeysRequest) returns (GetSigningKeysResponse);
+  // UC-ID-09. Première connexion d'un compte interne (MfaChallenge.enrollment_required) :
+  // crée le secret de l'application d'authentification (TOTP, RFC 6238). Le secret reste
+  // inactif jusqu'à ConfirmTotp ; un nouvel appel le remplace. Refusé si une application est
+  // déjà configurée : la remplacer relèvera de l'administration des comptes internes.
+  rpc EnrollTotp(EnrollTotpRequest) returns (EnrollTotpResponse);
+  // UC-ID-09. Active l'application par un premier code, remet les 10 codes de récupération
+  // (affichés une seule fois) et ouvre la session.
+  rpc ConfirmTotp(ConfirmTotpRequest) returns (ConfirmTotpResponse);
+  // UC-ID-09. Seconde étape de connexion : code de l'application d'authentification ou code
+  // de récupération, puis ouverture de la session. Un même code de l'application ne sert qu'une fois.
+  rpc VerifyMfa(VerifyMfaRequest) returns (VerifyMfaResponse);
 }
 
 enum OtpChannel {
@@ -285,8 +307,9 @@ message SessionTokens {
 }
 
 message MfaChallenge {
-  // Jeton court, à usage unique, qui prouve que la première étape est passée.
-  // À présenter à VerifyMfa (lot suivant). Jamais journalisé.
+  // Jeton court (5 minutes), à usage unique, lié au compte et au type de client, qui prouve
+  // que la première étape est passée. À présenter à EnrollTotp, ConfirmTotp ou VerifyMfa.
+  // Jamais journalisé.
   string mfa_token = 1;
   string expires_at = 2;
   repeated MfaMethod methods = 3;
@@ -310,6 +333,57 @@ message LogoutRequest {
 
 message LogoutResponse {
   int32 revoked_sessions = 1;
+}
+
+message EnrollTotpRequest {
+  string mfa_token = 1;
+  // Celui de la connexion qui a obtenu le jeton.
+  ClientKind client_kind = 2;
+}
+
+message EnrollTotpResponse {
+  // Secret en base32 (RFC 4648, sans remplissage), à saisir à la main si le QR code ne peut
+  // pas être lu. Transmis une seule fois, jamais journalisé.
+  string secret = 1;
+  // URI otpauth://totp/… à afficher en QR code.
+  string otpauth_uri = 2;
+  // "KSP"
+  string issuer = 3;
+  // Nom du compte affiché par l'application : le numéro de téléphone.
+  string account_name = 4;
+  // 6
+  int32 digits = 5;
+  // 30
+  int32 period_seconds = 6;
+}
+
+message ConfirmTotpRequest {
+  string mfa_token = 1;
+  // Premier code affiché par l'application.
+  string code = 2;
+  ClientKind client_kind = 3;
+}
+
+message ConfirmTotpResponse {
+  SessionTokens session = 1;
+  // Les 10 codes de récupération, chacun utilisable une fois. Transmis en clair une seule
+  // fois, jamais journalisés : seule leur empreinte est conservée.
+  repeated string recovery_codes = 2;
+}
+
+message VerifyMfaRequest {
+  string mfa_token = 1;
+  // MFA_METHOD_TOTP ou MFA_METHOD_RECOVERY_CODE.
+  MfaMethod method = 2;
+  // Code de l'application (6 chiffres) ou code de récupération (tirets et espaces ignorés).
+  string code = 3;
+  ClientKind client_kind = 4;
+}
+
+message VerifyMfaResponse {
+  SessionTokens session = 1;
+  // Codes de récupération encore utilisables : le back-office prévient quand il en reste peu.
+  int32 recovery_codes_remaining = 2;
 }
 
 message GetSigningKeysRequest {}

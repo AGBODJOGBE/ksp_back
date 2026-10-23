@@ -249,8 +249,9 @@ export interface SessionTokens {
 
 export interface MfaChallenge {
   /**
-   * Jeton court, à usage unique, qui prouve que la première étape est passée.
-   * À présenter à VerifyMfa (lot suivant). Jamais journalisé.
+   * Jeton court (5 minutes), à usage unique, lié au compte et au type de client, qui prouve
+   * que la première étape est passée. À présenter à EnrollTotp, ConfirmTotp ou VerifyMfa.
+   * Jamais journalisé.
    */
   mfaToken: string;
   expiresAt: string;
@@ -277,6 +278,65 @@ export interface LogoutRequest {
 
 export interface LogoutResponse {
   revokedSessions: number;
+}
+
+export interface EnrollTotpRequest {
+  mfaToken: string;
+  /** Celui de la connexion qui a obtenu le jeton. */
+  clientKind: ClientKind;
+}
+
+export interface EnrollTotpResponse {
+  /**
+   * Secret en base32 (RFC 4648, sans remplissage), à saisir à la main si le QR code ne peut
+   * pas être lu. Transmis une seule fois, jamais journalisé.
+   */
+  secret: string;
+  /** URI otpauth://totp/… à afficher en QR code. */
+  otpauthUri: string;
+  /** "KSP" */
+  issuer: string;
+  /** Nom du compte affiché par l'application : le numéro de téléphone. */
+  accountName: string;
+  /** 6 */
+  digits: number;
+  /** 30 */
+  periodSeconds: number;
+}
+
+export interface ConfirmTotpRequest {
+  mfaToken: string;
+  /** Premier code affiché par l'application. */
+  code: string;
+  clientKind: ClientKind;
+}
+
+export interface ConfirmTotpResponse {
+  session?:
+    | SessionTokens
+    | undefined;
+  /**
+   * Les 10 codes de récupération, chacun utilisable une fois. Transmis en clair une seule
+   * fois, jamais journalisés : seule leur empreinte est conservée.
+   */
+  recoveryCodes: string[];
+}
+
+export interface VerifyMfaRequest {
+  mfaToken: string;
+  /** MFA_METHOD_TOTP ou MFA_METHOD_RECOVERY_CODE. */
+  method: MfaMethod;
+  /** Code de l'application (6 chiffres) ou code de récupération (tirets et espaces ignorés). */
+  code: string;
+  clientKind: ClientKind;
+}
+
+export interface VerifyMfaResponse {
+  session?:
+    | SessionTokens
+    | undefined;
+  /** Codes de récupération encore utilisables : le back-office prévient quand il en reste peu. */
+  recoveryCodesRemaining: number;
 }
 
 export interface GetSigningKeysRequest {
@@ -433,12 +493,23 @@ export const IDENTITY_SERVICE_NAME = "IdentityService";
  *   IDENTITY_REFRESH_TOKEN_REUSED   UNAUTHENTICATED     ancien jeton réutilisé : session révoquée
  *   IDENTITY_SESSION_REVOKED        UNAUTHENTICATED
  *   IDENTITY_ACCOUNT_SUSPENDED      PERMISSION_DENIED
- *   IDENTITY_BACKOFFICE_FORBIDDEN   PERMISSION_DENIED   compte sans accès au back-office
+ *   IDENTITY_BACKOFFICE_FORBIDDEN   PERMISSION_DENIED   compte sans rôle du back-office
+ *
+ * Double authentification (UC-ID-09, comptes internes sur le back-office) :
+ *   IDENTITY_MFA_TOKEN_INVALID          UNAUTHENTICATED     jeton inconnu, expiré, déjà utilisé
+ *                                                           ou obtenu par un autre type de client
+ *   IDENTITY_MFA_METHOD_INVALID         INVALID_ARGUMENT    méthode non prise en charge
+ *   IDENTITY_MFA_CODE_INVALID           INVALID_ARGUMENT    details.attemptsRemaining
+ *   IDENTITY_MFA_CODE_REUSED            INVALID_ARGUMENT    code de l'application déjà utilisé,
+ *                                                           attendre le suivant (details.attemptsRemaining)
+ *   IDENTITY_MFA_TOO_MANY_ATTEMPTS      FAILED_PRECONDITION jeton annulé, recommencer la connexion
+ *   IDENTITY_MFA_ENROLLMENT_REQUIRED    FAILED_PRECONDITION application d'authentification à configurer
+ *   IDENTITY_MFA_ALREADY_ENROLLED       FAILED_PRECONDITION application déjà configurée
+ *   IDENTITY_MFA_ENROLLMENT_NOT_STARTED FAILED_PRECONDITION EnrollTotp doit précéder ConfirmTotp
  *
  * Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
  * LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),
- * EnrollTotp et VerifyMfa (UC-ID-09), ListSessions et RevokeSession (UC-ID-10),
- * SwitchContext (UC-ID-15).
+ * ListSessions et RevokeSession (UC-ID-10), SwitchContext (UC-ID-15).
  * ---------------------------------------------------------------------------
  */
 
@@ -474,6 +545,29 @@ export interface AuthServiceClient {
    */
 
   getSigningKeys(request: GetSigningKeysRequest, metadata?: Metadata): Observable<GetSigningKeysResponse>;
+
+  /**
+   * UC-ID-09. Première connexion d'un compte interne (MfaChallenge.enrollment_required) :
+   * crée le secret de l'application d'authentification (TOTP, RFC 6238). Le secret reste
+   * inactif jusqu'à ConfirmTotp ; un nouvel appel le remplace. Refusé si une application est
+   * déjà configurée : la remplacer relèvera de l'administration des comptes internes.
+   */
+
+  enrollTotp(request: EnrollTotpRequest, metadata?: Metadata): Observable<EnrollTotpResponse>;
+
+  /**
+   * UC-ID-09. Active l'application par un premier code, remet les 10 codes de récupération
+   * (affichés une seule fois) et ouvre la session.
+   */
+
+  confirmTotp(request: ConfirmTotpRequest, metadata?: Metadata): Observable<ConfirmTotpResponse>;
+
+  /**
+   * UC-ID-09. Seconde étape de connexion : code de l'application d'authentification ou code
+   * de récupération, puis ouverture de la session. Un même code de l'application ne sert qu'une fois.
+   */
+
+  verifyMfa(request: VerifyMfaRequest, metadata?: Metadata): Observable<VerifyMfaResponse>;
 }
 
 /**
@@ -493,12 +587,23 @@ export interface AuthServiceClient {
  *   IDENTITY_REFRESH_TOKEN_REUSED   UNAUTHENTICATED     ancien jeton réutilisé : session révoquée
  *   IDENTITY_SESSION_REVOKED        UNAUTHENTICATED
  *   IDENTITY_ACCOUNT_SUSPENDED      PERMISSION_DENIED
- *   IDENTITY_BACKOFFICE_FORBIDDEN   PERMISSION_DENIED   compte sans accès au back-office
+ *   IDENTITY_BACKOFFICE_FORBIDDEN   PERMISSION_DENIED   compte sans rôle du back-office
+ *
+ * Double authentification (UC-ID-09, comptes internes sur le back-office) :
+ *   IDENTITY_MFA_TOKEN_INVALID          UNAUTHENTICATED     jeton inconnu, expiré, déjà utilisé
+ *                                                           ou obtenu par un autre type de client
+ *   IDENTITY_MFA_METHOD_INVALID         INVALID_ARGUMENT    méthode non prise en charge
+ *   IDENTITY_MFA_CODE_INVALID           INVALID_ARGUMENT    details.attemptsRemaining
+ *   IDENTITY_MFA_CODE_REUSED            INVALID_ARGUMENT    code de l'application déjà utilisé,
+ *                                                           attendre le suivant (details.attemptsRemaining)
+ *   IDENTITY_MFA_TOO_MANY_ATTEMPTS      FAILED_PRECONDITION jeton annulé, recommencer la connexion
+ *   IDENTITY_MFA_ENROLLMENT_REQUIRED    FAILED_PRECONDITION application d'authentification à configurer
+ *   IDENTITY_MFA_ALREADY_ENROLLED       FAILED_PRECONDITION application déjà configurée
+ *   IDENTITY_MFA_ENROLLMENT_NOT_STARTED FAILED_PRECONDITION EnrollTotp doit précéder ConfirmTotp
  *
  * Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
  * LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),
- * EnrollTotp et VerifyMfa (UC-ID-09), ListSessions et RevokeSession (UC-ID-10),
- * SwitchContext (UC-ID-15).
+ * ListSessions et RevokeSession (UC-ID-10), SwitchContext (UC-ID-15).
  * ---------------------------------------------------------------------------
  */
 
@@ -549,11 +654,52 @@ export interface AuthServiceController {
     request: GetSigningKeysRequest,
     metadata?: Metadata,
   ): Promise<GetSigningKeysResponse> | Observable<GetSigningKeysResponse> | GetSigningKeysResponse;
+
+  /**
+   * UC-ID-09. Première connexion d'un compte interne (MfaChallenge.enrollment_required) :
+   * crée le secret de l'application d'authentification (TOTP, RFC 6238). Le secret reste
+   * inactif jusqu'à ConfirmTotp ; un nouvel appel le remplace. Refusé si une application est
+   * déjà configurée : la remplacer relèvera de l'administration des comptes internes.
+   */
+
+  enrollTotp(
+    request: EnrollTotpRequest,
+    metadata?: Metadata,
+  ): Promise<EnrollTotpResponse> | Observable<EnrollTotpResponse> | EnrollTotpResponse;
+
+  /**
+   * UC-ID-09. Active l'application par un premier code, remet les 10 codes de récupération
+   * (affichés une seule fois) et ouvre la session.
+   */
+
+  confirmTotp(
+    request: ConfirmTotpRequest,
+    metadata?: Metadata,
+  ): Promise<ConfirmTotpResponse> | Observable<ConfirmTotpResponse> | ConfirmTotpResponse;
+
+  /**
+   * UC-ID-09. Seconde étape de connexion : code de l'application d'authentification ou code
+   * de récupération, puis ouverture de la session. Un même code de l'application ne sert qu'une fois.
+   */
+
+  verifyMfa(
+    request: VerifyMfaRequest,
+    metadata?: Metadata,
+  ): Promise<VerifyMfaResponse> | Observable<VerifyMfaResponse> | VerifyMfaResponse;
 }
 
 export function AuthServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["requestOtp", "verifyOtp", "refreshSession", "logout", "getSigningKeys"];
+    const grpcMethods: string[] = [
+      "requestOtp",
+      "verifyOtp",
+      "refreshSession",
+      "logout",
+      "getSigningKeys",
+      "enrollTotp",
+      "confirmTotp",
+      "verifyMfa",
+    ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("AuthService", method)(constructor.prototype[method], method, descriptor);

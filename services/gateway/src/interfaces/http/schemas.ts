@@ -5,6 +5,8 @@ import { z } from 'zod';
  * Corps des requêtes, repris des schémas du contrat OpenAPI (components/schemas) : tout champ
  * inconnu est refusé. Un test vérifie que les champs et les champs obligatoires restent identiques.
  */
+const mfaToken = z.string().min(1).max(128);
+
 export const requestBodies = {
   requestOtp: z.strictObject({
     phone: z.string().regex(/^\+[1-9][0-9]{6,14}$/),
@@ -14,6 +16,13 @@ export const requestBodies = {
     challengeId: z.guid(),
     code: z.string().regex(/^[0-9]{4,8}$/),
     deviceLabel: z.string().max(100).optional(),
+  }),
+  enrollTotp: z.strictObject({ mfaToken }),
+  confirmTotp: z.strictObject({ mfaToken, code: z.string().regex(/^[0-9]{6}$/) }),
+  verifyMfa: z.strictObject({
+    mfaToken,
+    method: z.enum(['totp', 'recovery_code']),
+    code: z.string().regex(/^[0-9A-Za-z -]{6,20}$/),
   }),
   refreshSession: z.strictObject({ refreshToken: z.string() }),
   logout: z.strictObject({ scope: z.enum(['this_device', 'all_devices']).optional() }),

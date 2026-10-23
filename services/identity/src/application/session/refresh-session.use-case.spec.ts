@@ -1,11 +1,13 @@
 import { AppError } from '@ksp/platform';
 import { InMemorySessionStore } from '../testing/fakes';
+import { InMemoryRoles } from '../testing/mfa-fakes';
 import { type AccessTokenIssuer } from '../token/access-token-issuer';
 import { LogoutUseCase } from './logout.use-case';
 import { RefreshSessionUseCase } from './refresh-session.use-case';
 import { type Account } from './session.ports';
 
 const DAY = 24 * 3600 * 1000;
+const MINUTE = 60 * 1000;
 
 function setup() {
   let now = new Date('2026-10-19T12:00:00Z');
@@ -43,10 +45,19 @@ function setup() {
     },
   );
   store.tokens.push({ id: 't-1', hash: 'h(rt-1)', sessionId: 's-1', usedAt: null });
+  const roles = new InMemoryRoles();
 
-  const issued: { authTime: Date; clientId: string; sessionId: string }[] = [];
+  type Subject = {
+    authTime: Date;
+    clientId: string;
+    sessionId: string;
+    roles: unknown;
+    mfa: boolean;
+    amr: string[];
+  };
+  const issued: Subject[] = [];
   const accessTokens = {
-    issue: async (subject: { authTime: Date; clientId: string; sessionId: string }) => {
+    issue: async (subject: Subject) => {
       issued.push(subject);
       return { token: 'jwt', tokenId: 'j', expiresAt: new Date(now.getTime() + 900_000) };
     },
@@ -58,13 +69,36 @@ function setup() {
     accessTokens,
     { next: () => `t-${++seq + 100}` },
     { now: () => now },
-    { refreshTtlSeconds: 30 * 24 * 3600, maxSessions: 5 },
+    {
+      customer: { refreshTtlSeconds: 30 * 24 * 3600, maxSessions: 5 },
+      backoffice: {
+        refreshTtlSeconds: 12 * 3600,
+        maxSessions: 2,
+        slidingExpiry: false,
+        idleTimeoutSeconds: 1800,
+      },
+    },
+    roles,
   );
   const logout = new LogoutUseCase(store, { now: () => now });
   const advance = (ms: number) => {
     now = new Date(now.getTime() + ms);
   };
-  return { refresh, logout, store, account, issued, advance };
+  /** Session back-office ouverte maintenant après la double authentification, jeton rt-bo. */
+  const backofficeSession = () => {
+    store.sessions.push({
+      id: 's-bo',
+      userId: 'u-1',
+      clientKind: 'backoffice',
+      createdAt: now,
+      lastSeenAt: now,
+      expiresAt: new Date(now.getTime() + 12 * 3600 * 1000),
+      revokedAt: null,
+      mfaAt: now,
+    });
+    store.tokens.push({ id: 't-bo', hash: 'h(rt-bo)', sessionId: 's-bo', usedAt: null });
+  };
+  return { refresh, logout, store, account, roles, issued, advance, backofficeSession };
 }
 
 async function expectAppError(promise: Promise<unknown>, code: string): Promise<AppError> {
@@ -160,5 +194,58 @@ describe('LogoutUseCase (UC-ID-05)', () => {
     const { logout, store } = setup();
     await expect(logout.execute({ userId: 'u-2', sessionId: 's-1', scope: 'this_device' })).resolves.toBe(0);
     expect(store.sessions[0].revokedAt).toBeNull();
+  });
+});
+
+describe('RefreshSessionUseCase (sessions du back-office)', () => {
+  it('sites et applications : rôle client, sans double authentification', async () => {
+    const { refresh, issued } = setup();
+    await refresh.execute('rt-1');
+    expect(issued[0]).toMatchObject({
+      roles: [{ role: 'customer', scopeType: 'personal' }],
+      mfa: false,
+      amr: ['otp'],
+    });
+  });
+
+  it('échéance fixe de 12 heures, rôles relus, mfa et auth_time de la double authentification', async () => {
+    const { refresh, roles, issued, advance, backofficeSession } = setup();
+    backofficeSession();
+    const openedAt = new Date('2026-10-19T12:00:00Z');
+    roles.assign('u-1', 'cleaning_supervisor');
+    advance(20 * MINUTE);
+    const renewed = await refresh.execute('rt-bo');
+
+    expect(renewed.refreshTokenExpiresAt).toEqual(new Date(openedAt.getTime() + 12 * 3600 * 1000));
+    expect(issued[0]).toMatchObject({
+      clientId: 'backoffice',
+      mfa: true,
+      authTime: openedAt,
+      amr: ['otp', 'mfa'],
+      roles: [
+        { role: 'customer', scopeType: 'personal' },
+        { role: 'cleaning_supervisor', scopeType: 'domain', scopeId: 'cleaning' },
+      ],
+    });
+  });
+
+  it('après 30 minutes sans renouvellement, la session est fermée', async () => {
+    const { refresh, roles, store, advance, backofficeSession } = setup();
+    backofficeSession();
+    roles.assign('u-1', 'super_admin');
+    advance(31 * MINUTE);
+    await expectAppError(refresh.execute('rt-bo'), 'IDENTITY_REFRESH_TOKEN_INVALID');
+    expect(store.sessions.find((session) => session.id === 's-bo')).toMatchObject({
+      revokeReason: 'idle_timeout',
+    });
+  });
+
+  it('un rôle retiré prend effet au renouvellement : session fermée', async () => {
+    const { refresh, store, backofficeSession } = setup();
+    backofficeSession();
+    await expectAppError(refresh.execute('rt-bo'), 'IDENTITY_BACKOFFICE_FORBIDDEN');
+    expect(store.sessions.find((session) => session.id === 's-bo')).toMatchObject({
+      revokeReason: 'backoffice_access_removed',
+    });
   });
 });

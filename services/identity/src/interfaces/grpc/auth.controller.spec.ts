@@ -1,5 +1,8 @@
 import { identityV1 } from '@ksp/contracts';
 import { runWithContext } from '@ksp/platform';
+import { type ConfirmTotpUseCase } from '../../application/mfa/confirm-totp.use-case';
+import { type EnrollTotpUseCase } from '../../application/mfa/enroll-totp.use-case';
+import { type VerifyMfaInput, type VerifyMfaUseCase } from '../../application/mfa/verify-mfa.use-case';
 import { type RequestOtpInput, type RequestOtpUseCase } from '../../application/otp/request-otp.use-case';
 import {
   type OpenedSession,
@@ -50,7 +53,18 @@ function controller() {
   const verifyOtp = {
     execute: async (input: VerifyOtpInput) => {
       verifications.push(input);
-      return opened;
+      if (input.clientKind === 'backoffice') {
+        return {
+          status: 'mfa_required',
+          challenge: {
+            mfaToken: 'mfa-1',
+            expiresAt: new Date('2026-10-19T12:05:00Z'),
+            methods: ['totp', 'recovery_code'],
+            enrollmentRequired: false,
+          },
+        };
+      }
+      return { status: 'authenticated', session: opened };
     },
   } as unknown as VerifyOtpUseCase;
   const key: PublicSigningKey = {
@@ -77,13 +91,46 @@ function controller() {
       return input.scope === 'all_devices' ? 3 : 1;
     },
   } as unknown as LogoutUseCase;
+  const enroll = {
+    execute: async (input: { mfaToken: string; clientKind: string }) => ({
+      secret: 'JBSWY3DPEHPK3PXP',
+      otpauthUri: 'otpauth://totp/KSP:x',
+      issuer: 'KSP',
+      accountName: input.clientKind,
+      digits: 6,
+      periodSeconds: 30,
+    }),
+  } as unknown as EnrollTotpUseCase;
+  const confirm = {
+    execute: async () => ({
+      session: { ...opened, recoveryCodesRemaining: 10 },
+      recoveryCodes: ['7KQ2M-X9PDA'],
+    }),
+  } as unknown as ConfirmTotpUseCase;
+  const mfaVerifications: VerifyMfaInput[] = [];
+  const verifyMfa = {
+    execute: async (input: VerifyMfaInput) => {
+      mfaVerifications.push(input);
+      return { ...opened, recoveryCodesRemaining: 7 };
+    },
+  } as unknown as VerifyMfaUseCase;
   return {
     requests,
     verifications,
+    mfaVerifications,
     refreshes,
     logouts,
     key,
-    auth: new AuthGrpcController(requestOtp, verifyOtp, refresh, logout, signingKeys),
+    auth: new AuthGrpcController(
+      requestOtp,
+      verifyOtp,
+      refresh,
+      logout,
+      signingKeys,
+      enroll,
+      confirm,
+      verifyMfa,
+    ),
   };
 }
 
@@ -243,5 +290,79 @@ describe('AuthGrpcController.logout', () => {
       auth.logout({ scope: identityV1.LogoutScope.LOGOUT_SCOPE_THIS_DEVICE }),
     ).rejects.toMatchObject({ code: 'AUTH_REQUIRED' });
     expect(logouts).toHaveLength(0);
+  });
+});
+
+describe('AuthGrpcController : double authentification (UC-ID-09)', () => {
+  const backoffice = identityV1.ClientKind.CLIENT_KIND_BACKOFFICE;
+
+  it('VerifyOtp au back-office renvoie l’étape de double authentification', async () => {
+    const { auth } = controller();
+    const response = await auth.verifyOtp({
+      challengeId: 'c-1',
+      code: '482913',
+      clientKind: backoffice,
+      deviceLabel: '',
+    });
+    expect(response).toEqual({
+      result: {
+        mfaRequired: {
+          mfaToken: 'mfa-1',
+          expiresAt: '2026-10-19T12:05:00.000Z',
+          methods: [identityV1.MfaMethod.MFA_METHOD_TOTP, identityV1.MfaMethod.MFA_METHOD_RECOVERY_CODE],
+          enrollmentRequired: false,
+        },
+      },
+      isNewUser: false,
+    });
+  });
+
+  it('EnrollTotp, ConfirmTotp : secret, puis session et codes de récupération', async () => {
+    const { auth } = controller();
+    await expect(auth.enrollTotp({ mfaToken: 'mfa-1', clientKind: backoffice })).resolves.toMatchObject({
+      issuer: 'KSP',
+      accountName: 'backoffice',
+      digits: 6,
+    });
+    const confirmed = await auth.confirmTotp({ mfaToken: 'mfa-1', code: '287082', clientKind: backoffice });
+    expect(confirmed.recoveryCodes).toEqual(['7KQ2M-X9PDA']);
+    expect(confirmed.session).toMatchObject({ sessionId: 's-1', refreshToken: 'rt' });
+  });
+
+  it('VerifyMfa transmet la méthode et le client, et renvoie les codes restants', async () => {
+    const { auth, mfaVerifications } = controller();
+    const response = await runWithContext(
+      { correlationId: 'c', client: { ip: '196.192.10.4', userAgent: 'Firefox' } },
+      () =>
+        auth.verifyMfa({
+          mfaToken: 'mfa-1',
+          method: identityV1.MfaMethod.MFA_METHOD_RECOVERY_CODE,
+          code: '7KQ2M-X9PDA',
+          clientKind: backoffice,
+        }),
+    );
+    expect(response.recoveryCodesRemaining).toBe(7);
+    expect(mfaVerifications).toEqual([
+      {
+        mfaToken: 'mfa-1',
+        method: 'recovery_code',
+        code: '7KQ2M-X9PDA',
+        clientKind: 'backoffice',
+        ip: '196.192.10.4',
+        userAgent: 'Firefox',
+      },
+    ]);
+  });
+
+  it('VerifyMfa refuse le SMS et une méthode non précisée', async () => {
+    const { auth } = controller();
+    for (const method of [identityV1.MfaMethod.MFA_METHOD_SMS, identityV1.MfaMethod.MFA_METHOD_UNSPECIFIED]) {
+      await expect(
+        auth.verifyMfa({ mfaToken: 'mfa-1', method, code: '123456', clientKind: backoffice }),
+      ).rejects.toMatchObject({ code: 'IDENTITY_MFA_METHOD_INVALID' });
+    }
+    await expect(
+      auth.enrollTotp({ mfaToken: 'mfa-1', clientKind: identityV1.ClientKind.CLIENT_KIND_UNSPECIFIED }),
+    ).rejects.toMatchObject({ code: 'IDENTITY_CLIENT_KIND_INVALID' });
   });
 });

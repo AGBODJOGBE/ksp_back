@@ -51,6 +51,18 @@ export type LoginOutcome =
   | { status: 'authenticated'; session: SessionTokens; isNewUser: boolean }
   | { status: 'mfa_required'; challenge: MfaChallenge };
 
+export interface TotpEnrollment {
+  secret: string;
+  otpauthUri: string;
+  issuer: string;
+  accountName: string;
+  digits: number;
+  periodSeconds: number;
+}
+
+/** Méthodes acceptées à la seconde étape d'un compte interne (jamais de SMS, ADR-023). */
+export type SecondFactorMethod = 'totp' | 'recovery_code';
+
 export interface Profile {
   user: UserProfile;
   profileIncomplete: boolean;
@@ -75,6 +87,18 @@ export interface IdentityAuth {
   refreshSession(refreshToken: string): Promise<SessionTokens>;
   /** Renvoie le nombre de sessions révoquées. */
   logout(scope: LogoutScope): Promise<number>;
+  enrollTotp(input: { mfaToken: string; clientKind: ClientKind }): Promise<TotpEnrollment>;
+  confirmTotp(input: {
+    mfaToken: string;
+    code: string;
+    clientKind: ClientKind;
+  }): Promise<{ session: SessionTokens; recoveryCodes: string[] }>;
+  verifyMfa(input: {
+    mfaToken: string;
+    method: SecondFactorMethod;
+    code: string;
+    clientKind: ClientKind;
+  }): Promise<{ session: SessionTokens; recoveryCodesRemaining: number }>;
 }
 
 /** identity.AccountService : compte de l'utilisateur connecté. */

@@ -65,8 +65,12 @@ model User {
   deletionRequestedAt DateTime?  @map("deletion_requested_at") @db.Timestamptz(3)
   anonymizedAt        DateTime?  @map("anonymized_at") @db.Timestamptz(3)
 
-  phones   UserPhone[]
-  sessions Session[]
+  phones          UserPhone[]
+  sessions        Session[]
+  roleAssignments RoleAssignment[]
+  mfaFactors      MfaFactor[]
+  recoveryCodes   MfaRecoveryCode[]
+  mfaChallenges   MfaChallenge[]
 
   @@map("users")
 }
@@ -131,6 +135,8 @@ model Session {
   expiresAt    DateTime   @map("expires_at") @db.Timestamptz(3)
   revokedAt    DateTime?  @map("revoked_at") @db.Timestamptz(3)
   revokeReason String?    @map("revoke_reason")
+  /// Double authentification passée à l'ouverture (back-office) : fixe mfa et auth_time des jetons.
+  mfaAt        DateTime?  @map("mfa_at") @db.Timestamptz(3)
 
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   refreshTokens RefreshToken[]
@@ -167,4 +173,110 @@ model LoginEvent {
 
   @@index([userId, createdAt])
   @@map("login_events")
+}
+
+/// Portée d'un rôle ou d'une attribution (cahier des charges Identité, partie 5).
+enum RoleScopeType {
+  global
+  domain
+  org
+  personal
+}
+
+/// Rôles déclarés par les services. Catalogue initial du back-office écrit par la migration 0004.
+model Role {
+  id               String        @id @db.Uuid
+  /// Service qui déclare le rôle.
+  service          String
+  code             String        @unique
+  scopeType        RoleScopeType @map("scope_type")
+  requiresMfa      Boolean       @map("requires_mfa")
+  /// Donne accès au back-office ; exige alors la double authentification (contrainte en base).
+  backofficeAccess Boolean       @default(false) @map("backoffice_access")
+  description      String
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  assignments RoleAssignment[]
+
+  @@map("roles")
+}
+
+/// Qui a quel rôle, et où. Une attribution retirée garde sa ligne (revoked_at) pour l'historique.
+model RoleAssignment {
+  id        String        @id @db.Uuid
+  userId    String        @map("user_id") @db.Uuid
+  roleId    String        @map("role_id") @db.Uuid
+  scopeType RoleScopeType @map("scope_type")
+  /// Service pour une portée domain, organisation pour une portée org ; vide sinon.
+  scopeId   String?       @map("scope_id")
+  /// Vide : attribution d'amorçage (script roles:grant).
+  grantedBy String?       @map("granted_by") @db.Uuid
+  grantedAt DateTime      @map("granted_at") @db.Timestamptz(3)
+  revokedAt DateTime?     @map("revoked_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  /// Une seule attribution active par compte, rôle et portée : index partiel écrit dans la migration.
+  @@index([userId, revokedAt])
+  @@map("role_assignments")
+}
+
+enum MfaFactorType {
+  totp
+  sms
+}
+
+/// Double authentification d'un compte. Le secret est chiffré en AES-256-GCM (clé hors de la base).
+model MfaFactor {
+  id              String        @id @db.Uuid
+  userId          String        @map("user_id") @db.Uuid
+  type            MfaFactorType
+  secretEncrypted String        @map("secret_encrypted")
+  createdAt       DateTime      @map("created_at") @db.Timestamptz(3)
+  /// Vide tant que l'enrôlement n'est pas confirmé par un premier code.
+  enabledAt       DateTime?     @map("enabled_at") @db.Timestamptz(3)
+  /// Dernier pas de temps accepté : un code d'un pas égal ou antérieur est refusé (rejeu).
+  lastUsedStep    Int?          @map("last_used_step")
+  lastUsedAt      DateTime?     @map("last_used_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@map("mfa_factors")
+}
+
+/// Codes de récupération à usage unique : seule leur empreinte HMAC est conservée.
+model MfaRecoveryCode {
+  id        String    @id @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  codeHash  String    @unique @map("code_hash")
+  createdAt DateTime  @map("created_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("mfa_recovery_codes")
+}
+
+/// Étape de double authentification ouverte par un code par téléphone valide (jeton mfa_token).
+model MfaChallenge {
+  id          String     @id @db.Uuid
+  userId      String     @map("user_id") @db.Uuid
+  /// Empreinte SHA-256 du jeton remis au client ; le jeton n'est jamais stocké.
+  tokenHash   String     @unique @map("token_hash")
+  /// Type de client de la connexion : le jeton ne sert qu'à lui.
+  clientKind  ClientKind @map("client_kind")
+  deviceLabel String?    @map("device_label")
+  ip          String?
+  attempts    Int        @default(0)
+  createdAt   DateTime   @map("created_at") @db.Timestamptz(3)
+  expiresAt   DateTime   @map("expires_at") @db.Timestamptz(3)
+  consumedAt  DateTime?  @map("consumed_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("mfa_challenges")
 }

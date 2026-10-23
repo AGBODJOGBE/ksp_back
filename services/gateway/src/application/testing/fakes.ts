@@ -105,6 +105,28 @@ export class FakeIdentity implements IdentityAuth, IdentityAccount {
     return scope === 'all_devices' ? 3 : 1;
   }
 
+  async enrollTotp(input: Parameters<IdentityAuth['enrollTotp']>[0]) {
+    this.calls.push({ method: 'enrollTotp', input });
+    return {
+      secret: 'JBSWY3DPEHPK3PXP',
+      otpauthUri: 'otpauth://totp/KSP:%2B2290197000045?secret=JBSWY3DPEHPK3PXP&issuer=KSP',
+      issuer: 'KSP',
+      accountName: '+2290197000045',
+      digits: 6,
+      periodSeconds: 30,
+    };
+  }
+
+  async confirmTotp(input: Parameters<IdentityAuth['confirmTotp']>[0]) {
+    this.calls.push({ method: 'confirmTotp', input });
+    return { session, recoveryCodes: ['7KQ2M-X9PDA'] };
+  }
+
+  async verifyMfa(input: Parameters<IdentityAuth['verifyMfa']>[0]) {
+    this.calls.push({ method: 'verifyMfa', input });
+    return { session, recoveryCodesRemaining: 10 };
+  }
+
   async getMe(): Promise<Profile> {
     this.calls.push({ method: 'getMe', input: undefined });
     return { user, profileIncomplete: true };

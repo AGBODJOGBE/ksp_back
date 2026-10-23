@@ -3,6 +3,7 @@ import {
   type OtpChallenge,
   type Profile,
   type SessionTokens,
+  type TotpEnrollment,
   type UserProfile,
 } from '../../application/identity/identity.ports';
 
@@ -55,6 +56,17 @@ export function presentMfaRequired(challenge: MfaChallenge) {
     expiresAt: challenge.expiresAt,
     methods: challenge.methods,
     enrollmentRequired: challenge.enrollmentRequired,
+  };
+}
+
+export function presentTotpEnrollment(enrollment: TotpEnrollment) {
+  return {
+    secret: enrollment.secret,
+    otpauthUri: enrollment.otpauthUri,
+    issuer: enrollment.issuer,
+    accountName: enrollment.accountName,
+    digits: enrollment.digits,
+    periodSeconds: enrollment.periodSeconds,
   };
 }
 
