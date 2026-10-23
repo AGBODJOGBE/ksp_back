@@ -13,5 +13,10 @@
     "grpcPort": 50052,
     "httpPort": 3102,
     "database": true
+  },
+  "cleaning": {
+    "grpcPort": 50053,
+    "httpPort": 3103,
+    "database": true
   }
 }
