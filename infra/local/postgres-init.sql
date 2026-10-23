@@ -8,3 +8,6 @@ CREATE DATABASE identity OWNER identity;
 
 CREATE USER notification WITH PASSWORD 'notification' CREATEDB;
 CREATE DATABASE notification OWNER notification;
+
+CREATE USER cleaning WITH PASSWORD 'cleaning' CREATEDB;
+CREATE DATABASE cleaning OWNER cleaning;

@@ -312,6 +312,8 @@ export const ORIGINS = {
 /** La gateway complète, avec la même chaîne HTTP qu'en production. */
 export async function startGateway(options: {
   identityUrl: string;
+  /** Service cleaning simulé (cleaning-stub.ts) ; sans lui, les routes du Nettoyage répondent 503. */
+  cleaningUrl?: string;
   keys: TestKeys;
   env?: Record<string, string>;
   jwks?: JwksSource;
@@ -320,6 +322,7 @@ export async function startGateway(options: {
     NODE_ENV: 'test',
     LOG_LEVEL: 'fatal',
     IDENTITY_GRPC_URL: options.identityUrl,
+    ...(options.cleaningUrl ? { CLEANING_GRPC_URL: options.cleaningUrl } : {}),
     CORS_WEB_ORIGINS: `${ORIGINS.web},https://shop.ksp.bj,https://print.ksp.bj`,
     CORS_BACKOFFICE_ORIGINS: ORIGINS.backoffice,
     ...options.env,

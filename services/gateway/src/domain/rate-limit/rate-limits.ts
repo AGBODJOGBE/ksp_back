@@ -1,6 +1,12 @@
 /** Catégories de limites d'appels (extension x-ksp-rate-limits du contrat OpenAPI). */
 export type RateLimitCategory =
-  'public' | 'authenticated' | 'otp_request' | 'otp_verify' | 'mfa_verify' | 'refresh';
+  | 'public'
+  | 'authenticated'
+  | 'otp_request'
+  | 'otp_verify'
+  | 'mfa_verify'
+  | 'refresh'
+  | 'cleaning_simulation';
 
 export interface RateLimitRule {
   limit: number;
@@ -20,6 +26,8 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   /** identity limite aussi les essais par jeton de double authentification (5). */
   mfa_verify: { limit: 10, windowSeconds: 60, key: 'ip' },
   refresh: { limit: 60, windowSeconds: 60, key: 'ip' },
+  // Simulateur public du Nettoyage (cahier des charges Nettoyage, partie 5).
+  cleaning_simulation: { limit: 20, windowSeconds: 60, key: 'ip' },
 };
 
 /** Clé du compteur : une catégorie ne partage jamais ses compteurs avec une autre. */

@@ -1,0 +1,290 @@
+// Base de données du service cleaning. Aucun autre service n'y accède (règle d'or n° 1).
+// Montants en entiers de FCFA (XOF). Les coordonnées du client restent dans identity ;
+// seule l'adresse d'intervention, propre au dossier, est gardée ici.
+
+generator client {
+  provider = "prisma-client-js"
+  // Client propre à ce service : plusieurs services cohabitent dans le dépôt.
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Événements à publier (pattern outbox, règle d'or n° 4). Écrits dans la même transaction que la donnée métier.
+model OutboxEvent {
+  id          String    @id @db.Uuid
+  eventType   String    @map("event_type")
+  payload     Json
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(3)
+  attempts    Int       @default(0)
+
+  @@map("outbox")
+}
+
+/// Événements déjà traités par ce service (inbox) : un événement reçu deux fois n'a qu'un effet.
+model ProcessedEvent {
+  eventId     String   @map("event_id") @db.Uuid
+  consumer    String
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@id([eventId, consumer])
+  @@map("processed_events")
+}
+
+/// Prestation du catalogue (UC-CL-11).
+model CleaningService {
+  code        String        @id
+  name        String
+  description String        @default("")
+  /// square_meter, room, septic_tank, cubic_meter.
+  unit        String
+  active      Boolean       @default(true)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  pricing     PricingRule[]
+
+  @@map("cleaning_services")
+}
+
+/// Grille tarifaire versionnée : chaque modification crée une ligne, avec son auteur et sa date.
+model PricingRule {
+  id                   String          @id @db.Uuid
+  serviceCode          String          @map("service_code")
+  version              Int
+  /// Absent tant que l'équipe Nettoyage n'a pas fixé le prix.
+  unitPrice            Int?            @map("unit_price")
+  minimumPrice         Int?            @map("minimum_price")
+  options              Json            @default("[]")
+  communeCoefficients  Json            @default("{}") @map("commune_coefficients")
+  defaultCoefficientBp Int             @default(10000) @map("default_coefficient_bp")
+  teamSize             Json            @map("team_size")
+  checklist            Json            @default("[]")
+  createdBy            String          @map("created_by")
+  createdAt            DateTime        @map("created_at") @db.Timestamptz(3)
+  service              CleaningService @relation(fields: [serviceCode], references: [code])
+
+  @@unique([serviceCode, version])
+  @@map("pricing_rules")
+}
+
+/// Réglages de la partie 4 du cahier des charges (une seule ligne, id = 1).
+model CleaningSettings {
+  id                         Int       @id @default(1)
+  quoteValidityDays          Int       @default(15) @map("quote_validity_days")
+  minimumLeadHours           Int       @default(48) @map("minimum_lead_hours")
+  freeCancellationHours      Int       @default(24) @map("free_cancellation_hours")
+  visitThresholdSquareMeters Int       @default(300) @map("visit_threshold_square_meters")
+  maxOpenRequests            Int       @default(5) @map("max_open_requests")
+  depositPercent             Int       @default(30) @map("deposit_percent")
+  updatedBy                  String?   @map("updated_by")
+  updatedAt                  DateTime? @map("updated_at") @db.Timestamptz(3)
+
+  @@map("cleaning_settings")
+}
+
+/// Demande de devis (UC-CL-02 à 08).
+model QuoteRequest {
+  id                  String     @id @db.Uuid
+  customerId          String     @map("customer_id") @db.Uuid
+  idempotencyKey      String     @map("idempotency_key")
+  status              String
+  customerKind        String     @map("customer_kind")
+  organizationId      String?    @map("organization_id") @db.Uuid
+  serviceCode         String     @map("service_code")
+  premisesType        String     @map("premises_type")
+  quantity            Int
+  options             String[]
+  commune             String
+  /// Adresse d'intervention : jamais dans les journaux ni dans les événements.
+  address             String
+  preferredSlots      Json       @map("preferred_slots")
+  comment             String?
+  recurrence          Json?
+  requestedTeamSize   Int        @default(0) @map("requested_team_size")
+  recommendedTeamSize Int        @map("recommended_team_size")
+  estimateLow         Int?       @map("estimate_low")
+  estimateHigh        Int?       @map("estimate_high")
+  currentQuoteId      String?    @map("current_quote_id") @db.Uuid
+  missionId           String?    @map("mission_id") @db.Uuid
+  closingReason       String?    @map("closing_reason")
+  createdAt           DateTime   @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime   @map("updated_at") @db.Timestamptz(3)
+  /// Contrôle de concurrence optimiste.
+  version             Int        @default(0)
+  visit               SiteVisit?
+  quotes              Quote[]
+
+  @@unique([customerId, idempotencyKey])
+  @@index([customerId, id])
+  @@index([status, id])
+  @@map("quote_requests")
+}
+
+/// Visite technique (UC-CL-07) ; une replanification garde la même ligne.
+model SiteVisit {
+  id          String       @id @db.Uuid
+  requestId   String       @unique @map("request_id") @db.Uuid
+  status      String
+  scheduledAt DateTime     @map("scheduled_at") @db.Timestamptz(3)
+  agentId     String       @map("agent_id") @db.Uuid
+  report      String?
+  completedAt DateTime?    @map("completed_at") @db.Timestamptz(3)
+  request     QuoteRequest @relation(fields: [requestId], references: [id])
+
+  @@map("site_visits")
+}
+
+/// Devis envoyé : prix figé, un devis révisé s'ajoute sans effacer le précédent.
+model Quote {
+  id                String       @id @db.Uuid
+  requestId         String       @map("request_id") @db.Uuid
+  lines             Json
+  subtotal          Int
+  interventionCount Int          @map("intervention_count")
+  total             Int
+  proposedSlots     Json         @map("proposed_slots")
+  validUntil        DateTime     @map("valid_until") @db.Timestamptz(3)
+  depositPercent    Int          @map("deposit_percent")
+  depositAmount     Int          @map("deposit_amount")
+  recurrence        Json?
+  teamSize          Int          @map("team_size")
+  durationMinutes   Int          @map("duration_minutes")
+  sentAt            DateTime     @map("sent_at") @db.Timestamptz(3)
+  request           QuoteRequest @relation(fields: [requestId], references: [id])
+
+  @@index([requestId])
+  @@map("quotes")
+}
+
+/// Mission créée par l'acceptation d'un devis (UC-CL-04, 09, 10).
+model Mission {
+  id                   String           @id @db.Uuid
+  requestId            String           @unique @map("request_id") @db.Uuid
+  quoteId              String           @map("quote_id") @db.Uuid
+  /// Clé d'idempotence de l'acceptation.
+  acceptanceKey        String           @map("acceptance_key")
+  customerId           String           @map("customer_id") @db.Uuid
+  organizationId       String?          @map("organization_id") @db.Uuid
+  status               String
+  serviceCode          String           @map("service_code")
+  commune              String
+  address              String
+  chosenSlotStart      DateTime         @map("chosen_slot_start") @db.Timestamptz(3)
+  chosenSlotEnd        DateTime         @map("chosen_slot_end") @db.Timestamptz(3)
+  recurrence           Json?
+  plannedInterventions Int              @map("planned_interventions")
+  /// Option de paiement choisie par le client : option, timing, method.
+  paymentPlan          Json             @map("payment_plan")
+  paymentTotal         Int              @map("payment_total")
+  depositPercent       Int              @map("deposit_percent")
+  depositAmount        Int              @map("deposit_amount")
+  cancellationReason   String?          @map("cancellation_reason")
+  createdAt            DateTime         @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime         @map("updated_at") @db.Timestamptz(3)
+  version              Int              @default(0)
+  interventions        Intervention[]
+  payments             MissionPayment[]
+
+  @@index([customerId, id])
+  @@index([status, id])
+  @@map("missions")
+}
+
+/// Passage d'une mission, avec ses propres agents.
+model Intervention {
+  id                 String    @id @db.Uuid
+  missionId          String    @map("mission_id") @db.Uuid
+  status             String
+  scheduledStart     DateTime  @map("scheduled_start") @db.Timestamptz(3)
+  scheduledEnd       DateTime  @map("scheduled_end") @db.Timestamptz(3)
+  durationMinutes    Int       @map("duration_minutes")
+  agentIds           String[]  @map("agent_ids") @db.Uuid
+  checklist          Json      @default("[]")
+  incidentNote       String?   @map("incident_note")
+  /// Références du service file, sans stockage ici.
+  beforePhotoFileIds String[]  @default([]) @map("before_photo_file_ids") @db.Uuid
+  afterPhotoFileIds  String[]  @default([]) @map("after_photo_file_ids") @db.Uuid
+  startedAt          DateTime? @map("started_at") @db.Timestamptz(3)
+  completedAt        DateTime? @map("completed_at") @db.Timestamptz(3)
+  mission            Mission   @relation(fields: [missionId], references: [id])
+
+  @@index([missionId])
+  @@index([scheduledStart, scheduledEnd])
+  @@map("interventions")
+}
+
+/// Paiement enregistré : coché par le superviseur (espèces, Mobile Money hors ligne) ou, plus tard, en ligne.
+model MissionPayment {
+  id         String   @id @db.Uuid
+  missionId  String   @map("mission_id") @db.Uuid
+  amount     Int
+  method     String
+  reference  String?
+  recordedBy String   @map("recorded_by")
+  recordedAt DateTime @map("recorded_at") @db.Timestamptz(3)
+  mission    Mission  @relation(fields: [missionId], references: [id])
+
+  @@index([missionId])
+  @@map("mission_payments")
+}
+
+/// Agent Nettoyage : compte KSP existant rattaché par l'admin (UC-CL-12).
+model Agent {
+  userId           String                @id @map("user_id") @db.Uuid
+  displayName      String                @map("display_name")
+  active           Boolean               @default(true)
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  unavailabilities AgentUnavailability[]
+  teams            TeamMember[]
+
+  @@map("agents")
+}
+
+model AgentUnavailability {
+  id       String   @id @db.Uuid
+  agentId  String   @map("agent_id") @db.Uuid
+  startsAt DateTime @map("starts_at") @db.Timestamptz(3)
+  endsAt   DateTime @map("ends_at") @db.Timestamptz(3)
+  reason   String?
+  agent    Agent    @relation(fields: [agentId], references: [userId])
+
+  @@index([agentId, startsAt])
+  @@map("agent_unavailabilities")
+}
+
+model Team {
+  id        String       @id @db.Uuid
+  name      String
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  members   TeamMember[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  teamId  String @map("team_id") @db.Uuid
+  agentId String @map("agent_id") @db.Uuid
+  team    Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  agent   Agent  @relation(fields: [agentId], references: [userId])
+
+  @@id([teamId, agentId])
+  @@map("team_members")
+}
+
+/// Traces locales (prix, devis, affectations, paiements) en attendant le service audit.
+model AuditEntry {
+  id         String   @id @db.Uuid
+  actorId    String   @map("actor_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  at         DateTime @db.Timestamptz(3)
+  details    Json?
+
+  @@index([entityType, entityId])
+  @@map("audit_log")
+}

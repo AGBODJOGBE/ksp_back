@@ -19,6 +19,8 @@ interface Operation extends Json {
   'x-ksp-grpc'?: string;
   'x-ksp-access'?: string;
   'x-ksp-rate-limit'?: string;
+  'x-ksp-roles'?: string[];
+  'x-ksp-mfa-max-age'?: number;
 }
 
 interface MediaType {
@@ -109,6 +111,24 @@ describe('contrat OpenAPI de la gateway', () => {
     ({ op }) => {
       const needsBearer = (op.security ?? []).some((requirement) => 'bearerAuth' in requirement);
       expect(needsBearer).toBe(op['x-ksp-access'] === 'authenticated');
+    },
+  );
+
+  it.each(operations)(
+    '$method $path : rôles et double authentification seulement sur une route connectée ; toujours sur le back-office',
+    ({ path, op }) => {
+      const roles = op['x-ksp-roles'];
+      const mfa = op['x-ksp-mfa-max-age'];
+      if (roles !== undefined || mfa !== undefined) expect(op['x-ksp-access']).toBe('authenticated');
+      if (roles !== undefined) {
+        expect(Array.isArray(roles) && roles.length > 0).toBe(true);
+        for (const role of roles) expect(role).toMatch(/^[a-z]+(_[a-z]+)*$/);
+      }
+      if (mfa !== undefined) expect(Number.isInteger(mfa) && mfa > 0).toBe(true);
+      if (path.startsWith('/api/v1/admin/')) {
+        expect(roles).toBeDefined();
+        expect(mfa).toBeDefined();
+      }
     },
   );
 

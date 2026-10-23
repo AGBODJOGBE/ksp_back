@@ -1,4 +1,5 @@
 import { type RateLimitCategory } from '../rate-limit/rate-limits';
+import { CLEANING_ROUTES } from './cleaning-routes';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -25,6 +26,8 @@ export interface RouteDefinition {
   rateLimit: RateLimitCategory;
   /** Route d'authentification : le type de client (web, mobile, back-office) doit être reconnu. */
   requiresKnownClient: boolean;
+  /** Écriture sensible : en-tête Idempotency-Key obligatoire, transmis au service. */
+  idempotencyKey?: 'required';
 }
 
 const IDENTITY_AUTH = 'ksp.identity.v1.AuthService';
@@ -129,6 +132,7 @@ export const ROUTE_MANIFEST = [
     rateLimit: 'public',
     requiresKnownClient: false,
   },
+  ...CLEANING_ROUTES,
 ] as const satisfies readonly RouteDefinition[];
 
 export type OperationId = (typeof ROUTE_MANIFEST)[number]['operationId'];

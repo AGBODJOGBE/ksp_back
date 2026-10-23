@@ -1,5 +1,6 @@
 import { AppError } from '@ksp/platform';
 import { z } from 'zod';
+import { cleaningBodies } from './cleaning-schemas';
 
 /**
  * Corps des requêtes, repris des schémas du contrat OpenAPI (components/schemas) : tout champ
@@ -36,6 +37,7 @@ export const requestBodies = {
         .optional(),
     })
     .refine((body) => Object.keys(body).length > 0, { message: 'Au moins un champ à modifier.' }),
+  ...cleaningBodies,
 };
 
 /** Champ refusé et raison, sans reprendre la valeur envoyée (elle peut être un code ou un jeton). */

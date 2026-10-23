@@ -25,6 +25,7 @@ export function protoPath(relativePath: string): string {
 /** Packages gRPC connus, avec le fichier qui les déclare. */
 export const GRPC_PACKAGES = {
   // new-service:packages (le générateur de service ajoute les nouveaux packages ici)
+  cleaning: { package: 'ksp.cleaning.v1', file: 'ksp/cleaning/v1/cleaning.proto' },
   identity: { package: 'ksp.identity.v1', file: 'ksp/identity/v1/identity.proto' },
   notification: { package: 'ksp.notification.v1', file: 'ksp/notification/v1/notification.proto' },
   obligation: { package: 'ksp.common.v1', file: 'ksp/common/v1/obligation.proto' },

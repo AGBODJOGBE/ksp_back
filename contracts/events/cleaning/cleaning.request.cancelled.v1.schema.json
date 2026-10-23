@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.request.cancelled.v1.schema.json",
+  "title": "cleaning.request.cancelled",
+  "description": "Demande ou mission annulée, ou demande refusée par KSP (UC-CL-05, 06). Le motif libre n'y figure pas.",
+  "x-event-type": "cleaning.request.cancelled",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "missionId", "customerId", "cancelledBy", "outcome"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "missionId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Mission annulée, null si seule la demande l'est"
+    },
+    "customerId": { "type": "string", "format": "uuid" },
+    "cancelledBy": { "enum": ["customer", "supervisor"] },
+    "outcome": {
+      "enum": ["cancelled", "rejected", "declined"],
+      "description": "cancelled : annulation ; rejected : refus de KSP ; declined : devis refusé par le client"
+    }
+  }
+}

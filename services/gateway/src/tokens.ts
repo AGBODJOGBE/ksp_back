@@ -3,3 +3,5 @@ export const CLOCK = Symbol('CLOCK');
 export const JWKS_SOURCE = Symbol('JWKS_SOURCE');
 export const RATE_LIMITER = Symbol('RATE_LIMITER');
 export const IDENTITY_GRPC_CLIENT = Symbol('IDENTITY_GRPC_CLIENT');
+export const CLEANING_GRPC_CLIENT = Symbol('CLEANING_GRPC_CLIENT');
+export const CLEANING_API = Symbol('CLEANING_API');

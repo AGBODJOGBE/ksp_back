@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.quote.sent.v1.schema.json",
+  "title": "cleaning.quote.sent",
+  "description": "Devis envoyé au client (UC-CL-08) ; la notification porte un lien vers « Mon espace KSP ».",
+  "x-event-type": "cleaning.quote.sent",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "quoteId", "customerId", "total", "validUntil"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "quoteId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "total": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "integer", "minimum": 0 },
+        "currency": { "const": "XOF" }
+      }
+    },
+    "validUntil": { "type": "string", "format": "date-time" }
+  }
+}

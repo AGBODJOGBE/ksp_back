@@ -6,4 +6,5 @@ export * from './events';
 export * from './proto-path';
 export * from './tokens/access-token';
 export * from './tokens/service-token';
+export * as cleaningV1 from './generated/ksp/cleaning/v1/cleaning';
 // new-service:exports (le générateur de service ajoute les nouveaux contrats ici)

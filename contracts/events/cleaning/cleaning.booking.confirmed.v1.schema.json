@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.booking.confirmed.v1.schema.json",
+  "title": "cleaning.booking.confirmed",
+  "description": "Devis accepté, mission créée (UC-CL-04). Écouté par notification, puis par billing et payment.",
+  "x-event-type": "cleaning.booking.confirmed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "requestId",
+    "quoteId",
+    "missionId",
+    "customerId",
+    "organizationId",
+    "total",
+    "plannedInterventions",
+    "recurrence",
+    "paymentPlan",
+    "depositAmount"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "integer", "minimum": 0 },
+        "currency": { "const": "XOF" }
+      }
+    }
+  },
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "quoteId": { "type": "string", "format": "uuid" },
+    "missionId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": { "type": ["string", "null"], "format": "uuid" },
+    "total": { "$ref": "#/$defs/money" },
+    "plannedInterventions": { "type": "integer", "minimum": 1 },
+    "recurrence": {
+      "description": "Contrat récurrent, null pour une prestation ponctuelle",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["period", "visitsPerPeriod", "durationMonths"],
+          "properties": {
+            "period": { "enum": ["week", "month"] },
+            "visitsPerPeriod": { "type": "integer", "minimum": 1 },
+            "durationMonths": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "paymentPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["option", "timing", "method"],
+      "properties": {
+        "option": { "enum": ["deposit", "full"] },
+        "timing": { "enum": ["before", "after"] },
+        "method": { "enum": ["cash", "mobile_money_offline", "mobile_money_online"] }
+      }
+    },
+    "depositAmount": { "$ref": "#/$defs/money" }
+  }
+}
