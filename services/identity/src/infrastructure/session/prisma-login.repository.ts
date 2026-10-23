@@ -10,6 +10,7 @@ import {
   type PhoneLoginPlan,
   type ProfileChanges,
 } from '../../application/session/session.ports';
+import { type UserDirectory } from '../../application/directory/get-users.use-case';
 import { Prisma } from '../../../prisma/generated';
 import { PrismaService } from '../prisma/prisma.service';
 import { openSession } from './session-writes';
@@ -42,7 +43,7 @@ export function toAccount(row: AccountRow): Account {
 
 /** Comptes et ouverture de session, en base identity. */
 @Injectable()
-export class PrismaLoginRepository implements AccountRepository, LoginRepository {
+export class PrismaLoginRepository implements AccountRepository, LoginRepository, UserDirectory {
   constructor(private readonly prisma: PrismaService) {}
 
   async findByPhone(phoneE164: string): Promise<Account | null> {
@@ -56,6 +57,14 @@ export class PrismaLoginRepository implements AccountRepository, LoginRepository
   async findById(userId: string): Promise<Account | null> {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: ACCOUNT_SELECT });
     return user ? toAccount(user) : null;
+  }
+
+  async findByIds(userIds: readonly string[]): Promise<Account[]> {
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: [...userIds] } },
+      select: ACCOUNT_SELECT,
+    });
+    return users.map(toAccount);
   }
 
   async updateProfile(userId: string, changes: ProfileChanges): Promise<Account | null> {

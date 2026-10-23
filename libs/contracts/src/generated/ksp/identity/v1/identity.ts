@@ -387,6 +387,17 @@ export interface UpdateMeResponse {
 /** Appelé par tous les services autorisés par la carte des services. */
 
 export interface IdentityServiceClient {
+  /**
+   * GetUser et GetUsersByIds — appelant autorisé : notification (destinataires des événements
+   * métier), qui reçoit le téléphone et l'e-mail. Un compte supprimé est traité comme introuvable ;
+   * GetUsersByIds omet les identifiants introuvables (100 au plus par appel).
+   * Erreurs :
+   *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
+   *   IDENTITY_USER_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)
+   *   IDENTITY_TOO_MANY_USER_IDS   INVALID_ARGUMENT   plus de 100 identifiants
+   *   IDENTITY_USER_NOT_FOUND      NOT_FOUND          GetUser seulement
+   */
+
   getUser(request: GetUserRequest, metadata?: Metadata): Observable<GetUserResponse>;
 
   getUsersByIds(request: GetUsersByIdsRequest, metadata?: Metadata): Observable<GetUsersByIdsResponse>;
@@ -409,6 +420,17 @@ export interface IdentityServiceClient {
 /** Appelé par tous les services autorisés par la carte des services. */
 
 export interface IdentityServiceController {
+  /**
+   * GetUser et GetUsersByIds — appelant autorisé : notification (destinataires des événements
+   * métier), qui reçoit le téléphone et l'e-mail. Un compte supprimé est traité comme introuvable ;
+   * GetUsersByIds omet les identifiants introuvables (100 au plus par appel).
+   * Erreurs :
+   *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
+   *   IDENTITY_USER_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)
+   *   IDENTITY_TOO_MANY_USER_IDS   INVALID_ARGUMENT   plus de 100 identifiants
+   *   IDENTITY_USER_NOT_FOUND      NOT_FOUND          GetUser seulement
+   */
+
   getUser(
     request: GetUserRequest,
     metadata?: Metadata,

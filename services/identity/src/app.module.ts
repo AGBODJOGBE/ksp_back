@@ -3,6 +3,7 @@ import { GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { GetMeUseCase, UpdateMeUseCase } from './application/account/account.use-cases';
+import { GetUsersUseCase } from './application/directory/get-users.use-case';
 import { BackofficeSessionOpener } from './application/mfa/backoffice-session-opener';
 import { ConfirmTotpUseCase } from './application/mfa/confirm-totp.use-case';
 import { EnrollTotpUseCase } from './application/mfa/enroll-totp.use-case';
@@ -318,6 +319,11 @@ export class AppModule {
           provide: GetMeUseCase,
           inject: [PrismaLoginRepository],
           useFactory: (accounts: PrismaLoginRepository) => new GetMeUseCase(accounts),
+        },
+        {
+          provide: GetUsersUseCase,
+          inject: [PrismaLoginRepository],
+          useFactory: (directory: PrismaLoginRepository) => new GetUsersUseCase(directory),
         },
         {
           provide: UpdateMeUseCase,

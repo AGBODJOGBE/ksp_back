@@ -106,6 +106,10 @@ export class InMemoryIdentityStore implements AccountRepository, LoginRepository
     return this.accounts.find((account) => account.id === userId) ?? null;
   }
 
+  async findByIds(userIds: readonly string[]): Promise<Account[]> {
+    return this.accounts.filter((account) => userIds.includes(account.id));
+  }
+
   async updateProfile(userId: string, changes: ProfileChanges): Promise<Account | null> {
     const account = this.accounts.find((candidate) => candidate.id === userId);
     if (!account) return null;

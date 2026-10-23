@@ -1,23 +1,30 @@
 import { identityV1 } from '@ksp/contracts';
+import { currentContext } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
+import { GetUsersUseCase } from '../../application/directory/get-users.use-case';
+import { toUserMessage } from './mappers';
 import { notImplemented } from './not-implemented';
 
 /**
  * Adaptateur gRPC : traduit chaque appel en cas d'usage (couche application).
  * Aucune règle métier ici.
  *
- * Fondations : le contrat est exposé, chaque méthode répond NOT_IMPLEMENTED
- * jusqu'à ce que son cas d'usage soit livré (lot 1).
+ * Les méthodes pas encore livrées répondent NOT_IMPLEMENTED. GetUser et GetUsersByIds servent
+ * notification (destinataires des événements métier, lot 2).
  */
 @Controller()
 @identityV1.IdentityServiceControllerMethods()
 export class IdentityGrpcController implements identityV1.IdentityServiceController {
-  getUser(): Promise<identityV1.GetUserResponse> {
-    return notImplemented('GetUser');
+  constructor(private readonly getUsersUseCase: GetUsersUseCase) {}
+
+  async getUser(request: identityV1.GetUserRequest): Promise<identityV1.GetUserResponse> {
+    const account = await this.getUsersUseCase.one(callerService(), request.userId);
+    return { user: toUserMessage(account) };
   }
 
-  getUsersByIds(): Promise<identityV1.GetUsersByIdsResponse> {
-    return notImplemented('GetUsersByIds');
+  async getUsersByIds(request: identityV1.GetUsersByIdsRequest): Promise<identityV1.GetUsersByIdsResponse> {
+    const accounts = await this.getUsersUseCase.many(callerService(), request.userIds);
+    return { users: accounts.map(toUserMessage) };
   }
 
   checkPermission(): Promise<identityV1.CheckPermissionResponse> {
@@ -39,4 +46,9 @@ export class IdentityGrpcController implements identityV1.IdentityServiceControl
   getCatalog(): Promise<identityV1.GetCatalogResponse> {
     return notImplemented('GetCatalog');
   }
+}
+
+/** Renseigné par le kit après vérification du jeton de service ; absent sans vérificateur (développement). */
+function callerService(): string | null {
+  return currentContext()?.callerService ?? null;
 }
