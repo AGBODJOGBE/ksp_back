@@ -22,7 +22,13 @@ import {
   GetMyMissionUseCase,
   ListMyMissionsUseCase,
 } from './missions/customer-missions.use-cases';
+import { DeactivateZoneUseCase, ListZonesUseCase, SaveZoneUseCase } from './catalog/zones.use-cases';
 import { HasPendingObligationsUseCase } from './obligations/has-pending-obligations.use-case';
+import {
+  EvaluateStandingUseCase,
+  HandleInvoiceEventUseCase,
+  WatchIndividualPaymentsUseCase,
+} from './standing/standing.use-cases';
 import {
   CompleteVisitUseCase,
   GetQuoteRequestUseCase,
@@ -50,6 +56,7 @@ import {
 
 /** Les cas d'usage UC-CL-01 à 12 (une classe chacun), reliés aux mêmes dépendances. */
 export function createUseCases(deps: CleaningDeps) {
+  const evaluateStanding = new EvaluateStandingUseCase(deps);
   return {
     listServices: new ListServicesUseCase(deps),
     simulate: new SimulateUseCase(deps),
@@ -88,6 +95,12 @@ export function createUseCases(deps: CleaningDeps) {
     createTeam: new CreateTeamUseCase(deps),
     updateTeam: new UpdateTeamUseCase(deps),
     hasPendingObligations: new HasPendingObligationsUseCase(deps),
+    listZones: new ListZonesUseCase(deps),
+    saveZone: new SaveZoneUseCase(deps),
+    deactivateZone: new DeactivateZoneUseCase(deps),
+    evaluateStanding,
+    handleInvoiceEvent: new HandleInvoiceEventUseCase(deps, evaluateStanding),
+    watchIndividualPayments: new WatchIndividualPaymentsUseCase(deps, evaluateStanding),
   };
 }
 

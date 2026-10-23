@@ -139,6 +139,7 @@ describe('cleaning en gRPC', () => {
       ),
     );
     expect(simulation).toMatchObject({
+      covered: true,
       priced: true,
       estimate: { low: { amount: 33500, currency: 'XOF' }, high: { amount: 43000, currency: 'XOF' } },
       computedPrice: { amount: 37400, currency: 'XOF' },
@@ -161,6 +162,7 @@ describe('cleaning en gRPC', () => {
             preferredSlots: [SLOT],
             comment: '',
             requestedTeamSize: 0,
+            daysPerWeek: 0,
           },
           m,
         ),

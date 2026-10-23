@@ -1,3 +1,4 @@
+import { isCovered } from '../../domain/zone';
 import { PREMISES_TYPES, recommendedTeamSize } from '../../domain/catalog';
 import { type Mission } from '../../domain/mission';
 import { isValidPlan, newPaymentState, type PaymentPlan } from '../../domain/payment';
@@ -5,7 +6,7 @@ import { findProposedSlot, isQuoteExpired } from '../../domain/quote';
 import {
   canTransitionRequest,
   effectiveRequestStatus,
-  isVisitRequired,
+  VISIT_REQUIRED,
   type QuoteRequest,
   type RequestStatus,
 } from '../../domain/quote-request';
@@ -68,9 +69,17 @@ export interface RequestQuoteInput {
   comment: string;
   recurrence?: { period: string; visitsPerPeriod: number; durationMonths: number };
   requestedTeamSize: number;
+  /** Entreprise : jours d'intervention par semaine (1 à 7), 0 ou absent si non précisés. */
+  daysPerWeek?: number;
 }
 
 export const MAX_PREFERRED_SLOTS = 3;
+
+/**
+ * Plan de paiement d'une entreprise : elle règle ses factures mensuelles (service billing) et
+ * ne choisit pas d'acompte ; un plan fourni est tout de même respecté.
+ */
+export const BUSINESS_PAYMENT_PLAN: PaymentPlan = { option: 'full', timing: 'after', method: 'cash' };
 
 /** UC-CL-02 : demander un devis. Profil complet vérifié par la gateway (IDENTITY_PROFILE_INCOMPLETE). */
 export class RequestQuoteUseCase {
@@ -92,8 +101,12 @@ export class RequestQuoteUseCase {
     const requestedTeamSize = input.requestedTeamSize
       ? requirePositiveInt('requestedTeamSize', input.requestedTeamSize, 50)
       : 0;
+    const daysPerWeek = input.daysPerWeek ? requirePositiveInt('daysPerWeek', input.daysPerWeek, 7) : null;
     const service = await activeService(this.deps, input.serviceCode);
     if (unknownOptions(service, input.options).length) throw CleaningErrors.invalid('options');
+    // Zones desservies : une demande hors zone est refusée (le simulateur, lui, reste ouvert).
+    if (!isCovered(await this.deps.catalog.listZones(), commune))
+      throw CleaningErrors.zoneNotCovered(commune);
 
     const settings = await this.deps.catalog.getSettings();
     if (input.preferredSlots.length < 1 || input.preferredSlots.length > MAX_PREFERRED_SLOTS) {
@@ -111,12 +124,7 @@ export class RequestQuoteUseCase {
 
     const options = [...new Set(input.options)];
     const simulation = simulate(service, { quantity, options, commune, requestedTeamSize });
-    const visitRequired = isVisitRequired(
-      customer.kind,
-      service.unit,
-      quantity,
-      settings.visitThresholdSquareMeters,
-    );
+    const visitRequired = VISIT_REQUIRED;
     const request: QuoteRequest = {
       id: this.deps.ids.next(),
       status: 'received',
@@ -133,6 +141,7 @@ export class RequestQuoteUseCase {
       comment,
       recurrence,
       requestedTeamSize,
+      daysPerWeek,
       recommendedTeamSize: recommendedTeamSize(service.pricing.teamSize, quantity, requestedTeamSize),
       estimate: simulation.priced ? { low: simulation.low, high: simulation.high } : null,
       visit: null,
@@ -222,7 +231,9 @@ export class AcceptQuoteUseCase {
     if (!respectsLeadTime(slot.start, now, settings.minimumLeadHours)) {
       throw CleaningErrors.leadTimeTooShort(settings.minimumLeadHours);
     }
-    const plan = input.paymentPlan as PaymentPlan | undefined;
+    const plan =
+      (input.paymentPlan?.option ? (input.paymentPlan as PaymentPlan) : undefined) ??
+      (request.organizationId ? BUSINESS_PAYMENT_PLAN : undefined);
     if (!plan || !isValidPlan(plan)) throw CleaningErrors.invalid('paymentPlan');
 
     const mission: Mission = {
@@ -245,6 +256,9 @@ export class AcceptQuoteUseCase {
         quote.depositPercent,
       ),
       cancellationReason: null,
+      daysPerWeek: request.daysPerWeek,
+      suspension: null,
+      warningLevel: 0,
       createdAt: now,
       updatedAt: now,
       version: 0,
@@ -265,6 +279,7 @@ export class AcceptQuoteUseCase {
             recurrence: quote.recurrence,
             paymentPlan: mission.payment.plan,
             depositAmount: { amount: mission.payment.depositAmount, currency: 'XOF' },
+            startsAt: slot.start.toISOString(),
           },
         },
       ],

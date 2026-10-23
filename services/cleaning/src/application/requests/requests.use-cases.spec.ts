@@ -135,7 +135,25 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
 
   const request = (key?: string) =>
     asCustomer(() => new RequestQuoteUseCase(world).execute(requestInput(key)));
-  const sendQuote = (requestId: string) =>
+  /** Visite des lieux planifiée puis réalisée : obligatoire avant tout devis. */
+  const completeVisit = async (requestId: string) => {
+    const visited = await asSupervisor(() =>
+      new ScheduleVisitUseCase(world).execute({
+        requestId,
+        scheduledAt: '2026-10-26T09:00:00Z',
+        agentId: AGENT_ID,
+      }),
+    );
+    await asSupervisor(() =>
+      new CompleteVisitUseCase(world).execute({ visitId: visited.visit!.id, report: 'Visite faite.' }),
+    );
+  };
+  const sendQuote = async (requestId: string, options: { visit?: boolean } = {}) => {
+    const current = world.requests.requests.get(requestId);
+    if ((options.visit ?? true) && current?.visit?.status !== 'completed') await completeVisit(requestId);
+    return sendQuoteOnly(requestId);
+  };
+  const sendQuoteOnly = (requestId: string) =>
     asSupervisor(() =>
       new SendQuoteUseCase(world).execute({
         requestId,
@@ -164,7 +182,7 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
           organizationId: null,
           customerKind: 'individual',
           serviceCode: 'home_cleaning',
-          visitRequired: false,
+          visitRequired: true,
         },
       },
     ]);
@@ -178,12 +196,12 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect(world.requests.requests.size).toBe(1);
   });
 
-  it('client entreprise : visite technique obligatoire avant le devis', async () => {
+  it('visite des lieux obligatoire avant le devis (entreprise comme particulier)', async () => {
     const created = await as(CUSTOMER_ID, () => new RequestQuoteUseCase(world).execute(requestInput()), {
       activeContext: ORGANIZATION_ID,
     });
     expect(created).toMatchObject({ customerKind: 'business', organizationId: ORGANIZATION_ID });
-    expect(await code(sendQuote(created.id))).toBe('CLEANING_VISIT_REQUIRED');
+    expect(await code(sendQuote(created.id, { visit: false }))).toBe('CLEANING_VISIT_REQUIRED');
 
     const visited = await asSupervisor(() =>
       new ScheduleVisitUseCase(world).execute({
@@ -205,6 +223,15 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
       'cleaning.visit.scheduled',
       'cleaning.quote.sent',
     ]);
+  });
+
+  it('particulier : devis refusé sans visite réalisée ; demande hors zone refusée', async () => {
+    const created = await request();
+    expect(await code(sendQuote(created.id, { visit: false }))).toBe('CLEANING_VISIT_REQUIRED');
+    const outside = { ...requestInput('k-zone'), commune: 'Parakou' };
+    expect(await code(asCustomer(() => new RequestQuoteUseCase(world).execute(outside)))).toBe(
+      'CLEANING_ZONE_NOT_COVERED',
+    );
   });
 
   it('refuse un créneau trop proche, et au-delà de 5 demandes ouvertes', async () => {
@@ -263,6 +290,79 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect(world.missions.missions.size).toBe(1);
     expect(await code(accept('acc-2'))).toBe('CLEANING_INVALID_TRANSITION');
     expect(world.recorder.events.filter((e) => e.type === 'cleaning.booking.confirmed')).toHaveLength(1);
+  });
+
+  it('visite des lieux possible pour un particulier, même après l’envoi du devis (partie 10)', async () => {
+    const created = await request();
+    await sendQuote(created.id);
+    const visited = await asSupervisor(() =>
+      new ScheduleVisitUseCase(world).execute({
+        requestId: created.id,
+        scheduledAt: '2026-10-26T09:00:00Z',
+        agentId: AGENT_ID,
+      }),
+    );
+    expect(visited.status).toBe('visit_scheduled');
+    // Le client ne peut plus accepter : le devis sera renvoyé après la visite.
+    expect(
+      await code(
+        asCustomer(() =>
+          new AcceptQuoteUseCase(world).execute({
+            requestId: created.id,
+            idempotencyKey: 'acc-v',
+            slotStart: SLOT.start,
+            paymentPlan: PLAN,
+          }),
+        ),
+      ),
+    ).toBe('CLEANING_INVALID_TRANSITION');
+    expect((await sendQuote(created.id)).status).toBe('quote_sent');
+  });
+
+  it('entreprise : jours par semaine gardés, plan de paiement par défaut, début du contrat publié', async () => {
+    const created = await as(
+      CUSTOMER_ID,
+      () => new RequestQuoteUseCase(world).execute({ ...requestInput(), daysPerWeek: 3 }),
+      { activeContext: ORGANIZATION_ID },
+    );
+    expect(created.daysPerWeek).toBe(3);
+    const visited = await asSupervisor(() =>
+      new ScheduleVisitUseCase(world).execute({
+        requestId: created.id,
+        scheduledAt: '2026-10-26T09:00:00Z',
+        agentId: AGENT_ID,
+      }),
+    );
+    await asSupervisor(() =>
+      new CompleteVisitUseCase(world).execute({ visitId: visited.visit!.id, report: 'RAS' }),
+    );
+    await sendQuote(created.id);
+    const accepted = await as(
+      CUSTOMER_ID,
+      () =>
+        new AcceptQuoteUseCase(world).execute({
+          requestId: created.id,
+          idempotencyKey: 'acc-b',
+          slotStart: SLOT.start,
+        }),
+      { activeContext: ORGANIZATION_ID },
+    );
+    expect(accepted.mission.mission).toMatchObject({ daysPerWeek: 3, suspension: null });
+    expect(accepted.mission.mission.payment.plan).toEqual({
+      option: 'full',
+      timing: 'after',
+      method: 'cash',
+    });
+    const booking = world.recorder.events.find((e) => e.type === 'cleaning.booking.confirmed');
+    expect(booking?.payload).toMatchObject({
+      organizationId: ORGANIZATION_ID,
+      startsAt: '2026-10-30T08:00:00.000Z',
+    });
+    expect(
+      await code(
+        asCustomer(() => new RequestQuoteUseCase(world).execute({ ...requestInput('k-8'), daysPerWeek: 8 })),
+      ),
+    ).toBe('CLEANING_VALIDATION_FAILED');
   });
 
   it('devis expiré : refus CLEANING_QUOTE_EXPIRED', async () => {

@@ -1,3 +1,4 @@
+import { INITIAL_ZONES, type Zone, zoneCode } from '../../domain/zone';
 import { type RoleClaim, runWithContext } from '@ksp/platform';
 import { type Agent, type Team, type Unavailability } from '../../domain/agent';
 import { DEFAULT_TEAM_SIZE, type ServiceDefinition } from '../../domain/catalog';
@@ -15,6 +16,8 @@ import {
   type AgentRepository,
   type CatalogRepository,
   type Changes,
+  type ContractInvoiceRepository,
+  type ContractInvoiceStatus,
   type CreateResult,
   type MissionFilter,
   type MissionRepository,
@@ -100,6 +103,20 @@ export class InMemoryCatalog implements CatalogRepository {
     this.recorder.record(changes);
     return this.settings;
   }
+  readonly zones = new Map<string, Zone>(
+    INITIAL_ZONES.map((commune) => [
+      zoneCode(commune),
+      { code: zoneCode(commune), commune, active: true, updatedBy: null, updatedAt: null },
+    ]),
+  );
+  async listZones() {
+    return [...this.zones.values()].sort((a, b) => a.commune.localeCompare(b.commune));
+  }
+  async saveZone(zone: Zone, changes: Changes) {
+    this.zones.set(zone.code, zone);
+    this.recorder.record(changes);
+    return zone;
+  }
 }
 
 export class InMemoryMissions implements MissionRepository {
@@ -132,20 +149,25 @@ export class InMemoryMissions implements MissionRepository {
     this.recorder.record(changes);
     return true;
   }
+  /** Périodes occupées : passages actifs (hors un passage éventuel) et indisponibilités. */
+  busyPeriods(excludedId: string | null): BusyPeriod[] {
+    const busy: BusyPeriod[] = [...this.unavailabilities];
+    for (const other of this.missions.values()) {
+      for (const i of other.interventions) {
+        if (i.id === excludedId || !ACTIVE_INTERVENTION_STATUSES.includes(i.status)) continue;
+        for (const agentId of i.agentIds)
+          busy.push({ agentId, slot: slotFrom(i.scheduledStart, i.durationMinutes) });
+      }
+    }
+    return busy;
+  }
   async scheduleIntervention(
     mission: Mission,
     intervention: Intervention,
     conflicts: (busy: BusyPeriod[]) => string[],
     changes: Changes,
   ) {
-    const busy: BusyPeriod[] = [...this.unavailabilities];
-    for (const other of this.missions.values()) {
-      for (const i of other.interventions) {
-        if (i.id === intervention.id || !ACTIVE_INTERVENTION_STATUSES.includes(i.status)) continue;
-        for (const agentId of i.agentIds)
-          busy.push({ agentId, slot: slotFrom(i.scheduledStart, i.durationMinutes) });
-      }
-    }
+    const busy = this.busyPeriods(intervention.id);
     const found = conflicts(busy.filter((period) => intervention.agentIds.includes(period.agentId)));
     if (found.length) return { conflicts: found, saved: false };
     return { conflicts: [], saved: await this.save(mission, changes) };
@@ -154,6 +176,45 @@ export class InMemoryMissions implements MissionRepository {
     return [...this.missions.values()]
       .filter((m) => m.customerId === customerId && !isTerminalMission(m.status))
       .map((m) => ({ id: m.id, status: m.status }));
+  }
+  async saveWithAgenda(
+    agentIds: string[],
+    plan: (busy: BusyPeriod[]) => { mission: Mission; changes: Changes },
+  ) {
+    const busy = this.busyPeriods(null).filter((period) => agentIds.includes(period.agentId));
+    const { mission, changes } = plan(busy);
+    return this.save(mission, changes);
+  }
+  async listIndividualRecurring() {
+    return [...this.missions.values()].filter(
+      (m) => m.organizationId === null && m.recurrence !== null && !isTerminalMission(m.status),
+    );
+  }
+}
+
+/** Factures de contrat : inbox par (événement, consommateur), une facture payée le reste. */
+export class InMemoryContractInvoices implements ContractInvoiceRepository {
+  readonly processed = new Set<string>();
+  readonly invoices = new Map<string, { missionId: string; status: ContractInvoiceStatus }>();
+
+  async record(input: {
+    eventId: string;
+    consumer: string;
+    invoiceId: string;
+    missionId: string;
+    status: ContractInvoiceStatus;
+  }) {
+    const key = `${input.eventId}/${input.consumer}`;
+    if (this.processed.has(key)) return 'duplicate' as const;
+    this.processed.add(key);
+    if (this.invoices.get(input.invoiceId)?.status !== 'paid') {
+      this.invoices.set(input.invoiceId, { missionId: input.missionId, status: input.status });
+    }
+    return 'processed' as const;
+  }
+  async countOverdue(missionId: string) {
+    return [...this.invoices.values()].filter((i) => i.missionId === missionId && i.status === 'overdue')
+      .length;
   }
 }
 
@@ -266,6 +327,7 @@ export interface TestWorld extends CleaningDeps {
   requests: InMemoryRequests;
   missions: InMemoryMissions;
   agents: InMemoryAgents;
+  invoices: InMemoryContractInvoices;
 }
 
 export function testWorld(): TestWorld {
@@ -279,6 +341,7 @@ export function testWorld(): TestWorld {
     requests: new InMemoryRequests(recorder, missions),
     missions,
     agents: new InMemoryAgents(recorder),
+    invoices: new InMemoryContractInvoices(),
   };
 }
 

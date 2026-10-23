@@ -1,3 +1,4 @@
+import { type Zone } from '../../domain/zone';
 import { type cleaningV1 } from '@ksp/contracts';
 import { type MissionView } from '../../application/deps';
 import { type StoredSettings } from '../../application/ports';
@@ -85,6 +86,7 @@ export function presentRequest(request: QuoteRequest): cleaningV1.QuoteRequest {
     closingReason: text(request.closingReason),
     createdAt: iso(request.createdAt),
     updatedAt: iso(request.updatedAt),
+    daysPerWeek: request.daysPerWeek ?? 0,
   };
 }
 
@@ -115,6 +117,7 @@ export function presentMission({ mission, agentNames }: MissionView): cleaningV1
       afterPhotoFileIds: intervention.afterPhotoFileIds,
       startedAt: iso(intervention.startedAt),
       completedAt: iso(intervention.completedAt),
+      cancellationCause: intervention.cancellationCause ?? '',
     })),
     payment: {
       plan: { ...payment.plan },
@@ -135,6 +138,14 @@ export function presentMission({ mission, agentNames }: MissionView): cleaningV1
     cancellationReason: text(mission.cancellationReason),
     createdAt: iso(mission.createdAt),
     updatedAt: iso(mission.updatedAt),
+    suspension: mission.suspension
+      ? {
+          cause: mission.suspension.cause,
+          since: iso(mission.suspension.since),
+          unpaidCount: mission.suspension.unpaidCount,
+        }
+      : undefined,
+    daysPerWeek: mission.daysPerWeek ?? 0,
   };
 }
 
@@ -194,6 +205,10 @@ export function presentSettings(settings: StoredSettings): cleaningV1.Settings {
     visitThresholdSquareMeters: settings.visitThresholdSquareMeters,
     maxOpenRequests: settings.maxOpenRequests,
     depositPercent: settings.depositPercent,
+    businessWarningUnpaidInvoices: settings.businessWarningUnpaidInvoices,
+    businessSuspensionUnpaidInvoices: settings.businessSuspensionUnpaidInvoices,
+    individualSuspensionUnpaidInterventions: settings.individualSuspensionUnpaidInterventions,
+    individualPaymentGraceHours: settings.individualPaymentGraceHours,
     updatedBy: text(settings.updatedBy),
     updatedAt: iso(settings.updatedAt),
   };
@@ -219,5 +234,15 @@ export function presentTeam(team: Team, agents: Agent[]): cleaningV1.Team {
     id: team.id,
     name: team.name,
     members: team.memberIds.map((agentId) => ({ agentId, displayName: names.get(agentId) ?? '' })),
+  };
+}
+
+export function presentZone(zone: Zone): cleaningV1.Zone {
+  return {
+    code: zone.code,
+    commune: zone.commune,
+    active: zone.active,
+    updatedBy: text(zone.updatedBy),
+    updatedAt: iso(zone.updatedAt),
   };
 }

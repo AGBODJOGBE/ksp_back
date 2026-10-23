@@ -29,13 +29,49 @@ PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cl
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Simulateur | `max(minimum, (quantité × prix unitaire + options) × coefficient de commune)` ; fourchette −10 % / +15 % arrondie à 500 FCFA ; entiers XOF. Rien n'est enregistré.                                                            |
 | Grille     | Versionnée : chaque enregistrement crée une version datée avec son auteur ; un devis envoyé garde son prix.                                                                                                                   |
-| Réglages   | Validité des devis (15 j), délai minimum (48 h), annulation sans frais (24 h), visite au-delà de 300 m², 5 demandes ouvertes, acompte 30 % : modifiables au back-office.                                                      |
-| Demande    | reçue → visite planifiée → devis envoyé → acceptée / refusée / expirée / annulée, ou refusée par KSP. Visite obligatoire pour une entreprise (contexte d'organisation actif) ou au-delà du seuil.                             |
+| Réglages   | Validité des devis (15 j), délai minimum (48 h), annulation sans frais (24 h), 5 demandes ouvertes, acompte 30 %, seuils d'impayés : modifiables au back-office.                                                              |
+| Demande    | reçue → visite planifiée → devis envoyé → acceptée / refusée / expirée / annulée, ou refusée par KSP. Visite des lieux réalisée obligatoire avant tout devis.                                                                 |
 | Mission    | Un passage pour une prestation ponctuelle, plusieurs pour un contrat récurrent (passages par semaine ou par mois, sur N mois) ; chaque passage a ses agents, sa liste de contrôle et ses références de photos (service file). |
 | Conflits   | Un agent ne peut être affecté à deux passages qui se chevauchent, ni pendant une indisponibilité (`CLEANING_TEAM_UNAVAILABLE`) ; agents verrouillés pendant la planification.                                                 |
 | Paiement   | Option choisie à l'acceptation (acompte ou totalité, avant ou après, espèces ou Mobile Money) ; état dû / acompte reçu / payé ; paiements manuels cochés par le superviseur ; paiement en ligne : port prévu (`payment`).     |
 | Droits     | Client : ses demandes et missions (404 sinon) ; agent : les missions où il est affecté ; superviseur et admin : rôle et double authentification revérifiés par le service.                                                    |
 | Traces     | Événements par l'outbox dans la transaction de l'état (identifiants seulement, jamais d'adresse) ; table `audit_log` pour les prix, devis, affectations et paiements.                                                         |
+
+## Zones desservies et visite des lieux (décisions du 2026-10-23)
+
+- **Zones** : le Nettoyage n'est ouvert que dans certaines communes, au départ Cotonou,
+  Porto-Novo et Abomey-Calavi (migration `0003`). L'admin ajoute, réactive ou désactive une zone
+  (`/api/v1/admin/cleaning/zones`). Une zone est une commune identifiée par sa **clé normalisée**
+  (minuscules, sans accents, tirets), la même que les coefficients de commune de la grille
+  tarifaire : « Abomey Calavi » et « Abomey-Calavi » désignent la même zone, et le coefficient de
+  cette clé s'y applique. Demande de devis hors zone : `CLEANING_ZONE_NOT_COVERED` ; le
+  simulateur répond toujours, avec `covered: false`.
+- **Visite des lieux obligatoire pour toute demande** (particulier ou entreprise) : le devis ne
+  part qu'après une visite réalisée (`CLEANING_VISIT_REQUIRED`). Le réglage
+  `visitThresholdSquareMeters` reste dans le contrat mais n'a plus d'effet.
+- **Paiement manuel** (`RecordPayment`) réservé aux particuliers : une mission d'entreprise se
+  règle par sa facture (`CLEANING_PAYMENT_VIA_INVOICE`).
+
+## Impayés, suspension et reprise (partie 10)
+
+- **Réglages de l'admin** (`PUT /api/v1/admin/cleaning/catalog/settings`) : avertissement dès
+  1 facture d'entreprise impayée, suspension à 2, suspension d'un particulier en récurrent à
+  1 passage impayé, délai de grâce de 24 heures pour enregistrer le paiement d'un passage. Le
+  délai de règlement des factures appartient à billing.
+- **Entreprise** : cleaning consomme `billing.invoice.overdue` et `billing.invoice.paid` (inbox,
+  table `contract_invoices` ; une facture payée ne redevient jamais impayée) et réévalue la
+  mission. **Particulier** : tâche planifiée interne (`CLEANING_PAYMENT_WATCH_INTERVAL_MS`,
+  1 heure) et chaque paiement enregistré.
+- **Suspension** : passages planifiés annulés (cause `suspension`), agents libérés,
+  planification refusée (`CLEANING_CONTRACT_SUSPENDED`).
+- **Reprise** sous le seuil : reprogrammation automatique et déterministe des passages annulés
+  par la suspension (même date si le délai minimum le permet, sinon même jour et même heure des
+  semaines suivantes ; agents d'origine s'ils sont libres, sinon agents actifs libres par
+  identifiant), dans la transaction qui verrouille les agents ; à défaut,
+  `cleaning.rescheduling.failed` et replanification manuelle.
+- Événements : `cleaning.contract.suspension_warning`, `cleaning.contract.suspended`,
+  `cleaning.contract.resumed`, `cleaning.rescheduling.failed`, plus `cleaning.mission.scheduled`
+  pour chaque passage reprogrammé.
 
 ## Organisation
 

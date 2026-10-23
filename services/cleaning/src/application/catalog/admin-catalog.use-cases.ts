@@ -7,7 +7,7 @@ import {
   type ServiceDefinition,
 } from '../../domain/catalog';
 import { BASIS_POINTS } from '../../domain/money';
-import { type CleaningSettings, settingsProblems } from '../../domain/settings';
+import { type CleaningSettings, mergeSettings, settingsProblems } from '../../domain/settings';
 import { type CleaningDeps } from '../deps';
 import { type NewPricing, type StoredSettings } from '../ports';
 import { ADMINISTRATION, requireStaff } from '../shared/access';
@@ -100,12 +100,16 @@ export class SaveServiceUseCase {
   }
 }
 
-/** UC-CL-11 : réglages de la partie 4 (validité, délais, seuil de visite, acompte…). */
+/**
+ * UC-CL-11 : réglages des parties 4 et 10 (validité, délais, seuil de visite, acompte, seuils
+ * d'impayés). Un seuil d'impayés à 0 garde la valeur en vigueur.
+ */
 export class UpdateSettingsUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
-  async execute(settings: CleaningSettings): Promise<StoredSettings> {
+  async execute(update: CleaningSettings): Promise<StoredSettings> {
     const staff = requireStaff(ADMINISTRATION);
+    const settings = mergeSettings(await this.deps.catalog.getSettings(), update);
     const problems = settingsProblems(settings);
     if (problems.length) throw CleaningErrors.invalid(`settings.${problems[0]}`);
     return this.deps.catalog.saveSettings(settings, {

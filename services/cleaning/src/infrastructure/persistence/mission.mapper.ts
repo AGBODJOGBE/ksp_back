@@ -6,9 +6,11 @@ import {
 import {
   type ChecklistItem,
   type Intervention,
+  type InterventionCancellationCause,
   type InterventionStatus,
   type Mission,
   type MissionStatus,
+  type SuspensionCause,
 } from '../../domain/mission';
 import { type PaymentMethod, type PaymentPlan } from '../../domain/payment';
 import { slotFrom } from '../../domain/schedule';
@@ -34,6 +36,8 @@ function toIntervention(row: InterventionRow): Intervention {
     afterPhotoFileIds: row.afterPhotoFileIds,
     startedAt: row.startedAt,
     completedAt: row.completedAt,
+    cancellationCause: row.cancellationCause as InterventionCancellationCause | null,
+    cancelledAt: row.cancelledAt,
   };
 }
 
@@ -67,6 +71,16 @@ export function toMission(row: MissionWithRelations): Mission {
       })),
     },
     cancellationReason: row.cancellationReason,
+    daysPerWeek: row.daysPerWeek,
+    suspension:
+      row.suspensionCause && row.suspendedSince
+        ? {
+            cause: row.suspensionCause as SuspensionCause,
+            since: row.suspendedSince,
+            unpaidCount: row.suspensionUnpaid ?? 0,
+          }
+        : null,
+    warningLevel: row.warningLevel,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     version: row.version,
@@ -95,6 +109,8 @@ export function missionCreateColumns(mission: Mission, acceptanceKey: string) {
     depositPercent: mission.payment.depositPercent,
     depositAmount: mission.payment.depositAmount,
     cancellationReason: mission.cancellationReason,
+    daysPerWeek: mission.daysPerWeek,
+    ...suspensionColumns(mission),
     createdAt: mission.createdAt,
     updatedAt: mission.updatedAt,
   };
@@ -115,5 +131,17 @@ export function interventionColumns(missionId: string, intervention: Interventio
     afterPhotoFileIds: intervention.afterPhotoFileIds,
     startedAt: intervention.startedAt,
     completedAt: intervention.completedAt,
+    cancellationCause: intervention.cancellationCause,
+    cancelledAt: intervention.cancelledAt,
+  };
+}
+
+/** Colonnes de la suspension et du dernier avertissement. */
+export function suspensionColumns(mission: Pick<Mission, 'suspension' | 'warningLevel'>) {
+  return {
+    suspensionCause: mission.suspension?.cause ?? null,
+    suspendedSince: mission.suspension?.since ?? null,
+    suspensionUnpaid: mission.suspension?.unpaidCount ?? null,
+    warningLevel: mission.warningLevel,
   };
 }
