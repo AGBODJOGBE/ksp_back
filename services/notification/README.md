@@ -1,8 +1,8 @@
 # Service notification
 
-Contrat gRPC : `contracts/proto/ksp/notification/v1/notification.proto`. Événement publié : `notification.message.failed` (`contracts/events/notification/`). Décisions : ADR-014 (codes par gRPC direct), ADR-021 (WhatsApp Cloud API de Meta), ADR-013 et ADR-022 (jetons de service).
+Contrat gRPC : `contracts/proto/ksp/notification/v1/notification.proto`. Événement publié : `notification.message.failed` (`contracts/events/notification/`). Événements écoutés : les 7 événements du Nettoyage (`contracts/events/cleaning/`). Décisions : ADR-014 (codes par gRPC direct), ADR-021 (WhatsApp Cloud API de Meta), ADR-024 (e-mail par Brevo), ADR-013 et ADR-022 (jetons de service).
 
-Le cahier des charges complet du service (notifications dans l'application, préférences, appareils, modèles, événements écoutés) reste à écrire. Ce service couvre le **lot 1** : l'envoi des codes de connexion d'identity.
+Le cahier des charges complet du service (préférences, appareils, édition des modèles, lecture des notifications dans l'application) reste à écrire. Ce service couvre le **lot 1** (envoi des codes de connexion d'identity) et le **lot 2** (messages des événements du Nettoyage, par WhatsApp, e-mail et dans l'espace KSP).
 
 ## Démarrer en local
 
@@ -51,21 +51,81 @@ C'est **le seul endroit** où un code de connexion peut apparaître dans une sor
 
 Les journaux ne contiennent ni le jeton, ni le numéro, ni le code : seulement le statut HTTP, le code d'erreur Graph et l'identifiant de trace de Meta (`fbtrace_id`). Délai maximum : `WHATSAPP_TIMEOUT_MS` (2 secondes par défaut, identity attend 3 secondes au plus).
 
+## Messages des événements (lot 2)
+
+Chaque événement écouté a sa file `notification.<événement>` (quorum), sa file de reprise `.retry` (10 secondes, 5 reprises) et sa file d'erreurs `.dlq`, créées par le kit. Le traitement (`NotifyEventUseCase`) :
+
+1. ignore un événement déjà traité (inbox, table `processed_events`) ;
+2. déduit de l'événement les messages à envoyer (`application/events/cleaning.rules.ts`) et lit les coordonnées des destinataires dans identity (`GetUsersByIds`, jeton de service) ; identity indisponible → reprise par la file ;
+3. envoie un message par destinataire, avec la clé d'idempotence `<événement>:<modèle>:<destinataire>` (table `notifications`) : une nouvelle livraison n'envoie rien deux fois ;
+4. marque l'événement traité et enregistre une notification par destinataire dans `in_app_notifications`, dans la même transaction.
+
+Un destinataire introuvable (compte inconnu ou supprimé) est sauté ; un échec de tous les canaux publie `notification.message.failed` sans bloquer l'événement. Les journaux ne contiennent que l'identifiant de l'événement et des compteurs.
+
+**Règle de choix du canal** (`eventChannelPlan`) : un seul message externe par destinataire, plus la notification dans l'espace.
+
+| Nature du message                                | Canal                                            |
+| ------------------------------------------------ | ------------------------------------------------ |
+| Court, transactionnel (demande reçue, planning…) | WhatsApp ; e-mail en bascule si l'adresse existe |
+| Document (devis envoyé, compte rendu de fin)     | E-mail si l'adresse existe ; WhatsApp sinon      |
+| Destinataire sans téléphone ni e-mail            | Notification dans l'espace seulement             |
+
+| Événement                    | Destinataires        | Modèles                                                                    |
+| ---------------------------- | -------------------- | -------------------------------------------------------------------------- |
+| `cleaning.quote.requested`   | client               | `cleaning.quote_requested.customer` (visite annoncée si `visitRequired`)   |
+| `cleaning.visit.scheduled`   | client, agent        | `cleaning.visit_scheduled.customer`, `cleaning.visit_scheduled.agent`      |
+| `cleaning.quote.sent`        | client               | `cleaning.quote_sent.customer` (document)                                  |
+| `cleaning.booking.confirmed` | client               | `cleaning.booking_confirmed.customer` (montant, passages, paiement choisi) |
+| `cleaning.mission.scheduled` | client, chaque agent | `cleaning.mission_scheduled.customer`, `cleaning.mission_scheduled.agent`  |
+| `cleaning.mission.completed` | client               | `cleaning.mission_completed.customer` (document)                           |
+| `cleaning.request.cancelled` | client               | `cleaning.request_cancelled.customer` (texte selon le motif)               |
+
+Textes : `src/domain/messages/cleaning.messages.ts` (français, dates à l'heure du Bénin, montants en FCFA entiers). Liens : `PORTAL_BASE_URL` + `/mon-espace/nettoyage/demandes/<id>` ou `/missions/<id>`.
+
+**Ajouter un événement** (suspension, reprise, facture…) : ses modèles dans `domain/messages`, sa règle dans `application/events`, l'entrée dans `listened-events.ts`, le modèle WhatsApp dans `infrastructure/channels/whatsapp-templates.ts`.
+
+### Modèles WhatsApp à faire approuver par Meta
+
+Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie « utility », français). Paramètres du corps dans l'ordre ; `{{1}}` est toujours le prénom (« Madame, Monsieur » s'il manque).
+
+| Modèle Meta                                                                                                                    | Paramètres                                              |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `ksp_cleaning_quote_requested`, `ksp_cleaning_quote_requested_visit`                                                           | prénom, lien                                            |
+| `ksp_cleaning_visit_scheduled`                                                                                                 | prénom, date, lien                                      |
+| `ksp_cleaning_visit_assigned`                                                                                                  | prénom, date                                            |
+| `ksp_cleaning_quote_sent`                                                                                                      | prénom, montant, date de validité, lien                 |
+| `ksp_cleaning_booking_confirmed`                                                                                               | prénom, nombre de passages, montant, paiement, lien     |
+| `ksp_cleaning_mission_scheduled`                                                                                               | prénom, date, durée, lien                               |
+| `ksp_cleaning_mission_assigned`                                                                                                | prénom, date, durée                                     |
+| `ksp_cleaning_mission_completed`                                                                                               | prénom, passages réalisés, date, lien                   |
+| `ksp_cleaning_cancelled_by_customer`, `ksp_cleaning_cancelled_by_supervisor`, `ksp_cleaning_rejected`, `ksp_cleaning_declined` | prénom, « votre demande » ou « votre prestation », lien |
+
+## E-mail (Brevo)
+
+`POST https://api.brevo.com/v3/smtp/email`, clé dans l'en-tête `api-key`, expéditeur `EMAIL_SENDER_NAME <EMAIL_SENDER_ADDRESS>` ; objet, texte brut et HTML échappé. L'identifiant `messageId` est gardé dans `provider_message_id`. Panne, 429 ou quota du jour épuisé (402) → `provider_unavailable` ; 400 `invalid_parameter` → `recipient_invalid` ; autres refus → `provider_rejected`. Les journaux ne contiennent ni la clé, ni l'adresse, ni le texte. Avec `NOTIFICATION_EMAIL_PROVIDER=console` (défaut hors production, refusé en production), l'e-mail est écrit dans le terminal avec l'adresse masquée.
+
 ## Prochaines étapes
 
+- Lecture des notifications dans l'application (liste, marquer comme lue) : RPC à ajouter au contrat, puis routes de la gateway ; événement de notification en direct à définir.
+- Événements à brancher : suspension, reprise, avertissement et échec de reprogrammation du Nettoyage, facturation (billing).
 - Statuts de remise WhatsApp (remis, lu, échoué) par webhook : reçus par la gateway sur `/webhooks/whatsapp`, transmis à notification qui vérifie la signature (UC-GW-11) et met à jour la notification retrouvée par `provider_message_id` (index à ajouter).
 - Prestataire SMS (agrégateur à choisir avant la production, ADR-021).
 - Reste du contrat après le cahier des charges du service.
 
 ## Organisation
 
-| Dossier                           | Contenu                                                                                    |
-| --------------------------------- | ------------------------------------------------------------------------------------------ |
-| `src/domain`                      | Canaux, modèles, destinataire, délai, résumé d'un échec, appelants autorisés               |
-| `src/application/send`            | `SendNotificationUseCase`, ports (dépôt, fournisseur de canal), erreurs                    |
-| `src/application/testing`         | Doublures en mémoire des ports                                                             |
-| `src/infrastructure/channels`     | Prestataires WhatsApp (`MetaWhatsAppProvider`, `ConsoleWhatsAppProvider`) et leur fabrique |
-| `src/infrastructure/notification` | Dépôt Prisma (table `notifications`, outbox)                                               |
-| `src/interfaces/grpc`             | Contrôleur gRPC                                                                            |
+| Dossier                           | Contenu                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `src/domain`                      | Canaux, modèles, destinataire, délai, résumé d'un échec, appelants autorisés                      |
+| `src/domain/messages`             | Textes des messages des événements, mise en forme (montants, dates, durées)                       |
+| `src/application/send`            | `SendNotificationUseCase`, `MessageDispatcher` (envoi idempotent partagé), ports, erreurs         |
+| `src/application/events`          | `NotifyEventUseCase`, règles par événement, ports (annuaire, inbox)                               |
+| `src/application/testing`         | Doublures en mémoire des ports                                                                    |
+| `src/infrastructure/channels`     | Prestataires WhatsApp (Meta, console) et e-mail (Brevo, console), leur fabrique, modèles WhatsApp |
+| `src/infrastructure/events`       | Inbox et notifications dans l'espace (tables `processed_events`, `in_app_notifications`)          |
+| `src/infrastructure/identity`     | Annuaire des destinataires (identity, `GetUsersByIds`)                                            |
+| `src/infrastructure/notification` | Dépôt Prisma (table `notifications`, outbox)                                                      |
+| `src/interfaces/grpc`             | Contrôleur gRPC                                                                                   |
+| `src/interfaces/messaging`        | Abonnement RabbitMQ aux événements écoutés                                                        |
 
-Tests : `test/notification.repository.int.spec.ts` (PostgreSQL, ignoré sans `TEST_DATABASE_URL`) et `test/send-notification.grpc.spec.ts` (bout en bout gRPC avec le client d'identity).
+Tests : `test/notification.repository.int.spec.ts` et `test/event-inbox.int.spec.ts` (PostgreSQL, ignorés sans `TEST_DATABASE_URL`) et `test/send-notification.grpc.spec.ts` (bout en bout gRPC avec le client d'identity).

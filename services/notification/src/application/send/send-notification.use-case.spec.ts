@@ -41,7 +41,9 @@ describe('SendNotificationUseCase — envoi accepté', () => {
         channel: 'whatsapp',
         templateCode: 'identity.otp',
         phoneE164: '+2290197000045',
+        email: null,
         variables: { code: '482913', expires_in_minutes: '5' },
+        content: null,
         locale: 'fr',
       },
     ]);
@@ -296,6 +298,11 @@ describe('SendNotificationUseCase — refus avant tout envoi', () => {
     rejects(otp({ templateCode: 'identity.welcome' }), {
       code: 'NOTIFICATION_TEMPLATE_UNKNOWN',
       kind: 'NOT_FOUND',
+    }));
+
+  it('modèle réservé aux événements métier : NOTIFICATION_TEMPLATE_UNKNOWN', () =>
+    rejects(otp({ templateCode: 'cleaning.quote_sent.customer' }), {
+      code: 'NOTIFICATION_TEMPLATE_UNKNOWN',
     }));
 
   it('modèle inexistant pour les canaux demandés : NOTIFICATION_TEMPLATE_UNKNOWN', () =>

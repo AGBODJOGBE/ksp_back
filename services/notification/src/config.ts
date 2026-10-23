@@ -7,6 +7,9 @@ const optionalText = z.preprocess((value) => (value === '' ? undefined : value),
 /**
  * Configuration du service : variables communes, plus celles propres à notification.
  *
+ * Prestataire e-mail (ADR-024) : `brevo` (obligatoire en production) ou `console` (développement,
+ * refusé en production), sur le même modèle que WhatsApp.
+ *
  * Prestataire WhatsApp (ADR-021) :
  * - `meta` : WhatsApp Cloud API de Meta, obligatoire en production ;
  * - `console` : le code est écrit dans le terminal, pour se connecter en développement sans téléphone.
@@ -34,6 +37,29 @@ export const configSchema = baseServiceConfigSchema
     WHATSAPP_TEMPLATE_LANGUAGE: z.string().min(1).default('fr'),
     /** Délai maximum d'un appel à Meta : identity attend notification 3 secondes au plus. */
     WHATSAPP_TIMEOUT_MS: z.coerce.number().int().positive().default(2000),
+
+    /** `brevo` ou `console` ; par défaut `console` hors production, `brevo` en production (ADR-024). */
+    NOTIFICATION_EMAIL_PROVIDER: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.enum(['brevo', 'console']).optional(),
+    ),
+    /** Clé d'API Brevo (coffre à secrets). Jamais journalisée. */
+    BREVO_API_KEY: optionalText,
+    /** Adresse d'expédition, sur un domaine vérifié chez Brevo (SPF, DKIM). */
+    EMAIL_SENDER_ADDRESS: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.email('EMAIL_SENDER_ADDRESS doit être une adresse e-mail.').optional(),
+    ),
+    EMAIL_SENDER_NAME: z.string().min(1).default('Groupe KSP'),
+    /** Délai maximum d'un appel à Brevo (les e-mails partent des événements, sans appelant qui attend). */
+    EMAIL_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+
+    /** Adresse gRPC d'identity : coordonnées des destinataires des événements (GetUsersByIds). */
+    IDENTITY_GRPC_URL: z.string().min(1).default('localhost:50051'),
+    /** Adresse de « Mon espace KSP », pour les liens des messages. */
+    PORTAL_BASE_URL: z.url().default('https://ksp.bj'),
+    /** Fuseau des dates écrites dans les messages. */
+    NOTIFICATION_TIME_ZONE: z.string().min(1).default('Africa/Porto-Novo'),
   })
   .refine((cfg) => !(cfg.NODE_ENV === 'production' && cfg.NOTIFICATION_WHATSAPP_PROVIDER === 'console'), {
     message:
@@ -49,9 +75,43 @@ export const configSchema = baseServiceConfigSchema
         'WHATSAPP_ACCESS_TOKEN et WHATSAPP_PHONE_NUMBER_ID sont obligatoires avec le prestataire meta.',
       path: ['WHATSAPP_ACCESS_TOKEN'],
     },
+  )
+
+  .refine(
+    (cfg) =>
+      cfg.NODE_ENV !== 'production' ||
+      (Boolean(cfg.IDENTITY_TOKEN_URL) && Boolean(cfg.SERVICE_CLIENT_SECRET)),
+    {
+      message:
+        'IDENTITY_TOKEN_URL et SERVICE_CLIENT_SECRET sont obligatoires en production : notification lit les destinataires dans identity (ADR-022).',
+      path: ['SERVICE_CLIENT_SECRET'],
+    },
+  )
+  .refine((cfg) => !(cfg.NODE_ENV === 'production' && cfg.NOTIFICATION_EMAIL_PROVIDER === 'console'), {
+    message:
+      'NOTIFICATION_EMAIL_PROVIDER=console est interdit en production : les e-mails seraient écrits dans les journaux.',
+    path: ['NOTIFICATION_EMAIL_PROVIDER'],
+  })
+  .refine(
+    (cfg) =>
+      emailProviderKind(cfg) !== 'brevo' || (Boolean(cfg.BREVO_API_KEY) && Boolean(cfg.EMAIL_SENDER_ADDRESS)),
+    {
+      message: 'BREVO_API_KEY et EMAIL_SENDER_ADDRESS sont obligatoires avec le prestataire brevo.',
+      path: ['BREVO_API_KEY'],
+    },
   );
 
 export type ServiceConfig = z.infer<typeof configSchema>;
+
+export type EmailProviderKind = 'brevo' | 'console';
+
+/** Prestataire e-mail retenu : celui demandé, sinon `brevo` en production et `console` ailleurs. */
+export function emailProviderKind(config: {
+  NODE_ENV: string;
+  NOTIFICATION_EMAIL_PROVIDER?: EmailProviderKind | undefined;
+}): EmailProviderKind {
+  return config.NOTIFICATION_EMAIL_PROVIDER ?? (config.NODE_ENV === 'production' ? 'brevo' : 'console');
+}
 
 export type WhatsAppProviderKind = 'meta' | 'console';
 

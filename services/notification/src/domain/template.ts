@@ -1,8 +1,10 @@
 import { type ChannelName } from './channel';
+import { CLEANING_TEMPLATES } from './messages/cleaning.messages';
 
 /**
- * Modèle de message. Au lot 1, seul `identity.otp` existe ; le catalogue complet (fichiers versionnés
- * ou édition au back-office) attend le cahier des charges du service notification.
+ * Modèle de message. Lot 1 : `identity.otp` (envoi direct) ; lot 2 : les messages des événements du
+ * Nettoyage. Le catalogue complet (fichiers versionnés ou édition au back-office) attend le cahier
+ * des charges du service notification.
  */
 export interface TemplateDefinition {
   code: string;
@@ -17,6 +19,28 @@ export interface TemplateDefinition {
   variables: Readonly<Record<string, RegExp>>;
 }
 
+/** Texte d'un message, en français : objet (e-mail, titre dans l'espace) et corps en texte brut. */
+export interface RenderedMessage {
+  subject: string;
+  text: string;
+}
+
+/**
+ * Nature d'un message déclenché par un événement, qui fixe l'ordre des canaux (voir channel.ts) :
+ * `short` (court, transactionnel) ou `document` (devis, compte rendu).
+ */
+export type MessageKind = 'short' | 'document';
+
+/** Modèle d'un message déclenché par un événement métier : il porte son propre texte. */
+export interface EventTemplateDefinition extends TemplateDefinition {
+  kind: MessageKind;
+  render(variables: Readonly<Record<string, string>>): RenderedMessage;
+}
+
+export function isEventTemplate(template: TemplateDefinition): template is EventTemplateDefinition {
+  return 'render' in template && typeof (template as EventTemplateDefinition).render === 'function';
+}
+
 const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
   'identity.otp': {
     code: 'identity.otp',
@@ -28,6 +52,7 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
       expires_in_minutes: /^[1-9][0-9]{0,3}$/,
     },
   },
+  ...Object.fromEntries(CLEANING_TEMPLATES.map((template) => [template.code, template])),
 };
 
 export function findTemplate(code: string): TemplateDefinition | null {

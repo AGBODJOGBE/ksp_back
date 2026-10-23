@@ -76,3 +76,24 @@ model Notification {
 
   @@map("notifications")
 }
+
+/// Notifications « dans l'application », affichées dans l'espace KSP du destinataire (lot 2 : messages
+/// des événements du Nettoyage). Jamais de modèle secret ici : le texte est conservé pour l'affichage.
+model InAppNotification {
+  id            String    @id @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  templateCode  String    @map("template_code")
+  title         String
+  body          String
+  /// Page concernée de l'espace KSP ; null s'il n'y en a pas.
+  link          String?
+  /// Événement à l'origine de la notification : un même événement ne crée qu'une notification par modèle et destinataire.
+  sourceEventId String    @map("source_event_id") @db.Uuid
+  createdAt     DateTime  @map("created_at") @db.Timestamptz(3)
+  /// null : pas encore lue.
+  readAt        DateTime? @map("read_at") @db.Timestamptz(3)
+
+  @@unique([sourceEventId, userId, templateCode])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("in_app_notifications")
+}

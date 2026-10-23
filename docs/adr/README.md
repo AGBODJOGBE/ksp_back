@@ -27,3 +27,4 @@ Chaque décision importante fait l'objet d'une fiche courte : contexte, décisio
 | [ADR-021](0021-whatsapp-cloud-api.md)                  | WhatsApp par l'API officielle de Meta                                         | Accepté |
 | [ADR-022](0022-jetons-de-service.md)                   | Jetons de service : flux OAuth 2.0 client credentials                         | Accepté |
 | [ADR-023](0023-double-authentification-back-office.md) | Double authentification du back-office : application et codes de récupération | Accepté |
+| [ADR-024](0024-email-brevo.md)                         | E-mail par Brevo (API transactionnelle)                                       | Accepté |
