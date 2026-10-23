@@ -41,6 +41,7 @@ export interface QuoteRequestInput {
   comment?: string | undefined;
   recurrence?: RecurrenceInput | undefined;
   requestedTeamSize?: number | undefined;
+  daysPerWeek?: number | undefined;
 }
 
 export interface QuoteInput {
@@ -75,6 +76,11 @@ export interface SettingsInput {
   visitThresholdSquareMeters: number;
   maxOpenRequests: number;
   depositPercent: number;
+  /** Réglages de la partie 10 : absents, ils gardent leur valeur en vigueur. */
+  businessWarningUnpaidInvoices?: number | undefined;
+  businessSuspensionUnpaidInvoices?: number | undefined;
+  individualSuspensionUnpaidInterventions?: number | undefined;
+  individualPaymentGraceHours?: number | undefined;
 }
 
 /** Un appel par méthode du contrat ksp.cleaning.v1 exposée en REST. */
@@ -125,6 +131,9 @@ export interface CleaningApi {
   getCatalog(): Promise<Json>;
   saveService(code: string, input: ServiceInput): Promise<Json>;
   updateSettings(input: SettingsInput): Promise<Json>;
+  listZones(): Promise<Json>;
+  saveZone(commune: string): Promise<Json>;
+  deactivateZone(code: string): Promise<Json>;
   listAgents(): Promise<Json>;
   registerAgent(input: { agentId: string; displayName: string }): Promise<Json>;
   declareUnavailability(

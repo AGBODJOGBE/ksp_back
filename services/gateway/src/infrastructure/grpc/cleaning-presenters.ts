@@ -61,6 +61,7 @@ export function presentSimulation(value: cleaningV1.SimulateResponse) {
     communeCoefficientBp: value.communeCoefficientBp,
     recommendedTeamSize: value.recommendedTeamSize,
     notice: value.notice,
+    covered: value.covered,
   };
 }
 
@@ -101,6 +102,7 @@ export function presentRequest(value: cleaningV1.QuoteRequest | undefined) {
     comment: orNull(value.comment),
     recurrence: recurrence(value.recurrence),
     requestedTeamSize: value.requestedTeamSize || null,
+    daysPerWeek: value.daysPerWeek || null,
     recommendedTeamSize: value.recommendedTeamSize,
     estimate: range(value.estimate),
     visit: visit
@@ -149,6 +151,7 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
       afterPhotoFileIds: i.afterPhotoFileIds,
       startedAt: orNull(i.startedAt),
       completedAt: orNull(i.completedAt),
+      cancellationCause: orNull(i.cancellationCause),
     })),
     payment: {
       plan: {
@@ -171,6 +174,14 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
       })),
     },
     cancellationReason: orNull(value.cancellationReason),
+    daysPerWeek: value.daysPerWeek || null,
+    suspension: value.suspension
+      ? {
+          cause: value.suspension.cause,
+          since: value.suspension.since,
+          unpaidCount: value.suspension.unpaidCount,
+        }
+      : null,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
   };
@@ -216,6 +227,10 @@ export function presentSettings(value: cleaningV1.Settings | undefined) {
     visitThresholdSquareMeters: value.visitThresholdSquareMeters,
     maxOpenRequests: value.maxOpenRequests,
     depositPercent: value.depositPercent,
+    businessWarningUnpaidInvoices: value.businessWarningUnpaidInvoices,
+    businessSuspensionUnpaidInvoices: value.businessSuspensionUnpaidInvoices,
+    individualSuspensionUnpaidInterventions: value.individualSuspensionUnpaidInterventions,
+    individualPaymentGraceHours: value.individualPaymentGraceHours,
     updatedBy: orNull(value.updatedBy),
     updatedAt: orNull(value.updatedAt),
   };
@@ -242,5 +257,16 @@ export function presentTeam(value: cleaningV1.Team | undefined) {
     id: value.id,
     name: value.name,
     members: value.members.map((m) => ({ agentId: m.agentId, displayName: m.displayName })),
+  };
+}
+
+export function presentZone(value: cleaningV1.Zone | undefined) {
+  if (!value) throw malformed('zone');
+  return {
+    code: value.code,
+    commune: value.commune,
+    active: value.active,
+    updatedBy: orNull(value.updatedBy),
+    updatedAt: orNull(value.updatedAt),
   };
 }

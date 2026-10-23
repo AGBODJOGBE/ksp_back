@@ -22,6 +22,7 @@ import {
   presentSettings,
   presentSimulation,
   presentTeam,
+  presentZone,
   xof,
 } from './cleaning-presenters';
 import { toUpstreamError } from './upstream-error';
@@ -81,6 +82,7 @@ export class CleaningGrpcAdapter implements CleaningApi {
           comment: input.comment ?? '',
           ...(input.recurrence ? { recurrence: input.recurrence } : {}),
           requestedTeamSize: input.requestedTeamSize ?? 0,
+          daysPerWeek: input.daysPerWeek ?? 0,
         },
         m,
       ),
@@ -365,9 +367,40 @@ export class CleaningGrpcAdapter implements CleaningApi {
 
   async updateSettings(input: SettingsInput): Promise<Json> {
     const res = await this.write('updateSettings', (m) =>
-      this.clients.admin.updateSettings({ settings: { ...input, updatedBy: '', updatedAt: '' } }, m),
+      this.clients.admin.updateSettings(
+        {
+          settings: {
+            ...input,
+            // 0 : valeur en vigueur conservée par cleaning.
+            businessWarningUnpaidInvoices: input.businessWarningUnpaidInvoices ?? 0,
+            businessSuspensionUnpaidInvoices: input.businessSuspensionUnpaidInvoices ?? 0,
+            individualSuspensionUnpaidInterventions: input.individualSuspensionUnpaidInterventions ?? 0,
+            individualPaymentGraceHours: input.individualPaymentGraceHours ?? 0,
+            updatedBy: '',
+            updatedAt: '',
+          },
+        },
+        m,
+      ),
     );
     return presentSettings(res.settings);
+  }
+
+  async listZones(): Promise<Json> {
+    const res = await this.read('listZones', (m) => this.clients.admin.listZones({}, m));
+    return { data: res.zones.map(presentZone) };
+  }
+
+  async saveZone(commune: string): Promise<Json> {
+    return presentZone(
+      (await this.write('saveZone', (m) => this.clients.admin.saveZone({ commune }, m))).zone,
+    );
+  }
+
+  async deactivateZone(code: string): Promise<Json> {
+    return presentZone(
+      (await this.write('deactivateZone', (m) => this.clients.admin.deactivateZone({ code }, m))).zone,
+    );
   }
 
   async listAgents(): Promise<Json> {

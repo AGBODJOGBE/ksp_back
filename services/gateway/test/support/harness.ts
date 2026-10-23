@@ -314,6 +314,8 @@ export async function startGateway(options: {
   identityUrl: string;
   /** Service cleaning simulé (cleaning-stub.ts) ; sans lui, les routes du Nettoyage répondent 503. */
   cleaningUrl?: string;
+  /** Service billing simulé (billing-stub.ts) ; sans lui, les routes de facturation répondent 503. */
+  billingUrl?: string;
   keys: TestKeys;
   env?: Record<string, string>;
   jwks?: JwksSource;
@@ -323,6 +325,7 @@ export async function startGateway(options: {
     LOG_LEVEL: 'fatal',
     IDENTITY_GRPC_URL: options.identityUrl,
     ...(options.cleaningUrl ? { CLEANING_GRPC_URL: options.cleaningUrl } : {}),
+    ...(options.billingUrl ? { BILLING_GRPC_URL: options.billingUrl } : {}),
     CORS_WEB_ORIGINS: `${ORIGINS.web},https://shop.ksp.bj,https://print.ksp.bj`,
     CORS_BACKOFFICE_ORIGINS: ORIGINS.backoffice,
     ...options.env,
