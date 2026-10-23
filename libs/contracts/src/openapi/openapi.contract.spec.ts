@@ -7,7 +7,7 @@ import { parse } from 'yaml';
 const CONTRACTS_ROOT = resolve(__dirname, '..', '..', '..', '..', 'contracts');
 const DOC_ID = 'ksp-api';
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const;
-const ACCESS_LEVELS = ['public', 'refresh_token', 'authenticated'];
+const ACCESS_LEVELS = ['public', 'refresh_token', 'mfa_token', 'authenticated'];
 
 type Json = Record<string, unknown>;
 

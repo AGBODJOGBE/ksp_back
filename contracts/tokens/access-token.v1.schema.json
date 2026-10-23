@@ -98,6 +98,14 @@
     "auth_time": {
       "type": "integer",
       "description": "Dernière authentification forte, en secondes depuis 1970"
+    },
+    "amr": {
+      "type": "array",
+      "description": "Méthodes d'authentification de la session (RFC 8176) : otp = code reçu par téléphone ; mfa = seconde étape passée (application d'authentification ou code de récupération). Facultatif : absent des jetons émis avant son ajout.",
+      "items": {
+        "enum": ["otp", "mfa"]
+      },
+      "uniqueItems": true
     }
   }
 }

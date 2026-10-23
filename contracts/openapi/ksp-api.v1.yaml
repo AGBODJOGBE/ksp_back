@@ -27,7 +27,8 @@ info:
 
     **Extensions `x-ksp-*`** (base du manifeste de routage de la gateway)
     - `x-ksp-grpc` : appel gRPC exécuté, `<paquet>.<Service>/<Méthode>`.
-    - `x-ksp-access` : `public`, `refresh_token` ou `authenticated`.
+    - `x-ksp-access` : `public`, `refresh_token`, `mfa_token` (jeton de double authentification
+      dans le corps, vérifié par identity) ou `authenticated`.
     - `x-ksp-rate-limit` : catégorie de limite d'appels, définie dans `x-ksp-rate-limits`.
 servers:
   - url: https://api.ksp.bj
@@ -65,6 +66,11 @@ x-ksp-rate-limits:
     limit: 60
     per: minute
     key: ip
+  mfa_verify:
+    limit: 10
+    per: minute
+    key: ip
+    description: identity limite aussi les essais par jeton de double authentification (5).
 
 # Préfixes réservés, sans route pour l'instant.
 x-ksp-reserved-prefixes:
@@ -140,7 +146,9 @@ paths:
       description: |
         UC-ID-01. Crée le compte si le numéro est nouveau, puis ouvre une session. Un compte
         interne qui se connecte au back-office reçoit à la place une étape de double
-        authentification (`mfa_required`), avec configuration obligatoire à la première connexion.
+        authentification (`mfa_required`), avec configuration obligatoire à la première connexion
+        (`enrollmentRequired`). Un compte sans rôle du back-office y est refusé
+        (`IDENTITY_BACKOFFICE_FORBIDDEN`).
 
         Erreurs : `IDENTITY_OTP_INVALID` (400, `details.attemptsRemaining`),
         `IDENTITY_OTP_EXPIRED` et `IDENTITY_OTP_TOO_MANY_ATTEMPTS` (422),
@@ -208,6 +216,232 @@ paths:
                     enrollmentRequired: true
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/mfa/totp/enroll:
+    post:
+      tags: [Authentification]
+      operationId: enrollTotp
+      summary: Configurer l'application d'authentification
+      description: |
+        UC-ID-09. Première connexion d'un compte interne (`enrollmentRequired`) : crée le secret
+        de l'application d'authentification (TOTP, RFC 6238 : 6 chiffres, 30 secondes). Le
+        back-office affiche `otpauthUri` en QR code et `secret` pour une saisie à la main. Le
+        secret reste inactif jusqu'à la confirmation ; un nouvel appel le remplace.
+
+        Erreurs : `IDENTITY_MFA_TOKEN_INVALID` (401), `IDENTITY_MFA_ALREADY_ENROLLED` et
+        `IDENTITY_MFA_TOO_MANY_ATTEMPTS` (422), `IDENTITY_BACKOFFICE_FORBIDDEN` et
+        `IDENTITY_ACCOUNT_SUSPENDED` (403), `GATEWAY_RATE_LIMITED` (429).
+      x-ksp-grpc: ksp.identity.v1.AuthService/EnrollTotp
+      x-ksp-access: mfa_token
+      x-ksp-rate-limit: mfa_verify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollTotpRequest'
+            example:
+              mfaToken: mfa_2b3c4d5e6f
+      responses:
+        '200':
+          description: Secret créé, en attente de confirmation
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpEnrollmentResponse'
+              example:
+                secret: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+                otpauthUri: otpauth://totp/KSP:%2B2290197000045?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=KSP&algorithm=SHA1&digits=6&period=30
+                issuer: KSP
+                accountName: '+2290197000045'
+                digits: 6
+                periodSeconds: 30
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/mfa/totp/confirm:
+    post:
+      tags: [Authentification]
+      operationId: confirmTotp
+      summary: Confirmer l'application d'authentification et ouvrir la session
+      description: |
+        UC-ID-09. Le premier code affiché par l'application active la double authentification.
+        La réponse remet les 10 codes de récupération, à usage unique, affichés une seule fois :
+        ils sont le seul secours si le téléphone est perdu (jamais de code par SMS pour un compte
+        interne, ADR-023). La session back-office est ouverte : jeton de renouvellement dans le
+        cookie `__Secure-ksp_admin_rt`.
+
+        Erreurs : `IDENTITY_MFA_CODE_INVALID` (400, `details.attemptsRemaining`),
+        `IDENTITY_MFA_TOKEN_INVALID` (401), `IDENTITY_BACKOFFICE_FORBIDDEN` et
+        `IDENTITY_ACCOUNT_SUSPENDED` (403), `IDENTITY_MFA_ENROLLMENT_NOT_STARTED`,
+        `IDENTITY_MFA_ALREADY_ENROLLED` et `IDENTITY_MFA_TOO_MANY_ATTEMPTS` (422),
+        `GATEWAY_RATE_LIMITED` (429).
+      x-ksp-grpc: ksp.identity.v1.AuthService/ConfirmTotp
+      x-ksp-access: mfa_token
+      x-ksp-rate-limit: mfa_verify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmTotpRequest'
+            example:
+              mfaToken: mfa_2b3c4d5e6f
+              code: '287082'
+      responses:
+        '200':
+          description: Double authentification activée, session ouverte
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+            Set-Cookie:
+              $ref: '#/components/headers/Set-Cookie-Refresh'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpConfirmedResponse'
+              example:
+                status: authenticated
+                accessToken: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.e30.c2ln
+                accessTokenExpiresAt: '2026-10-17T10:15:00Z'
+                refreshTokenExpiresAt: '2026-10-17T22:00:00Z'
+                sessionId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e10
+                user:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                  status: active
+                  firstName: Koffi
+                  lastName: Adjovi
+                  phone: '+2290197000045'
+                  email: null
+                  preferredLanguage: fr
+                  createdAt: '2026-10-17T10:00:00Z'
+                profileIncomplete: false
+                recoveryCodes:
+                  - 7KQ2M-X9PDA
+                  - H4TZ8-0RWNC
+                  - B6VJE-3MYQ1
+                  - 2NDKS-QF7HX
+                  - WP5CA-8ZT0G
+                  - E9MRY-K2HVB
+                  - 1XGQT-6NWJD
+                  - SZ3FP-YB8KM
+                  - 0CHVN-4ERT7
+                  - Q8JWD-5AXPZ
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/mfa/verify:
+    post:
+      tags: [Authentification]
+      operationId: verifyMfa
+      summary: Passer la double authentification et ouvrir la session
+      description: |
+        UC-ID-09. Seconde étape de connexion d'un compte interne : code de l'application
+        d'authentification (`totp`) ou code de récupération (`recovery_code`, tirets et espaces
+        ignorés). Un même code de l'application ne sert qu'une fois ; un code de récupération est
+        consommé. La session back-office est ouverte : jeton de renouvellement dans le cookie
+        `__Secure-ksp_admin_rt`.
+
+        Erreurs : `IDENTITY_MFA_CODE_INVALID` et `IDENTITY_MFA_CODE_REUSED` (400,
+        `details.attemptsRemaining`), `IDENTITY_MFA_TOKEN_INVALID` (401),
+        `IDENTITY_BACKOFFICE_FORBIDDEN` et `IDENTITY_ACCOUNT_SUSPENDED` (403),
+        `IDENTITY_MFA_ENROLLMENT_REQUIRED` et `IDENTITY_MFA_TOO_MANY_ATTEMPTS` (422),
+        `GATEWAY_RATE_LIMITED` (429).
+      x-ksp-grpc: ksp.identity.v1.AuthService/VerifyMfa
+      x-ksp-access: mfa_token
+      x-ksp-rate-limit: mfa_verify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyMfaRequest'
+            example:
+              mfaToken: mfa_2b3c4d5e6f
+              method: totp
+              code: '081804'
+      responses:
+        '200':
+          description: Session ouverte
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+            Set-Cookie:
+              $ref: '#/components/headers/Set-Cookie-Refresh'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaSessionResponse'
+              example:
+                status: authenticated
+                accessToken: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.e30.c2ln
+                accessTokenExpiresAt: '2026-10-17T10:15:00Z'
+                refreshTokenExpiresAt: '2026-10-17T22:00:00Z'
+                sessionId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e10
+                user:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                  status: active
+                  firstName: Koffi
+                  lastName: Adjovi
+                  phone: '+2290197000045'
+                  email: null
+                  preferredLanguage: fr
+                  createdAt: '2026-10-17T10:00:00Z'
+                profileIncomplete: false
+                recoveryCodesRemaining: 10
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -537,7 +771,7 @@ components:
 
   responses:
     BadRequest:
-      description: Requête invalide (`GATEWAY_VALIDATION_FAILED`, `GATEWAY_CLIENT_UNKNOWN`, `IDENTITY_OTP_INVALID`)
+      description: Requête invalide (`GATEWAY_VALIDATION_FAILED`, `GATEWAY_CLIENT_UNKNOWN`, `IDENTITY_OTP_INVALID`, `IDENTITY_MFA_CODE_INVALID`, `IDENTITY_MFA_CODE_REUSED`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -553,7 +787,7 @@ components:
                 attemptsRemaining: 3
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
     Unauthorized:
-      description: Jeton absent, invalide, expiré ou session révoquée (`GATEWAY_TOKEN_MISSING`, `GATEWAY_TOKEN_INVALID`, `GATEWAY_TOKEN_EXPIRED`, `IDENTITY_REFRESH_TOKEN_*`, `IDENTITY_SESSION_REVOKED`)
+      description: Jeton absent, invalide, expiré ou session révoquée (`GATEWAY_TOKEN_MISSING`, `GATEWAY_TOKEN_INVALID`, `GATEWAY_TOKEN_EXPIRED`, `IDENTITY_REFRESH_TOKEN_*`, `IDENTITY_SESSION_REVOKED`, `IDENTITY_MFA_TOKEN_INVALID`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -583,7 +817,7 @@ components:
               details: {}
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
     Forbidden:
-      description: Accès refusé (`IDENTITY_ACCOUNT_SUSPENDED`)
+      description: Accès refusé (`IDENTITY_ACCOUNT_SUSPENDED`, `IDENTITY_BACKOFFICE_FORBIDDEN`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -598,7 +832,7 @@ components:
               details: {}
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
     UnprocessableEntity:
-      description: Code expiré ou annulé (`IDENTITY_OTP_EXPIRED`, `IDENTITY_OTP_TOO_MANY_ATTEMPTS`)
+      description: Code expiré ou annulé, étape de double authentification impossible (`IDENTITY_OTP_EXPIRED`, `IDENTITY_OTP_TOO_MANY_ATTEMPTS`, `IDENTITY_MFA_*`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -883,7 +1117,7 @@ components:
           const: mfa_required
         mfaToken:
           type: string
-          description: Jeton court, à usage unique, à présenter à l'étape de double authentification (lot suivant).
+          description: Jeton court (5 minutes), à usage unique, à présenter aux routes /api/v1/identity/mfa/….
         expiresAt:
           type: string
           format: date-time
@@ -895,6 +1129,153 @@ components:
         enrollmentRequired:
           type: boolean
           description: L'application d'authentification doit être configurée avant tout accès.
+
+    MfaToken:
+      type: string
+      minLength: 1
+      maxLength: 128
+      description: Jeton reçu dans la réponse mfa_required de /api/v1/identity/otp/verify.
+
+    EnrollTotpRequest:
+      type: object
+      additionalProperties: false
+      required: [mfaToken]
+      properties:
+        mfaToken:
+          $ref: '#/components/schemas/MfaToken'
+
+    TotpEnrollmentResponse:
+      type: object
+      additionalProperties: false
+      required: [secret, otpauthUri, issuer, accountName, digits, periodSeconds]
+      properties:
+        secret:
+          type: string
+          pattern: '^[A-Z2-7]+$'
+          description: Secret en base32, pour une saisie à la main. Affiché une seule fois.
+        otpauthUri:
+          type: string
+          pattern: '^otpauth://totp/'
+          description: À afficher en QR code.
+        issuer:
+          type: string
+        accountName:
+          type: string
+        digits:
+          const: 6
+        periodSeconds:
+          const: 30
+
+    ConfirmTotpRequest:
+      type: object
+      additionalProperties: false
+      required: [mfaToken, code]
+      properties:
+        mfaToken:
+          $ref: '#/components/schemas/MfaToken'
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: Premier code affiché par l'application d'authentification.
+
+    TotpConfirmedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          status,
+          accessToken,
+          accessTokenExpiresAt,
+          refreshTokenExpiresAt,
+          sessionId,
+          user,
+          profileIncomplete,
+          recoveryCodes,
+        ]
+      properties:
+        status:
+          const: authenticated
+        accessToken:
+          type: string
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+        refreshToken:
+          type: string
+          description: Mobile uniquement. Web et back-office le reçoivent dans le cookie.
+        refreshTokenExpiresAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/User'
+        profileIncomplete:
+          type: boolean
+        recoveryCodes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          description: Codes de récupération, chacun utilisable une fois, affichés une seule fois.
+          items:
+            type: string
+            pattern: '^[0-9A-Z]{5}-[0-9A-Z]{5}$'
+
+    VerifyMfaRequest:
+      type: object
+      additionalProperties: false
+      required: [mfaToken, method, code]
+      properties:
+        mfaToken:
+          $ref: '#/components/schemas/MfaToken'
+        method:
+          type: string
+          enum: [totp, recovery_code]
+        code:
+          type: string
+          pattern: '^[0-9A-Za-z -]{6,20}$'
+          description: 6 chiffres pour totp ; code de récupération (tirets et espaces ignorés).
+
+    MfaSessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          status,
+          accessToken,
+          accessTokenExpiresAt,
+          refreshTokenExpiresAt,
+          sessionId,
+          user,
+          profileIncomplete,
+          recoveryCodesRemaining,
+        ]
+      properties:
+        status:
+          const: authenticated
+        accessToken:
+          type: string
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+        refreshToken:
+          type: string
+          description: Mobile uniquement. Web et back-office le reçoivent dans le cookie.
+        refreshTokenExpiresAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/User'
+        profileIncomplete:
+          type: boolean
+        recoveryCodesRemaining:
+          type: integer
+          minimum: 0
+          description: Codes de récupération encore utilisables ; le back-office prévient quand il en reste peu.
 
     RefreshSessionRequest:
       type: object

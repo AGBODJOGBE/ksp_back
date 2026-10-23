@@ -10,6 +10,9 @@ export interface AccessTokenRoleClaim {
   scopeId?: string | null;
 }
 
+/** Méthodes d’authentification (RFC 8176) : code par téléphone, puis seconde étape. */
+export type AccessTokenAuthMethod = 'otp' | 'mfa';
+
 export interface AccessTokenClaims {
   iss: 'ksp-identity';
   aud: 'ksp-api';
@@ -24,6 +27,8 @@ export interface AccessTokenClaims {
   roles: AccessTokenRoleClaim[];
   mfa: boolean;
   auth_time: number;
+  /** Facultatif : absent des jetons émis avant son ajout. */
+  amr?: AccessTokenAuthMethod[];
 }
 
 /** Valeurs fixes du profil de jeton d'accès. */
