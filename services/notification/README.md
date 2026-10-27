@@ -28,16 +28,16 @@ C'est **le seul endroit** où un code de connexion peut apparaître dans une sor
 
 ## SendNotification (lot 1)
 
-| Règle           | Fonctionnement                                                                                                                                                                                                                                                          |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Modèles         | `identity.otp` seul (variables `code`, 15 caractères au plus, et `expires_in_minutes`) ; tout autre modèle → `NOTIFICATION_TEMPLATE_UNKNOWN`. Modèle secret : ni le texte ni les variables ne sont stockés ni journalisés.                                              |
-| Appelants       | `identity` et `document`, lus dans le jeton de service vérifié ; tout autre service → `NOTIFICATION_CALLER_FORBIDDEN`. Sans `IDENTITY_JWKS_URL` (développement), les appels ne sont pas authentifiés : le kit l'annonce au démarrage, et tout appelant est accepté.     |
-| Canaux          | Le canal demandé (WhatsApp s'il n'est pas précisé), puis `fallback_channels` dans l'ordre. Un canal sans prestataire est sauté : au lancement, **WhatsApp seul** (aucun prestataire SMS, ADR-021).                                                                      |
-| Idempotence     | Table `notifications`, clé `idempotency_key` unique : deux appels avec la même clé = un seul envoi, la seconde réponse (ou erreur) est celle du premier. Un second appel pendant le premier → `NOTIFICATION_ALREADY_IN_PROGRESS`.                                       |
-| Délai           | `ttl_seconds` compte à partir de l'appel : passé ce délai, aucune bascule n'est plus tentée (cause `ttl_expired`). `0` : pas de limite.                                                                                                                                 |
-| Réponse         | `DELIVERY_STATUS_ACCEPTED` quand le prestataire a pris le message en charge (jamais `SENT` sans accusé), `channel_used`, `notification_id`.                                                                                                                             |
-| Échec           | Tous les canaux échouent → `NOTIFICATION_CHANNELS_EXHAUSTED` (`details.channelsTried`) et événement `notification.message.failed` par l'outbox, dans la même transaction que le statut. Numéro refusé par chaque prestataire appelé → `NOTIFICATION_RECIPIENT_INVALID`. |
-| Refus immédiats | Numéro absent ou non E.164, identifiant de compte non UUID → `NOTIFICATION_RECIPIENT_INVALID` ; variables manquantes ou mal formées → `NOTIFICATION_VARIABLES_INVALID` (noms seuls). Rien n'est enregistré.                                                             |
+| Règle           | Fonctionnement                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Modèles         | `identity.otp` (WhatsApp ou SMS ; variables `code`, 15 caractères au plus, et `expires_in_minutes`) et `identity.email_verification` (e-mail seul, `recipient.email` obligatoire ; `code` de 4 à 8 chiffres, `expires_in_minutes` ; texte dans `domain/messages/identity.messages.ts`, code absent de l'objet). Tout autre modèle → `NOTIFICATION_TEMPLATE_UNKNOWN`. Modèles secrets : ni le texte ni les variables ne sont stockés ni journalisés. |
+| Appelants       | `identity` et `document`, lus dans le jeton de service vérifié ; tout autre service → `NOTIFICATION_CALLER_FORBIDDEN`. Sans `IDENTITY_JWKS_URL` (développement), les appels ne sont pas authentifiés : le kit l'annonce au démarrage, et tout appelant est accepté.                                                                                                                                                                                 |
+| Canaux          | Le canal demandé (WhatsApp s'il n'est pas précisé), puis `fallback_channels` dans l'ordre. Un canal sans prestataire est sauté : au lancement, **WhatsApp seul** (aucun prestataire SMS, ADR-021).                                                                                                                                                                                                                                                  |
+| Idempotence     | Table `notifications`, clé `idempotency_key` unique : deux appels avec la même clé = un seul envoi, la seconde réponse (ou erreur) est celle du premier. Un second appel pendant le premier → `NOTIFICATION_ALREADY_IN_PROGRESS`.                                                                                                                                                                                                                   |
+| Délai           | `ttl_seconds` compte à partir de l'appel : passé ce délai, aucune bascule n'est plus tentée (cause `ttl_expired`). `0` : pas de limite.                                                                                                                                                                                                                                                                                                             |
+| Réponse         | `DELIVERY_STATUS_ACCEPTED` quand le prestataire a pris le message en charge (jamais `SENT` sans accusé), `channel_used`, `notification_id`.                                                                                                                                                                                                                                                                                                         |
+| Échec           | Tous les canaux échouent → `NOTIFICATION_CHANNELS_EXHAUSTED` (`details.channelsTried`) et événement `notification.message.failed` par l'outbox, dans la même transaction que le statut. Numéro refusé par chaque prestataire appelé → `NOTIFICATION_RECIPIENT_INVALID`.                                                                                                                                                                             |
+| Refus immédiats | Coordonnée absente ou mal formée pour un canal prévu (numéro E.164 pour WhatsApp et SMS, adresse pour l'e-mail), identifiant de compte non UUID → `NOTIFICATION_RECIPIENT_INVALID` ; variables manquantes ou mal formées → `NOTIFICATION_VARIABLES_INVALID` (noms seuls). Rien n'est enregistré.                                                                                                                                                    |
 
 ## WhatsApp Cloud API (Meta)
 
@@ -56,7 +56,7 @@ Les journaux ne contiennent ni le jeton, ni le numéro, ni le code : seulement l
 Chaque événement écouté a sa file `notification.<événement>` (quorum), sa file de reprise `.retry` (10 secondes, 5 reprises) et sa file d'erreurs `.dlq`, créées par le kit. Le traitement (`NotifyEventUseCase`) :
 
 1. ignore un événement déjà traité (inbox, table `processed_events`) ;
-2. déduit de l'événement les messages à envoyer (`application/events/cleaning.rules.ts`) et lit les coordonnées des destinataires dans identity (`GetUsersByIds`, jeton de service) ; identity indisponible → reprise par la file ;
+2. déduit de l'événement les messages à envoyer (`application/events/cleaning.rules.ts`) et lit les coordonnées des destinataires dans identity (`GetUsersByIds`, jeton de service) ; identity indisponible → reprise par la file. **Seule une adresse e-mail vérifiée par code (`email_verified`) est retenue** : sans elle, aucun e-mail ne part (devis, compte rendu, avis d'impayés, factures) et le message reste visible dans l'espace KSP ;
 3. envoie un message par destinataire, avec la clé d'idempotence `<événement>:<modèle>:<destinataire>` (table `notifications`) : une nouvelle livraison n'envoie rien deux fois ;
 4. marque l'événement traité et enregistre une notification par destinataire dans `in_app_notifications`, dans la même transaction.
 
@@ -64,12 +64,12 @@ Un destinataire introuvable (compte inconnu ou supprimé) est sauté ; un échec
 
 **Règle de choix du canal** (`eventChannelPlan`) : un seul message externe par destinataire, plus la notification dans l'espace.
 
-| Nature du message                                | Canal                                              |
-| ------------------------------------------------ | -------------------------------------------------- |
-| Court, transactionnel (demande reçue, planning…) | WhatsApp ; e-mail en bascule si l'adresse existe   |
-| Document (devis envoyé, compte rendu de fin)     | E-mail si l'adresse existe ; WhatsApp sinon        |
-| Important (avertissement d'impayés, suspension)  | WhatsApp **et** e-mail (deux envois, sans bascule) |
-| Destinataire sans téléphone ni e-mail            | Notification dans l'espace seulement               |
+| Nature du message                                | Canal                                                  |
+| ------------------------------------------------ | ------------------------------------------------------ |
+| Court, transactionnel (demande reçue, planning…) | WhatsApp ; e-mail en bascule si l'adresse est vérifiée |
+| Document (devis envoyé, compte rendu de fin)     | E-mail si l'adresse est vérifiée ; WhatsApp sinon      |
+| Important (avertissement d'impayés, suspension)  | WhatsApp **et** e-mail (deux envois, sans bascule)     |
+| Destinataire sans téléphone ni e-mail            | Notification dans l'espace seulement                   |
 
 | Événement                              | Destinataires            | Modèles                                                                                 |
 | -------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------- |

@@ -3,6 +3,7 @@ export interface RecipientContact {
   userId: string;
   firstName: string | null;
   phoneE164: string | null;
+  /** Adresse e-mail vérifiée par code ; null si le compte n'en a pas (aucun e-mail n'est alors envoyé). */
   email: string | null;
   /** Langue préférée (deux lettres). Les messages n'existent qu'en français au lot 2. */
   language: string;

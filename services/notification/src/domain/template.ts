@@ -1,10 +1,11 @@
 import { type ChannelName } from './channel';
 import { CLEANING_TEMPLATES } from './messages/cleaning.messages';
+import { IDENTITY_DIRECT_TEMPLATES } from './messages/identity.messages';
 
 /**
  * Modèle de message. Lot 1 : `identity.otp` (envoi direct) ; lot 2 : les messages des événements du
- * Nettoyage. Le catalogue complet (fichiers versionnés ou édition au back-office) attend le cahier
- * des charges du service notification.
+ * Nettoyage et `identity.email_verification` (envoi direct, par e-mail). Le catalogue complet
+ * (fichiers versionnés ou édition au back-office) attend le cahier des charges du service notification.
  */
 export interface TemplateDefinition {
   code: string;
@@ -17,6 +18,11 @@ export interface TemplateDefinition {
   secret: boolean;
   /** Variables obligatoires et leur format. */
   variables: Readonly<Record<string, RegExp>>;
+  /**
+   * Texte écrit par notification (objet et corps), indispensable pour l'e-mail ; absent pour un
+   * modèle rédigé chez le prestataire (identity.otp : modèle WhatsApp approuvé par Meta).
+   */
+  render?(variables: Readonly<Record<string, string>>): RenderedMessage;
 }
 
 /** Texte d'un message, en français : objet (e-mail, titre dans l'espace) et corps en texte brut. */
@@ -39,7 +45,7 @@ export interface EventTemplateDefinition extends TemplateDefinition {
 }
 
 export function isEventTemplate(template: TemplateDefinition): template is EventTemplateDefinition {
-  return 'render' in template && typeof (template as EventTemplateDefinition).render === 'function';
+  return 'kind' in template && typeof template.render === 'function';
 }
 
 const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
@@ -53,6 +59,7 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
       expires_in_minutes: /^[1-9][0-9]{0,3}$/,
     },
   },
+  ...Object.fromEntries(IDENTITY_DIRECT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(CLEANING_TEMPLATES.map((template) => [template.code, template])),
 };
 

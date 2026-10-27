@@ -38,7 +38,11 @@ export class NotificationGrpcController implements notificationV1.NotificationSe
       templateCode: request.templateCode,
       channel: CHANNEL_IN[request.channel] ?? null,
       fallbackChannels: request.fallbackChannels.flatMap((channel) => CHANNEL_IN[channel] ?? []),
-      recipient: { userId: request.recipient?.userId ?? '', phoneE164: request.recipient?.phoneE164 ?? '' },
+      recipient: {
+        userId: request.recipient?.userId ?? '',
+        phoneE164: request.recipient?.phoneE164 ?? '',
+        email: request.recipient?.email ?? '',
+      },
       variables: request.variables,
       idempotencyKey: request.idempotencyKey,
       locale: request.locale,

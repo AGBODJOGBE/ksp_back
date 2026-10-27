@@ -183,7 +183,7 @@ describeWithDatabase('PrismaNotificationRepository (PostgreSQL)', () => {
       templateCode: 'identity.otp',
       channel: 'whatsapp' as const,
       fallbackChannels: ['sms' as const],
-      recipient: { userId: '', phoneE164: '+2290197000045' },
+      recipient: { userId: '', phoneE164: '+2290197000045', email: '' },
       variables: { code: '482913', expires_in_minutes: '5' },
       idempotencyKey: 'challenge-usecase',
       locale: 'fr',
