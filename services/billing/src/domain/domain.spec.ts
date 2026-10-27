@@ -58,6 +58,7 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
     dueAt: at('2026-12-15T08:00:00Z'),
     paidAt: null,
     payments: [],
+    organization: null,
     version: 0,
     ...overrides,
   };

@@ -58,6 +58,15 @@ export function presentInvoice(value: billingV1.Invoice | undefined) {
       recordedBy: payment.recordedBy,
       recordedAt: payment.recordedAt,
     })),
+    // En-tête copié à l'émission ; null pour un particulier ou une facture émise avant.
+    organization: value.organization
+      ? {
+          legalName: value.organization.legalName,
+          address: value.organization.address,
+          ifu: value.organization.ifu,
+          rccm: orNull(value.organization.rccm),
+        }
+      : null,
   };
 }
 

@@ -82,6 +82,19 @@ export function toOrganizationMessage(organization: Organization): identityV1.Or
   };
 }
 
+/** Fiche lue par un autre service (GetOrganizationsByIds) : ni membres ni décisions du back-office. */
+export function toOrganizationProfileMessage(organization: Organization): identityV1.OrganizationProfile {
+  return {
+    id: organization.id,
+    legalName: organization.legalName,
+    address: organization.address,
+    ifu: organization.ifu,
+    rccm: organization.rccm ?? '',
+    billingEmail: organization.billingEmail ?? '',
+    status: ORGANIZATION_STATUS[organization.status],
+  };
+}
+
 export function toMembershipMessage(membership: MembershipView): identityV1.OrganizationMembership {
   return {
     organization: toOrganizationMessage(membership.organization),

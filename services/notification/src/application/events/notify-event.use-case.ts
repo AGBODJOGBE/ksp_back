@@ -7,6 +7,8 @@ import { type Clock, type IdGenerator } from '../shared/system.ports';
 import {
   type EventInbox,
   type InAppNotification,
+  type OrganizationBillingContact,
+  type OrganizationDirectory,
   type RecipientContact,
   type RecipientDirectory,
 } from './event-notification.ports';
@@ -44,8 +46,10 @@ const LOCALE = 'fr';
  *
  * 1. Un événement déjà traité (inbox) est ignoré.
  * 2. La règle de l'événement donne les messages à envoyer ; les coordonnées des destinataires sont
- *    lues dans identity. Une panne d'identity lève une erreur : l'événement est repris plus tard
- *    (file de reprise, puis file d'erreurs).
+ *    lues dans identity, ainsi que l'e-mail de facturation des organisations concernées (factures
+ *    d'une entreprise : il remplace l'adresse du destinataire pour l'e-mail seulement). Une panne
+ *    d'identity lève une erreur : l'événement est repris plus tard (file de reprise, puis file
+ *    d'erreurs).
  * 3. Chaque message part par les canaux que fixe sa nature (`eventDispatchPlans`), avec une clé
  *    d'idempotence `<événement>:<modèle>:<destinataire>` : une nouvelle livraison du même événement
  *    n'envoie rien deux fois.
@@ -57,6 +61,7 @@ export class NotifyEventUseCase {
     private readonly rules: EventRules,
     private readonly dispatcher: MessageDispatcher,
     private readonly directory: RecipientDirectory,
+    private readonly organizations: OrganizationDirectory,
     private readonly inbox: EventInbox,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
@@ -79,6 +84,7 @@ export class NotifyEventUseCase {
 
     const intents = rule(event.payload as never, this.context);
     const contacts = await this.findContacts(intents);
+    const organizations = await this.findOrganizations(intents);
     const inApp: InAppNotification[] = [];
 
     for (const intent of intents) {
@@ -87,7 +93,10 @@ export class NotifyEventUseCase {
         result.recipientsNotFound += 1;
         continue;
       }
-      const { template, variables } = prepare(intent, contact);
+      const organization = intent.billingOrganizationId
+        ? organizations.get(intent.billingOrganizationId.toLowerCase())
+        : undefined;
+      const { template, variables } = prepare(intent, contact, organization);
       const content = template.render(variables);
       const now = this.clock.now();
       inApp.push({
@@ -102,7 +111,8 @@ export class NotifyEventUseCase {
       });
 
       const phone = PhoneNumber.parse(contact.phoneE164 ?? '');
-      const email = EmailAddress.parse(contact.email);
+      // E-mail de facturation vérifié de l'organisation, sinon adresse vérifiée du destinataire.
+      const email = EmailAddress.parse(organization?.billingEmail) ?? EmailAddress.parse(contact.email);
       const plans = eventDispatchPlans(template.kind, { hasPhone: phone !== null, hasEmail: email !== null });
       if (plans.length === 0) {
         result.unreachable += 1;
@@ -154,18 +164,44 @@ export class NotifyEventUseCase {
     const contacts = await this.directory.findContacts(userIds);
     return new Map(contacts.map((contact) => [contact.userId.toLowerCase(), contact]));
   }
+
+  /** Fiches de facturation des organisations citées par les messages, par identifiant en minuscules. */
+  private async findOrganizations(
+    intents: readonly NotificationIntent[],
+  ): Promise<Map<string, OrganizationBillingContact>> {
+    const organizationIds = [
+      ...new Set(
+        intents.flatMap((intent) =>
+          intent.billingOrganizationId ? [intent.billingOrganizationId.toLowerCase()] : [],
+        ),
+      ),
+    ];
+    if (organizationIds.length === 0) return new Map();
+    const organizations = await this.organizations.findBillingContacts(organizationIds);
+    return new Map(
+      organizations.map((organization) => [organization.organizationId.toLowerCase(), organization]),
+    );
+  }
 }
 
 /**
  * Modèle et variables complètes d'un message. Un modèle inconnu ou des variables invalides
  * signalent un événement mal formé ou une règle erronée : l'erreur part en file d'erreurs.
  */
-function prepare(intent: NotificationIntent, contact: RecipientContact) {
+function prepare(
+  intent: NotificationIntent,
+  contact: RecipientContact,
+  organization: OrganizationBillingContact | undefined,
+) {
   const template = findTemplate(intent.templateCode);
   if (!template || !isEventTemplate(template)) {
     throw new Error(`modèle de message inconnu : ${intent.templateCode}`);
   }
-  const variables = { ...intent.variables, first_name: (contact.firstName ?? '').trim() };
+  const variables = {
+    ...intent.variables,
+    first_name: (contact.firstName ?? '').trim(),
+    ...(organization ? { organization_name: organization.legalName.trim() } : {}),
+  };
   const invalid = invalidVariables(template, variables);
   if (invalid.length > 0) {
     throw new Error(`variables invalides pour ${template.code} : ${invalid.join(', ')}`);

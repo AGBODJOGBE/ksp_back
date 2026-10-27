@@ -7,10 +7,12 @@ import { eventDate } from './rule-dates';
  * Messages des événements de la facturation (CDC Nettoyage, partie 10 ; ADR-025) : facture émise,
  * facture impayée, facture réglée.
  *
- * Destinataire : le compte client qui porte le contrat facturé (`customerId`). identity n'a pas
- * encore d'organisations : l'entreprise reçoit ses factures sur ce compte. L'e-mail ne part que
- * vers une adresse vérifiée (ADR-026, appliqué par l'annuaire des destinataires) ; sinon WhatsApp,
- * et la notification reste dans l'espace KSP.
+ * Destinataire : le compte client qui porte le contrat facturé (`customerId`) : WhatsApp et
+ * notification dans l'espace KSP. Facture d'une organisation (`organizationId`) : l'e-mail part à
+ * l'e-mail de facturation vérifié de l'organisation ; sans lui, à l'adresse vérifiée du compte
+ * client (ADR-026) ; sinon aucun e-mail (WhatsApp, et la facture reste dans l'espace KSP). La
+ * raison sociale (`organization_name`, vide par défaut) est ajoutée par le service quand la fiche de
+ * l'organisation est connue : elle figure dans l'objet de l'e-mail, pas dans le modèle WhatsApp.
  *
  * Lien : la facture dans « Mes factures » du portail, /mon-espace/factures/<invoiceId>.
  */
@@ -33,17 +35,23 @@ function period(startIso: string, endIso: string, context: RuleContext): string 
 }
 
 function customer(
-  userId: string,
+  event: { customerId: string; organizationId: string | null },
   templateCode: string,
   link: string,
   variables: Record<string, string>,
 ): NotificationIntent {
-  return { userId, templateCode, variables: { ...variables, link }, link };
+  return {
+    userId: event.customerId,
+    templateCode,
+    variables: { ...variables, organization_name: '', link },
+    link,
+    ...(event.organizationId ? { billingOrganizationId: event.organizationId } : {}),
+  };
 }
 
 export const BILLING_RULES: { readonly [T in BillingEventType]: EventRule<T> } = {
   'billing.invoice.issued': (event, context) => [
-    customer(event.customerId, 'billing.invoice_issued.customer', invoiceLink(context, event.invoiceId), {
+    customer(event, 'billing.invoice_issued.customer', invoiceLink(context, event.invoiceId), {
       invoice_number: event.invoiceNumber,
       period: period(event.periodStart, event.periodEnd, context),
       total: formatXof(event.total.amount),
@@ -52,7 +60,7 @@ export const BILLING_RULES: { readonly [T in BillingEventType]: EventRule<T> } =
   ],
 
   'billing.invoice.overdue': (event, context) => [
-    customer(event.customerId, 'billing.invoice_overdue.customer', invoiceLink(context, event.invoiceId), {
+    customer(event, 'billing.invoice_overdue.customer', invoiceLink(context, event.invoiceId), {
       invoice_number: event.invoiceNumber,
       total: formatXof(event.total.amount),
       due_on: eventDate(event.dueAt, context),
@@ -60,7 +68,7 @@ export const BILLING_RULES: { readonly [T in BillingEventType]: EventRule<T> } =
   ],
 
   'billing.invoice.paid': (event, context) => [
-    customer(event.customerId, 'billing.invoice_paid.customer', invoiceLink(context, event.invoiceId), {
+    customer(event, 'billing.invoice_paid.customer', invoiceLink(context, event.invoiceId), {
       invoice_number: event.invoiceNumber,
       total: formatXof(event.total.amount),
       paid_on: eventDate(event.paidAt, context),

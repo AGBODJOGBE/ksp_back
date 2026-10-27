@@ -9,6 +9,13 @@ export interface NotificationIntent {
   variables: Record<string, string>;
   /** Lien vers l'espace KSP, repris par la notification dans l'application ; null s'il n'y en a pas. */
   link: string | null;
+  /**
+   * Organisation dont l'e-mail de facturation vérifié reçoit l'e-mail à la place de l'adresse du
+   * destinataire (factures d'une entreprise). Sans e-mail de facturation, l'adresse vérifiée du
+   * destinataire sert. WhatsApp et la notification dans l'espace restent pour le destinataire.
+   * Quand la fiche est connue, sa raison sociale remplace la variable `organization_name`.
+   */
+  billingOrganizationId?: string;
 }
 
 /** Réglages utiles à la rédaction des messages. */

@@ -18,6 +18,13 @@ partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/bill
   suspension, la somme des factures vaut exactement le total. Un contrat annulé est facturé
   jusqu'au jour de l'annulation (exclu), sans absorption. Un mois entièrement suspendu n'est pas
   facturé.
+- **En-tête des factures d'organisation** (ADR-028) : raison sociale, adresse, IFU et RCCM lus
+  dans identity (`GetOrganizationsByIds`, jeton de service, délai, nouvelle tentative et
+  coupe-circuit du kit) au moment de l'émission, et copiés dans la facture : une modification
+  ultérieure de la fiche ne la change pas. Pas de TVA. Aucune facture n'est émise sans en-tête :
+  identity indisponible → aucune émission, reprise au passage suivant (le passage en impayée
+  continue) ; organisation introuvable → contrat reporté et journalisé. Les factures émises
+  avant cet en-tête n'en ont pas (`organization` nul).
 - **Numérotation** `FAC-<année>-<000001>`, continue par année (compteur dans la transaction).
 - **Statuts** : `pending_payment` jusqu'à l'échéance (émission + délai réglable, 10 jours),
   puis `overdue` ; `paid` quand les paiements atteignent le total ; `cancelled` réservé.
@@ -39,6 +46,9 @@ pnpm --filter @ksp/billing-service dev
 - gRPC : `localhost:50054`
 - Santé : `http://localhost:3104/health/live` et `/health/ready`
 - Métriques : `http://localhost:3104/metrics`
+- identity : `IDENTITY_GRPC_URL` (`localhost:50051`) ; jeton de service (`IDENTITY_TOKEN_URL`,
+  `SERVICE_CLIENT_SECRET`) obligatoire en production. Entrée `SERVICE_CLIENTS` d'identity :
+  `billing` avec l'audience `identity` (`keys:service-client billing identity`).
 
 ## Organisation
 

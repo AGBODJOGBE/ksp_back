@@ -8,7 +8,16 @@ import {
 } from '../../application/ports';
 import { formatInvoiceNumber, type Invoice, type InvoicePayment } from '../../domain/invoice';
 import { PrismaService } from '../prisma/prisma.service';
-import { INVOICE_INCLUDE, json, pageArgs, toInvoice, toPage, type Tx, writeEvents } from './mappers';
+import {
+  INVOICE_INCLUDE,
+  invoiceOrganizationColumns,
+  json,
+  pageArgs,
+  toInvoice,
+  toPage,
+  type Tx,
+  writeEvents,
+} from './mappers';
 
 @Injectable()
 export class PrismaInvoiceRepository implements InvoiceRepository {
@@ -54,6 +63,7 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
           total: invoice.total,
           issuedAt: invoice.issuedAt,
           dueAt: invoice.dueAt,
+          ...invoiceOrganizationColumns(invoice.organization),
         },
       });
       await writeEvents(tx, events(invoice));

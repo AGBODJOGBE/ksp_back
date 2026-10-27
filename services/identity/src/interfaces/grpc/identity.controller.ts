@@ -1,8 +1,9 @@
 import { identityV1 } from '@ksp/contracts';
 import { currentContext } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
+import { GetOrganizationsUseCase } from '../../application/directory/get-organizations.use-case';
 import { GetUsersUseCase } from '../../application/directory/get-users.use-case';
-import { toUserMessage } from './mappers';
+import { toOrganizationProfileMessage, toUserMessage } from './mappers';
 import { notImplemented } from './not-implemented';
 
 /**
@@ -10,12 +11,16 @@ import { notImplemented } from './not-implemented';
  * Aucune règle métier ici.
  *
  * Les méthodes pas encore livrées répondent NOT_IMPLEMENTED. GetUser et GetUsersByIds servent
- * notification (destinataires des événements métier, lot 2).
+ * notification (destinataires des événements métier, lot 2) ; GetOrganizationsByIds sert billing
+ * (en-tête des factures) et notification (e-mail de facturation).
  */
 @Controller()
 @identityV1.IdentityServiceControllerMethods()
 export class IdentityGrpcController implements identityV1.IdentityServiceController {
-  constructor(private readonly getUsersUseCase: GetUsersUseCase) {}
+  constructor(
+    private readonly getUsersUseCase: GetUsersUseCase,
+    private readonly getOrganizationsUseCase: GetOrganizationsUseCase,
+  ) {}
 
   async getUser(request: identityV1.GetUserRequest): Promise<identityV1.GetUserResponse> {
     const account = await this.getUsersUseCase.one(callerService(), request.userId);
@@ -25,6 +30,13 @@ export class IdentityGrpcController implements identityV1.IdentityServiceControl
   async getUsersByIds(request: identityV1.GetUsersByIdsRequest): Promise<identityV1.GetUsersByIdsResponse> {
     const accounts = await this.getUsersUseCase.many(callerService(), request.userIds);
     return { users: accounts.map(toUserMessage) };
+  }
+
+  async getOrganizationsByIds(
+    request: identityV1.GetOrganizationsByIdsRequest,
+  ): Promise<identityV1.GetOrganizationsByIdsResponse> {
+    const organizations = await this.getOrganizationsUseCase.many(callerService(), request.organizationIds);
+    return { organizations: organizations.map(toOrganizationProfileMessage) };
   }
 
   checkPermission(): Promise<identityV1.CheckPermissionResponse> {

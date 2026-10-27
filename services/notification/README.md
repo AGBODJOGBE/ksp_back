@@ -1,6 +1,6 @@
 # Service notification
 
-Contrat gRPC : `contracts/proto/ksp/notification/v1/notification.proto`. Événement publié : `notification.message.failed` (`contracts/events/notification/`). Événements écoutés : les 11 événements du Nettoyage (`contracts/events/cleaning/`), les 3 de la facturation (`contracts/events/billing/`) et 3 événements des comptes entreprise d'identity (`identity.organization.created`, `.validated`, `.rejected`, ADR-027). Décisions : ADR-014 (codes par gRPC direct), ADR-021 (WhatsApp Cloud API de Meta), ADR-024 (e-mail par Brevo), ADR-025 (facturation des contrats d'entreprise), ADR-026 (e-mail vérifié), ADR-027 (comptes entreprise), ADR-013 et ADR-022 (jetons de service).
+Contrat gRPC : `contracts/proto/ksp/notification/v1/notification.proto`. Événement publié : `notification.message.failed` (`contracts/events/notification/`). Événements écoutés : les 11 événements du Nettoyage (`contracts/events/cleaning/`), les 3 de la facturation (`contracts/events/billing/`) et 5 événements des comptes entreprise d'identity (`identity.organization.created`, `.validated`, `.rejected`, `.suspended`, `.reactivated`, ADR-027). Décisions : ADR-014 (codes par gRPC direct), ADR-021 (WhatsApp Cloud API de Meta), ADR-024 (e-mail par Brevo), ADR-025 (facturation des contrats d'entreprise), ADR-026 (e-mail vérifié), ADR-027 (comptes entreprise), ADR-028 (factures des entreprises), ADR-013 et ADR-022 (jetons de service).
 
 Le cahier des charges complet du service (préférences, appareils, édition des modèles, lecture des notifications dans l'application) reste à écrire. Ce service couvre le **lot 1** (envoi des codes de connexion d'identity) et le **lot 2** (messages des événements du Nettoyage et des factures mensuelles, par WhatsApp, e-mail et dans l'espace KSP).
 
@@ -56,7 +56,7 @@ Les journaux ne contiennent ni le jeton, ni le numéro, ni le code : seulement l
 Chaque événement écouté a sa file `notification.<événement>` (quorum), sa file de reprise `.retry` (10 secondes, 5 reprises) et sa file d'erreurs `.dlq`, créées par le kit. Le traitement (`NotifyEventUseCase`) :
 
 1. ignore un événement déjà traité (inbox, table `processed_events`) ;
-2. déduit de l'événement les messages à envoyer (`application/events/cleaning.rules.ts`, `billing.rules.ts`) et lit les coordonnées des destinataires dans identity (`GetUsersByIds`, jeton de service) ; identity indisponible → reprise par la file. **Seule une adresse e-mail vérifiée par code (`email_verified`) est retenue** : sans elle, aucun e-mail ne part (devis, compte rendu, avis d'impayés, factures) et le message reste visible dans l'espace KSP ;
+2. déduit de l'événement les messages à envoyer (`application/events/cleaning.rules.ts`, `billing.rules.ts`, `organization.rules.ts`) et lit les coordonnées des destinataires dans identity (`GetUsersByIds`, jeton de service), ainsi que l'e-mail de facturation des organisations pour leurs factures (`GetOrganizationsByIds`) ; identity indisponible → reprise par la file. **Seule une adresse e-mail vérifiée par code est retenue** (`email_verified` du compte, e-mail de facturation toujours vérifié) : sans elle, aucun e-mail ne part (devis, compte rendu, avis d'impayés, factures) et le message reste visible dans l'espace KSP ;
 3. envoie un message par destinataire, avec la clé d'idempotence `<événement>:<modèle>:<destinataire>` (table `notifications`) : une nouvelle livraison n'envoie rien deux fois ;
 4. marque l'événement traité et enregistre une notification par destinataire dans `in_app_notifications`, dans la même transaction.
 
@@ -90,10 +90,12 @@ Un destinataire introuvable (compte inconnu ou supprimé) est sauté ; un échec
 | `identity.organization.created`        | équipe comptes entreprise | `identity.organization_requested.team` (raison sociale, référence)                      |
 | `identity.organization.validated`      | demandeur                 | `identity.organization_validated.customer`                                              |
 | `identity.organization.rejected`       | demandeur                 | `identity.organization_rejected.customer` (motif)                                       |
+| `identity.organization.suspended`      | demandeur                 | `identity.organization_suspended.customer` (motif)                                      |
+| `identity.organization.reactivated`    | demandeur                 | `identity.organization_reactivated.customer`                                            |
 
-Équipe Nettoyage : comptes listés dans `NOTIFICATION_CLEANING_TEAM_USER_IDS` (identifiants séparés par des virgules, vide par défaut), car ces événements ne désignent ni l'admin ni le superviseur. Équipe des comptes entreprise : `NOTIFICATION_ACCOUNTS_TEAM_USER_IDS` (même format), prévenue de chaque nouvelle demande ; lien du demandeur : `PORTAL_BASE_URL` + `/mon-espace/entreprise` (chemin du portail à valider). La suspension et la réactivation d'une organisation ne sont pas annoncées par message. Lien des factures : `PORTAL_BASE_URL` + `/mon-espace/factures` (avertissement, suspension) ou `/mon-espace/factures/<invoiceId>` (messages de la facturation).
+Équipe Nettoyage : comptes listés dans `NOTIFICATION_CLEANING_TEAM_USER_IDS` (identifiants séparés par des virgules, vide par défaut), car ces événements ne désignent ni l'admin ni le superviseur. Équipe des comptes entreprise : `NOTIFICATION_ACCOUNTS_TEAM_USER_IDS` (même format), prévenue de chaque nouvelle demande ; lien du demandeur : `PORTAL_BASE_URL` + `/mon-espace/entreprise` (chemin du portail à valider). Demandeur = `createdBy` de l'événement, seul administrateur de l'organisation tant que les invitations n'existent pas ; une suspension ou une réactivation publiée avant l'ajout de ce champ n'est annoncée à personne. Lien des factures : `PORTAL_BASE_URL` + `/mon-espace/factures` (avertissement, suspension) ou `/mon-espace/factures/<invoiceId>` (messages de la facturation).
 
-Factures (`billing.invoice.*`) : destinataire = le compte client qui porte le contrat (`customerId` ; identity n'a pas encore d'organisations). Période écrite jusqu'au dernier jour facturé (la fin publiée par billing est exclue). La facture impayée désigne la facture et son montant ; l'avertissement et la suspension restent les messages du Nettoyage, qui ne nomment pas la facture et ne couvrent ni la dernière facture d'un contrat terminé ni les factures échues pendant une suspension. Le paiement en ligne et la facture PDF viendront avec leurs lots.
+Factures (`billing.invoice.*`) : destinataire = le compte client qui porte le contrat (`customerId`) pour WhatsApp et la notification dans l'espace KSP. **Facture d'une organisation** (`organizationId`) : l'e-mail part à l'**e-mail de facturation vérifié de l'organisation** (identity, `GetOrganizationsByIds`) ; sans lui (ou organisation introuvable), à l'adresse vérifiée du compte client (ADR-026) ; sinon aucun e-mail. La règle de canal ne change pas (document : e-mail, WhatsApp du compte client en bascule ou sans e-mail) ; la clé d'idempotence reste celle du compte client (ADR-028). Quand la fiche est connue, la raison sociale suit l'objet de l'e-mail (« Votre facture FAC-2026-000042 — SARL Bénin Propre ») ; modèles WhatsApp inchangés. Période écrite jusqu'au dernier jour facturé (la fin publiée par billing est exclue). La facture impayée désigne la facture et son montant ; l'avertissement et la suspension restent les messages du Nettoyage, qui ne nomment pas la facture et ne couvrent ni la dernière facture d'un contrat terminé ni les factures échues pendant une suspension. Le paiement en ligne et la facture PDF viendront avec leurs lots.
 
 Textes : `src/domain/messages/cleaning.messages.ts` et `billing.messages.ts` (français, dates à l'heure du Bénin, montants en FCFA entiers, sans division). Liens : `PORTAL_BASE_URL` + `/mon-espace/nettoyage/demandes/<id>` ou `/missions/<id>`. En production, `PORTAL_BASE_URL` doit être une adresse HTTPS publique (le service refuse de démarrer sinon).
 
@@ -126,6 +128,8 @@ Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie
 | `ksp_identity_team_organization_requested`                                                                                     | prénom, raison sociale                                         |
 | `ksp_identity_organization_validated`                                                                                          | prénom, raison sociale, lien                                   |
 | `ksp_identity_organization_rejected`                                                                                           | prénom, raison sociale, motif, lien                            |
+| `ksp_identity_organization_suspended`                                                                                          | prénom, raison sociale, motif, lien                            |
+| `ksp_identity_organization_reactivated`                                                                                        | prénom, raison sociale, lien                                   |
 
 ## E-mail (Brevo)
 
@@ -141,18 +145,18 @@ Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie
 
 ## Organisation
 
-| Dossier                           | Contenu                                                                                           |
-| --------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `src/domain`                      | Canaux, modèles, destinataire, délai, résumé d'un échec, appelants autorisés                      |
-| `src/domain/messages`             | Textes des messages des événements, mise en forme (montants, dates, durées)                       |
-| `src/application/send`            | `SendNotificationUseCase`, `MessageDispatcher` (envoi idempotent partagé), ports, erreurs         |
-| `src/application/events`          | `NotifyEventUseCase`, règles par événement, ports (annuaire, inbox)                               |
-| `src/application/testing`         | Doublures en mémoire des ports                                                                    |
-| `src/infrastructure/channels`     | Prestataires WhatsApp (Meta, console) et e-mail (Brevo, console), leur fabrique, modèles WhatsApp |
-| `src/infrastructure/events`       | Inbox et notifications dans l'espace (tables `processed_events`, `in_app_notifications`)          |
-| `src/infrastructure/identity`     | Annuaire des destinataires (identity, `GetUsersByIds`)                                            |
-| `src/infrastructure/notification` | Dépôt Prisma (table `notifications`, outbox)                                                      |
-| `src/interfaces/grpc`             | Contrôleur gRPC                                                                                   |
-| `src/interfaces/messaging`        | Abonnement RabbitMQ aux événements écoutés                                                        |
+| Dossier                           | Contenu                                                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `src/domain`                      | Canaux, modèles, destinataire, délai, résumé d'un échec, appelants autorisés                            |
+| `src/domain/messages`             | Textes des messages des événements, mise en forme (montants, dates, durées)                             |
+| `src/application/send`            | `SendNotificationUseCase`, `MessageDispatcher` (envoi idempotent partagé), ports, erreurs               |
+| `src/application/events`          | `NotifyEventUseCase`, règles par événement, ports (annuaire, inbox)                                     |
+| `src/application/testing`         | Doublures en mémoire des ports                                                                          |
+| `src/infrastructure/channels`     | Prestataires WhatsApp (Meta, console) et e-mail (Brevo, console), leur fabrique, modèles WhatsApp       |
+| `src/infrastructure/events`       | Inbox et notifications dans l'espace (tables `processed_events`, `in_app_notifications`)                |
+| `src/infrastructure/identity`     | Annuaires d'identity : destinataires (`GetUsersByIds`), e-mail de facturation (`GetOrganizationsByIds`) |
+| `src/infrastructure/notification` | Dépôt Prisma (table `notifications`, outbox)                                                            |
+| `src/interfaces/grpc`             | Contrôleur gRPC                                                                                         |
+| `src/interfaces/messaging`        | Abonnement RabbitMQ aux événements écoutés                                                              |
 
 Tests : `test/notification.repository.int.spec.ts` et `test/event-inbox.int.spec.ts` (PostgreSQL, ignorés sans `TEST_DATABASE_URL`) et `test/send-notification.grpc.spec.ts` (bout en bout gRPC avec le client d'identity).

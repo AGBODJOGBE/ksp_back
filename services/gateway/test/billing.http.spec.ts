@@ -1,6 +1,6 @@
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
-import { type BillingServer, INVOICE_ID, startBillingStub } from './support/billing-stub';
+import { type BillingServer, INVOICE_ID, protoInvoice, startBillingStub } from './support/billing-stub';
 import {
   type IdentityServer,
   ORIGINS,
@@ -63,6 +63,12 @@ describe('gateway → billing', () => {
       paidAt: null,
     });
     expect(res.body.data[0].payments[0].reference).toBeNull();
+    expect(res.body.data[0].organization).toEqual({
+      legalName: 'SARL Bénin Propre',
+      address: 'Lot 12, Haie Vive, Cotonou',
+      ifu: '3201912345678',
+      rccm: null,
+    });
     const call = billing.stub.last('listMyInvoices')!;
     expect(call.request).toMatchObject({ status: 'overdue', page: { limit: 5, cursor: '' } });
     expect(call.context?.user?.userId).toBe(USER_ID);
@@ -86,6 +92,11 @@ describe('gateway → billing', () => {
     ).send({ amount: 100000, method: 'cash' });
     expect(paid.status).toBe(200);
     expect(paid.body).toMatchObject({ status: 'paid', balance: { amount: 0, currency: 'XOF' } });
+    // Facture d'un particulier, ou émise avant l'en-tête : organisation absente → null.
+    billing.stub.on('getInvoice', async () => ({ invoice: { ...protoInvoice, organization: undefined } }));
+    const detail = await backoffice(http().get(`/api/v1/admin/billing/invoices/${INVOICE_ID}`), finance);
+    expect(detail.status).toBe(200);
+    expect(detail.body.organization).toBeNull();
     expect(billing.stub.last('recordInvoicePayment')!.request).toEqual({
       invoiceId: INVOICE_ID,
       amount: { amount: 100000, currency: 'XOF' },

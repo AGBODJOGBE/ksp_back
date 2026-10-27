@@ -16,6 +16,7 @@ import { SendNotificationUseCase } from './application/send/send-notification.us
 import { emailProviderKind, type ServiceConfig, whatsappProviderKind } from './config';
 import { createChannelProviders } from './infrastructure/channels/channel-providers';
 import { PrismaEventInbox } from './infrastructure/events/prisma-event-inbox';
+import { IdentityOrganizationDirectory } from './infrastructure/identity/identity-organization-directory';
 import { IdentityRecipientDirectory } from './infrastructure/identity/identity-recipient-directory';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { PrismaNotificationRepository } from './infrastructure/notification/prisma-notification.repository';
@@ -90,16 +91,19 @@ export class AppModule {
               );
             }
             const clock = new SystemClock();
+            const identity = grpc.getService<identityV1.IdentityServiceClient>(
+              identityV1.IDENTITY_SERVICE_NAME,
+            );
+            // Un seul appelant (délai, coupe-circuit) pour les deux lectures d'identity.
+            const identityCaller = new GrpcCaller({
+              target: 'identity',
+              ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+            });
             return new NotifyEventUseCase(
               EVENT_RULES,
               new MessageDispatcher(notifications, providers, clock),
-              new IdentityRecipientDirectory(
-                grpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
-                new GrpcCaller({
-                  target: 'identity',
-                  ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
-                }),
-              ),
+              new IdentityRecipientDirectory(identity, identityCaller),
+              new IdentityOrganizationDirectory(identity, identityCaller),
               inbox,
               clock,
               new UuidV7Generator(),

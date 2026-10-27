@@ -166,6 +166,35 @@ export interface GetUsersByIdsResponse {
   users: User[];
 }
 
+/**
+ * Fiche d'une organisation vue par un autre service (GetOrganizationsByIds) : coordonnées de
+ * facturation seulement.
+ */
+export interface OrganizationProfile {
+  id: string;
+  /** Raison sociale. */
+  legalName: string;
+  address: string;
+  /** Identifiant fiscal unique (Bénin) : 13 chiffres. */
+  ifu: string;
+  /** Vide s'il n'est pas renseigné. */
+  rccm: string;
+  /**
+   * E-mail de facturation vérifié par code ; vide s'il n'y en a pas, ou pour un appelant qui
+   * n'a pas droit aux coordonnées.
+   */
+  billingEmail: string;
+  status: OrganizationStatus;
+}
+
+export interface GetOrganizationsByIdsRequest {
+  organizationIds: string[];
+}
+
+export interface GetOrganizationsByIdsResponse {
+  organizations: OrganizationProfile[];
+}
+
 export interface CheckPermissionRequest {
   userId: string;
   /** Format <service>:<ressource>:<action>, par exemple "wallet:payout:approve". */
@@ -666,6 +695,23 @@ export interface IdentityServiceClient {
 
   getUsersByIds(request: GetUsersByIdsRequest, metadata?: Metadata): Observable<GetUsersByIdsResponse>;
 
+  /**
+   * Fiches d'organisations (comptes entreprise, ADR-027) lues par un autre service, sans les
+   * membres ni les décisions du back-office. Appelants autorisés : billing (en-tête des factures,
+   * copié à l'émission) et notification, seul à recevoir l'e-mail de facturation (factures
+   * envoyées à l'entreprise). L'e-mail transmis est toujours vérifié par code ; vide sinon.
+   * Tous les états sont rendus (status) ; les identifiants introuvables sont omis (100 au plus).
+   * Erreurs :
+   *   IDENTITY_CALLER_FORBIDDEN            PERMISSION_DENIED  service appelant non autorisé
+   *   IDENTITY_ORGANIZATION_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)
+   *   IDENTITY_TOO_MANY_ORGANIZATION_IDS   INVALID_ARGUMENT   plus de 100 identifiants
+   */
+
+  getOrganizationsByIds(
+    request: GetOrganizationsByIdsRequest,
+    metadata?: Metadata,
+  ): Observable<GetOrganizationsByIdsResponse>;
+
   /** Réservé aux actions sensibles : les permissions courantes voyagent dans le jeton. */
 
   checkPermission(request: CheckPermissionRequest, metadata?: Metadata): Observable<CheckPermissionResponse>;
@@ -706,6 +752,23 @@ export interface IdentityServiceController {
     metadata?: Metadata,
   ): Promise<GetUsersByIdsResponse> | Observable<GetUsersByIdsResponse> | GetUsersByIdsResponse;
 
+  /**
+   * Fiches d'organisations (comptes entreprise, ADR-027) lues par un autre service, sans les
+   * membres ni les décisions du back-office. Appelants autorisés : billing (en-tête des factures,
+   * copié à l'émission) et notification, seul à recevoir l'e-mail de facturation (factures
+   * envoyées à l'entreprise). L'e-mail transmis est toujours vérifié par code ; vide sinon.
+   * Tous les états sont rendus (status) ; les identifiants introuvables sont omis (100 au plus).
+   * Erreurs :
+   *   IDENTITY_CALLER_FORBIDDEN            PERMISSION_DENIED  service appelant non autorisé
+   *   IDENTITY_ORGANIZATION_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)
+   *   IDENTITY_TOO_MANY_ORGANIZATION_IDS   INVALID_ARGUMENT   plus de 100 identifiants
+   */
+
+  getOrganizationsByIds(
+    request: GetOrganizationsByIdsRequest,
+    metadata?: Metadata,
+  ): Promise<GetOrganizationsByIdsResponse> | Observable<GetOrganizationsByIdsResponse> | GetOrganizationsByIdsResponse;
+
   /** Réservé aux actions sensibles : les permissions courantes voyagent dans le jeton. */
 
   checkPermission(
@@ -741,6 +804,7 @@ export function IdentityServiceControllerMethods() {
     const grpcMethods: string[] = [
       "getUser",
       "getUsersByIds",
+      "getOrganizationsByIds",
       "checkPermission",
       "grantRole",
       "revokeRole",

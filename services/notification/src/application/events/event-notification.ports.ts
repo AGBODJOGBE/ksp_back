@@ -17,6 +17,26 @@ export interface RecipientDirectory {
   findContacts(userIds: readonly string[]): Promise<RecipientContact[]>;
 }
 
+/**
+ * Coordonnées de facturation d'une organisation (compte entreprise), lues dans identity au moment
+ * de l'événement.
+ */
+export interface OrganizationBillingContact {
+  organizationId: string;
+  /** Raison sociale, reprise dans l'objet des e-mails de facture. */
+  legalName: string;
+  /** Adresse vérifiée par code ; null si l'organisation n'en a pas confirmé. */
+  billingEmail: string | null;
+}
+
+/**
+ * Fiches des organisations (identity, GetOrganizationsByIds). Une organisation introuvable est
+ * simplement absente du résultat ; une panne lève une erreur (l'événement sera repris plus tard).
+ */
+export interface OrganizationDirectory {
+  findBillingContacts(organizationIds: readonly string[]): Promise<OrganizationBillingContact[]>;
+}
+
 /** Notification « dans l'application » : affichée dans l'espace KSP du destinataire. */
 export interface InAppNotification {
   id: string;

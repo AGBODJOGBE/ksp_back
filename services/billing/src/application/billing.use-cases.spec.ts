@@ -6,6 +6,7 @@ import {
   asStaff,
   CUSTOMER_ID,
   ORGANIZATION_ID,
+  ORGANIZATION_PROFILE,
   OTHER_CUSTOMER_ID,
   testWorld,
   type TestWorld,
@@ -65,10 +66,10 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
 
   it('émission à la fin du mois civil, idempotente, numérotée, échéance à 10 jours', async () => {
     world.clock.current = new Date('2026-11-30T22:59:00Z');
-    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 0 });
+    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 0, deferredContractIds: [] });
     world.clock.current = new Date('2026-12-01T09:00:00Z');
-    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 1 });
-    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 0 });
+    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 1, deferredContractIds: [] });
+    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 0, deferredContractIds: [] });
     expect(types()).toEqual(['billing.invoice.issued']);
     expect(payload('billing.invoice.issued')).toMatchObject({
       invoiceNumber: 'FAC-2026-000001',
@@ -81,6 +82,62 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
       issuedAt: '2026-12-01T09:00:00.000Z',
       dueAt: '2026-12-11T09:00:00.000Z',
     });
+  });
+
+  it('en-tête de l’organisation copié à l’émission ; une modification ultérieure ne le change pas', async () => {
+    world.clock.current = new Date('2026-12-01T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    expect(world.organizations.lookups).toEqual([[ORGANIZATION_ID]]);
+    world.organizations.profiles.set(ORGANIZATION_ID, {
+      ...ORGANIZATION_PROFILE,
+      legalName: 'SARL Bénin Propre et Services',
+      rccm: null,
+    });
+    world.clock.current = new Date('2027-01-01T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    const [november, december] = [...world.invoices.invoices.values()].sort(
+      (a, b) => a.periodIndex - b.periodIndex,
+    );
+    expect(november?.organization).toEqual({
+      legalName: 'SARL Bénin Propre',
+      address: 'Lot 12, Haie Vive, Cotonou',
+      ifu: '3201912345678',
+      rccm: 'RB/COT/19 B 1234',
+    });
+    expect(december?.organization).toMatchObject({ legalName: 'SARL Bénin Propre et Services', rccm: null });
+    const mine = await asCustomer(() => useCases.getMyInvoice.execute(november!.id));
+    expect(mine.organization?.legalName).toBe('SARL Bénin Propre');
+  });
+
+  it('identity indisponible : aucune facture sans en-tête, émission reprise au passage suivant', async () => {
+    world.clock.current = new Date('2026-12-01T09:00:00Z');
+    world.organizations.unavailable = true;
+    await expect(useCases.issueDueInvoices.execute()).rejects.toThrow('identity indisponible');
+    expect(world.invoices.invoices.size).toBe(0);
+    expect(types()).toEqual([]);
+    world.organizations.unavailable = false;
+    world.clock.current = new Date('2026-12-01T09:15:00Z');
+    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 1, deferredContractIds: [] });
+    expect(payload('billing.invoice.issued')).toMatchObject({
+      issuedAt: '2026-12-01T09:15:00.000Z',
+      dueAt: '2026-12-11T09:15:00.000Z',
+    });
+  });
+
+  it('organisation introuvable dans identity : contrat reporté, les autres sont facturés', async () => {
+    world.organizations.profiles.delete(ORGANIZATION_ID);
+    world.clock.current = new Date('2026-12-01T09:00:00Z');
+    expect(await useCases.issueDueInvoices.execute()).toEqual({
+      issued: 0,
+      deferredContractIds: [MISSION_ID],
+    });
+    expect(world.invoices.invoices.size).toBe(0);
+  });
+
+  it('aucun mois à facturer : identity n’est pas appelé', async () => {
+    world.clock.current = new Date('2026-11-15T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    expect(world.organizations.lookups).toEqual([]);
   });
 
   it('« impayée » à l’échéance, avec le nombre d’impayées du contrat', async () => {
@@ -134,7 +191,7 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     });
     world.clock.current = new Date('2026-12-06T00:00:00Z');
     // Novembre, non suspendu, est facturé en entier.
-    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 1 });
+    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 1, deferredContractIds: [] });
     await useCases.resumeContract.execute({
       eventId: event(4),
       type: 'cleaning.contract.resumed',

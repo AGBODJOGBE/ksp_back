@@ -42,6 +42,21 @@ export interface InvoicePayment {
   recordedAt: Date;
 }
 
+/**
+ * En-tête d'une facture d'organisation : la fiche lue dans identity au moment de l'émission.
+ * La facture est un document comptable : une modification ultérieure de la fiche ne la change
+ * pas. Aucun champ fiscal au-delà de l'IFU et du RCCM (pas de TVA).
+ */
+export interface InvoiceOrganization {
+  /** Raison sociale. */
+  legalName: string;
+  address: string;
+  /** Identifiant fiscal unique (Bénin), 13 chiffres. */
+  ifu: string;
+  /** Registre du commerce, facultatif. */
+  rccm: string | null;
+}
+
 export interface Invoice {
   id: string;
   number: string;
@@ -59,6 +74,8 @@ export interface Invoice {
   dueAt: Date;
   paidAt: Date | null;
   payments: InvoicePayment[];
+  /** En-tête de l'organisation facturée ; null pour une facture émise avant son enregistrement. */
+  organization: InvoiceOrganization | null;
   version: number;
 }
 

@@ -1,6 +1,11 @@
 import { type BillingEventPayloads, type BillingEventType } from '@ksp/contracts';
 import { type BillingContract } from '../domain/contract';
-import { type Invoice, type InvoicePayment, type InvoiceStatus } from '../domain/invoice';
+import {
+  type Invoice,
+  type InvoiceOrganization,
+  type InvoicePayment,
+  type InvoiceStatus,
+} from '../domain/invoice';
 import { type BillingSettings } from '../domain/settings';
 
 /**
@@ -85,6 +90,20 @@ export interface InvoiceRepository {
   ): Promise<boolean>;
 }
 
+/** Fiche d'une organisation lue dans identity, à copier dans l'en-tête de la facture. */
+export interface OrganizationProfile extends InvoiceOrganization {
+  id: string;
+}
+
+/**
+ * Fiches des organisations facturées (identity, GetOrganizationsByIds). Une organisation inconnue
+ * est simplement absente du résultat ; une panne lève une erreur (l'émission est reprise au
+ * passage suivant de la tâche planifiée).
+ */
+export interface OrganizationDirectory {
+  findByIds(organizationIds: readonly string[]): Promise<OrganizationProfile[]>;
+}
+
 export interface StoredBillingSettings extends BillingSettings {
   updatedBy: string | null;
   updatedAt: Date | null;
@@ -99,6 +118,7 @@ export interface BillingDeps {
   contracts: ContractRepository;
   invoices: InvoiceRepository;
   settings: SettingsRepository;
+  organizations: OrganizationDirectory;
   clock: Clock;
   ids: IdGenerator;
 }

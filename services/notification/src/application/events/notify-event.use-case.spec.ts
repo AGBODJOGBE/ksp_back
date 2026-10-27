@@ -2,13 +2,14 @@ import { type KspEventPayloads } from '@ksp/contracts';
 import { MessageDispatcher } from '../send/message-dispatcher';
 import {
   FakeDirectory,
+  FakeOrganizations,
   FakeProvider,
   FixedClock,
   InMemoryInbox,
   InMemoryNotifications,
   SequentialIds,
 } from '../testing/fakes';
-import { type RecipientContact } from './event-notification.ports';
+import { type OrganizationBillingContact, type RecipientContact } from './event-notification.ports';
 import { EVENT_RULES } from './listened-events';
 import { NotifyEventUseCase, type ReceivedEvent } from './notify-event.use-case';
 
@@ -35,15 +36,18 @@ function setup(
   providers = [new FakeProvider('whatsapp'), new FakeProvider('email')],
   cleaningTeamUserIds: string[] = [],
   accountsTeamUserIds: string[] = [],
+  billingContacts: OrganizationBillingContact[] = [],
 ) {
   const notifications = new InMemoryNotifications();
   const directory = new FakeDirectory(contacts);
+  const organizations = new FakeOrganizations(billingContacts);
   const inbox = new InMemoryInbox();
   const clock = new FixedClock(NOW);
   const useCase = new NotifyEventUseCase(
     EVENT_RULES,
     new MessageDispatcher(notifications, providers, clock),
     directory,
+    organizations,
     inbox,
     clock,
     new SequentialIds(),
@@ -55,7 +59,7 @@ function setup(
     },
   );
   const [whatsapp, email] = providers as [FakeProvider, FakeProvider];
-  return { notifications, directory, inbox, useCase, whatsapp, email };
+  return { notifications, directory, organizations, inbox, useCase, whatsapp, email };
 }
 
 const event = <T extends keyof KspEventPayloads>(type: T, payload: KspEventPayloads[T]): ReceivedEvent => ({
@@ -620,6 +624,80 @@ describe('NotifyEventUseCase — factures mensuelles (billing)', () => {
     expect(email.sent).toHaveLength(1);
   });
 
+  describe('facture d’une organisation (ADR-027)', () => {
+    const billing = (billingEmail: string | null) => [
+      { organizationId: ORG, legalName: 'SARL Bénin Propre', billingEmail },
+    ];
+    const setupOrg = (contacts: RecipientContact[], billingEmail: string | null) =>
+      setup(contacts, undefined, [], [], billing(billingEmail));
+
+    it('e-mail à l’adresse de facturation vérifiée ; l’espace KSP reste celui du compte client', async () => {
+      const { useCase, whatsapp, email, inbox, organizations } = setupOrg(
+        [withEmail],
+        'Compta@Benin-Propre.bj',
+      );
+      await expect(useCase.execute(issued)).resolves.toMatchObject({ accepted: 1, inApp: 1 });
+      expect(organizations.lookups).toEqual([[ORG]]);
+      expect(whatsapp.sent).toHaveLength(0);
+      expect(email.sent).toHaveLength(1);
+      expect(email.sent[0]).toMatchObject({
+        templateCode: 'billing.invoice_issued.customer',
+        email: 'compta@benin-propre.bj',
+      });
+      expect(email.sent[0]!.content!.subject).toBe('Votre facture FAC-2026-000042 — SARL Bénin Propre');
+      expect(inbox.inApp).toEqual([expect.objectContaining({ userId: CUSTOMER, link: LINK })]);
+    });
+
+    it('e-mail de facturation refusé par le prestataire : bascule sur le WhatsApp du compte client', async () => {
+      const providers = [
+        new FakeProvider('whatsapp'),
+        new FakeProvider('email', [{ accepted: false, reason: 'recipient_invalid' }]),
+      ];
+      const { useCase, whatsapp } = setup([contact(CUSTOMER)], providers, [], [], billing('compta@bp.bj'));
+      await expect(useCase.execute(overdue)).resolves.toMatchObject({ accepted: 1 });
+      expect(whatsapp.sent).toEqual([expect.objectContaining({ phoneE164: '+2290197000045' })]);
+    });
+
+    it('sans e-mail de facturation : repli sur l’adresse vérifiée du compte client, objet nommant l’entreprise', async () => {
+      const { useCase, email } = setupOrg([withEmail], null);
+      await useCase.execute(paid);
+      expect(email.sent).toEqual([expect.objectContaining({ email: 'koffi@example.com' })]);
+      expect(email.sent[0]!.content!.subject).toBe('Facture FAC-2026-000042 réglée — SARL Bénin Propre');
+    });
+
+    it('organisation introuvable : repli sur l’adresse vérifiée du compte client, objet inchangé', async () => {
+      const { useCase, email } = setup([withEmail]);
+      await useCase.execute(issued);
+      expect(email.sent).toEqual([expect.objectContaining({ email: 'koffi@example.com' })]);
+      expect(email.sent[0]!.content!.subject).toBe('Votre facture FAC-2026-000042');
+    });
+
+    it('ni e-mail de facturation ni adresse vérifiée : WhatsApp au compte client, aucun e-mail', async () => {
+      const { useCase, whatsapp, email } = setupOrg([contact(CUSTOMER)], null);
+      await useCase.execute(issued);
+      expect(email.sent).toHaveLength(0);
+      expect(whatsapp.sent).toHaveLength(1);
+      // Le modèle WhatsApp ne change pas : la raison sociale n'est pas un de ses paramètres.
+      expect(whatsapp.sent[0]!.variables['organization_name']).toBe('SARL Bénin Propre');
+    });
+
+    it('identity indisponible pour l’organisation : erreur (reprise par la file), rien n’est envoyé', async () => {
+      const { useCase, whatsapp, email, inbox, organizations } = setupOrg([withEmail], 'compta@bp.bj');
+      organizations.unavailable = true;
+      await expect(useCase.execute(issued)).rejects.toThrow('identity indisponible');
+      expect([...whatsapp.sent, ...email.sent]).toHaveLength(0);
+      expect(inbox.processed.size).toBe(0);
+    });
+
+    it('facture d’un particulier : l’annuaire des organisations n’est pas lu', async () => {
+      const { useCase, email, organizations } = setupOrg([withEmail], 'compta@bp.bj');
+      await useCase.execute({ ...issued, payload: { ...(issued.payload as object), organizationId: null } });
+      expect(organizations.lookups).toEqual([]);
+      expect(email.sent).toEqual([expect.objectContaining({ email: 'koffi@example.com' })]);
+      expect(email.sent[0]!.content!.subject).toBe('Votre facture FAC-2026-000042');
+    });
+  });
+
   it('période illisible : erreur (file d’erreurs après les reprises)', async () => {
     const { useCase, inbox } = setup();
     await expect(
@@ -696,5 +774,61 @@ describe('NotifyEventUseCase — comptes entreprise (ADR-027)', () => {
     );
     expect(whatsapp.sent[0]).toMatchObject({ templateCode: 'identity.organization_rejected.customer' });
     expect(whatsapp.sent[0]!.content!.text).toContain('Motif : IFU introuvable au registre de la DGI.');
+  });
+
+  it('suspension : le demandeur, avec le motif et le lien vers son espace entreprise', async () => {
+    const { useCase, whatsapp, inbox } = setup();
+    await useCase.execute(
+      event('identity.organization.suspended', {
+        organizationId: ORGANIZATION,
+        legalName: 'SARL Bénin Propre',
+        suspendedBy: STAFF,
+        createdBy: CUSTOMER,
+        reason: 'Usurpation signalée.',
+      }),
+    );
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'identity.organization_suspended.customer',
+      variables: { legal_name: 'SARL Bénin Propre', reason: 'Usurpation signalée.' },
+    });
+    expect(whatsapp.sent[0]!.content!.text).toContain(
+      'KSP a suspendu le compte entreprise SARL Bénin Propre.',
+    );
+    expect(whatsapp.sent[0]!.content!.text).toContain('Motif : Usurpation signalée.');
+    expect(inbox.inApp).toEqual([
+      expect.objectContaining({ userId: CUSTOMER, link: 'https://ksp.bj/mon-espace/entreprise' }),
+    ]);
+  });
+
+  it('réactivation : le demandeur, avec le lien vers son espace entreprise', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(
+      event('identity.organization.reactivated', {
+        organizationId: ORGANIZATION,
+        legalName: 'SARL Bénin Propre',
+        reactivatedBy: STAFF,
+        createdBy: CUSTOMER,
+      }),
+    );
+    expect(whatsapp.sent[0]).toMatchObject({ templateCode: 'identity.organization_reactivated.customer' });
+    expect(whatsapp.sent[0]!.content!.text).toContain(
+      'Le compte entreprise SARL Bénin Propre est de nouveau actif.',
+    );
+  });
+
+  it('suspension publiée avant l’ajout du demandeur : rien à envoyer, événement traité', async () => {
+    const { useCase, whatsapp, inbox, directory } = setup();
+    await useCase.execute(
+      event('identity.organization.suspended', {
+        organizationId: ORGANIZATION,
+        legalName: 'SARL Bénin Propre',
+        suspendedBy: STAFF,
+        reason: 'Usurpation signalée.',
+      }),
+    );
+    expect(whatsapp.sent).toEqual([]);
+    expect(directory.lookups).toEqual([]);
+    expect(inbox.processed.size).toBe(1);
   });
 });

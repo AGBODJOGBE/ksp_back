@@ -11,6 +11,7 @@ import {
   type OrganizationRepository,
   type OrganizationStatusChange,
 } from '../../application/organization/organization.ports';
+import { type OrganizationDirectory } from '../../application/directory/get-organizations.use-case';
 import { type Organization, type OrganizationStatus } from '../../domain/organization/organization';
 import { Prisma } from '../../../prisma/generated';
 import { PrismaService } from '../prisma/prisma.service';
@@ -97,16 +98,27 @@ function decisionEvent(change: OrganizationStatusChange, organization: Organizat
     case 'suspend':
       return [
         'identity.organization.suspended',
-        { ...base, suspendedBy: change.actorId, reason: change.reason ?? '' },
+        {
+          ...base,
+          suspendedBy: change.actorId,
+          createdBy: organization.createdBy,
+          reason: change.reason ?? '',
+        },
       ];
     case 'reactivate':
-      return ['identity.organization.reactivated', { ...base, reactivatedBy: change.actorId }];
+      return [
+        'identity.organization.reactivated',
+        { ...base, reactivatedBy: change.actorId, createdBy: organization.createdBy },
+      ];
   }
 }
 
-/** Organisations, membres et décisions du back-office, en base identity (ADR-027). */
+/**
+ * Organisations, membres et décisions du back-office, en base identity (ADR-027) ; lecture des
+ * fiches par les autres services (GetOrganizationsByIds).
+ */
 @Injectable()
-export class PrismaOrganizationRepository implements OrganizationRepository {
+export class PrismaOrganizationRepository implements OrganizationRepository, OrganizationDirectory {
   constructor(private readonly prisma: PrismaService) {}
 
   async countPendingCreatedBy(userId: string): Promise<number> {
@@ -159,6 +171,17 @@ export class PrismaOrganizationRepository implements OrganizationRepository {
       select: ORGANIZATION_SELECT,
     });
     return row ? toOrganization(row) : null;
+  }
+
+  async findByIds(organizationIds: readonly string[]): Promise<Organization[]> {
+    const rows = await this.prisma.organization.findMany({
+      where: { id: { in: [...organizationIds] } },
+      select: { ...ORGANIZATION_SELECT, billingEmailVerifiedAt: true },
+    });
+    // L'adresse n'est enregistrée qu'à sa confirmation : la date de vérification est un second verrou.
+    return rows.map(({ billingEmailVerifiedAt, ...row }) =>
+      toOrganization({ ...row, billingEmail: billingEmailVerifiedAt ? row.billingEmail : null }),
+    );
   }
 
   async membership(userId: string, organizationId: string): Promise<Membership | null> {

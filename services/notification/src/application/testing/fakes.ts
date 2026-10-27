@@ -16,6 +16,8 @@ import {
 import {
   type EventInbox,
   type InAppNotification,
+  type OrganizationBillingContact,
+  type OrganizationDirectory,
   type RecipientContact,
   type RecipientDirectory,
 } from '../events/event-notification.ports';
@@ -145,6 +147,19 @@ export class FakeDirectory implements RecipientDirectory {
     this.lookups.push([...userIds]);
     if (this.unavailable) throw new Error('identity indisponible');
     return this.contacts.filter((contact) => userIds.includes(contact.userId));
+  }
+}
+
+export class FakeOrganizations implements OrganizationDirectory {
+  readonly lookups: string[][] = [];
+  unavailable = false;
+
+  constructor(readonly organizations: OrganizationBillingContact[] = []) {}
+
+  async findBillingContacts(organizationIds: readonly string[]): Promise<OrganizationBillingContact[]> {
+    this.lookups.push([...organizationIds]);
+    if (this.unavailable) throw new Error('identity indisponible');
+    return this.organizations.filter((organization) => organizationIds.includes(organization.organizationId));
   }
 }
 
