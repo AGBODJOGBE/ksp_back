@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.organization.rejected.v1.schema.json",
+  "title": "identity.organization.rejected",
+  "description": "Un admin KSP a refusé la demande de création d'une organisation (ADR-027).",
+  "x-event-type": "identity.organization.rejected",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["organizationId", "legalName", "createdBy", "rejectedBy", "reason"],
+  "properties": {
+    "organizationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "legalName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Raison sociale"
+    },
+    "createdBy": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte qui a demandé la création (prévenu de la décision)"
+    },
+    "rejectedBy": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Motif communiqué au client"
+    }
+  }
+}

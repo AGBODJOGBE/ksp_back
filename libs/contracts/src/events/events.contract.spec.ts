@@ -34,7 +34,31 @@ const examples: { [K in IdentityEventType]: IdentityEventPayloads[K] } = {
   'identity.user.suspended': { userId: uuid, reason: 'Fraude signalée', suspendedBy: uuid },
   'identity.user.reactivated': { userId: uuid, reactivatedBy: uuid },
   'identity.user.deleted': { userId: uuid },
-  'identity.organization.created': { organizationId: uuid, createdBy: uuid },
+  'identity.organization.created': { organizationId: uuid, createdBy: uuid, legalName: 'SARL Bénin Propre' },
+  'identity.organization.validated': {
+    organizationId: uuid,
+    legalName: 'SARL Bénin Propre',
+    createdBy: uuid,
+    validatedBy: uuid,
+  },
+  'identity.organization.rejected': {
+    organizationId: uuid,
+    legalName: 'SARL Bénin Propre',
+    createdBy: uuid,
+    rejectedBy: uuid,
+    reason: 'IFU introuvable au registre',
+  },
+  'identity.organization.suspended': {
+    organizationId: uuid,
+    legalName: 'SARL Bénin Propre',
+    suspendedBy: uuid,
+    reason: 'Usurpation signalée',
+  },
+  'identity.organization.reactivated': {
+    organizationId: uuid,
+    legalName: 'SARL Bénin Propre',
+    reactivatedBy: uuid,
+  },
   'identity.member.added': { organizationId: uuid, userId: uuid, orgRole: 'org_member' },
   'identity.member.removed': { organizationId: uuid, userId: uuid, removedBy: uuid },
   'identity.role.granted': {

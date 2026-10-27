@@ -74,8 +74,8 @@ message User {
 
 // Type du contexte actif, tel que le lisent les services métier (cleaning, billing) : le
 // contexte personnel est celui d'un particulier, une organisation active celui d'une entreprise
-// (facture mensuelle, pas de choix du moyen de paiement). Pour l'instant, identity n'ouvre que
-// le contexte personnel : l'organisation et son changement (UC-ID-12 à 16) viendront plus tard.
+// (facture mensuelle, pas de choix du moyen de paiement). Une session ouvre toujours le contexte
+// personnel ; SwitchContext passe à une organisation validée dont l'utilisateur est membre (ADR-027).
 enum ContextType {
   CONTEXT_TYPE_UNSPECIFIED = 0;
   CONTEXT_TYPE_INDIVIDUAL = 1;
@@ -88,6 +88,8 @@ message ActiveContext {
   ContextType type = 1;
   // Organisation active pour CONTEXT_TYPE_BUSINESS ; vide pour un particulier.
   string organization_id = 2;
+  // Raison sociale de l'organisation active (affichée par les fronts) ; vide pour un particulier.
+  string organization_name = 3;
 }
 
 message GetUserRequest {
@@ -211,9 +213,16 @@ message GetCatalogResponse {
 //   IDENTITY_MFA_ALREADY_ENROLLED       FAILED_PRECONDITION application déjà configurée
 //   IDENTITY_MFA_ENROLLMENT_NOT_STARTED FAILED_PRECONDITION EnrollTotp doit précéder ConfirmTotp
 //
+// Changement de contexte (UC-ID-15, ADR-027) :
+//   IDENTITY_SESSION_REVOKED          UNAUTHENTICATED     session de l'appelant fermée ou expirée
+//   IDENTITY_CONTEXT_FORBIDDEN        PERMISSION_DENIED   session du back-office : contexte personnel seul
+//   IDENTITY_ORGANIZATION_NOT_FOUND   NOT_FOUND           organisation inconnue, ou appelant non membre
+//   IDENTITY_ORGANIZATION_NOT_ACTIVE  FAILED_PRECONDITION organisation non validée ou suspendue
+//                                                         (details.status)
+//
 // Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
 // LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),
-// ListSessions et RevokeSession (UC-ID-10), SwitchContext (UC-ID-15).
+// ListSessions et RevokeSession (UC-ID-10).
 // ---------------------------------------------------------------------------
 service AuthService {
   // UC-ID-01. Envoie un code par appel gRPC à notification (ADR-014).
@@ -241,6 +250,12 @@ service AuthService {
   // UC-ID-09. Seconde étape de connexion : code de l'application d'authentification ou code
   // de récupération, puis ouverture de la session. Un même code de l'application ne sert qu'une fois.
   rpc VerifyMfa(VerifyMfaRequest) returns (VerifyMfaResponse);
+  // UC-ID-15. Change le contexte actif de la session des métadonnées (x-session-id) et réémet un
+  // jeton d'accès avec ctx = identifiant de l'organisation, ou "personal" pour revenir au contexte
+  // personnel. L'organisation doit être validée et l'appelant en être membre. Le renouvellement
+  // garde ce contexte, et revient au contexte personnel si l'organisation n'est plus validée ou si
+  // l'appelant n'en est plus membre. Le jeton de renouvellement n'est pas modifié.
+  rpc SwitchContext(SwitchContextRequest) returns (SwitchContextResponse);
 }
 
 enum OtpChannel {
@@ -420,6 +435,18 @@ message VerifyMfaResponse {
   int32 recovery_codes_remaining = 2;
 }
 
+message SwitchContextRequest {
+  // Organisation à activer ; vide : retour au contexte personnel.
+  string organization_id = 1;
+}
+
+message SwitchContextResponse {
+  // Nouveau jeton d'accès, à utiliser à la place du précédent (qui reste valable jusqu'à son expiration).
+  string access_token = 1;
+  string access_token_expires_at = 2;
+  ActiveContext active_context = 3;
+}
+
 message GetSigningKeysRequest {}
 
 message GetSigningKeysResponse {
@@ -465,8 +492,9 @@ message SigningKey {
 //   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
 //
 // Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
-// RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) et
-// l'administration (UC-ID-18 à 21) auront leurs propres services.
+// RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) ont leurs
+// propres services (OrganizationService, OrganizationAdminService) ; l'administration des comptes
+// (UC-ID-18 à 21) aura le sien.
 // ---------------------------------------------------------------------------
 service AccountService {
   rpc GetMe(GetMeRequest) returns (GetMeResponse);
@@ -532,4 +560,249 @@ message ConfirmEmailResponse {
   bool profile_incomplete = 2;
   // Contexte du jeton d'accès de l'appelant (x-active-context).
   ActiveContext active_context = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Organisations (comptes entreprise, UC-ID-12 à 16, ADR-027) — réservé à la gateway.
+//
+// Une organisation est créée par un client connecté depuis le portail : elle est « en attente de
+// validation » jusqu'à la décision d'un admin KSP au back-office (OrganizationAdminService). Le
+// créateur en devient administrateur (org_admin). Seule une organisation validée peut devenir le
+// contexte actif d'une session (AuthService.SwitchContext).
+//
+// L'e-mail de facturation suit la règle de l'e-mail du profil (ADR-026) : il n'est enregistré
+// qu'après sa confirmation par le code reçu à cette adresse.
+//
+// Erreurs (code AppError → statut gRPC) :
+//   IDENTITY_ORGANIZATION_INVALID          INVALID_ARGUMENT    details.field : legalName, address, ifu ou rccm
+//   IDENTITY_ORGANIZATION_NOT_FOUND        NOT_FOUND           organisation inconnue, ou appelant non membre
+//   IDENTITY_ORGANIZATION_FORBIDDEN        PERMISSION_DENIED   action réservée à un administrateur de l'organisation
+//   IDENTITY_ORGANIZATION_ALREADY_EXISTS   ALREADY_EXISTS      IFU déjà enregistré (organisation en attente,
+//                                                              validée ou suspendue)
+//   IDENTITY_ORGANIZATION_TOO_MANY_PENDING FAILED_PRECONDITION trop de demandes en attente (details.maximum)
+//   IDENTITY_ORGANIZATION_NOT_ACTIVE       FAILED_PRECONDITION état de l'organisation incompatible
+//                                                              (details.status)
+// E-mail de facturation : mêmes erreurs que ChangeEmail et ConfirmEmail (IDENTITY_EMAIL_INVALID,
+// IDENTITY_EMAIL_ALREADY_VERIFIED, IDENTITY_OTP_*), sauf IDENTITY_EMAIL_ALREADY_USED : une même
+// adresse peut servir à plusieurs organisations.
+// ---------------------------------------------------------------------------
+service OrganizationService {
+  // UC-ID-12. Demande de création : l'organisation est en attente de validation et l'appelant
+  // en devient l'administrateur (événements identity.organization.created, identity.member.added).
+  rpc CreateOrganization(CreateOrganizationRequest) returns (CreateOrganizationResponse);
+  // Organisations de l'appelant, avec leur état (sélecteur de contexte du portail).
+  rpc ListMyOrganizations(ListMyOrganizationsRequest) returns (ListMyOrganizationsResponse);
+  rpc GetMyOrganization(GetMyOrganizationRequest) returns (GetMyOrganizationResponse);
+  // Déclarer ou changer l'e-mail de facturation (administrateur de l'organisation, organisation en
+  // attente ou validée) : un code est envoyé par e-mail à l'adresse (notification, modèle
+  // identity.organization_email_verification). L'ancienne adresse reste en place jusqu'à la
+  // confirmation ; un nouvel appel annule le code précédent.
+  rpc ChangeOrganizationBillingEmail(ChangeOrganizationBillingEmailRequest) returns (ChangeOrganizationBillingEmailResponse);
+  // Confirmer l'adresse par le dernier code reçu : elle devient l'e-mail de facturation.
+  rpc ConfirmOrganizationBillingEmail(ConfirmOrganizationBillingEmailRequest) returns (ConfirmOrganizationBillingEmailResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Validation des comptes entreprise — back-office (ADR-027). Rôles : super_admin pour les
+// décisions, super_admin ou support_agent pour la consultation ; double authentification exigée.
+// Chaque décision est tracée dans le journal d'audit d'identity, avec son auteur.
+//
+// Erreurs (code AppError → statut gRPC) :
+//   AUTH_REQUIRED                            UNAUTHENTICATED
+//   AUTH_FORBIDDEN                           PERMISSION_DENIED   rôle du back-office manquant
+//   AUTH_MFA_REQUIRED                        PERMISSION_DENIED   double authentification absente
+//   IDENTITY_ORGANIZATION_NOT_FOUND          NOT_FOUND
+//   IDENTITY_ORGANIZATION_INVALID            INVALID_ARGUMENT    motif absent ou trop long (details.field = reason)
+//   IDENTITY_ORGANIZATION_INVALID_TRANSITION FAILED_PRECONDITION details.from, details.action
+// ---------------------------------------------------------------------------
+service OrganizationAdminService {
+  // Les plus récentes d'abord ; filtre facultatif sur l'état.
+  rpc ListOrganizations(ListOrganizationsRequest) returns (ListOrganizationsResponse);
+  // Fiche complète, avec les membres et leurs coordonnées (pour joindre le demandeur).
+  rpc GetOrganization(GetOrganizationRequest) returns (GetOrganizationResponse);
+  // En attente → validée (identity.organization.validated) : elle peut devenir un contexte actif.
+  rpc ValidateOrganization(ValidateOrganizationRequest) returns (ValidateOrganizationResponse);
+  // En attente → refusée, avec un motif communiqué au client (identity.organization.rejected).
+  rpc RejectOrganization(RejectOrganizationRequest) returns (RejectOrganizationResponse);
+  // Validée → suspendue, avec un motif (identity.organization.suspended) : elle ne peut plus
+  // devenir un contexte actif ; les sessions qui l'ont active reviennent au contexte personnel à
+  // leur prochain renouvellement.
+  rpc SuspendOrganization(SuspendOrganizationRequest) returns (SuspendOrganizationResponse);
+  // Suspendue → validée (identity.organization.reactivated).
+  rpc ReactivateOrganization(ReactivateOrganizationRequest) returns (ReactivateOrganizationResponse);
+}
+
+enum OrganizationStatus {
+  ORGANIZATION_STATUS_UNSPECIFIED = 0;
+  // Demande du client, en attente de la décision d'un admin KSP.
+  ORGANIZATION_STATUS_PENDING_REVIEW = 1;
+  // Validée : peut devenir le contexte actif d'une session.
+  ORGANIZATION_STATUS_ACTIVE = 2;
+  // Refusée par un admin KSP (motif dans rejection_reason) ; état définitif.
+  ORGANIZATION_STATUS_REJECTED = 3;
+  // Suspendue par un admin KSP (motif dans suspension_reason).
+  ORGANIZATION_STATUS_SUSPENDED = 4;
+}
+
+// Rôle d'un membre dans son organisation (portée org). Seul ORG_ROLE_ADMIN est attribué
+// aujourd'hui : au créateur de l'organisation.
+enum OrgRole {
+  ORG_ROLE_UNSPECIFIED = 0;
+  ORG_ROLE_ADMIN = 1;
+  ORG_ROLE_MEMBER = 2;
+  ORG_ROLE_VIEWER = 3;
+}
+
+message Organization {
+  string id = 1;
+  // Raison sociale.
+  string legal_name = 2;
+  string address = 3;
+  // Identifiant fiscal unique (Bénin) : 13 chiffres.
+  string ifu = 4;
+  // Registre du commerce et du crédit mobilier ; vide s'il n'est pas renseigné.
+  string rccm = 5;
+  // E-mail de facturation, toujours vérifié par code ; vide si aucun n'est confirmé (les factures
+  // restent alors dans l'espace KSP).
+  string billing_email = 6;
+  OrganizationStatus status = 7;
+  // Compte qui a demandé la création.
+  string created_by = 8;
+  string created_at = 9;
+  // Admin KSP qui a validé ou refusé la demande ; vide tant qu'elle est en attente.
+  string reviewed_by = 10;
+  string reviewed_at = 11;
+  string rejection_reason = 12;
+  // Suspension en cours ; vide sinon.
+  string suspended_at = 13;
+  string suspension_reason = 14;
+}
+
+// Une organisation vue par l'un de ses membres.
+message OrganizationMembership {
+  Organization organization = 1;
+  OrgRole role = 2;
+  // E-mail de facturation en attente de confirmation (code envoyé, encore valable) ; vide sinon.
+  string pending_billing_email = 3;
+}
+
+// Un membre, vu par le back-office.
+message OrganizationMember {
+  string user_id = 1;
+  OrgRole role = 2;
+  string first_name = 3;
+  string last_name = 4;
+  string phone_e164 = 5;
+  string joined_at = 6;
+}
+
+message CreateOrganizationRequest {
+  string legal_name = 1;
+  string address = 2;
+  // 13 chiffres ; espaces ignorés.
+  string ifu = 3;
+  // Facultatif.
+  string rccm = 4;
+}
+
+message CreateOrganizationResponse {
+  OrganizationMembership membership = 1;
+}
+
+message ListMyOrganizationsRequest {}
+
+message ListMyOrganizationsResponse {
+  // Les plus récentes d'abord, tous états confondus.
+  repeated OrganizationMembership memberships = 1;
+}
+
+message GetMyOrganizationRequest {
+  string organization_id = 1;
+}
+
+message GetMyOrganizationResponse {
+  OrganizationMembership membership = 1;
+}
+
+message ChangeOrganizationBillingEmailRequest {
+  string organization_id = 1;
+  string email = 2;
+}
+
+message ChangeOrganizationBillingEmailResponse {
+  // Adresse à confirmer, normalisée (espaces retirés, minuscules).
+  string pending_email = 1;
+  int32 expires_in_seconds = 2;
+  // Délai avant de pouvoir demander un nouveau code.
+  int32 resend_after_seconds = 3;
+}
+
+message ConfirmOrganizationBillingEmailRequest {
+  string organization_id = 1;
+  // Code reçu par e-mail.
+  string code = 2;
+}
+
+message ConfirmOrganizationBillingEmailResponse {
+  OrganizationMembership membership = 1;
+}
+
+message ListOrganizationsRequest {
+  // Non précisé : tous les états.
+  OrganizationStatus status = 1;
+  // 20 par défaut, 100 au plus.
+  int32 limit = 2;
+  // next_cursor de la page précédente ; vide pour la première page.
+  string cursor = 3;
+}
+
+message ListOrganizationsResponse {
+  repeated Organization organizations = 1;
+  // Vide : dernière page.
+  string next_cursor = 2;
+}
+
+message GetOrganizationRequest {
+  string organization_id = 1;
+}
+
+message GetOrganizationResponse {
+  Organization organization = 1;
+  repeated OrganizationMember members = 2;
+}
+
+message ValidateOrganizationRequest {
+  string organization_id = 1;
+}
+
+message ValidateOrganizationResponse {
+  Organization organization = 1;
+}
+
+message RejectOrganizationRequest {
+  string organization_id = 1;
+  // Motif communiqué au client (500 caractères au plus).
+  string reason = 2;
+}
+
+message RejectOrganizationResponse {
+  Organization organization = 1;
+}
+
+message SuspendOrganizationRequest {
+  string organization_id = 1;
+  // Motif communiqué au client (500 caractères au plus).
+  string reason = 2;
+}
+
+message SuspendOrganizationResponse {
+  Organization organization = 1;
+}
+
+message ReactivateOrganizationRequest {
+  string organization_id = 1;
+}
+
+message ReactivateOrganizationResponse {
+  Organization organization = 1;
 }

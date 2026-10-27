@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.organization.reactivated.v1.schema.json",
+  "title": "identity.organization.reactivated",
+  "description": "Un admin KSP a levé la suspension d'une organisation (ADR-027).",
+  "x-event-type": "identity.organization.reactivated",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["organizationId", "legalName", "reactivatedBy"],
+  "properties": {
+    "organizationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "legalName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Raison sociale"
+    },
+    "reactivatedBy": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

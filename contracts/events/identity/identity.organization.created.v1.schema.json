@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/identity/identity.organization.created.v1.schema.json",
   "title": "identity.organization.created",
-  "description": "Une organisation a été créée (UC-ID-12).",
+  "description": "Une organisation a été créée par un client, en attente de validation par un admin KSP (UC-ID-12, ADR-027).",
   "x-event-type": "identity.organization.created",
   "x-event-version": 1,
   "type": "object",
@@ -16,6 +16,12 @@
     "createdBy": {
       "type": "string",
       "format": "uuid"
+    },
+    "legalName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Raison sociale (prévenir l'équipe KSP de la demande). Facultatif : absent des événements émis avant son ajout."
     }
   }
 }
