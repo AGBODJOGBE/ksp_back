@@ -45,6 +45,10 @@ tags:
     description: Connexion par téléphone, sessions (UC-ID-01, 04, 05)
   - name: Compte
     description: Profil de l'utilisateur connecté
+  - name: Comptes entreprise
+    description: Organisations du client, changement de contexte, e-mail de facturation (UC-ID-12 à 16, ADR-027)
+  - name: Comptes entreprise (back-office)
+    description: Validation, refus, suspension des comptes entreprise (ADR-027)
   - name: Clés publiques
     description: Vérification des jetons d'accès (UC-ID-22)
   - name: Nettoyage
@@ -873,6 +877,669 @@ paths:
           $ref: '#/components/responses/Conflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/context:
+    post:
+      tags: [Comptes entreprise]
+      operationId: switchContext
+      summary: Changer de contexte (particulier ou entreprise)
+      description: |
+        UC-ID-15 (ADR-027). Active une organisation **validée** dont l'utilisateur est membre
+        (`organizationId`), ou revient au contexte personnel (`organizationId: null`). La réponse porte
+        un **nouveau jeton d'accès** (claim `ctx` = identifiant de l'organisation, ou `personal`) à
+        utiliser à la place du précédent ; le jeton de renouvellement ne change pas. Les
+        renouvellements suivants gardent ce contexte, et reviennent au contexte personnel si
+        l'organisation est suspendue ou si l'utilisateur n'en est plus membre.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `IDENTITY_SESSION_REVOKED` (401),
+        `IDENTITY_CONTEXT_FORBIDDEN` (403, session du back-office), `IDENTITY_ORGANIZATION_NOT_FOUND`
+        (404, organisation inconnue ou utilisateur non membre), `IDENTITY_ORGANIZATION_NOT_ACTIVE`
+        (422, organisation en attente de validation, refusée ou suspendue : `details.status`).
+      x-ksp-grpc: ksp.identity.v1.AuthService/SwitchContext
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwitchContextRequest'
+            example:
+              organizationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0a01
+      responses:
+        '200':
+          description: Nouveau jeton d'accès, dans le contexte demandé
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SwitchContextResponse'
+              example:
+                accessToken: eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.e30.c2ln
+                accessTokenExpiresAt: '2026-10-27T10:15:00Z'
+                activeContext:
+                  type: business
+                  organizationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0a01
+                  organizationName: SARL Bénin Propre
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/organizations:
+    get:
+      tags: [Comptes entreprise]
+      operationId: listMyOrganizations
+      summary: Mes organisations
+      description: |
+        Organisations dont l'utilisateur est membre, les plus récentes d'abord, avec leur état
+        (sélecteur de contexte du portail). Seule une organisation `active` peut devenir le contexte actif.
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/ListMyOrganizations
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationMembershipList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    post:
+      tags: [Comptes entreprise]
+      operationId: createOrganization
+      summary: Demander la création d'un compte entreprise
+      description: |
+        UC-ID-12 (ADR-027). L'organisation est créée **en attente de validation** par un admin KSP ;
+        l'utilisateur en devient l'administrateur (`org_admin`). Elle ne peut pas devenir le contexte
+        actif avant sa validation. L'e-mail de facturation se déclare ensuite
+        (`PUT /api/v1/identity/organizations/{id}/billing-email`) et se confirme par code.
+
+        IFU : 13 chiffres (espaces ignorés), obligatoire. RCCM : facultatif.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` et `IDENTITY_ORGANIZATION_INVALID` (400,
+        `details.field`), `IDENTITY_ORGANIZATION_ALREADY_EXISTS` (409, IFU déjà enregistré),
+        `IDENTITY_ORGANIZATION_TOO_MANY_PENDING` (422, `details.maximum`).
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/CreateOrganization
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrganizationRequest'
+            example:
+              legalName: SARL Bénin Propre
+              address: Lot 1234, quartier Haie Vive, Cotonou
+              ifu: '3201912345678'
+              rccm: RB/COT/19 B 12345
+      responses:
+        '200':
+          description: Demande enregistrée, en attente de validation
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationMembership'
+              example:
+                organization:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0a01
+                  legalName: SARL Bénin Propre
+                  address: Lot 1234, quartier Haie Vive, Cotonou
+                  ifu: '3201912345678'
+                  rccm: RB/COT/19 B 12345
+                  billingEmail: null
+                  status: pending_review
+                  rejectionReason: null
+                  suspensionReason: null
+                  createdAt: '2026-10-27T10:00:00Z'
+                  reviewedAt: null
+                role: org_admin
+                pendingBillingEmail: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/organizations/{id}:
+    get:
+      tags: [Comptes entreprise]
+      operationId: getMyOrganization
+      summary: Fiche d'une de mes organisations
+      description: |
+        Erreurs : `IDENTITY_ORGANIZATION_NOT_FOUND` (404, organisation inconnue ou utilisateur non membre).
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/GetMyOrganization
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationMembership'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/organizations/{id}/billing-email:
+    put:
+      tags: [Comptes entreprise]
+      operationId: changeOrganizationBillingEmail
+      summary: Déclarer ou changer l'e-mail de facturation
+      description: |
+        Réservé à un administrateur de l'organisation (en attente ou validée). Envoie un code **par
+        e-mail** à l'adresse saisie (valable 15 minutes), comme pour l'e-mail du profil (ADR-026) :
+        l'adresse n'est enregistrée qu'après sa confirmation ; d'ici là, elle apparaît dans
+        `pendingBillingEmail`. Sans e-mail de facturation confirmé, les factures restent visibles
+        dans l'espace KSP sans être envoyées.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` et `IDENTITY_EMAIL_INVALID` (400),
+        `IDENTITY_ORGANIZATION_FORBIDDEN` (403), `IDENTITY_ORGANIZATION_NOT_FOUND` (404),
+        `IDENTITY_EMAIL_ALREADY_VERIFIED` et `IDENTITY_ORGANIZATION_NOT_ACTIVE` (422),
+        `IDENTITY_OTP_RATE_LIMITED` et `GATEWAY_RATE_LIMITED` (429), `IDENTITY_OTP_SEND_FAILED` (503).
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/ChangeOrganizationBillingEmail
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: email_code_request
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeEmailRequest'
+            example:
+              email: compta@beninpropre.bj
+      responses:
+        '200':
+          description: Code envoyé à l'adresse de facturation
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeEmailResponse'
+              example:
+                pendingEmail: compta@beninpropre.bj
+                expiresInSeconds: 900
+                resendAfterSeconds: 60
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/organizations/{id}/billing-email/verify:
+    post:
+      tags: [Comptes entreprise]
+      operationId: confirmOrganizationBillingEmail
+      summary: Confirmer l'e-mail de facturation par le code reçu
+      description: |
+        Le dernier code envoyé confirme l'adresse : elle devient l'e-mail de facturation de
+        l'organisation (`billingEmail`), seul destinataire des factures par e-mail.
+
+        Erreurs : `IDENTITY_OTP_INVALID` (400, `details.attemptsRemaining`),
+        `IDENTITY_ORGANIZATION_FORBIDDEN` (403), `IDENTITY_ORGANIZATION_NOT_FOUND` (404),
+        `IDENTITY_OTP_EXPIRED`, `IDENTITY_OTP_TOO_MANY_ATTEMPTS` et `IDENTITY_ORGANIZATION_NOT_ACTIVE`
+        (422), `GATEWAY_RATE_LIMITED` (429).
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/ConfirmOrganizationBillingEmail
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: email_code_verify
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmEmailRequest'
+            example:
+              code: '482913'
+      responses:
+        '200':
+          description: Adresse confirmée, fiche à jour
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationMembership'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/organizations:
+    get:
+      tags: [Comptes entreprise (back-office)]
+      operationId: listOrganizations
+      summary: Comptes entreprise (back-office)
+      description: |
+        Toutes les organisations, les plus récentes d'abord, filtrables par état
+        (`pending_review` : demandes à traiter).
+
+        Rôles : `super_admin`, `support_agent` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.OrganizationAdminService/ListOrganizations
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+        - support_agent
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/OrganizationStatus'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrganizationList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/organizations/{id}:
+    get:
+      tags: [Comptes entreprise (back-office)]
+      operationId: getOrganization
+      summary: Fiche d'un compte entreprise (back-office)
+      description: |
+        Fiche complète et membres, avec leurs coordonnées (pour joindre le demandeur).
+
+        Rôles : `super_admin`, `support_agent` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.OrganizationAdminService/GetOrganization
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+        - support_agent
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrganizationDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/organizations/{id}/validate:
+    post:
+      tags: [Comptes entreprise (back-office)]
+      operationId: validateOrganization
+      summary: Valider un compte entreprise
+      description: |
+        En attente → validée : l'organisation peut devenir le contexte actif de ses membres. Le
+        demandeur est prévenu (WhatsApp ou e-mail, et dans son espace). Décision tracée (auteur, date).
+
+        Erreurs : `IDENTITY_ORGANIZATION_NOT_FOUND` (404), `IDENTITY_ORGANIZATION_INVALID_TRANSITION`
+        (422, `details.from`).
+
+        Rôles : `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.OrganizationAdminService/ValidateOrganization
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      responses:
+        '200':
+          description: Organisation validée
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrganization'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/organizations/{id}/reject:
+    post:
+      tags: [Comptes entreprise (back-office)]
+      operationId: rejectOrganization
+      summary: Refuser un compte entreprise
+      description: |
+        En attente → refusée (état définitif ; le client peut faire une nouvelle demande). Le motif
+        est communiqué au demandeur. Décision tracée (auteur, date, motif).
+
+        Erreurs : `IDENTITY_ORGANIZATION_INVALID` (400, motif), `IDENTITY_ORGANIZATION_NOT_FOUND` (404),
+        `IDENTITY_ORGANIZATION_INVALID_TRANSITION` (422, `details.from`).
+
+        Rôles : `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.OrganizationAdminService/RejectOrganization
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationDecisionRequest'
+            example:
+              reason: IFU introuvable au registre de la DGI.
+      responses:
+        '200':
+          description: Demande refusée
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrganization'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/organizations/{id}/suspend:
+    post:
+      tags: [Comptes entreprise (back-office)]
+      operationId: suspendOrganization
+      summary: Suspendre un compte entreprise
+      description: |
+        Validée → suspendue : l'organisation ne peut plus devenir le contexte actif ; les sessions qui
+        l'ont active reviennent au contexte personnel à leur prochain renouvellement (15 minutes au
+        plus). Décision tracée (auteur, date, motif).
+
+        Erreurs : `IDENTITY_ORGANIZATION_INVALID` (400, motif), `IDENTITY_ORGANIZATION_NOT_FOUND` (404),
+        `IDENTITY_ORGANIZATION_INVALID_TRANSITION` (422, `details.from`).
+
+        Rôles : `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.OrganizationAdminService/SuspendOrganization
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationDecisionRequest'
+            example:
+              reason: Usurpation d'identité signalée par l'entreprise.
+      responses:
+        '200':
+          description: Organisation suspendue
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrganization'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/organizations/{id}/reactivate:
+    post:
+      tags: [Comptes entreprise (back-office)]
+      operationId: reactivateOrganization
+      summary: Lever la suspension d'un compte entreprise
+      description: |
+        Suspendue → validée. Décision tracée (auteur, date).
+
+        Erreurs : `IDENTITY_ORGANIZATION_NOT_FOUND` (404), `IDENTITY_ORGANIZATION_INVALID_TRANSITION`
+        (422, `details.from`).
+
+        Rôles : `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.OrganizationAdminService/ReactivateOrganization
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      responses:
+        '200':
+          description: Suspension levée
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrganization'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -3992,6 +4659,20 @@ components:
       required: false
       schema:
         $ref: '#/components/schemas/InvoiceStatus'
+    OrganizationId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant de l'organisation (UUID).
+      schema:
+        type: string
+        format: uuid
+    OrganizationStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/OrganizationStatus'
     CleaningId:
       name: id
       in: path
@@ -4102,7 +4783,7 @@ components:
               details: {}
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
     NotFound:
-      description: Introuvable (`IDENTITY_USER_NOT_FOUND`)
+      description: Introuvable (`IDENTITY_USER_NOT_FOUND`, `IDENTITY_ORGANIZATION_NOT_FOUND`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -4117,7 +4798,7 @@ components:
               details: {}
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
     Forbidden:
-      description: Accès refusé (`IDENTITY_ACCOUNT_SUSPENDED`, `IDENTITY_BACKOFFICE_FORBIDDEN`)
+      description: Accès refusé (`IDENTITY_ACCOUNT_SUSPENDED`, `IDENTITY_BACKOFFICE_FORBIDDEN`, `IDENTITY_CONTEXT_FORBIDDEN`, `IDENTITY_ORGANIZATION_FORBIDDEN`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -4132,7 +4813,7 @@ components:
               details: {}
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
     UnprocessableEntity:
-      description: Code expiré ou annulé, étape de double authentification impossible, adresse déjà vérifiée (`IDENTITY_OTP_EXPIRED`, `IDENTITY_OTP_TOO_MANY_ATTEMPTS`, `IDENTITY_MFA_*`, `IDENTITY_EMAIL_ALREADY_VERIFIED`)
+      description: Code expiré ou annulé, étape de double authentification impossible, adresse déjà vérifiée, état de l'organisation incompatible (`IDENTITY_OTP_EXPIRED`, `IDENTITY_OTP_TOO_MANY_ATTEMPTS`, `IDENTITY_MFA_*`, `IDENTITY_EMAIL_ALREADY_VERIFIED`, `IDENTITY_ORGANIZATION_NOT_ACTIVE`, `IDENTITY_ORGANIZATION_TOO_MANY_PENDING`, `IDENTITY_ORGANIZATION_INVALID_TRANSITION`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -4181,7 +4862,7 @@ components:
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
 
     Conflict:
-      description: Conflit (`CLEANING_TEAM_UNAVAILABLE`, `CLEANING_CONCURRENT_UPDATE`, `CLEANING_AGENT_ALREADY_REGISTERED`, `IDENTITY_EMAIL_ALREADY_USED`)
+      description: Conflit (`CLEANING_TEAM_UNAVAILABLE`, `CLEANING_CONCURRENT_UPDATE`, `CLEANING_AGENT_ALREADY_REGISTERED`, `IDENTITY_EMAIL_ALREADY_USED`, `IDENTITY_ORGANIZATION_ALREADY_EXISTS`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -4654,8 +5335,9 @@ components:
         Contexte actif de la session, celui du jeton d'accès (claim `ctx`) : il fixe le type de compte
         réel que lisent les services métier. `individual` (particulier, contexte personnel) : choix du
         paiement, tout réglé à la fin. `business` (entreprise, organisation active) : facture mensuelle,
-        pas de choix du moyen de paiement, jours d'intervention par semaine (Nettoyage). Aujourd'hui,
-        identity n'ouvre que le contexte personnel : toutes les sessions sont `individual`.
+        pas de choix du moyen de paiement, jours d'intervention par semaine (Nettoyage). Une session
+        s'ouvre dans le contexte personnel ; `POST /api/v1/identity/context` active une organisation
+        validée (ADR-027).
       properties:
         type:
           type: string
@@ -4664,6 +5346,9 @@ components:
           type: [string, 'null']
           format: uuid
           description: Organisation active d'une entreprise ; null pour un particulier.
+        organizationName:
+          type: [string, 'null']
+          description: Raison sociale de l'organisation active ; null pour un particulier.
 
     MeResponse:
       type: object
@@ -4680,6 +5365,260 @@ components:
           type: [string, 'null']
           format: email
           description: Adresse en attente de confirmation par code (code envoyé, encore valable) ; null sinon.
+
+    SwitchContextRequest:
+      type: object
+      additionalProperties: false
+      required: [organizationId]
+      properties:
+        organizationId:
+          type: [string, 'null']
+          format: uuid
+          description: Organisation à activer ; null pour revenir au contexte personnel.
+
+    SwitchContextResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, accessTokenExpiresAt, activeContext]
+      properties:
+        accessToken:
+          type: string
+          description: Nouveau jeton d'accès, à utiliser à la place du précédent.
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+        activeContext:
+          $ref: '#/components/schemas/ActiveContext'
+
+    OrganizationStatus:
+      type: string
+      enum: [pending_review, active, rejected, suspended]
+      description: |
+        `pending_review` : en attente de validation par KSP ; `active` : validée, peut devenir le
+        contexte actif ; `rejected` : refusée (définitif) ; `suspended` : suspendue par KSP.
+
+    OrgRole:
+      type: string
+      enum: [org_admin, org_member, org_viewer]
+      description: Rôle dans l'organisation ; seul `org_admin` (le créateur) est attribué aujourd'hui.
+
+    Organization:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          legalName,
+          address,
+          ifu,
+          rccm,
+          billingEmail,
+          status,
+          rejectionReason,
+          suspensionReason,
+          createdAt,
+          reviewedAt,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        legalName:
+          type: string
+          description: Raison sociale.
+        address:
+          type: string
+        ifu:
+          type: string
+          pattern: '^[0-9]{13}$'
+          description: Identifiant fiscal unique (13 chiffres).
+        rccm:
+          type: [string, 'null']
+          description: Registre du commerce et du crédit mobilier ; null s'il n'est pas renseigné.
+        billingEmail:
+          type: [string, 'null']
+          format: email
+          description: E-mail de facturation, toujours confirmé par code ; null si aucun ne l'est.
+        status:
+          $ref: '#/components/schemas/OrganizationStatus'
+        rejectionReason:
+          type: [string, 'null']
+          description: Motif du refus (`rejected`).
+        suspensionReason:
+          type: [string, 'null']
+          description: Motif de la suspension en cours (`suspended`).
+        createdAt:
+          type: string
+          format: date-time
+        reviewedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Date de la validation ou du refus.
+
+    OrganizationMembership:
+      type: object
+      additionalProperties: false
+      required: [organization, role, pendingBillingEmail]
+      properties:
+        organization:
+          $ref: '#/components/schemas/Organization'
+        role:
+          $ref: '#/components/schemas/OrgRole'
+        pendingBillingEmail:
+          type: [string, 'null']
+          format: email
+          description: E-mail de facturation en attente de confirmation (code envoyé, encore valable) ; null sinon.
+
+    OrganizationMembershipList:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrganizationMembership'
+
+    CreateOrganizationRequest:
+      type: object
+      additionalProperties: false
+      required: [legalName, address, ifu]
+      properties:
+        legalName:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Raison sociale.
+        address:
+          type: string
+          minLength: 1
+          maxLength: 300
+        ifu:
+          type: string
+          minLength: 1
+          maxLength: 30
+          description: Identifiant fiscal unique, 13 chiffres (espaces ignorés) ; format contrôlé par identity.
+        rccm:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Facultatif, par exemple `RB/COT/19 B 12345`.
+
+    OrganizationDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Motif communiqué au client.
+
+    AdminOrganization:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          legalName,
+          address,
+          ifu,
+          rccm,
+          billingEmail,
+          status,
+          rejectionReason,
+          suspensionReason,
+          createdAt,
+          reviewedAt,
+          createdBy,
+          reviewedBy,
+          suspendedAt,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        legalName:
+          type: string
+        address:
+          type: string
+        ifu:
+          type: string
+          pattern: '^[0-9]{13}$'
+        rccm:
+          type: [string, 'null']
+        billingEmail:
+          type: [string, 'null']
+          format: email
+        status:
+          $ref: '#/components/schemas/OrganizationStatus'
+        rejectionReason:
+          type: [string, 'null']
+        suspensionReason:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        reviewedAt:
+          type: [string, 'null']
+          format: date-time
+        createdBy:
+          type: string
+          format: uuid
+          description: Compte qui a demandé la création.
+        reviewedBy:
+          type: [string, 'null']
+          format: uuid
+          description: Admin KSP qui a validé ou refusé la demande.
+        suspendedAt:
+          type: [string, 'null']
+          format: date-time
+
+    AdminOrganizationList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminOrganization'
+        nextCursor:
+          type: [string, 'null']
+          format: uuid
+
+    OrganizationMember:
+      type: object
+      additionalProperties: false
+      required: [userId, role, firstName, lastName, phone, joinedAt]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        role:
+          $ref: '#/components/schemas/OrgRole'
+        firstName:
+          type: [string, 'null']
+        lastName:
+          type: [string, 'null']
+        phone:
+          type: [string, 'null']
+        joinedAt:
+          type: string
+          format: date-time
+
+    AdminOrganizationDetail:
+      type: object
+      additionalProperties: false
+      required: [organization, members]
+      properties:
+        organization:
+          $ref: '#/components/schemas/AdminOrganization'
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrganizationMember'
 
     ChangeEmailRequest:
       type: object

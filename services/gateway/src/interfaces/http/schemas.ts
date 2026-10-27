@@ -2,6 +2,7 @@ import { AppError } from '@ksp/platform';
 import { z } from 'zod';
 import { billingBodies } from './billing-schemas';
 import { cleaningBodies } from './cleaning-schemas';
+import { organizationBodies } from './organization-schemas';
 
 /**
  * Corps des requêtes, repris des schémas du contrat OpenAPI (components/schemas) : tout champ
@@ -41,6 +42,7 @@ export const requestBodies = {
   // identity contrôle la forme de l'adresse (IDENTITY_EMAIL_INVALID) ; ici, seulement sa présence et sa taille.
   changeEmail: z.strictObject({ email: z.string().min(3).max(254) }),
   confirmEmail: z.strictObject({ code: z.string().regex(/^[0-9]{4,8}$/) }),
+  ...organizationBodies,
   ...cleaningBodies,
   ...billingBodies,
 };

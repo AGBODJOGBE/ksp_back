@@ -19,7 +19,28 @@ export interface IdentityEventPayloads {
   'identity.user.suspended': { userId: string; reason: string; suspendedBy: string };
   'identity.user.reactivated': { userId: string; reactivatedBy: string };
   'identity.user.deleted': { userId: string };
-  'identity.organization.created': { organizationId: string; createdBy: string };
+  /** Demande de création, en attente de validation par un admin KSP (ADR-027). */
+  'identity.organization.created': { organizationId: string; createdBy: string; legalName?: string };
+  'identity.organization.validated': {
+    organizationId: string;
+    legalName: string;
+    createdBy: string;
+    validatedBy: string;
+  };
+  'identity.organization.rejected': {
+    organizationId: string;
+    legalName: string;
+    createdBy: string;
+    rejectedBy: string;
+    reason: string;
+  };
+  'identity.organization.suspended': {
+    organizationId: string;
+    legalName: string;
+    suspendedBy: string;
+    reason: string;
+  };
+  'identity.organization.reactivated': { organizationId: string; legalName: string; reactivatedBy: string };
   'identity.member.added': { organizationId: string; userId: string; orgRole: OrgRole };
   'identity.member.removed': { organizationId: string; userId: string; removedBy: string };
   'identity.role.granted': {

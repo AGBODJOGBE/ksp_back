@@ -73,6 +73,17 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
     'failed_count',
     'link',
   ]),
+  // Comptes entreprise (ADR-027).
+  'identity.organization_requested.team': spec('ksp_identity_team_organization_requested', ['legal_name']),
+  'identity.organization_validated.customer': spec('ksp_identity_organization_validated', [
+    'legal_name',
+    'link',
+  ]),
+  'identity.organization_rejected.customer': spec('ksp_identity_organization_rejected', [
+    'legal_name',
+    'reason',
+    'link',
+  ]),
   'cleaning.contract_resumed.team': spec('ksp_cleaning_team_contract_resumed', [
     'mission_id',
     'rescheduled_count',

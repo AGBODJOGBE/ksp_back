@@ -3,6 +3,7 @@ import { GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { GetMeUseCase, UpdateMeUseCase } from './application/account/account.use-cases';
+import { ActiveContexts } from './application/context/active-contexts';
 import { GetUsersUseCase } from './application/directory/get-users.use-case';
 import { ChangeEmailUseCase } from './application/email/change-email.use-case';
 import { ConfirmEmailUseCase } from './application/email/confirm-email.use-case';
@@ -13,10 +14,23 @@ import { EnrollTotpUseCase } from './application/mfa/enroll-totp.use-case';
 import { MfaStepGuard } from './application/mfa/mfa-step-guard';
 import { OpenMfaChallenge } from './application/mfa/open-mfa-challenge';
 import { VerifyMfaUseCase } from './application/mfa/verify-mfa.use-case';
+import {
+  DecideOrganizationUseCase,
+  GetOrganizationUseCase,
+  ListOrganizationsUseCase,
+} from './application/organization/organization-admin.use-cases';
+import {
+  ChangeOrganizationBillingEmailUseCase,
+  ConfirmOrganizationBillingEmailUseCase,
+  CreateOrganizationUseCase,
+  GetMyOrganizationUseCase,
+  ListMyOrganizationsUseCase,
+} from './application/organization/organization.use-cases';
 import { RequestOtpUseCase } from './application/otp/request-otp.use-case';
 import { IssueServiceTokenUseCase } from './application/service-token/issue-service-token.use-case';
 import { LogoutUseCase } from './application/session/logout.use-case';
 import { RefreshSessionUseCase } from './application/session/refresh-session.use-case';
+import { SwitchContextUseCase } from './application/session/switch-context.use-case';
 import { VerifyOtpUseCase } from './application/session/verify-otp.use-case';
 import { AccessTokenIssuer } from './application/token/access-token-issuer';
 import { GetSigningKeysUseCase } from './application/token/get-signing-keys.use-case';
@@ -38,6 +52,7 @@ import { HmacTotpGenerator } from './infrastructure/mfa/hmac-totp-generator';
 import { PrismaMfaRepository } from './infrastructure/mfa/prisma-mfa.repository';
 import { PrismaRoleRepository } from './infrastructure/role/prisma-role.repository';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
+import { PrismaOrganizationRepository } from './infrastructure/organization/prisma-organization.repository';
 import { CryptoOtpCodeGenerator } from './infrastructure/otp/crypto-otp-code-generator';
 import { HmacOtpHasher } from './infrastructure/otp/hmac-otp-hasher';
 import { NotificationOtpSender } from './infrastructure/otp/notification-otp-sender';
@@ -56,6 +71,10 @@ import { KeyRingSigner } from './infrastructure/token/key-ring-signer';
 import { AccountGrpcController } from './interfaces/grpc/account.controller';
 import { AuthGrpcController } from './interfaces/grpc/auth.controller';
 import { IdentityGrpcController } from './interfaces/grpc/identity.controller';
+import {
+  OrganizationAdminGrpcController,
+  OrganizationGrpcController,
+} from './interfaces/grpc/organization.controllers';
 import { JwksHttpController } from './interfaces/http/jwks.controller';
 import { OAuthTokenHttpController } from './interfaces/http/oauth-token.controller';
 
@@ -81,6 +100,8 @@ export class AppModule {
         IdentityGrpcController,
         AuthGrpcController,
         AccountGrpcController,
+        OrganizationGrpcController,
+        OrganizationAdminGrpcController,
         JwksHttpController,
         OAuthTokenHttpController,
       ],
@@ -298,13 +319,15 @@ export class AppModule {
             ),
         },
         PrismaSessionStore,
+        PrismaOrganizationRepository,
         {
           provide: RefreshSessionUseCase,
-          inject: [PrismaSessionStore, AccessTokenIssuer, PrismaRoleRepository],
+          inject: [PrismaSessionStore, AccessTokenIssuer, PrismaRoleRepository, PrismaOrganizationRepository],
           useFactory: (
             sessions: PrismaSessionStore,
             accessTokens: AccessTokenIssuer,
             roles: PrismaRoleRepository,
+            organizations: PrismaOrganizationRepository,
           ) =>
             new RefreshSessionUseCase(
               sessions,
@@ -315,7 +338,22 @@ export class AppModule {
               new SystemClock(),
               sessionPoliciesFrom(config),
               roles,
+              organizations,
             ),
+        },
+        {
+          provide: SwitchContextUseCase,
+          inject: [PrismaSessionStore, PrismaOrganizationRepository, AccessTokenIssuer],
+          useFactory: (
+            sessions: PrismaSessionStore,
+            organizations: PrismaOrganizationRepository,
+            accessTokens: AccessTokenIssuer,
+          ) => new SwitchContextUseCase(sessions, organizations, accessTokens, new SystemClock()),
+        },
+        {
+          provide: ActiveContexts,
+          inject: [PrismaOrganizationRepository],
+          useFactory: (organizations: PrismaOrganizationRepository) => new ActiveContexts(organizations),
         },
         {
           provide: LogoutUseCase,
@@ -331,9 +369,12 @@ export class AppModule {
         },
         {
           provide: GetMeUseCase,
-          inject: [PrismaLoginRepository, PendingEmails],
-          useFactory: (accounts: PrismaLoginRepository, pendingEmails: PendingEmails) =>
-            new GetMeUseCase(accounts, pendingEmails),
+          inject: [PrismaLoginRepository, PendingEmails, ActiveContexts],
+          useFactory: (
+            accounts: PrismaLoginRepository,
+            pendingEmails: PendingEmails,
+            contexts: ActiveContexts,
+          ) => new GetMeUseCase(accounts, pendingEmails, contexts),
         },
         {
           provide: GetUsersUseCase,
@@ -342,9 +383,12 @@ export class AppModule {
         },
         {
           provide: UpdateMeUseCase,
-          inject: [PrismaLoginRepository, PendingEmails],
-          useFactory: (accounts: PrismaLoginRepository, pendingEmails: PendingEmails) =>
-            new UpdateMeUseCase(accounts, pendingEmails),
+          inject: [PrismaLoginRepository, PendingEmails, ActiveContexts],
+          useFactory: (
+            accounts: PrismaLoginRepository,
+            pendingEmails: PendingEmails,
+            contexts: ActiveContexts,
+          ) => new UpdateMeUseCase(accounts, pendingEmails, contexts),
         },
         {
           provide: EMAIL_CODE_SENDER,
@@ -381,15 +425,97 @@ export class AppModule {
         },
         {
           provide: ConfirmEmailUseCase,
-          inject: [PrismaLoginRepository, PrismaEmailVerificationRepository],
-          useFactory: (accounts: PrismaLoginRepository, verifications: PrismaEmailVerificationRepository) =>
+          inject: [PrismaLoginRepository, PrismaEmailVerificationRepository, ActiveContexts],
+          useFactory: (
+            accounts: PrismaLoginRepository,
+            verifications: PrismaEmailVerificationRepository,
+            contexts: ActiveContexts,
+          ) =>
             new ConfirmEmailUseCase(
               accounts,
               verifications,
               new HmacOtpHasher(config.OTP_HMAC_SECRET),
               new SystemClock(),
               emailOtpPolicyFrom(config),
+              contexts,
             ),
+        },
+        {
+          provide: CreateOrganizationUseCase,
+          inject: [PrismaOrganizationRepository, PendingEmails],
+          useFactory: (organizations: PrismaOrganizationRepository, pendingEmails: PendingEmails) =>
+            new CreateOrganizationUseCase(
+              organizations,
+              pendingEmails,
+              new UuidV7Generator(),
+              new SystemClock(),
+            ),
+        },
+        {
+          provide: ListMyOrganizationsUseCase,
+          inject: [PrismaOrganizationRepository, PendingEmails],
+          useFactory: (organizations: PrismaOrganizationRepository, pendingEmails: PendingEmails) =>
+            new ListMyOrganizationsUseCase(organizations, pendingEmails),
+        },
+        {
+          provide: GetMyOrganizationUseCase,
+          inject: [PrismaOrganizationRepository, PendingEmails],
+          useFactory: (organizations: PrismaOrganizationRepository, pendingEmails: PendingEmails) =>
+            new GetMyOrganizationUseCase(organizations, pendingEmails),
+        },
+        {
+          provide: ChangeOrganizationBillingEmailUseCase,
+          inject: [PrismaOrganizationRepository, PrismaEmailVerificationRepository, EMAIL_CODE_SENDER],
+          useFactory: (
+            organizations: PrismaOrganizationRepository,
+            verifications: PrismaEmailVerificationRepository,
+            sender: NotificationEmailCodeSender,
+          ) =>
+            new ChangeOrganizationBillingEmailUseCase(
+              organizations,
+              verifications,
+              sender,
+              new HmacOtpHasher(config.OTP_HMAC_SECRET),
+              new CryptoOtpCodeGenerator(),
+              new UuidV7Generator(),
+              new SystemClock(),
+              emailOtpPolicyFrom(config),
+            ),
+        },
+        {
+          provide: ConfirmOrganizationBillingEmailUseCase,
+          inject: [PrismaOrganizationRepository, PrismaEmailVerificationRepository, PendingEmails],
+          useFactory: (
+            organizations: PrismaOrganizationRepository,
+            verifications: PrismaEmailVerificationRepository,
+            pendingEmails: PendingEmails,
+          ) =>
+            new ConfirmOrganizationBillingEmailUseCase(
+              organizations,
+              verifications,
+              pendingEmails,
+              new HmacOtpHasher(config.OTP_HMAC_SECRET),
+              new SystemClock(),
+              emailOtpPolicyFrom(config),
+            ),
+        },
+        {
+          provide: ListOrganizationsUseCase,
+          inject: [PrismaOrganizationRepository],
+          useFactory: (organizations: PrismaOrganizationRepository) =>
+            new ListOrganizationsUseCase(organizations),
+        },
+        {
+          provide: GetOrganizationUseCase,
+          inject: [PrismaOrganizationRepository],
+          useFactory: (organizations: PrismaOrganizationRepository) =>
+            new GetOrganizationUseCase(organizations),
+        },
+        {
+          provide: DecideOrganizationUseCase,
+          inject: [PrismaOrganizationRepository],
+          useFactory: (organizations: PrismaOrganizationRepository) =>
+            new DecideOrganizationUseCase(organizations, new UuidV7Generator(), new SystemClock()),
         },
       ],
     };

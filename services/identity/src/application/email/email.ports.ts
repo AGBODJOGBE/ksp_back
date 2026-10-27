@@ -5,7 +5,10 @@ import { type Account } from '../session/session.ports';
 /** Une demande de confirmation d'e-mail, enregistrée avant l'envoi du code. */
 export interface NewEmailVerification {
   id: string;
+  /** Compte qui demande le code (limites d'envoi par compte). */
   userId: string;
+  /** E-mail de facturation de cette organisation (ADR-027) ; null pour l'e-mail du profil. */
+  organizationId: string | null;
   email: EmailAddress;
   codeHash: string;
   expiresAt: Date;
@@ -34,6 +37,14 @@ export interface EmailConfirmation {
   now: Date;
 }
 
+/** Écritures de la confirmation d'un e-mail de facturation, faites en une seule transaction. */
+export interface OrganizationEmailConfirmation {
+  verificationId: string;
+  organizationId: string;
+  email: string;
+  now: Date;
+}
+
 /** La demande a déjà été utilisée entre-temps (deux confirmations simultanées). */
 export class VerificationAlreadyConsumedError extends Error {
   override readonly name = 'VerificationAlreadyConsumedError';
@@ -54,8 +65,10 @@ export interface EmailVerificationRepository {
   markSent(id: string, sentAt: Date, event: EmailCodeRequestedEvent): Promise<void>;
   /** Envoi impossible : la demande devient inutilisable et ne compte pas dans les limites. */
   markSendFailed(id: string, failedAt: Date): Promise<void>;
-  /** Dernière demande du compte, envoyée ou non : seule celle-ci peut être confirmée. */
+  /** Dernière demande du compte pour l'e-mail du profil, envoyée ou non : seule celle-ci peut être confirmée. */
   findLatest(userId: string): Promise<StoredEmailVerification | null>;
+  /** Dernière demande pour l'e-mail de facturation de l'organisation, quel que soit le membre qui l'a faite. */
+  findLatestForOrganization(organizationId: string): Promise<StoredEmailVerification | null>;
   /** Compte un essai faux et renvoie le nombre d'essais, de façon atomique. */
   registerFailedAttempt(id: string): Promise<number>;
   /**
@@ -63,6 +76,11 @@ export interface EmailVerificationRepository {
    * identity.user.verified. Lève VerificationAlreadyConsumedError ou EmailAlreadyUsedError.
    */
   confirm(confirmation: EmailConfirmation): Promise<Account>;
+  /**
+   * Consomme la demande et enregistre l'adresse comme e-mail de facturation de l'organisation.
+   * Une même adresse peut servir à plusieurs organisations. Lève VerificationAlreadyConsumedError.
+   */
+  confirmForOrganization(confirmation: OrganizationEmailConfirmation): Promise<void>;
 }
 
 /** Envoi du code par e-mail (appel gRPC direct à notification, comme les codes par téléphone, ADR-014). */
@@ -73,5 +91,7 @@ export interface EmailCodeSender {
     email: EmailAddress;
     code: string;
     ttlSeconds: number;
+    /** E-mail de facturation : raison sociale de l'organisation, citée dans le message. */
+    organizationName?: string;
   }): Promise<void>;
 }

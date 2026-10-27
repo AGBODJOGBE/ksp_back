@@ -36,8 +36,8 @@ export enum ScopeType {
 /**
  * Type du contexte actif, tel que le lisent les services métier (cleaning, billing) : le
  * contexte personnel est celui d'un particulier, une organisation active celui d'une entreprise
- * (facture mensuelle, pas de choix du moyen de paiement). Pour l'instant, identity n'ouvre que
- * le contexte personnel : l'organisation et son changement (UC-ID-12 à 16) viendront plus tard.
+ * (facture mensuelle, pas de choix du moyen de paiement). Une session ouvre toujours le contexte
+ * personnel ; SwitchContext passe à une organisation validée dont l'utilisateur est membre (ADR-027).
  */
 export enum ContextType {
   CONTEXT_TYPE_UNSPECIFIED = "CONTEXT_TYPE_UNSPECIFIED",
@@ -92,6 +92,31 @@ export enum LogoutScope {
   UNRECOGNIZED = "UNRECOGNIZED",
 }
 
+export enum OrganizationStatus {
+  ORGANIZATION_STATUS_UNSPECIFIED = "ORGANIZATION_STATUS_UNSPECIFIED",
+  /** ORGANIZATION_STATUS_PENDING_REVIEW - Demande du client, en attente de la décision d'un admin KSP. */
+  ORGANIZATION_STATUS_PENDING_REVIEW = "ORGANIZATION_STATUS_PENDING_REVIEW",
+  /** ORGANIZATION_STATUS_ACTIVE - Validée : peut devenir le contexte actif d'une session. */
+  ORGANIZATION_STATUS_ACTIVE = "ORGANIZATION_STATUS_ACTIVE",
+  /** ORGANIZATION_STATUS_REJECTED - Refusée par un admin KSP (motif dans rejection_reason) ; état définitif. */
+  ORGANIZATION_STATUS_REJECTED = "ORGANIZATION_STATUS_REJECTED",
+  /** ORGANIZATION_STATUS_SUSPENDED - Suspendue par un admin KSP (motif dans suspension_reason). */
+  ORGANIZATION_STATUS_SUSPENDED = "ORGANIZATION_STATUS_SUSPENDED",
+  UNRECOGNIZED = "UNRECOGNIZED",
+}
+
+/**
+ * Rôle d'un membre dans son organisation (portée org). Seul ORG_ROLE_ADMIN est attribué
+ * aujourd'hui : au créateur de l'organisation.
+ */
+export enum OrgRole {
+  ORG_ROLE_UNSPECIFIED = "ORG_ROLE_UNSPECIFIED",
+  ORG_ROLE_ADMIN = "ORG_ROLE_ADMIN",
+  ORG_ROLE_MEMBER = "ORG_ROLE_MEMBER",
+  ORG_ROLE_VIEWER = "ORG_ROLE_VIEWER",
+  UNRECOGNIZED = "UNRECOGNIZED",
+}
+
 export interface User {
   id: string;
   status: UserStatus;
@@ -121,6 +146,8 @@ export interface ActiveContext {
   type: ContextType;
   /** Organisation active pour CONTEXT_TYPE_BUSINESS ; vide pour un particulier. */
   organizationId: string;
+  /** Raison sociale de l'organisation active (affichée par les fronts) ; vide pour un particulier. */
+  organizationName: string;
 }
 
 export interface GetUserRequest {
@@ -373,6 +400,18 @@ export interface VerifyMfaResponse {
   recoveryCodesRemaining: number;
 }
 
+export interface SwitchContextRequest {
+  /** Organisation à activer ; vide : retour au contexte personnel. */
+  organizationId: string;
+}
+
+export interface SwitchContextResponse {
+  /** Nouveau jeton d'accès, à utiliser à la place du précédent (qui reste valable jusqu'à son expiration). */
+  accessToken: string;
+  accessTokenExpiresAt: string;
+  activeContext?: ActiveContext | undefined;
+}
+
 export interface GetSigningKeysRequest {
 }
 
@@ -449,6 +488,163 @@ export interface ConfirmEmailResponse {
   profileIncomplete: boolean;
   /** Contexte du jeton d'accès de l'appelant (x-active-context). */
   activeContext?: ActiveContext | undefined;
+}
+
+export interface Organization {
+  id: string;
+  /** Raison sociale. */
+  legalName: string;
+  address: string;
+  /** Identifiant fiscal unique (Bénin) : 13 chiffres. */
+  ifu: string;
+  /** Registre du commerce et du crédit mobilier ; vide s'il n'est pas renseigné. */
+  rccm: string;
+  /**
+   * E-mail de facturation, toujours vérifié par code ; vide si aucun n'est confirmé (les factures
+   * restent alors dans l'espace KSP).
+   */
+  billingEmail: string;
+  status: OrganizationStatus;
+  /** Compte qui a demandé la création. */
+  createdBy: string;
+  createdAt: string;
+  /** Admin KSP qui a validé ou refusé la demande ; vide tant qu'elle est en attente. */
+  reviewedBy: string;
+  reviewedAt: string;
+  rejectionReason: string;
+  /** Suspension en cours ; vide sinon. */
+  suspendedAt: string;
+  suspensionReason: string;
+}
+
+/** Une organisation vue par l'un de ses membres. */
+export interface OrganizationMembership {
+  organization?: Organization | undefined;
+  role: OrgRole;
+  /** E-mail de facturation en attente de confirmation (code envoyé, encore valable) ; vide sinon. */
+  pendingBillingEmail: string;
+}
+
+/** Un membre, vu par le back-office. */
+export interface OrganizationMember {
+  userId: string;
+  role: OrgRole;
+  firstName: string;
+  lastName: string;
+  phoneE164: string;
+  joinedAt: string;
+}
+
+export interface CreateOrganizationRequest {
+  legalName: string;
+  address: string;
+  /** 13 chiffres ; espaces ignorés. */
+  ifu: string;
+  /** Facultatif. */
+  rccm: string;
+}
+
+export interface CreateOrganizationResponse {
+  membership?: OrganizationMembership | undefined;
+}
+
+export interface ListMyOrganizationsRequest {
+}
+
+export interface ListMyOrganizationsResponse {
+  /** Les plus récentes d'abord, tous états confondus. */
+  memberships: OrganizationMembership[];
+}
+
+export interface GetMyOrganizationRequest {
+  organizationId: string;
+}
+
+export interface GetMyOrganizationResponse {
+  membership?: OrganizationMembership | undefined;
+}
+
+export interface ChangeOrganizationBillingEmailRequest {
+  organizationId: string;
+  email: string;
+}
+
+export interface ChangeOrganizationBillingEmailResponse {
+  /** Adresse à confirmer, normalisée (espaces retirés, minuscules). */
+  pendingEmail: string;
+  expiresInSeconds: number;
+  /** Délai avant de pouvoir demander un nouveau code. */
+  resendAfterSeconds: number;
+}
+
+export interface ConfirmOrganizationBillingEmailRequest {
+  organizationId: string;
+  /** Code reçu par e-mail. */
+  code: string;
+}
+
+export interface ConfirmOrganizationBillingEmailResponse {
+  membership?: OrganizationMembership | undefined;
+}
+
+export interface ListOrganizationsRequest {
+  /** Non précisé : tous les états. */
+  status: OrganizationStatus;
+  /** 20 par défaut, 100 au plus. */
+  limit: number;
+  /** next_cursor de la page précédente ; vide pour la première page. */
+  cursor: string;
+}
+
+export interface ListOrganizationsResponse {
+  organizations: Organization[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+}
+
+export interface GetOrganizationRequest {
+  organizationId: string;
+}
+
+export interface GetOrganizationResponse {
+  organization?: Organization | undefined;
+  members: OrganizationMember[];
+}
+
+export interface ValidateOrganizationRequest {
+  organizationId: string;
+}
+
+export interface ValidateOrganizationResponse {
+  organization?: Organization | undefined;
+}
+
+export interface RejectOrganizationRequest {
+  organizationId: string;
+  /** Motif communiqué au client (500 caractères au plus). */
+  reason: string;
+}
+
+export interface RejectOrganizationResponse {
+  organization?: Organization | undefined;
+}
+
+export interface SuspendOrganizationRequest {
+  organizationId: string;
+  /** Motif communiqué au client (500 caractères au plus). */
+  reason: string;
+}
+
+export interface SuspendOrganizationResponse {
+  organization?: Organization | undefined;
+}
+
+export interface ReactivateOrganizationRequest {
+  organizationId: string;
+}
+
+export interface ReactivateOrganizationResponse {
+  organization?: Organization | undefined;
 }
 
 /** Appelé par tous les services autorisés par la carte des services. */
@@ -598,9 +794,16 @@ export const IDENTITY_SERVICE_NAME = "IdentityService";
  *   IDENTITY_MFA_ALREADY_ENROLLED       FAILED_PRECONDITION application déjà configurée
  *   IDENTITY_MFA_ENROLLMENT_NOT_STARTED FAILED_PRECONDITION EnrollTotp doit précéder ConfirmTotp
  *
+ * Changement de contexte (UC-ID-15, ADR-027) :
+ *   IDENTITY_SESSION_REVOKED          UNAUTHENTICATED     session de l'appelant fermée ou expirée
+ *   IDENTITY_CONTEXT_FORBIDDEN        PERMISSION_DENIED   session du back-office : contexte personnel seul
+ *   IDENTITY_ORGANIZATION_NOT_FOUND   NOT_FOUND           organisation inconnue, ou appelant non membre
+ *   IDENTITY_ORGANIZATION_NOT_ACTIVE  FAILED_PRECONDITION organisation non validée ou suspendue
+ *                                                         (details.status)
+ *
  * Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
  * LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),
- * ListSessions et RevokeSession (UC-ID-10), SwitchContext (UC-ID-15).
+ * ListSessions et RevokeSession (UC-ID-10).
  * ---------------------------------------------------------------------------
  */
 
@@ -659,6 +862,16 @@ export interface AuthServiceClient {
    */
 
   verifyMfa(request: VerifyMfaRequest, metadata?: Metadata): Observable<VerifyMfaResponse>;
+
+  /**
+   * UC-ID-15. Change le contexte actif de la session des métadonnées (x-session-id) et réémet un
+   * jeton d'accès avec ctx = identifiant de l'organisation, ou "personal" pour revenir au contexte
+   * personnel. L'organisation doit être validée et l'appelant en être membre. Le renouvellement
+   * garde ce contexte, et revient au contexte personnel si l'organisation n'est plus validée ou si
+   * l'appelant n'en est plus membre. Le jeton de renouvellement n'est pas modifié.
+   */
+
+  switchContext(request: SwitchContextRequest, metadata?: Metadata): Observable<SwitchContextResponse>;
 }
 
 /**
@@ -692,9 +905,16 @@ export interface AuthServiceClient {
  *   IDENTITY_MFA_ALREADY_ENROLLED       FAILED_PRECONDITION application déjà configurée
  *   IDENTITY_MFA_ENROLLMENT_NOT_STARTED FAILED_PRECONDITION EnrollTotp doit précéder ConfirmTotp
  *
+ * Changement de contexte (UC-ID-15, ADR-027) :
+ *   IDENTITY_SESSION_REVOKED          UNAUTHENTICATED     session de l'appelant fermée ou expirée
+ *   IDENTITY_CONTEXT_FORBIDDEN        PERMISSION_DENIED   session du back-office : contexte personnel seul
+ *   IDENTITY_ORGANIZATION_NOT_FOUND   NOT_FOUND           organisation inconnue, ou appelant non membre
+ *   IDENTITY_ORGANIZATION_NOT_ACTIVE  FAILED_PRECONDITION organisation non validée ou suspendue
+ *                                                         (details.status)
+ *
  * Prochains lots (ajout sans rupture) : RegisterWithEmail et VerifyEmail (UC-ID-02),
  * LoginWithPassword (UC-ID-03), ForgotPassword et ResetPassword (UC-ID-06),
- * ListSessions et RevokeSession (UC-ID-10), SwitchContext (UC-ID-15).
+ * ListSessions et RevokeSession (UC-ID-10).
  * ---------------------------------------------------------------------------
  */
 
@@ -777,6 +997,19 @@ export interface AuthServiceController {
     request: VerifyMfaRequest,
     metadata?: Metadata,
   ): Promise<VerifyMfaResponse> | Observable<VerifyMfaResponse> | VerifyMfaResponse;
+
+  /**
+   * UC-ID-15. Change le contexte actif de la session des métadonnées (x-session-id) et réémet un
+   * jeton d'accès avec ctx = identifiant de l'organisation, ou "personal" pour revenir au contexte
+   * personnel. L'organisation doit être validée et l'appelant en être membre. Le renouvellement
+   * garde ce contexte, et revient au contexte personnel si l'organisation n'est plus validée ou si
+   * l'appelant n'en est plus membre. Le jeton de renouvellement n'est pas modifié.
+   */
+
+  switchContext(
+    request: SwitchContextRequest,
+    metadata?: Metadata,
+  ): Promise<SwitchContextResponse> | Observable<SwitchContextResponse> | SwitchContextResponse;
 }
 
 export function AuthServiceControllerMethods() {
@@ -790,6 +1023,7 @@ export function AuthServiceControllerMethods() {
       "enrollTotp",
       "confirmTotp",
       "verifyMfa",
+      "switchContext",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
@@ -831,8 +1065,9 @@ export const AUTH_SERVICE_NAME = "AuthService";
  *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
  *
  * Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
- * RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) et
- * l'administration (UC-ID-18 à 21) auront leurs propres services.
+ * RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) ont leurs
+ * propres services (OrganizationService, OrganizationAdminService) ; l'administration des comptes
+ * (UC-ID-18 à 21) aura le sien.
  * ---------------------------------------------------------------------------
  */
 
@@ -884,8 +1119,9 @@ export interface AccountServiceClient {
  *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
  *
  * Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
- * RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) et
- * l'administration (UC-ID-18 à 21) auront leurs propres services.
+ * RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) ont leurs
+ * propres services (OrganizationService, OrganizationAdminService) ; l'administration des comptes
+ * (UC-ID-18 à 21) aura le sien.
  * ---------------------------------------------------------------------------
  */
 
@@ -940,3 +1176,316 @@ export function AccountServiceControllerMethods() {
 }
 
 export const ACCOUNT_SERVICE_NAME = "AccountService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Organisations (comptes entreprise, UC-ID-12 à 16, ADR-027) — réservé à la gateway.
+ *
+ * Une organisation est créée par un client connecté depuis le portail : elle est « en attente de
+ * validation » jusqu'à la décision d'un admin KSP au back-office (OrganizationAdminService). Le
+ * créateur en devient administrateur (org_admin). Seule une organisation validée peut devenir le
+ * contexte actif d'une session (AuthService.SwitchContext).
+ *
+ * L'e-mail de facturation suit la règle de l'e-mail du profil (ADR-026) : il n'est enregistré
+ * qu'après sa confirmation par le code reçu à cette adresse.
+ *
+ * Erreurs (code AppError → statut gRPC) :
+ *   IDENTITY_ORGANIZATION_INVALID          INVALID_ARGUMENT    details.field : legalName, address, ifu ou rccm
+ *   IDENTITY_ORGANIZATION_NOT_FOUND        NOT_FOUND           organisation inconnue, ou appelant non membre
+ *   IDENTITY_ORGANIZATION_FORBIDDEN        PERMISSION_DENIED   action réservée à un administrateur de l'organisation
+ *   IDENTITY_ORGANIZATION_ALREADY_EXISTS   ALREADY_EXISTS      IFU déjà enregistré (organisation en attente,
+ *                                                              validée ou suspendue)
+ *   IDENTITY_ORGANIZATION_TOO_MANY_PENDING FAILED_PRECONDITION trop de demandes en attente (details.maximum)
+ *   IDENTITY_ORGANIZATION_NOT_ACTIVE       FAILED_PRECONDITION état de l'organisation incompatible
+ *                                                              (details.status)
+ * E-mail de facturation : mêmes erreurs que ChangeEmail et ConfirmEmail (IDENTITY_EMAIL_INVALID,
+ * IDENTITY_EMAIL_ALREADY_VERIFIED, IDENTITY_OTP_*), sauf IDENTITY_EMAIL_ALREADY_USED : une même
+ * adresse peut servir à plusieurs organisations.
+ * ---------------------------------------------------------------------------
+ */
+
+export interface OrganizationServiceClient {
+  /**
+   * UC-ID-12. Demande de création : l'organisation est en attente de validation et l'appelant
+   * en devient l'administrateur (événements identity.organization.created, identity.member.added).
+   */
+
+  createOrganization(request: CreateOrganizationRequest, metadata?: Metadata): Observable<CreateOrganizationResponse>;
+
+  /** Organisations de l'appelant, avec leur état (sélecteur de contexte du portail). */
+
+  listMyOrganizations(
+    request: ListMyOrganizationsRequest,
+    metadata?: Metadata,
+  ): Observable<ListMyOrganizationsResponse>;
+
+  getMyOrganization(request: GetMyOrganizationRequest, metadata?: Metadata): Observable<GetMyOrganizationResponse>;
+
+  /**
+   * Déclarer ou changer l'e-mail de facturation (administrateur de l'organisation, organisation en
+   * attente ou validée) : un code est envoyé par e-mail à l'adresse (notification, modèle
+   * identity.organization_email_verification). L'ancienne adresse reste en place jusqu'à la
+   * confirmation ; un nouvel appel annule le code précédent.
+   */
+
+  changeOrganizationBillingEmail(
+    request: ChangeOrganizationBillingEmailRequest,
+    metadata?: Metadata,
+  ): Observable<ChangeOrganizationBillingEmailResponse>;
+
+  /** Confirmer l'adresse par le dernier code reçu : elle devient l'e-mail de facturation. */
+
+  confirmOrganizationBillingEmail(
+    request: ConfirmOrganizationBillingEmailRequest,
+    metadata?: Metadata,
+  ): Observable<ConfirmOrganizationBillingEmailResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Organisations (comptes entreprise, UC-ID-12 à 16, ADR-027) — réservé à la gateway.
+ *
+ * Une organisation est créée par un client connecté depuis le portail : elle est « en attente de
+ * validation » jusqu'à la décision d'un admin KSP au back-office (OrganizationAdminService). Le
+ * créateur en devient administrateur (org_admin). Seule une organisation validée peut devenir le
+ * contexte actif d'une session (AuthService.SwitchContext).
+ *
+ * L'e-mail de facturation suit la règle de l'e-mail du profil (ADR-026) : il n'est enregistré
+ * qu'après sa confirmation par le code reçu à cette adresse.
+ *
+ * Erreurs (code AppError → statut gRPC) :
+ *   IDENTITY_ORGANIZATION_INVALID          INVALID_ARGUMENT    details.field : legalName, address, ifu ou rccm
+ *   IDENTITY_ORGANIZATION_NOT_FOUND        NOT_FOUND           organisation inconnue, ou appelant non membre
+ *   IDENTITY_ORGANIZATION_FORBIDDEN        PERMISSION_DENIED   action réservée à un administrateur de l'organisation
+ *   IDENTITY_ORGANIZATION_ALREADY_EXISTS   ALREADY_EXISTS      IFU déjà enregistré (organisation en attente,
+ *                                                              validée ou suspendue)
+ *   IDENTITY_ORGANIZATION_TOO_MANY_PENDING FAILED_PRECONDITION trop de demandes en attente (details.maximum)
+ *   IDENTITY_ORGANIZATION_NOT_ACTIVE       FAILED_PRECONDITION état de l'organisation incompatible
+ *                                                              (details.status)
+ * E-mail de facturation : mêmes erreurs que ChangeEmail et ConfirmEmail (IDENTITY_EMAIL_INVALID,
+ * IDENTITY_EMAIL_ALREADY_VERIFIED, IDENTITY_OTP_*), sauf IDENTITY_EMAIL_ALREADY_USED : une même
+ * adresse peut servir à plusieurs organisations.
+ * ---------------------------------------------------------------------------
+ */
+
+export interface OrganizationServiceController {
+  /**
+   * UC-ID-12. Demande de création : l'organisation est en attente de validation et l'appelant
+   * en devient l'administrateur (événements identity.organization.created, identity.member.added).
+   */
+
+  createOrganization(
+    request: CreateOrganizationRequest,
+    metadata?: Metadata,
+  ): Promise<CreateOrganizationResponse> | Observable<CreateOrganizationResponse> | CreateOrganizationResponse;
+
+  /** Organisations de l'appelant, avec leur état (sélecteur de contexte du portail). */
+
+  listMyOrganizations(
+    request: ListMyOrganizationsRequest,
+    metadata?: Metadata,
+  ): Promise<ListMyOrganizationsResponse> | Observable<ListMyOrganizationsResponse> | ListMyOrganizationsResponse;
+
+  getMyOrganization(
+    request: GetMyOrganizationRequest,
+    metadata?: Metadata,
+  ): Promise<GetMyOrganizationResponse> | Observable<GetMyOrganizationResponse> | GetMyOrganizationResponse;
+
+  /**
+   * Déclarer ou changer l'e-mail de facturation (administrateur de l'organisation, organisation en
+   * attente ou validée) : un code est envoyé par e-mail à l'adresse (notification, modèle
+   * identity.organization_email_verification). L'ancienne adresse reste en place jusqu'à la
+   * confirmation ; un nouvel appel annule le code précédent.
+   */
+
+  changeOrganizationBillingEmail(
+    request: ChangeOrganizationBillingEmailRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ChangeOrganizationBillingEmailResponse>
+    | Observable<ChangeOrganizationBillingEmailResponse>
+    | ChangeOrganizationBillingEmailResponse;
+
+  /** Confirmer l'adresse par le dernier code reçu : elle devient l'e-mail de facturation. */
+
+  confirmOrganizationBillingEmail(
+    request: ConfirmOrganizationBillingEmailRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ConfirmOrganizationBillingEmailResponse>
+    | Observable<ConfirmOrganizationBillingEmailResponse>
+    | ConfirmOrganizationBillingEmailResponse;
+}
+
+export function OrganizationServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = [
+      "createOrganization",
+      "listMyOrganizations",
+      "getMyOrganization",
+      "changeOrganizationBillingEmail",
+      "confirmOrganizationBillingEmail",
+    ];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("OrganizationService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("OrganizationService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const ORGANIZATION_SERVICE_NAME = "OrganizationService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Validation des comptes entreprise — back-office (ADR-027). Rôles : super_admin pour les
+ * décisions, super_admin ou support_agent pour la consultation ; double authentification exigée.
+ * Chaque décision est tracée dans le journal d'audit d'identity, avec son auteur.
+ *
+ * Erreurs (code AppError → statut gRPC) :
+ *   AUTH_REQUIRED                            UNAUTHENTICATED
+ *   AUTH_FORBIDDEN                           PERMISSION_DENIED   rôle du back-office manquant
+ *   AUTH_MFA_REQUIRED                        PERMISSION_DENIED   double authentification absente
+ *   IDENTITY_ORGANIZATION_NOT_FOUND          NOT_FOUND
+ *   IDENTITY_ORGANIZATION_INVALID            INVALID_ARGUMENT    motif absent ou trop long (details.field = reason)
+ *   IDENTITY_ORGANIZATION_INVALID_TRANSITION FAILED_PRECONDITION details.from, details.action
+ * ---------------------------------------------------------------------------
+ */
+
+export interface OrganizationAdminServiceClient {
+  /** Les plus récentes d'abord ; filtre facultatif sur l'état. */
+
+  listOrganizations(request: ListOrganizationsRequest, metadata?: Metadata): Observable<ListOrganizationsResponse>;
+
+  /** Fiche complète, avec les membres et leurs coordonnées (pour joindre le demandeur). */
+
+  getOrganization(request: GetOrganizationRequest, metadata?: Metadata): Observable<GetOrganizationResponse>;
+
+  /** En attente → validée (identity.organization.validated) : elle peut devenir un contexte actif. */
+
+  validateOrganization(
+    request: ValidateOrganizationRequest,
+    metadata?: Metadata,
+  ): Observable<ValidateOrganizationResponse>;
+
+  /** En attente → refusée, avec un motif communiqué au client (identity.organization.rejected). */
+
+  rejectOrganization(request: RejectOrganizationRequest, metadata?: Metadata): Observable<RejectOrganizationResponse>;
+
+  /**
+   * Validée → suspendue, avec un motif (identity.organization.suspended) : elle ne peut plus
+   * devenir un contexte actif ; les sessions qui l'ont active reviennent au contexte personnel à
+   * leur prochain renouvellement.
+   */
+
+  suspendOrganization(
+    request: SuspendOrganizationRequest,
+    metadata?: Metadata,
+  ): Observable<SuspendOrganizationResponse>;
+
+  /** Suspendue → validée (identity.organization.reactivated). */
+
+  reactivateOrganization(
+    request: ReactivateOrganizationRequest,
+    metadata?: Metadata,
+  ): Observable<ReactivateOrganizationResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Validation des comptes entreprise — back-office (ADR-027). Rôles : super_admin pour les
+ * décisions, super_admin ou support_agent pour la consultation ; double authentification exigée.
+ * Chaque décision est tracée dans le journal d'audit d'identity, avec son auteur.
+ *
+ * Erreurs (code AppError → statut gRPC) :
+ *   AUTH_REQUIRED                            UNAUTHENTICATED
+ *   AUTH_FORBIDDEN                           PERMISSION_DENIED   rôle du back-office manquant
+ *   AUTH_MFA_REQUIRED                        PERMISSION_DENIED   double authentification absente
+ *   IDENTITY_ORGANIZATION_NOT_FOUND          NOT_FOUND
+ *   IDENTITY_ORGANIZATION_INVALID            INVALID_ARGUMENT    motif absent ou trop long (details.field = reason)
+ *   IDENTITY_ORGANIZATION_INVALID_TRANSITION FAILED_PRECONDITION details.from, details.action
+ * ---------------------------------------------------------------------------
+ */
+
+export interface OrganizationAdminServiceController {
+  /** Les plus récentes d'abord ; filtre facultatif sur l'état. */
+
+  listOrganizations(
+    request: ListOrganizationsRequest,
+    metadata?: Metadata,
+  ): Promise<ListOrganizationsResponse> | Observable<ListOrganizationsResponse> | ListOrganizationsResponse;
+
+  /** Fiche complète, avec les membres et leurs coordonnées (pour joindre le demandeur). */
+
+  getOrganization(
+    request: GetOrganizationRequest,
+    metadata?: Metadata,
+  ): Promise<GetOrganizationResponse> | Observable<GetOrganizationResponse> | GetOrganizationResponse;
+
+  /** En attente → validée (identity.organization.validated) : elle peut devenir un contexte actif. */
+
+  validateOrganization(
+    request: ValidateOrganizationRequest,
+    metadata?: Metadata,
+  ): Promise<ValidateOrganizationResponse> | Observable<ValidateOrganizationResponse> | ValidateOrganizationResponse;
+
+  /** En attente → refusée, avec un motif communiqué au client (identity.organization.rejected). */
+
+  rejectOrganization(
+    request: RejectOrganizationRequest,
+    metadata?: Metadata,
+  ): Promise<RejectOrganizationResponse> | Observable<RejectOrganizationResponse> | RejectOrganizationResponse;
+
+  /**
+   * Validée → suspendue, avec un motif (identity.organization.suspended) : elle ne peut plus
+   * devenir un contexte actif ; les sessions qui l'ont active reviennent au contexte personnel à
+   * leur prochain renouvellement.
+   */
+
+  suspendOrganization(
+    request: SuspendOrganizationRequest,
+    metadata?: Metadata,
+  ): Promise<SuspendOrganizationResponse> | Observable<SuspendOrganizationResponse> | SuspendOrganizationResponse;
+
+  /** Suspendue → validée (identity.organization.reactivated). */
+
+  reactivateOrganization(
+    request: ReactivateOrganizationRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ReactivateOrganizationResponse>
+    | Observable<ReactivateOrganizationResponse>
+    | ReactivateOrganizationResponse;
+}
+
+export function OrganizationAdminServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = [
+      "listOrganizations",
+      "getOrganization",
+      "validateOrganization",
+      "rejectOrganization",
+      "suspendOrganization",
+      "reactivateOrganization",
+    ];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("OrganizationAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("OrganizationAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const ORGANIZATION_ADMIN_SERVICE_NAME = "OrganizationAdminService";

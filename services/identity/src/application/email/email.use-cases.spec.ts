@@ -1,6 +1,12 @@
+import { ActiveContexts } from '../context/active-contexts';
 import { AppError } from '@ksp/platform';
 import { type OtpPolicy } from '../../domain/otp/otp-policy';
-import { InMemoryChallenges, InMemoryEmailVerifications, InMemoryIdentityStore } from '../testing/fakes';
+import {
+  InMemoryChallenges,
+  InMemoryEmailVerifications,
+  InMemoryOrganizations,
+  InMemoryIdentityStore,
+} from '../testing/fakes';
 import { ChangeEmailUseCase } from './change-email.use-case';
 import { ConfirmEmailUseCase } from './confirm-email.use-case';
 import { type EmailCodeSender } from './email.ports';
@@ -67,7 +73,14 @@ function setup() {
     clock,
     policy,
   );
-  const confirm = new ConfirmEmailUseCase(store, verifications, hasher, clock, policy);
+  const confirm = new ConfirmEmailUseCase(
+    store,
+    verifications,
+    hasher,
+    clock,
+    policy,
+    new ActiveContexts(new InMemoryOrganizations()),
+  );
   const pending = new PendingEmails(verifications, clock, policy.maxAttempts);
   return {
     store,

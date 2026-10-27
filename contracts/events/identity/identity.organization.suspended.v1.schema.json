@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.organization.suspended.v1.schema.json",
+  "title": "identity.organization.suspended",
+  "description": "Un admin KSP a suspendu une organisation : elle ne peut plus devenir un contexte actif (ADR-027).",
+  "x-event-type": "identity.organization.suspended",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["organizationId", "legalName", "suspendedBy", "reason"],
+  "properties": {
+    "organizationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "legalName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Raison sociale"
+    },
+    "suspendedBy": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Motif communiqué au client"
+    }
+  }
+}

@@ -3,6 +3,7 @@ import {
   type RefreshRotation,
   type SessionStore,
   type StoredRefreshToken,
+  type StoredSession,
 } from '../../application/session/session-store.ports';
 import { PrismaService } from '../prisma/prisma.service';
 import { ACCOUNT_SELECT, toAccount } from './prisma-login.repository';
@@ -27,6 +28,7 @@ export class PrismaSessionStore implements SessionStore {
             expiresAt: true,
             revokedAt: true,
             mfaAt: true,
+            activeOrgId: true,
             user: { select: ACCOUNT_SELECT },
           },
         },
@@ -55,7 +57,11 @@ export class PrismaSessionStore implements SessionStore {
       });
       await tx.session.update({
         where: { id: rotation.sessionId },
-        data: { lastSeenAt: rotation.now, expiresAt: rotation.sessionExpiresAt },
+        data: {
+          lastSeenAt: rotation.now,
+          expiresAt: rotation.sessionExpiresAt,
+          activeOrgId: rotation.activeOrgId,
+        },
       });
       return true;
     });
@@ -75,5 +81,36 @@ export class PrismaSessionStore implements SessionStore {
       data: { revokedAt: now, revokeReason: reason },
     });
     return revoked.count;
+  }
+
+  async findSession(sessionId: string): Promise<StoredSession | null> {
+    const row = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      select: {
+        id: true,
+        userId: true,
+        clientKind: true,
+        createdAt: true,
+        expiresAt: true,
+        revokedAt: true,
+        user: { select: ACCOUNT_SELECT },
+      },
+    });
+    if (!row) return null;
+    const { user, ...session } = row;
+    return { ...session, account: toAccount(user) };
+  }
+
+  async setActiveOrganization(
+    sessionId: string,
+    userId: string,
+    organizationId: string | null,
+  ): Promise<boolean> {
+    // Conditionnelle : une session fermée entre-temps ne change plus de contexte.
+    const updated = await this.prisma.session.updateMany({
+      where: { id: sessionId, userId, revokedAt: null },
+      data: { activeOrgId: organizationId },
+    });
+    return updated.count === 1;
   }
 }

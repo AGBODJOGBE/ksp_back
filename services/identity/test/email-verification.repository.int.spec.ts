@@ -46,6 +46,7 @@ describeWithDatabase('PrismaEmailVerificationRepository (PostgreSQL)', () => {
     await repository.create({
       id,
       userId,
+      organizationId: null,
       email,
       codeHash: 'empreinte',
       expiresAt: new Date(createdAt.getTime() + 900_000),

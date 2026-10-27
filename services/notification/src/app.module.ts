@@ -107,6 +107,7 @@ export class AppModule {
                 portalBaseUrl: config.PORTAL_BASE_URL.replace(/\/+$/, ''),
                 timeZone: config.NOTIFICATION_TIME_ZONE,
                 cleaningTeamUserIds: config.NOTIFICATION_CLEANING_TEAM_USER_IDS,
+                accountsTeamUserIds: config.NOTIFICATION_ACCOUNTS_TEAM_USER_IDS,
               },
             );
           },

@@ -30,3 +30,4 @@ Chaque décision importante fait l'objet d'une fiche courte : contexte, décisio
 | [ADR-024](0024-email-brevo.md)                         | E-mail par Brevo (API transactionnelle)                                                        | Accepté |
 | [ADR-025](0025-facturation-contrats-entreprise.md)     | Facturation des contrats d'entreprise : contrats appris par événements, mois civils au prorata | Accepté |
 | [ADR-026](0026-email-du-profil-verifie.md)             | E-mail du profil vérifié par un code envoyé par e-mail                                         | Accepté |
+| [ADR-027](0027-comptes-entreprise.md)                  | Comptes entreprise : organisations validées par KSP, membres et contexte actif                 | Accepté |

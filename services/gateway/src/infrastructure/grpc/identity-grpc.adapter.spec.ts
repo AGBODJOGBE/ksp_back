@@ -20,6 +20,7 @@ const protoUser: identityV1.User = {
 const individual: identityV1.ActiveContext = {
   type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL,
   organizationId: '',
+  organizationName: '',
 };
 
 const protoSession: identityV1.SessionTokens = {
@@ -156,7 +157,7 @@ describe('IdentityGrpcAdapter', () => {
           preferredLanguage: 'fr',
           createdAt: '2026-10-17T10:00:00.000Z',
         },
-        activeContext: { type: 'individual', organizationId: null },
+        activeContext: { type: 'individual', organizationId: null, organizationName: null },
       },
     });
   });
@@ -233,11 +234,11 @@ describe('IdentityGrpcAdapter', () => {
     await expect(adapter.getMe()).resolves.toMatchObject({
       user: { email: null, emailVerified: false },
       pendingEmail: 'koffi@exemple.com',
-      activeContext: { type: 'individual', organizationId: null },
+      activeContext: { type: 'individual', organizationId: null, organizationName: null },
     });
   });
 
-  it('profil : une organisation active fait un compte entreprise', async () => {
+  it('profil : une organisation active fait un compte entreprise, avec sa raison sociale', async () => {
     const organizationId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e20';
     const { adapter } = setup({
       getMe: () =>
@@ -245,18 +246,22 @@ describe('IdentityGrpcAdapter', () => {
           user: protoUser,
           profileIncomplete: false,
           pendingEmail: '',
-          activeContext: { type: identityV1.ContextType.CONTEXT_TYPE_BUSINESS, organizationId },
+          activeContext: {
+            type: identityV1.ContextType.CONTEXT_TYPE_BUSINESS,
+            organizationId,
+            organizationName: 'SARL Bénin Propre',
+          },
         }),
     });
     await expect(adapter.getMe()).resolves.toMatchObject({
-      activeContext: { type: 'business', organizationId },
+      activeContext: { type: 'business', organizationId, organizationName: 'SARL Bénin Propre' },
     });
   });
 
   it('profil sans contexte actif, ou de type inconnu : erreur interne, jamais un type deviné', async () => {
     for (const activeContext of [
       undefined,
-      { type: identityV1.ContextType.CONTEXT_TYPE_UNSPECIFIED, organizationId: '' },
+      { type: identityV1.ContextType.CONTEXT_TYPE_UNSPECIFIED, organizationId: '', organizationName: '' },
     ]) {
       const { adapter } = setup({
         getMe: () => of({ user: protoUser, profileIncomplete: false, pendingEmail: '', activeContext }),

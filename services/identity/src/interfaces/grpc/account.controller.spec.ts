@@ -30,7 +30,7 @@ const profile: Profile = {
   },
   profileIncomplete: true,
   pendingEmail: 'koffi@exemple.com',
-  activeContext: { type: 'individual', organizationId: null },
+  activeContext: { type: 'individual', organizationId: null, organizationName: null },
 };
 
 function controller() {
@@ -96,22 +96,27 @@ describe('AccountGrpcController', () => {
       },
       profileIncomplete: true,
       pendingEmail: 'koffi@exemple.com',
-      activeContext: { type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL, organizationId: '' },
+      activeContext: {
+        type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL,
+        organizationId: '',
+        organizationName: '',
+      },
     });
   });
 
   it('rend le type entreprise et l’organisation quand le profil vient d’un contexte d’organisation', async () => {
     const organizationId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e20';
     const { account } = controller();
-    profile.activeContext = { type: 'business', organizationId };
+    profile.activeContext = { type: 'business', organizationId, organizationName: 'SARL Bénin Propre' };
     try {
       const response = await runWithContext({ correlationId: 'c', user }, () => account.getMe());
       expect(response.activeContext).toEqual({
         type: identityV1.ContextType.CONTEXT_TYPE_BUSINESS,
         organizationId,
+        organizationName: 'SARL Bénin Propre',
       });
     } finally {
-      profile.activeContext = { type: 'individual', organizationId: null };
+      profile.activeContext = { type: 'individual', organizationId: null, organizationName: null };
     }
   });
 
@@ -152,6 +157,7 @@ describe('AccountGrpcController', () => {
     expect(response.activeContext).toEqual({
       type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL,
       organizationId: '',
+      organizationName: '',
     });
   });
 

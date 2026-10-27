@@ -108,6 +108,7 @@ describeWithDatabase('PrismaSessionStore (PostgreSQL)', () => {
       newToken: { id: newId, hash: `empreinte-${newId}` },
       sessionId: opened.sessionId,
       sessionExpiresAt: new Date('2026-11-18T13:00:00Z'),
+      activeOrgId: null,
       now: later,
     });
     const results = await Promise.all([

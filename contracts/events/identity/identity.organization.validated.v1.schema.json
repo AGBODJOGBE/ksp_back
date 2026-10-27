@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.organization.validated.v1.schema.json",
+  "title": "identity.organization.validated",
+  "description": "Un admin KSP a validé une organisation : elle peut devenir le contexte actif d'une session (ADR-027).",
+  "x-event-type": "identity.organization.validated",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["organizationId", "legalName", "createdBy", "validatedBy"],
+  "properties": {
+    "organizationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "legalName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Raison sociale"
+    },
+    "createdBy": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte qui a demandé la création (prévenu de la décision)"
+    },
+    "validatedBy": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

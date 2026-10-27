@@ -15,6 +15,7 @@ import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { type Clock, type RateLimiter } from './application/access/access.ports';
 import { type BillingApi } from './application/billing/billing.ports';
 import { type CleaningApi } from './application/cleaning/cleaning.ports';
+import { type OrganizationsApi } from './application/identity/organizations.ports';
 import { RequestCleaningQuoteUseCase } from './application/cleaning/request-cleaning-quote.use-case';
 import { AuthorizeRequestUseCase } from './application/access/authorize-request.use-case';
 import {
@@ -35,6 +36,7 @@ import { clientOriginsFrom, DEV_IDENTITY_JWKS_URL, type GatewayConfig, rateLimit
 import { BillingGrpcAdapter } from './infrastructure/grpc/billing-grpc.adapter';
 import { CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
 import { IdentityGrpcAdapter } from './infrastructure/grpc/identity-grpc.adapter';
+import { OrganizationsGrpcAdapter } from './infrastructure/grpc/organizations-grpc.adapter';
 import { HttpJwksSource } from './infrastructure/keys/http-jwks.source';
 import { KeysReadiness } from './infrastructure/keys/keys-readiness';
 import { type JwksSource, SigningKeysCache } from './infrastructure/keys/signing-keys-cache';
@@ -45,6 +47,8 @@ import { CleaningAdminHttpController } from './interfaces/http/cleaning-admin.co
 import { CleaningHttpController } from './interfaces/http/cleaning.controller';
 import { IdentityHttpController } from './interfaces/http/identity.controller';
 import { JwksHttpController } from './interfaces/http/jwks.controller';
+import { OrganizationAdminHttpController } from './interfaces/http/organizations-admin.controller';
+import { OrganizationHttpController } from './interfaces/http/organizations.controller';
 import { RefreshCookies } from './interfaces/http/refresh-cookie';
 import { RouteGuard } from './interfaces/http/route.guard';
 import {
@@ -55,6 +59,7 @@ import {
   CLOCK,
   IDENTITY_GRPC_CLIENT,
   JWKS_SOURCE,
+  ORGANIZATIONS_API,
   RATE_LIMITER,
 } from './tokens';
 
@@ -82,6 +87,8 @@ export class AppModule {
         HealthController,
         IdentityHttpController,
         JwksHttpController,
+        OrganizationHttpController,
+        OrganizationAdminHttpController,
         CleaningHttpController,
         CleaningAdminHttpController,
         BillingHttpController,
@@ -133,6 +140,29 @@ export class AppModule {
               grpc.getService<identityV1.AuthServiceClient>(identityV1.AUTH_SERVICE_NAME),
               grpc.getService<identityV1.AccountServiceClient>(identityV1.ACCOUNT_SERVICE_NAME),
               // Un appelant par service : son coupe-circuit n'affecte pas les routes des autres (UC-GW-07).
+              new GrpcCaller({
+                target: 'identity',
+                defaultDeadlineMs: config.GRPC_DEADLINE_MS,
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        {
+          provide: ORGANIZATIONS_API,
+          inject: [IDENTITY_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
+          useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): OrganizationsApi =>
+            new OrganizationsGrpcAdapter(
+              {
+                auth: grpc.getService<identityV1.AuthServiceClient>(identityV1.AUTH_SERVICE_NAME),
+                organizations: grpc.getService<identityV1.OrganizationServiceClient>(
+                  identityV1.ORGANIZATION_SERVICE_NAME,
+                ),
+                admin: grpc.getService<identityV1.OrganizationAdminServiceClient>(
+                  identityV1.ORGANIZATION_ADMIN_SERVICE_NAME,
+                ),
+              },
+              // Appelant propre aux comptes entreprise : une panne ou un coupe-circuit ouvert ici ne
+              // bloque pas la connexion ni le renouvellement des sessions (UC-GW-07).
               new GrpcCaller({
                 target: 'identity',
                 defaultDeadlineMs: config.GRPC_DEADLINE_MS,

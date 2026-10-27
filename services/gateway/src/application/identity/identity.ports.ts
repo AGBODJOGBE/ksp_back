@@ -35,6 +35,8 @@ export interface ActiveContext {
   type: ContextType;
   /** Organisation active d'une entreprise ; null pour un particulier. */
   organizationId: string | null;
+  /** Raison sociale de l'organisation active ; null pour un particulier. */
+  organizationName: string | null;
 }
 
 export interface OtpChallenge {

@@ -79,10 +79,15 @@ const CONTEXT_TYPE: Partial<Record<identityV1.ContextType, ContextType>> = {
 };
 
 /** Contexte absent ou de type inconnu : réponse hors contrat, jamais un type deviné. */
-function toActiveContext(context: identityV1.ActiveContext | undefined): ActiveContext {
+export function toActiveContext(context: identityV1.ActiveContext | undefined): ActiveContext {
   const type = context && CONTEXT_TYPE[context.type];
   if (!type) throw malformed(`contexte actif ${context?.type ?? 'absent'}`);
-  return { type, organizationId: type === 'business' ? orNull(context.organizationId) : null };
+  const business = type === 'business';
+  return {
+    type,
+    organizationId: business ? orNull(context.organizationId) : null,
+    organizationName: business ? orNull(context.organizationName) : null,
+  };
 }
 
 function toUser(user: identityV1.User | undefined): UserProfile {

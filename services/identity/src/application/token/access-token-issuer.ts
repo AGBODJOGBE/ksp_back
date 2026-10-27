@@ -14,6 +14,8 @@ export interface AccessTokenSubject {
   clientId: AccessTokenClaims['client_id'];
   /** "personal" ou identifiant de l'organisation active (UC-ID-15). */
   activeContext: string;
+  /** Raison sociale de l'organisation active, renvoyée aux fronts (pas écrite dans le jeton). */
+  organizationName?: string | null;
   roles: AccessTokenRoleClaim[];
   mfa: boolean;
   /** Dernière authentification forte. */
@@ -65,7 +67,7 @@ export class AccessTokenIssuer {
       token,
       tokenId: claims.jti,
       expiresAt: new Date(claims.exp * 1000),
-      activeContext: activeContextOf(claims.ctx),
+      activeContext: activeContextOf(claims.ctx, subject.organizationName ?? null),
     };
   }
 }

@@ -16,6 +16,8 @@ import { CleaningAdminHttpController } from '../src/interfaces/http/cleaning-adm
 import { CleaningHttpController } from '../src/interfaces/http/cleaning.controller';
 import { IdentityHttpController } from '../src/interfaces/http/identity.controller';
 import { JwksHttpController } from '../src/interfaces/http/jwks.controller';
+import { OrganizationAdminHttpController } from '../src/interfaces/http/organizations-admin.controller';
+import { OrganizationHttpController } from '../src/interfaces/http/organizations.controller';
 import { expressPath } from '../src/interfaces/http/route.decorator';
 import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
 import { requestBodies } from '../src/interfaces/http/schemas';
@@ -167,6 +169,8 @@ describe('contrat OpenAPI : manifeste de routage', () => {
     for (const controller of [
       IdentityHttpController,
       JwksHttpController,
+      OrganizationHttpController,
+      OrganizationAdminHttpController,
       CleaningHttpController,
       CleaningAdminHttpController,
       BillingHttpController,
@@ -279,7 +283,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         claims: {
           client_id: 'backoffice',
           mfa,
-          roles: ['cleaning_supervisor', 'cleaning_agent', 'cleaning_admin'].map((role) => ({
+          roles: ['cleaning_supervisor', 'cleaning_agent', 'cleaning_admin', 'super_admin'].map((role) => ({
             role,
             scopeType: 'global',
           })),
@@ -785,7 +789,13 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       operation('simulateCleaning').op.requestBody!.content['application/json'].example as object;
 
     const successes = operations
-      .filter(({ path }) => path.includes('/cleaning') || path.includes('/billing'))
+      .filter(
+        ({ path }) =>
+          path.includes('/cleaning') ||
+          path.includes('/billing') ||
+          path.includes('/organizations') ||
+          path === '/api/v1/identity/context',
+      )
       .map(
         ({ op }) =>
           [
@@ -907,6 +917,91 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         'updateBillingSettings',
         400,
         () => call('updateBillingSettings', { body: { paymentTermDays: 0 } }),
+      ],
+      [
+        'compte entreprise : IFU déjà enregistré',
+        'createOrganization',
+        409,
+        () => {
+          fail(
+            'createOrganization',
+            AppError.conflict('IDENTITY_ORGANIZATION_ALREADY_EXISTS', 'IFU déjà enregistré.'),
+          );
+          return call('createOrganization');
+        },
+      ],
+      [
+        'compte entreprise : champ inconnu',
+        'createOrganization',
+        400,
+        () =>
+          call('createOrganization', { body: { legalName: 'SARL', address: 'Cotonou', ifu: '1', tva: 18 } }),
+      ],
+      [
+        'contexte : organisation en attente de validation',
+        'switchContext',
+        422,
+        () => {
+          fail(
+            'switchContext',
+            AppError.precondition('IDENTITY_ORGANIZATION_NOT_ACTIVE', 'En attente de validation.', {
+              status: 'pending_review',
+            }),
+          );
+          return call('switchContext');
+        },
+      ],
+      [
+        'contexte : organisation d’un autre client',
+        'switchContext',
+        404,
+        () => {
+          fail(
+            'switchContext',
+            AppError.notFound('IDENTITY_ORGANIZATION_NOT_FOUND', 'Organisation introuvable.'),
+          );
+          return call('switchContext');
+        },
+      ],
+      [
+        'contexte : identifiant mal formé',
+        'switchContext',
+        400,
+        () => call('switchContext', { body: { organizationId: 'abc' } }),
+      ],
+      [
+        'e-mail de facturation : réservé à l’administrateur',
+        'changeOrganizationBillingEmail',
+        403,
+        () => {
+          fail(
+            'changeOrganizationBillingEmail',
+            AppError.forbidden('IDENTITY_ORGANIZATION_FORBIDDEN', 'Réservé à un administrateur.'),
+          );
+          return call('changeOrganizationBillingEmail');
+        },
+      ],
+      [
+        'validation d’une organisation déjà validée',
+        'validateOrganization',
+        422,
+        () => {
+          fail(
+            'validateOrganization',
+            AppError.precondition('IDENTITY_ORGANIZATION_INVALID_TRANSITION', 'Décision impossible.', {
+              from: 'active',
+              action: 'validate',
+            }),
+          );
+          return call('validateOrganization');
+        },
+      ],
+      ['refus sans motif', 'rejectOrganization', 400, () => call('rejectOrganization', { body: {} })],
+      [
+        'comptes entreprise du back-office pour un client',
+        'listOrganizations',
+        403,
+        () => call('listOrganizations', { auth: 'customer' }),
       ],
       [
         'back-office sans rôle',

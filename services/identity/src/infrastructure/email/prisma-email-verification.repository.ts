@@ -6,6 +6,7 @@ import {
   type EmailConfirmation,
   type EmailVerificationRepository,
   type NewEmailVerification,
+  type OrganizationEmailConfirmation,
   type StoredEmailVerification,
   VerificationAlreadyConsumedError,
 } from '../../application/email/email.ports';
@@ -15,7 +16,10 @@ import { Prisma } from '../../../prisma/generated';
 import { PrismaService } from '../prisma/prisma.service';
 import { ACCOUNT_SELECT, toAccount } from '../session/prisma-login.repository';
 
-/** Demandes de confirmation de l'e-mail du profil, en base identity (table email_verifications). */
+/**
+ * Demandes de confirmation d'e-mail, en base identity (table email_verifications) : e-mail du profil
+ * (organization_id vide) et e-mail de facturation d'une organisation (ADR-027).
+ */
 @Injectable()
 export class PrismaEmailVerificationRepository implements EmailVerificationRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -33,6 +37,7 @@ export class PrismaEmailVerificationRepository implements EmailVerificationRepos
       data: {
         id: verification.id,
         userId: verification.userId,
+        organizationId: verification.organizationId,
         email: verification.email.value,
         codeHash: verification.codeHash,
         expiresAt: verification.expiresAt,
@@ -57,25 +62,11 @@ export class PrismaEmailVerificationRepository implements EmailVerificationRepos
   }
 
   async findLatest(userId: string): Promise<StoredEmailVerification | null> {
-    // Identifiants UUID v7 : l'ordre des identifiants départage deux demandes de la même milliseconde.
-    const row = await this.prisma.emailVerification.findFirst({
-      where: { userId },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      select: {
-        id: true,
-        userId: true,
-        email: true,
-        codeHash: true,
-        attempts: true,
-        expiresAt: true,
-        sentAt: true,
-        sendFailedAt: true,
-        consumedAt: true,
-      },
-    });
-    if (!row) return null;
-    const { email, ...rest } = row;
-    return { ...rest, target: email };
+    return this.latest({ userId, organizationId: null });
+  }
+
+  async findLatestForOrganization(organizationId: string): Promise<StoredEmailVerification | null> {
+    return this.latest({ organizationId });
   }
 
   async registerFailedAttempt(id: string): Promise<number> {
@@ -120,6 +111,49 @@ export class PrismaEmailVerificationRepository implements EmailVerificationRepos
       }
       throw error;
     }
+  }
+
+  async confirmForOrganization(confirmation: OrganizationEmailConfirmation): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      // Consommation atomique : de deux confirmations simultanées, une seule passe.
+      const consumed = await tx.emailVerification.updateMany({
+        where: {
+          id: confirmation.verificationId,
+          organizationId: confirmation.organizationId,
+          consumedAt: null,
+        },
+        data: { consumedAt: confirmation.now },
+      });
+      if (consumed.count !== 1) throw new VerificationAlreadyConsumedError();
+      await tx.organization.update({
+        where: { id: confirmation.organizationId },
+        data: { billingEmail: confirmation.email, billingEmailVerifiedAt: confirmation.now },
+      });
+    });
+  }
+
+  /** Dernière demande : identifiants UUID v7, leur ordre départage deux demandes de la même milliseconde. */
+  private async latest(
+    where: { userId: string; organizationId: null } | { organizationId: string },
+  ): Promise<StoredEmailVerification | null> {
+    const row = await this.prisma.emailVerification.findFirst({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        userId: true,
+        email: true,
+        codeHash: true,
+        attempts: true,
+        expiresAt: true,
+        sentAt: true,
+        sendFailedAt: true,
+        consumedAt: true,
+      },
+    });
+    if (!row) return null;
+    const { email, ...rest } = row;
+    return { ...rest, target: email };
   }
 
   private async sentSince(where: { email: string } | { userId: string }, since: Date): Promise<Date[]> {
