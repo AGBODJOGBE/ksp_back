@@ -86,6 +86,7 @@ describe('Modèles du Nettoyage', () => {
       expect(template.code).toMatch(/^[a-z]+(\.[a-z_]+)+$/);
     }
     expect(isEventTemplate(findTemplate('identity.otp')!)).toBe(false);
+    expect(isEventTemplate(findTemplate('identity.email_verification')!)).toBe(false);
   });
 
   it('salutation sans prénom', () => {
@@ -106,5 +107,26 @@ describe('Modèles du Nettoyage', () => {
     expect(
       paymentNote({ option: 'full', timing: 'after', method: 'cash', total: 20000, deposit: 6000 }),
     ).toBe(`Paiement choisi : totalité (20${NBSP}000${NBSP}FCFA), après l'intervention, en espèces.`);
+  });
+});
+
+describe('Code de confirmation de l’e-mail (identity.email_verification)', () => {
+  const template = findTemplate('identity.email_verification')!;
+
+  it('modèle secret, par e-mail seulement, avec son propre texte', () => {
+    expect(template).toMatchObject({ secret: true, channels: ['email'] });
+    expect(invalidVariables(template, { code: '482913', expires_in_minutes: '15' })).toEqual([]);
+    expect(invalidVariables(template, { code: '48 29', expires_in_minutes: '0' })).toEqual([
+      'code',
+      'expires_in_minutes',
+    ]);
+  });
+
+  it('donne le code et sa durée, sans le code dans l’objet', () => {
+    const message = template.render!({ code: '482913', expires_in_minutes: '1' });
+    expect(message.subject).toBe('Confirmez votre adresse e-mail KSP');
+    expect(message.text).toContain('482913');
+    expect(message.text).toContain('valable 1 minute.');
+    expect(message.text.startsWith('Bonjour,\n')).toBe(true);
   });
 });

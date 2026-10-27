@@ -86,9 +86,18 @@ export interface User {
   lastName: string;
   /** Renseigné uniquement si le service appelant en a besoin (par exemple delivery). */
   phoneE164: string;
+  /**
+   * Adresse e-mail du compte, vide si aucune n'est enregistrée. Une adresse n'est enregistrée
+   * qu'une fois confirmée par le code reçu à cette adresse (ChangeEmail puis ConfirmEmail).
+   */
   email: string;
   preferredLanguage: string;
   createdAt: string;
+  /**
+   * L'e-mail a été confirmé par un code : seule une adresse vérifiée reçoit des e-mails
+   * (factures, documents).
+   */
+  emailVerified: boolean;
 }
 
 export interface GetUserRequest {
@@ -368,6 +377,8 @@ export interface GetMeRequest {
 export interface GetMeResponse {
   user?: User | undefined;
   profileIncomplete: boolean;
+  /** Adresse en attente de confirmation (code envoyé, encore valable) ; vide sinon. */
+  pendingEmail: string;
 }
 
 export interface UpdateMeRequest {
@@ -382,6 +393,31 @@ export interface UpdateMeRequest {
 export interface UpdateMeResponse {
   user?: User | undefined;
   profileIncomplete: boolean;
+  /** Adresse en attente de confirmation (code envoyé, encore valable) ; vide sinon. */
+  pendingEmail: string;
+}
+
+export interface ChangeEmailRequest {
+  email: string;
+}
+
+export interface ChangeEmailResponse {
+  /** Adresse à confirmer, normalisée (espaces retirés, minuscules). */
+  pendingEmail: string;
+  expiresInSeconds: number;
+  /** Délai avant de pouvoir demander un nouveau code. */
+  resendAfterSeconds: number;
+}
+
+export interface ConfirmEmailRequest {
+  /** Code reçu par e-mail. */
+  code: string;
+}
+
+/** Profil à jour : plus aucune adresse en attente après une confirmation réussie. */
+export interface ConfirmEmailResponse {
+  user?: User | undefined;
+  profileIncomplete: boolean;
 }
 
 /** Appelé par tous les services autorisés par la carte des services. */
@@ -389,7 +425,8 @@ export interface UpdateMeResponse {
 export interface IdentityServiceClient {
   /**
    * GetUser et GetUsersByIds — appelant autorisé : notification (destinataires des événements
-   * métier), qui reçoit le téléphone et l'e-mail. Un compte supprimé est traité comme introuvable ;
+   * métier), qui reçoit le téléphone et l'e-mail. L'e-mail transmis est toujours une adresse
+   * vérifiée par code (email_verified). Un compte supprimé est traité comme introuvable ;
    * GetUsersByIds omet les identifiants introuvables (100 au plus par appel).
    * Erreurs :
    *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
@@ -422,7 +459,8 @@ export interface IdentityServiceClient {
 export interface IdentityServiceController {
   /**
    * GetUser et GetUsersByIds — appelant autorisé : notification (destinataires des événements
-   * métier), qui reçoit le téléphone et l'e-mail. Un compte supprimé est traité comme introuvable ;
+   * métier), qui reçoit le téléphone et l'e-mail. L'e-mail transmis est toujours une adresse
+   * vérifiée par code (email_verified). Un compte supprimé est traité comme introuvable ;
    * GetUsersByIds omet les identifiants introuvables (100 au plus par appel).
    * Erreurs :
    *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
@@ -749,6 +787,18 @@ export const AUTH_SERVICE_NAME = "AuthService";
  *   IDENTITY_PROFILE_EMPTY_UPDATE   INVALID_ARGUMENT    aucun champ à modifier
  *   IDENTITY_USER_NOT_FOUND         NOT_FOUND           compte inexistant ou supprimé
  *
+ * E-mail du profil (ChangeEmail, ConfirmEmail) : mêmes codes d'erreur que les codes par téléphone
+ * pour le code lui-même, plus ceux propres à l'adresse.
+ *   IDENTITY_EMAIL_INVALID          INVALID_ARGUMENT    adresse mal formée, ou refusée par notification
+ *   IDENTITY_EMAIL_ALREADY_VERIFIED FAILED_PRECONDITION cette adresse est déjà celle, vérifiée, du compte
+ *   IDENTITY_EMAIL_ALREADY_USED     ALREADY_EXISTS      adresse vérifiée par un autre compte (signalé
+ *                                                       seulement après la saisie du bon code)
+ *   IDENTITY_OTP_RATE_LIMITED       RESOURCE_EXHAUSTED  details.retryAfterSeconds (par adresse et par compte)
+ *   IDENTITY_OTP_SEND_FAILED        UNAVAILABLE         notification n'a pu envoyer l'e-mail
+ *   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attemptsRemaining
+ *   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION aucun code en attente, ou code expiré
+ *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
+ *
  * Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
  * RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) et
  * l'administration (UC-ID-18 à 21) auront leurs propres services.
@@ -761,6 +811,22 @@ export interface AccountServiceClient {
   /** Seuls les champs renseignés sont modifiés. */
 
   updateMe(request: UpdateMeRequest, metadata?: Metadata): Observable<UpdateMeResponse>;
+
+  /**
+   * Déclarer ou changer son e-mail : un code est envoyé PAR E-MAIL à la nouvelle adresse
+   * (notification, modèle identity.email_verification). L'adresse n'est enregistrée qu'à
+   * ConfirmEmail : l'ancienne, vérifiée, reste en place jusque-là. Un nouvel appel annule le code
+   * précédent. La réponse est la même que l'adresse soit libre ou non (anti-énumération).
+   */
+
+  changeEmail(request: ChangeEmailRequest, metadata?: Metadata): Observable<ChangeEmailResponse>;
+
+  /**
+   * Confirmer l'adresse par le dernier code reçu : elle devient l'e-mail vérifié du compte
+   * (événement identity.user.verified, verifiedVia = email).
+   */
+
+  confirmEmail(request: ConfirmEmailRequest, metadata?: Metadata): Observable<ConfirmEmailResponse>;
 }
 
 /**
@@ -773,6 +839,18 @@ export interface AccountServiceClient {
  *   IDENTITY_LANGUAGE_INVALID       INVALID_ARGUMENT    code de deux lettres attendu
  *   IDENTITY_PROFILE_EMPTY_UPDATE   INVALID_ARGUMENT    aucun champ à modifier
  *   IDENTITY_USER_NOT_FOUND         NOT_FOUND           compte inexistant ou supprimé
+ *
+ * E-mail du profil (ChangeEmail, ConfirmEmail) : mêmes codes d'erreur que les codes par téléphone
+ * pour le code lui-même, plus ceux propres à l'adresse.
+ *   IDENTITY_EMAIL_INVALID          INVALID_ARGUMENT    adresse mal formée, ou refusée par notification
+ *   IDENTITY_EMAIL_ALREADY_VERIFIED FAILED_PRECONDITION cette adresse est déjà celle, vérifiée, du compte
+ *   IDENTITY_EMAIL_ALREADY_USED     ALREADY_EXISTS      adresse vérifiée par un autre compte (signalé
+ *                                                       seulement après la saisie du bon code)
+ *   IDENTITY_OTP_RATE_LIMITED       RESOURCE_EXHAUSTED  details.retryAfterSeconds (par adresse et par compte)
+ *   IDENTITY_OTP_SEND_FAILED        UNAVAILABLE         notification n'a pu envoyer l'e-mail
+ *   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attemptsRemaining
+ *   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION aucun code en attente, ou code expiré
+ *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
  *
  * Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
  * RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) et
@@ -789,11 +867,33 @@ export interface AccountServiceController {
     request: UpdateMeRequest,
     metadata?: Metadata,
   ): Promise<UpdateMeResponse> | Observable<UpdateMeResponse> | UpdateMeResponse;
+
+  /**
+   * Déclarer ou changer son e-mail : un code est envoyé PAR E-MAIL à la nouvelle adresse
+   * (notification, modèle identity.email_verification). L'adresse n'est enregistrée qu'à
+   * ConfirmEmail : l'ancienne, vérifiée, reste en place jusque-là. Un nouvel appel annule le code
+   * précédent. La réponse est la même que l'adresse soit libre ou non (anti-énumération).
+   */
+
+  changeEmail(
+    request: ChangeEmailRequest,
+    metadata?: Metadata,
+  ): Promise<ChangeEmailResponse> | Observable<ChangeEmailResponse> | ChangeEmailResponse;
+
+  /**
+   * Confirmer l'adresse par le dernier code reçu : elle devient l'e-mail vérifié du compte
+   * (événement identity.user.verified, verifiedVia = email).
+   */
+
+  confirmEmail(
+    request: ConfirmEmailRequest,
+    metadata?: Metadata,
+  ): Promise<ConfirmEmailResponse> | Observable<ConfirmEmailResponse> | ConfirmEmailResponse;
 }
 
 export function AccountServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["getMe", "updateMe"];
+    const grpcMethods: string[] = ["getMe", "updateMe", "changeEmail", "confirmEmail"];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("AccountService", method)(constructor.prototype[method], method, descriptor);

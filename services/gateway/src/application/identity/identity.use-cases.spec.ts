@@ -1,6 +1,8 @@
 import { FakeIdentity } from '../testing/fakes';
 import { GetPublicKeysUseCase } from '../keys/public-keys';
 import {
+  ChangeEmailUseCase,
+  ConfirmEmailUseCase,
   ConfirmTotpUseCase,
   EnrollTotpUseCase,
   GetMeUseCase,
@@ -112,6 +114,20 @@ describe('cas d’usage identity de la gateway', () => {
     await expect(new UpdateMeUseCase(identity).execute({ firstName: 'Koffi' })).resolves.toMatchObject({
       user: { firstName: 'Koffi' },
     });
+  });
+
+  it('e-mail du profil : envoi du code puis confirmation', async () => {
+    const identity = new FakeIdentity();
+    await expect(new ChangeEmailUseCase(identity).execute({ email: 'koffi@exemple.com' })).resolves.toEqual({
+      pendingEmail: 'koffi@exemple.com',
+      expiresInSeconds: 900,
+      resendAfterSeconds: 60,
+    });
+    await expect(new ConfirmEmailUseCase(identity).execute({ code: '482913' })).resolves.toMatchObject({
+      user: { email: 'koffi@exemple.com', emailVerified: true },
+      pendingEmail: null,
+    });
+    expect(identity.calls.map((call) => call.input)).toEqual(['koffi@exemple.com', '482913']);
   });
 
   it('clés publiques : document JWKS', async () => {

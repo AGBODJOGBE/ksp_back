@@ -15,7 +15,9 @@ import { type ClientGrpc, ClientProxyFactory, type MicroserviceOptions } from '@
 import { createLocalJWKSet, type JSONWebKeySet } from 'jose';
 // Côté appelant : le vrai client d'identity et sa chaîne de jetons de service (test de contrat entre les deux services).
 import { IssueServiceTokenUseCase } from '../../identity/src/application/service-token/issue-service-token.use-case';
+import { EmailAddress } from '../../identity/src/domain/user/email-address';
 import { PhoneNumber } from '../../identity/src/domain/user/phone-number';
+import { NotificationEmailCodeSender } from '../../identity/src/infrastructure/email/notification-email-code-sender';
 import { NotificationOtpSender } from '../../identity/src/infrastructure/otp/notification-otp-sender';
 import {
   ConfigServiceClientRegistry,
@@ -34,6 +36,7 @@ import {
 } from '../src/application/send/notification.ports';
 import { SendNotificationUseCase } from '../src/application/send/send-notification.use-case';
 import { InMemoryNotifications } from '../src/application/testing/fakes';
+import { ConsoleEmailProvider } from '../src/infrastructure/channels/console-email.provider';
 import { ConsoleWhatsAppProvider } from '../src/infrastructure/channels/console-whatsapp.provider';
 import { SystemClock, UuidV7Generator } from '../src/infrastructure/system/system';
 import { NotificationGrpcController } from '../src/interfaces/grpc/notification.controller';
@@ -74,6 +77,7 @@ describe('SendNotification en gRPC : client d’identity contre le serveur notif
   let client: notificationV1.NotificationServiceClient;
   let issuer: IssueServiceTokenUseCase;
   const whatsapp = new SwitchableWhatsApp();
+  const emailOutput: string[] = [];
   const notifications = new InMemoryNotifications();
 
   beforeAll(async () => {
@@ -97,7 +101,7 @@ describe('SendNotification en gRPC : client d’identity contre le serveur notif
     });
     const useCase = new SendNotificationUseCase(
       notifications,
-      [whatsapp],
+      [whatsapp, new ConsoleEmailProvider((text) => emailOutput.push(text))],
       new SystemClock(),
       new UuidV7Generator(),
     );
@@ -240,6 +244,29 @@ describe('SendNotification en gRPC : client d’identity contre le serveur notif
       code: 'IDENTITY_OTP_SEND_FAILED',
     });
     expect(notifications.rows.length).toBe(rows);
+  });
+
+  it('identity envoie le code de confirmation de l’e-mail : e-mail accepté, adresse masquée en base', async () => {
+    const sender = new NotificationEmailCodeSender(
+      client,
+      new GrpcCaller({ target: 'notification', serviceTokenProvider: new LocalServiceTokenProvider(issuer) }),
+    );
+    await sender.send({
+      verificationId: '0192f1c4-0000-7000-8000-00000000c007',
+      userId: '0192f1c4-0000-7000-8000-000000000001',
+      email: EmailAddress.parse('koffi@exemple.com')!,
+      code: '482913',
+      ttlSeconds: 900,
+    });
+    expect(emailOutput.join('')).toContain('Objet : Confirmez votre adresse e-mail KSP');
+    expect(emailOutput.join('')).toContain('482913');
+    expect(notifications.rows.at(-1)).toMatchObject({
+      idempotencyKey: '0192f1c4-0000-7000-8000-00000000c007',
+      templateCode: 'identity.email_verification',
+      status: 'accepted',
+      channelUsed: 'email',
+      targetMasked: 'k***@exemple.com',
+    });
   });
 
   it('un appel sans jeton de service est refusé', async () => {

@@ -245,6 +245,8 @@ describe('contrat OpenAPI : corps des requêtes', () => {
     ).toBe(false);
     expect(requestBodies.updateMe.safeParse({ preferredLanguage: 'fra' }).success).toBe(false);
     expect(requestBodies.updateMe.safeParse({}).success).toBe(false);
+    expect(requestBodies.confirmEmail.safeParse({ code: '4829 13' }).success).toBe(false);
+    expect(requestBodies.changeEmail.safeParse({ email: 'x'.repeat(255) }).success).toBe(false);
   });
 });
 
@@ -309,6 +311,11 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   };
   const authed = (req: request.Test, client: 'web' | 'mobile' | 'none' = 'none') =>
     from(req, client).set('Authorization', `Bearer ${token}`);
+  // Limites par utilisateur basses (code par e-mail) : chaque scénario a son propre utilisateur.
+  let emailUsers = 0;
+  const newUserToken = () =>
+    keys.accessToken({ subject: `0192f1c4-7a2b-7c3d-8e4f-${String(++emailUsers).padStart(12, '0')}` });
+  const asUser = (req: request.Test, bearer: string) => from(req).set('Authorization', `Bearer ${bearer}`);
   const fail = (method: Parameters<typeof identity.stub.on>[0], error: AppError) =>
     identity.stub.on(method, () => Promise.reject(error));
 
@@ -317,7 +324,9 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   const suspended = AppError.forbidden('IDENTITY_ACCOUNT_SUSPENDED', 'Ce compte est suspendu.');
   const down = AppError.unavailable('IDENTITY_OTP_SEND_FAILED', "Le code n'a pas pu être envoyé.");
 
-  const scenarios: [string, string, number, () => request.Test | Promise<request.Test>][] = [
+  /** Une requête, ou une promesse de requête (jeton préparé avant l'envoi). */
+  type Run = () => request.Test | Promise<request.Test | request.Response>;
+  const scenarios: [string, string, number, Run][] = [
     [
       'code envoyé',
       'requestOtp',
@@ -435,7 +444,9 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       401,
       () => {
         fail('enrollTotp', AppError.unauthenticated('IDENTITY_MFA_TOKEN_INVALID', 'Étape expirée.'));
-        return from(http().post('/api/v1/identity/mfa/totp/enroll'), 'backoffice').send({ mfaToken: 'mfa' });
+        return from(http().post('/api/v1/identity/mfa/totp/enroll'), 'backoffice').send({
+          mfaToken: 'mfa',
+        });
       },
     ],
     [
@@ -444,7 +455,9 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       422,
       () => {
         fail('enrollTotp', AppError.precondition('IDENTITY_MFA_ALREADY_ENROLLED', 'Déjà configurée.'));
-        return from(http().post('/api/v1/identity/mfa/totp/enroll'), 'backoffice').send({ mfaToken: 'mfa' });
+        return from(http().post('/api/v1/identity/mfa/totp/enroll'), 'backoffice').send({
+          mfaToken: 'mfa',
+        });
       },
     ],
     [
@@ -600,6 +613,136 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       'updateMe',
       401,
       () => from(http().patch('/api/v1/identity/me'), 'none').send({ firstName: 'Koffi' }),
+    ],
+    [
+      'code envoyé à la nouvelle adresse',
+      'changeEmail',
+      200,
+      async () =>
+        asUser(http().put('/api/v1/identity/me/email'), await newUserToken()).send({
+          email: 'Compta@Entreprise.bj',
+        }),
+    ],
+    [
+      'adresse refusée par identity',
+      'changeEmail',
+      400,
+      async () => {
+        fail('changeEmail', AppError.invalid('IDENTITY_EMAIL_INVALID', 'Adresse invalide.'));
+        return asUser(http().put('/api/v1/identity/me/email'), await newUserToken()).send({
+          email: 'compta@',
+        });
+      },
+    ],
+    [
+      'champ inconnu',
+      'changeEmail',
+      400,
+      async () =>
+        asUser(http().put('/api/v1/identity/me/email'), await newUserToken()).send({
+          email: 'a@b.bj',
+          verified: true,
+        }),
+    ],
+    [
+      'adresse sans jeton',
+      'changeEmail',
+      401,
+      () => from(http().put('/api/v1/identity/me/email'), 'none').send({ email: 'a@b.bj' }),
+    ],
+    [
+      'adresse déjà vérifiée',
+      'changeEmail',
+      422,
+      async () => {
+        fail(
+          'changeEmail',
+          AppError.precondition('IDENTITY_EMAIL_ALREADY_VERIFIED', 'Adresse déjà vérifiée.'),
+        );
+        return asUser(http().put('/api/v1/identity/me/email'), await newUserToken()).send({
+          email: 'a@b.bj',
+        });
+      },
+    ],
+    [
+      'trop de codes',
+      'changeEmail',
+      429,
+      async () => {
+        fail(
+          'changeEmail',
+          AppError.rateLimited('IDENTITY_OTP_RATE_LIMITED', 'Trop de codes.', { retryAfterSeconds: 40 }),
+        );
+        return asUser(http().put('/api/v1/identity/me/email'), await newUserToken()).send({
+          email: 'a@b.bj',
+        });
+      },
+    ],
+    [
+      'e-mail non envoyé',
+      'changeEmail',
+      503,
+      async () => {
+        fail(
+          'changeEmail',
+          AppError.unavailable('IDENTITY_OTP_SEND_FAILED', "L'e-mail n'a pas pu être envoyé."),
+        );
+        return asUser(http().put('/api/v1/identity/me/email'), await newUserToken()).send({
+          email: 'a@b.bj',
+        });
+      },
+    ],
+    [
+      'adresse confirmée',
+      'confirmEmail',
+      200,
+      async () =>
+        asUser(http().post('/api/v1/identity/me/email/verify'), await newUserToken()).send({
+          code: '482913',
+        }),
+    ],
+    [
+      'code mal formé',
+      'confirmEmail',
+      400,
+      async () =>
+        asUser(http().post('/api/v1/identity/me/email/verify'), await newUserToken()).send({ code: '48a' }),
+    ],
+    [
+      'code incorrect',
+      'confirmEmail',
+      400,
+      async () => {
+        fail(
+          'confirmEmail',
+          AppError.invalid('IDENTITY_OTP_INVALID', 'Code incorrect.', { attemptsRemaining: 4 }),
+        );
+        return asUser(http().post('/api/v1/identity/me/email/verify'), await newUserToken()).send({
+          code: '000000',
+        });
+      },
+    ],
+    [
+      'adresse prise par un autre compte',
+      'confirmEmail',
+      409,
+      async () => {
+        fail('confirmEmail', AppError.conflict('IDENTITY_EMAIL_ALREADY_USED', 'Adresse déjà utilisée.'));
+        return asUser(http().post('/api/v1/identity/me/email/verify'), await newUserToken()).send({
+          code: '482913',
+        });
+      },
+    ],
+    [
+      'code expiré',
+      'confirmEmail',
+      422,
+      async () => {
+        fail('confirmEmail', AppError.precondition('IDENTITY_OTP_EXPIRED', 'Le code a expiré.'));
+        return asUser(http().post('/api/v1/identity/me/email/verify'), await newUserToken()).send({
+          code: '482913',
+        });
+      },
     ],
     ['clés publiques', 'getJwks', 200, () => from(http().get('/.well-known/jwks.json'), 'none')],
     ...cleaningScenarios(),

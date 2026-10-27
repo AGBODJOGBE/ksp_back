@@ -123,6 +123,25 @@ export const ROUTE_MANIFEST = [
     requiresKnownClient: false,
   },
   {
+    // Code envoyé par e-mail à la nouvelle adresse ; elle n'est enregistrée qu'à la confirmation.
+    operationId: 'changeEmail',
+    method: 'PUT',
+    path: '/api/v1/identity/me/email',
+    grpc: `${IDENTITY_ACCOUNT}/ChangeEmail`,
+    access: { level: 'authenticated' },
+    rateLimit: 'email_code_request',
+    requiresKnownClient: false,
+  },
+  {
+    operationId: 'confirmEmail',
+    method: 'POST',
+    path: '/api/v1/identity/me/email/verify',
+    grpc: `${IDENTITY_ACCOUNT}/ConfirmEmail`,
+    access: { level: 'authenticated' },
+    rateLimit: 'email_code_verify',
+    requiresKnownClient: false,
+  },
+  {
     // Clés servies depuis le cache de la gateway, alimenté par le JWKS HTTP d'identity (ADR-020) ;
     // l'appel gRPC déclaré par le contrat est la source logique de ce document.
     operationId: 'getJwks',

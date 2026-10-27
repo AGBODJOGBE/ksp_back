@@ -12,15 +12,16 @@ const user = (id: string, overrides: Partial<identityV1.User> = {}): identityV1.
   email: '',
   preferredLanguage: '',
   createdAt: '2026-10-19T12:00:00.000Z',
+  emailVerified: false,
   ...overrides,
 });
 
-function directory() {
+function directory(overrides: Partial<identityV1.User> = {}) {
   const requests: identityV1.GetUsersByIdsRequest[] = [];
   const client = {
     getUsersByIds: (request: identityV1.GetUsersByIdsRequest) => {
       requests.push(request);
-      return of({ users: request.userIds.map((id) => user(id)) });
+      return of({ users: request.userIds.map((id) => user(id, overrides)) });
     },
   } as unknown as identityV1.IdentityServiceClient;
   return {
@@ -36,6 +37,15 @@ describe('IdentityRecipientDirectory', () => {
       { userId: 'u-1', firstName: 'Koffi', phoneE164: '+2290197000045', email: null, language: 'fr' },
     ]);
     expect(requests).toEqual([{ userIds: ['u-1'] }]);
+  });
+
+  it('garde l’e-mail seulement s’il est vérifié : aucun e-mail vers une adresse non confirmée', async () => {
+    const verified = directory({ email: 'compta@entreprise.bj', emailVerified: true }).directory;
+    await expect(verified.findContacts(['u-1'])).resolves.toMatchObject([{ email: 'compta@entreprise.bj' }]);
+    const unverified = directory({ email: 'compta@entreprise.bj', emailVerified: false }).directory;
+    await expect(unverified.findContacts(['u-1'])).resolves.toMatchObject([
+      { email: null, phoneE164: '+2290197000045' },
+    ]);
   });
 
   it('découpe les demandes par lots de 100 identifiants (limite du contrat)', async () => {

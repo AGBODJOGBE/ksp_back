@@ -329,10 +329,12 @@ describe('gateway : routes identity de bout en bout (serveur gRPC identity simul
           lastName: null,
           phone: '+2290197000045',
           email: null,
+          emailVerified: false,
           preferredLanguage: 'fr',
           createdAt: '2026-10-17T10:00:00.000Z',
         },
         profileIncomplete: true,
+        pendingEmail: null,
       });
       const call = identity.stub.last('getMe')!;
       expect(call.request).toEqual({});

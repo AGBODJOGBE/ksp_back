@@ -44,7 +44,7 @@ describe('NotificationGrpcController.sendNotification', () => {
         templateCode: 'identity.otp',
         channel: 'whatsapp',
         fallbackChannels: ['sms'],
-        recipient: { userId: '', phoneE164: '+2290197000045' },
+        recipient: { userId: '', phoneE164: '+2290197000045', email: '' },
         variables: { code: '482913', expires_in_minutes: '5' },
         idempotencyKey: 'c-1',
         locale: 'fr',
@@ -76,7 +76,7 @@ describe('NotificationGrpcController.sendNotification', () => {
     expect(inputs[0]).toMatchObject({
       channel: null,
       fallbackChannels: ['email'],
-      recipient: { userId: '', phoneE164: '' },
+      recipient: { userId: '', phoneE164: '', email: '' },
     });
     expect(response.channelUsed).toBe(notificationV1.Channel.CHANNEL_SMS);
   });

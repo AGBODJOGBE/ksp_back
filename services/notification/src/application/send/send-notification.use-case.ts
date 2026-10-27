@@ -1,7 +1,7 @@
 import { isDirectSendCaller } from '../../domain/caller-policy';
-import { channelPlan, type ChannelName, DEFAULT_CHANNEL } from '../../domain/channel';
+import { channelPlan, type ChannelName, DEFAULT_CHANNEL, isPhoneChannel } from '../../domain/channel';
 import { expiryOf } from '../../domain/delivery';
-import { parseRecipientUserId, PhoneNumber } from '../../domain/recipient';
+import { EmailAddress, parseRecipientUserId, PhoneNumber } from '../../domain/recipient';
 import { findTemplate, invalidVariables, isEventTemplate } from '../../domain/template';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { failureError, MessageDispatcher } from './message-dispatcher';
@@ -22,7 +22,8 @@ export interface SendNotificationInput {
   /** null : canal non précisé, WhatsApp par défaut. */
   channel: ChannelName | null;
   fallbackChannels: ChannelName[];
-  recipient: { userId: string; phoneE164: string };
+  /** Coordonnées vides (chaîne vide) quand le canal n'en a pas besoin. */
+  recipient: { userId: string; phoneE164: string; email: string };
   variables: Record<string, string>;
   idempotencyKey: string;
   locale: string;
@@ -40,7 +41,7 @@ const DEFAULT_LOCALE = 'fr';
 
 /**
  * Envoi direct d'une notification (contrat SendNotification) : codes de connexion d'identity
- * (ADR-014), puis codes de signature de document.
+ * (ADR-014) et code de confirmation de l'e-mail du profil, puis codes de signature de document.
  *
  * - Idempotent : deux appels avec la même clé ne produisent qu'un envoi, le second reçoit la réponse du premier.
  * - Canal demandé (WhatsApp par défaut), puis les canaux de bascule dans l'ordre ; un canal sans
@@ -71,10 +72,12 @@ export class SendNotificationUseCase {
     const plan = channelPlan(input.channel, input.fallbackChannels, template.channels);
     if (plan.length === 0) throw NotificationErrors.templateUnknown();
 
-    // Au lot 1, les modèles ne partent que par des canaux téléphoniques : le numéro est obligatoire.
+    // Chaque canal prévu exige sa coordonnée : le numéro pour WhatsApp et SMS, l'adresse pour l'e-mail.
     const phone = PhoneNumber.parse(input.recipient.phoneE164);
+    const email = EmailAddress.parse(input.recipient.email);
     const recipientUser = parseRecipientUserId(input.recipient.userId);
-    if (!phone || !recipientUser.valid) throw NotificationErrors.recipientInvalid();
+    const reachable = plan.every((channel) => (isPhoneChannel(channel) ? phone !== null : email !== null));
+    if (!reachable || !recipientUser.valid) throw NotificationErrors.recipientInvalid();
 
     const invalid = invalidVariables(template, input.variables);
     if (invalid.length > 0) throw NotificationErrors.variablesInvalid(invalid);
@@ -88,7 +91,7 @@ export class SendNotificationUseCase {
         idempotencyKey: input.idempotencyKey.trim() || id,
         templateCode: template.code,
         requestedChannel: input.channel ?? DEFAULT_CHANNEL,
-        targetMasked: phone.masked(),
+        targetMasked: (isPhoneChannel(plan[0]) ? phone?.masked() : email?.masked()) ?? '',
         recipientUserId: recipientUser.userId,
         createdAt,
         expiresAt: expiryOf(createdAt, input.ttlSeconds),
@@ -96,10 +99,11 @@ export class SendNotificationUseCase {
       plan,
       message: {
         templateCode: template.code,
-        phoneE164: phone.e164,
-        email: null,
+        phoneE164: phone?.e164 ?? null,
+        email: email?.value ?? null,
         variables: input.variables,
-        content: null,
+        // Texte écrit par notification (e-mail) ; null pour un modèle rédigé chez le prestataire.
+        content: template.render ? template.render(input.variables) : null,
         locale: input.locale.trim() || DEFAULT_LOCALE,
       },
     });

@@ -1,6 +1,7 @@
 import { AppError } from '@ksp/platform';
 import { type ClientKind, refreshTokenTransport } from '../../domain/client/client-kind';
 import {
+  type EmailChange,
   type IdentityAccount,
   type IdentityAuth,
   type LoginOutcome,
@@ -132,6 +133,24 @@ export class UpdateMeUseCase {
 
   execute(changes: ProfileChanges): Promise<Profile> {
     return this.account.updateMe(changes);
+  }
+}
+
+/** Déclarer ou changer son e-mail : identity envoie un code à la nouvelle adresse. */
+export class ChangeEmailUseCase {
+  constructor(private readonly account: IdentityAccount) {}
+
+  execute(input: { email: string }): Promise<EmailChange> {
+    return this.account.changeEmail(input.email);
+  }
+}
+
+/** Confirmer son e-mail par le code reçu. */
+export class ConfirmEmailUseCase {
+  constructor(private readonly account: IdentityAccount) {}
+
+  execute(input: { code: string }): Promise<Profile> {
+    return this.account.confirmEmail(input.code);
   }
 }
 

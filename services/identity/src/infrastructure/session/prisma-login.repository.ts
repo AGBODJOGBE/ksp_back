@@ -22,6 +22,8 @@ export const ACCOUNT_SELECT = {
   lastName: true,
   preferredLanguage: true,
   createdAt: true,
+  email: true,
+  emailVerifiedAt: true,
   phones: { where: { isPrimary: true }, select: { phoneE164: true }, take: 1 },
 } as const;
 
@@ -34,8 +36,8 @@ export function toAccount(row: AccountRow): Account {
     firstName: row.firstName,
     lastName: row.lastName,
     phoneE164: row.phones[0]?.phoneE164 ?? null,
-    // Les adresses e-mail arriveront avec UC-ID-02.
-    email: null,
+    email: row.email,
+    emailVerifiedAt: row.emailVerifiedAt,
     preferredLanguage: row.preferredLanguage,
     createdAt: row.createdAt,
   };

@@ -89,6 +89,18 @@ x-ksp-rate-limits:
     per: minute
     key: ip
     description: Simulateur public du Nettoyage (cahier des charges Nettoyage, partie 5).
+  email_code_request:
+    limit: 3
+    per: minute
+    key: user
+    description: |
+      Envoi du code de confirmation de l'e-mail du profil. identity ajoute ses propres limites,
+      par adresse et par compte (un envoi par minute, 5 par heure, 10 par jour).
+  email_code_verify:
+    limit: 10
+    per: minute
+    key: user
+    description: identity annule aussi le code après 5 essais faux.
 
 # Préfixes réservés, sans route pour l'instant.
 x-ksp-reserved-prefixes:
@@ -220,6 +232,7 @@ paths:
                       lastName: null
                       phone: '+2290197000045'
                       email: null
+                      emailVerified: false
                       preferredLanguage: fr
                       createdAt: '2026-10-17T10:00:00Z'
                     profileIncomplete: true
@@ -364,6 +377,7 @@ paths:
                   lastName: Adjovi
                   phone: '+2290197000045'
                   email: null
+                  emailVerified: false
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: false
@@ -452,6 +466,7 @@ paths:
                   lastName: Adjovi
                   phone: '+2290197000045'
                   email: null
+                  emailVerified: false
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: false
@@ -528,6 +543,7 @@ paths:
                   lastName: Adjovi
                   phone: '+2290197000045'
                   email: null
+                  emailVerified: false
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: false
@@ -604,7 +620,11 @@ paths:
       tags: [Compte]
       operationId: getMe
       summary: Lire son profil
-      description: 'Erreurs : `IDENTITY_USER_NOT_FOUND` (404) si le compte a été supprimé.'
+      description: |
+        `user.email` est l'adresse vérifiée du compte (`emailVerified`), seule destinataire des
+        e-mails (factures, documents) ; `pendingEmail`, l'adresse en attente de confirmation par code.
+
+        Erreurs : `IDENTITY_USER_NOT_FOUND` (404) si le compte a été supprimé.
       x-ksp-grpc: ksp.identity.v1.AccountService/GetMe
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -628,9 +648,11 @@ paths:
                   lastName: null
                   phone: '+2290197000045'
                   email: null
+                  emailVerified: false
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: true
+                pendingEmail: null
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -685,15 +707,150 @@ paths:
                   lastName: Adjovi
                   phone: '+2290197000045'
                   email: null
+                  emailVerified: false
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: false
+                pendingEmail: null
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/me/email:
+    put:
+      tags: [Compte]
+      operationId: changeEmail
+      summary: Déclarer ou changer son e-mail
+      description: |
+        Envoie un code **par e-mail** à l'adresse saisie (valable 15 minutes). L'adresse n'est
+        enregistrée qu'après sa confirmation (`POST /api/v1/identity/me/email/verify`) : jusque-là,
+        l'ancienne adresse vérifiée reste celle du compte et la nouvelle apparaît dans
+        `pendingEmail` du profil. Un nouvel envoi annule le code précédent. La réponse est la même
+        que l'adresse soit déjà utilisée par un autre compte ou non.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` et `IDENTITY_EMAIL_INVALID` (400),
+        `IDENTITY_EMAIL_ALREADY_VERIFIED` (422, adresse déjà vérifiée sur ce compte),
+        `IDENTITY_OTP_RATE_LIMITED` et `GATEWAY_RATE_LIMITED` (429), `IDENTITY_OTP_SEND_FAILED` (503),
+        `IDENTITY_USER_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.identity.v1.AccountService/ChangeEmail
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: email_code_request
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeEmailRequest'
+            example:
+              email: compta@entreprise.bj
+      responses:
+        '200':
+          description: Code envoyé à la nouvelle adresse
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeEmailResponse'
+              example:
+                pendingEmail: compta@entreprise.bj
+                expiresInSeconds: 900
+                resendAfterSeconds: 60
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/me/email/verify:
+    post:
+      tags: [Compte]
+      operationId: confirmEmail
+      summary: Confirmer son e-mail par le code reçu
+      description: |
+        Le dernier code envoyé confirme l'adresse : elle devient l'e-mail vérifié du compte
+        (`emailVerified`) et remplace l'ancienne. Seule une adresse vérifiée reçoit des e-mails
+        (factures, documents, avis d'impayés).
+
+        Erreurs : `IDENTITY_OTP_INVALID` (400, `details.attemptsRemaining`),
+        `IDENTITY_OTP_EXPIRED` et `IDENTITY_OTP_TOO_MANY_ATTEMPTS` (422),
+        `IDENTITY_EMAIL_ALREADY_USED` (409, adresse vérifiée par un autre compte),
+        `IDENTITY_USER_NOT_FOUND` (404), `GATEWAY_RATE_LIMITED` (429).
+      x-ksp-grpc: ksp.identity.v1.AccountService/ConfirmEmail
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: email_code_verify
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmEmailRequest'
+            example:
+              code: '482913'
+      responses:
+        '200':
+          description: Adresse confirmée, profil à jour
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+              example:
+                user:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                  status: active
+                  firstName: Koffi
+                  lastName: Adjovi
+                  phone: '+2290197000045'
+                  email: compta@entreprise.bj
+                  emailVerified: true
+                  preferredLanguage: fr
+                  createdAt: '2026-10-17T10:00:00Z'
+                profileIncomplete: false
+                pendingEmail: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -3890,7 +4047,7 @@ components:
 
   responses:
     BadRequest:
-      description: Requête invalide (`GATEWAY_VALIDATION_FAILED`, `GATEWAY_CLIENT_UNKNOWN`, `IDENTITY_OTP_INVALID`, `IDENTITY_MFA_CODE_INVALID`, `IDENTITY_MFA_CODE_REUSED`)
+      description: Requête invalide (`GATEWAY_VALIDATION_FAILED`, `GATEWAY_CLIENT_UNKNOWN`, `IDENTITY_OTP_INVALID`, `IDENTITY_MFA_CODE_INVALID`, `IDENTITY_MFA_CODE_REUSED`, `IDENTITY_EMAIL_INVALID`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -3951,7 +4108,7 @@ components:
               details: {}
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
     UnprocessableEntity:
-      description: Code expiré ou annulé, étape de double authentification impossible (`IDENTITY_OTP_EXPIRED`, `IDENTITY_OTP_TOO_MANY_ATTEMPTS`, `IDENTITY_MFA_*`)
+      description: Code expiré ou annulé, étape de double authentification impossible, adresse déjà vérifiée (`IDENTITY_OTP_EXPIRED`, `IDENTITY_OTP_TOO_MANY_ATTEMPTS`, `IDENTITY_MFA_*`, `IDENTITY_EMAIL_ALREADY_VERIFIED`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -4000,7 +4157,7 @@ components:
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
 
     Conflict:
-      description: Conflit (`CLEANING_TEAM_UNAVAILABLE`, `CLEANING_CONCURRENT_UPDATE`, `CLEANING_AGENT_ALREADY_REGISTERED`)
+      description: Conflit (`CLEANING_TEAM_UNAVAILABLE`, `CLEANING_CONCURRENT_UPDATE`, `CLEANING_AGENT_ALREADY_REGISTERED`, `IDENTITY_EMAIL_ALREADY_USED`)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -4105,7 +4262,7 @@ components:
     User:
       type: object
       additionalProperties: false
-      required: [id, status, firstName, lastName, phone, email, preferredLanguage, createdAt]
+      required: [id, status, firstName, lastName, phone, email, emailVerified, preferredLanguage, createdAt]
       properties:
         id:
           type: string
@@ -4123,6 +4280,10 @@ components:
         email:
           type: [string, 'null']
           format: email
+          description: Adresse du compte, en minuscules ; enregistrée seulement après confirmation par code.
+        emailVerified:
+          type: boolean
+          description: L'e-mail a été confirmé par un code. Seule une adresse vérifiée reçoit des e-mails.
         preferredLanguage:
           type: string
         createdAt:
@@ -4444,12 +4605,54 @@ components:
     MeResponse:
       type: object
       additionalProperties: false
-      required: [user, profileIncomplete]
+      required: [user, profileIncomplete, pendingEmail]
       properties:
         user:
           $ref: '#/components/schemas/User'
         profileIncomplete:
           type: boolean
+        pendingEmail:
+          type: [string, 'null']
+          format: email
+          description: Adresse en attente de confirmation par code (code envoyé, encore valable) ; null sinon.
+
+    ChangeEmailRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email:
+          type: string
+          minLength: 3
+          maxLength: 254
+          description: Adresse à confirmer ; espaces autour retirés et mise en minuscules par identity.
+
+    ChangeEmailResponse:
+      type: object
+      additionalProperties: false
+      required: [pendingEmail, expiresInSeconds, resendAfterSeconds]
+      properties:
+        pendingEmail:
+          type: string
+          format: email
+          description: Adresse à confirmer, normalisée.
+        expiresInSeconds:
+          type: integer
+          minimum: 1
+        resendAfterSeconds:
+          type: integer
+          minimum: 0
+          description: Délai avant de pouvoir demander un nouveau code.
+
+    ConfirmEmailRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          pattern: '^[0-9]{4,8}$'
+          description: Code reçu par e-mail.
 
     UpdateMeRequest:
       type: object

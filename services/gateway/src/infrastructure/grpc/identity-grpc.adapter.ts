@@ -4,6 +4,7 @@ import { Logger } from '@nestjs/common';
 import { type Metadata } from '@grpc/grpc-js';
 import { type Observable } from 'rxjs';
 import {
+  type EmailChange,
   type IdentityAccount,
   type IdentityAuth,
   type LoginOutcome,
@@ -81,6 +82,7 @@ function toUser(user: identityV1.User | undefined): UserProfile {
     lastName: orNull(user.lastName),
     phone: orNull(user.phoneE164),
     email: orNull(user.email),
+    emailVerified: user.emailVerified,
     preferredLanguage: user.preferredLanguage,
     createdAt: user.createdAt,
   };
@@ -99,8 +101,12 @@ function toSession(tokens: identityV1.SessionTokens | undefined): SessionTokens 
   };
 }
 
-function toProfile(response: identityV1.GetMeResponse): Profile {
-  return { user: toUser(response.user), profileIncomplete: response.profileIncomplete };
+function toProfile(response: identityV1.GetMeResponse | identityV1.ConfirmEmailResponse): Profile {
+  return {
+    user: toUser(response.user),
+    profileIncomplete: response.profileIncomplete,
+    pendingEmail: 'pendingEmail' in response ? orNull(response.pendingEmail) : null,
+  };
 }
 
 /**
@@ -249,6 +255,23 @@ export class IdentityGrpcAdapter implements IdentityAuth, IdentityAccount {
     if (changes.lastName !== undefined) request.lastName = changes.lastName;
     if (changes.preferredLanguage !== undefined) request.preferredLanguage = changes.preferredLanguage;
     return toProfile(await this.call('updateMe', (metadata) => this.account.updateMe(request, metadata)));
+  }
+
+  async changeEmail(email: string): Promise<EmailChange> {
+    const response = await this.call('changeEmail', (metadata) =>
+      this.account.changeEmail({ email }, metadata),
+    );
+    return {
+      pendingEmail: response.pendingEmail,
+      expiresInSeconds: response.expiresInSeconds,
+      resendAfterSeconds: response.resendAfterSeconds,
+    };
+  }
+
+  async confirmEmail(code: string): Promise<Profile> {
+    return toProfile(
+      await this.call('confirmEmail', (metadata) => this.account.confirmEmail({ code }, metadata)),
+    );
   }
 
   private async call<T>(

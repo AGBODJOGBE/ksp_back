@@ -24,15 +24,21 @@ curl -s -X POST localhost:3000/api/v1/identity/otp/request \
 
 ## Routes du lot 1
 
-| Route                                 | Appel gRPC                                          | Accès            | Limite (par minute) |
-| ------------------------------------- | --------------------------------------------------- | ---------------- | ------------------- |
-| `POST /api/v1/identity/otp/request`   | `AuthService/RequestOtp`                            | public           | 5 par IP            |
-| `POST /api/v1/identity/otp/verify`    | `AuthService/VerifyOtp`                             | public           | 10 par IP           |
-| `POST /api/v1/identity/token/refresh` | `AuthService/RefreshSession`                        | jeton de renouv. | 60 par IP           |
-| `POST /api/v1/identity/logout`        | `AuthService/Logout`                                | connecté         | 300 par utilisateur |
-| `GET /api/v1/identity/me`             | `AccountService/GetMe`                              | connecté         | 300 par utilisateur |
-| `PATCH /api/v1/identity/me`           | `AccountService/UpdateMe`                           | connecté         | 300 par utilisateur |
-| `GET /.well-known/jwks.json`          | cache de la gateway (JWKS HTTP d'identity, ADR-020) | public           | 60 par IP           |
+| Route                                   | Appel gRPC                                          | Accès            | Limite (par minute) |
+| --------------------------------------- | --------------------------------------------------- | ---------------- | ------------------- |
+| `POST /api/v1/identity/otp/request`     | `AuthService/RequestOtp`                            | public           | 5 par IP            |
+| `POST /api/v1/identity/otp/verify`      | `AuthService/VerifyOtp`                             | public           | 10 par IP           |
+| `POST /api/v1/identity/token/refresh`   | `AuthService/RefreshSession`                        | jeton de renouv. | 60 par IP           |
+| `POST /api/v1/identity/logout`          | `AuthService/Logout`                                | connecté         | 300 par utilisateur |
+| `GET /api/v1/identity/me`               | `AccountService/GetMe`                              | connecté         | 300 par utilisateur |
+| `PATCH /api/v1/identity/me`             | `AccountService/UpdateMe`                           | connecté         | 300 par utilisateur |
+| `PUT /api/v1/identity/me/email`         | `AccountService/ChangeEmail`                        | connecté         | 3 par utilisateur   |
+| `POST /api/v1/identity/me/email/verify` | `AccountService/ConfirmEmail`                       | connecté         | 10 par utilisateur  |
+| `GET /.well-known/jwks.json`            | cache de la gateway (JWKS HTTP d'identity, ADR-020) | public           | 60 par IP           |
+
+E-mail du profil (lot 2) : `PUT /api/v1/identity/me/email` envoie un code par e-mail à la nouvelle
+adresse, `POST /api/v1/identity/me/email/verify` la confirme (ADR-026). identity ajoute ses propres
+limites par adresse et par compte.
 
 ## Routes du Nettoyage (lot 2)
 

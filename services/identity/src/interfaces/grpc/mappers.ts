@@ -21,5 +21,6 @@ export function toUserMessage(account: Account): identityV1.User {
     email: account.email ?? '',
     preferredLanguage: account.preferredLanguage,
     createdAt: account.createdAt.toISOString(),
+    emailVerified: account.email !== null && account.emailVerifiedAt !== null,
   };
 }

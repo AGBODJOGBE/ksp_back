@@ -4,6 +4,9 @@ import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { GetMeUseCase, UpdateMeUseCase } from './application/account/account.use-cases';
 import { GetUsersUseCase } from './application/directory/get-users.use-case';
+import { ChangeEmailUseCase } from './application/email/change-email.use-case';
+import { ConfirmEmailUseCase } from './application/email/confirm-email.use-case';
+import { PendingEmails } from './application/email/pending-email';
 import { BackofficeSessionOpener } from './application/mfa/backoffice-session-opener';
 import { ConfirmTotpUseCase } from './application/mfa/confirm-totp.use-case';
 import { EnrollTotpUseCase } from './application/mfa/enroll-totp.use-case';
@@ -19,6 +22,7 @@ import { AccessTokenIssuer } from './application/token/access-token-issuer';
 import { GetSigningKeysUseCase } from './application/token/get-signing-keys.use-case';
 import {
   backofficeSessionPolicyFrom,
+  emailOtpPolicyFrom,
   mfaPolicyFrom,
   otpPolicyFrom,
   type ServiceConfig,
@@ -26,6 +30,8 @@ import {
   sessionPolicyFrom,
 } from './config';
 import { TOTP_DEFAULTS } from './domain/mfa/totp';
+import { NotificationEmailCodeSender } from './infrastructure/email/notification-email-code-sender';
+import { PrismaEmailVerificationRepository } from './infrastructure/email/prisma-email-verification.repository';
 import { AesGcmSecretCipher } from './infrastructure/mfa/aes-gcm-secret-cipher';
 import { CryptoMfaTokenGenerator, CryptoRecoveryCodes } from './infrastructure/mfa/crypto-mfa-secrets';
 import { HmacTotpGenerator } from './infrastructure/mfa/hmac-totp-generator';
@@ -55,6 +61,7 @@ import { OAuthTokenHttpController } from './interfaces/http/oauth-token.controll
 
 const NOTIFICATION_CLIENT = Symbol('NOTIFICATION_CLIENT');
 const OTP_SENDER = Symbol('OTP_SENDER');
+const EMAIL_CODE_SENDER = Symbol('EMAIL_CODE_SENDER');
 const TOKEN_SIGNER = Symbol('TOKEN_SIGNER');
 const SECRET_CIPHER = Symbol('SECRET_CIPHER');
 
@@ -315,10 +322,18 @@ export class AppModule {
           inject: [PrismaSessionStore],
           useFactory: (sessions: PrismaSessionStore) => new LogoutUseCase(sessions, new SystemClock()),
         },
+        PrismaEmailVerificationRepository,
+        {
+          provide: PendingEmails,
+          inject: [PrismaEmailVerificationRepository],
+          useFactory: (verifications: PrismaEmailVerificationRepository) =>
+            new PendingEmails(verifications, new SystemClock(), emailOtpPolicyFrom(config).maxAttempts),
+        },
         {
           provide: GetMeUseCase,
-          inject: [PrismaLoginRepository],
-          useFactory: (accounts: PrismaLoginRepository) => new GetMeUseCase(accounts),
+          inject: [PrismaLoginRepository, PendingEmails],
+          useFactory: (accounts: PrismaLoginRepository, pendingEmails: PendingEmails) =>
+            new GetMeUseCase(accounts, pendingEmails),
         },
         {
           provide: GetUsersUseCase,
@@ -327,8 +342,54 @@ export class AppModule {
         },
         {
           provide: UpdateMeUseCase,
-          inject: [PrismaLoginRepository],
-          useFactory: (accounts: PrismaLoginRepository) => new UpdateMeUseCase(accounts),
+          inject: [PrismaLoginRepository, PendingEmails],
+          useFactory: (accounts: PrismaLoginRepository, pendingEmails: PendingEmails) =>
+            new UpdateMeUseCase(accounts, pendingEmails),
+        },
+        {
+          provide: EMAIL_CODE_SENDER,
+          inject: [NOTIFICATION_CLIENT, IssueServiceTokenUseCase],
+          useFactory: (grpc: ClientGrpc, serviceTokens: IssueServiceTokenUseCase) =>
+            new NotificationEmailCodeSender(
+              grpc.getService<notificationV1.NotificationServiceClient>(
+                notificationV1.NOTIFICATION_SERVICE_NAME,
+              ),
+              new GrpcCaller({
+                target: 'notification',
+                serviceTokenProvider: new LocalServiceTokenProvider(serviceTokens),
+              }),
+            ),
+        },
+        {
+          provide: ChangeEmailUseCase,
+          inject: [PrismaLoginRepository, PrismaEmailVerificationRepository, EMAIL_CODE_SENDER],
+          useFactory: (
+            accounts: PrismaLoginRepository,
+            verifications: PrismaEmailVerificationRepository,
+            sender: NotificationEmailCodeSender,
+          ) =>
+            new ChangeEmailUseCase(
+              accounts,
+              verifications,
+              sender,
+              new HmacOtpHasher(config.OTP_HMAC_SECRET),
+              new CryptoOtpCodeGenerator(),
+              new UuidV7Generator(),
+              new SystemClock(),
+              emailOtpPolicyFrom(config),
+            ),
+        },
+        {
+          provide: ConfirmEmailUseCase,
+          inject: [PrismaLoginRepository, PrismaEmailVerificationRepository],
+          useFactory: (accounts: PrismaLoginRepository, verifications: PrismaEmailVerificationRepository) =>
+            new ConfirmEmailUseCase(
+              accounts,
+              verifications,
+              new HmacOtpHasher(config.OTP_HMAC_SECRET),
+              new SystemClock(),
+              emailOtpPolicyFrom(config),
+            ),
         },
       ],
     };

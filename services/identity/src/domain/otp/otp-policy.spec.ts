@@ -1,4 +1,4 @@
-import { decideSend, type OtpPolicy } from './otp-policy';
+import { decideSend, type OtpPolicy, strictest } from './otp-policy';
 
 const policy: OtpPolicy = {
   codeLength: 6,
@@ -42,5 +42,22 @@ describe('decideSend : limites d’envoi par numéro', () => {
   it('ignore les envois de plus de 24 heures', () => {
     const old = sent(...Array.from({ length: 12 }, (_, i) => 90000 + i * 60));
     expect(decideSend(old, now, policy)).toEqual({ allowed: true });
+  });
+});
+
+describe('strictest : plusieurs limites à la fois', () => {
+  it('autorise seulement si toutes les limites autorisent', () => {
+    expect(strictest([{ allowed: true }, { allowed: true }])).toEqual({ allowed: true });
+    expect(strictest([])).toEqual({ allowed: true });
+  });
+
+  it('refuse avec le délai le plus long', () => {
+    expect(
+      strictest([
+        { allowed: false, retryAfterSeconds: 40 },
+        { allowed: true },
+        { allowed: false, retryAfterSeconds: 600 },
+      ]),
+    ).toEqual({ allowed: false, retryAfterSeconds: 600 });
   });
 });

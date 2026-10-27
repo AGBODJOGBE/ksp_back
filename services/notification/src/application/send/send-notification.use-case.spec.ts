@@ -10,7 +10,7 @@ const otp = (overrides: Partial<SendNotificationInput> = {}): SendNotificationIn
   templateCode: 'identity.otp',
   channel: 'whatsapp',
   fallbackChannels: ['sms'],
-  recipient: { userId: '', phoneE164: '+2290197000045' },
+  recipient: { userId: '', phoneE164: '+2290197000045', email: '' },
   variables: { code: '482913', expires_in_minutes: '5' },
   idempotencyKey: 'challenge-1',
   locale: 'fr',
@@ -125,7 +125,7 @@ describe('SendNotificationUseCase — envoi accepté', () => {
 
   it('garde l’identifiant de compte du destinataire, s’il est fourni', async () => {
     const { notifications, useCase } = setup();
-    await useCase.execute(otp({ recipient: { userId: USER_ID, phoneE164: '+2290197000045' } }));
+    await useCase.execute(otp({ recipient: { userId: USER_ID, phoneE164: '+2290197000045', email: '' } }));
     expect(notifications.rows[0]).toMatchObject({ recipientUserId: USER_ID });
   });
 });
@@ -197,7 +197,7 @@ describe('SendNotificationUseCase — échecs', () => {
     const { notifications, useCase } = setup([whatsapp]);
 
     const error = await useCase
-      .execute(otp({ recipient: { userId: USER_ID, phoneE164: '+2290197000045' } }))
+      .execute(otp({ recipient: { userId: USER_ID, phoneE164: '+2290197000045', email: '' } }))
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(AppError);
     expect(error).toMatchObject({
@@ -311,14 +311,14 @@ describe('SendNotificationUseCase — refus avant tout envoi', () => {
     }));
 
   it.each(['', '0197000045', '+229'])('numéro %p : NOTIFICATION_RECIPIENT_INVALID', (phoneE164) =>
-    rejects(otp({ recipient: { userId: '', phoneE164 } }), {
+    rejects(otp({ recipient: { userId: '', phoneE164, email: '' } }), {
       code: 'NOTIFICATION_RECIPIENT_INVALID',
       kind: 'INVALID_ARGUMENT',
     }),
   );
 
   it('identifiant de compte mal formé : NOTIFICATION_RECIPIENT_INVALID', () =>
-    rejects(otp({ recipient: { userId: 'u-1', phoneE164: '+2290197000045' } }), {
+    rejects(otp({ recipient: { userId: 'u-1', phoneE164: '+2290197000045', email: '' } }), {
       code: 'NOTIFICATION_RECIPIENT_INVALID',
     }));
 
@@ -337,5 +337,78 @@ describe('SendNotificationUseCase — refus avant tout envoi', () => {
   it.each(['identity', 'document', null])('appelant %p accepté', async (callerService) => {
     const { useCase } = setup();
     await expect(useCase.execute(otp({ callerService }))).resolves.toMatchObject({ status: 'accepted' });
+  });
+});
+
+describe('SendNotificationUseCase — code de confirmation de l’e-mail (identity.email_verification)', () => {
+  const emailCode = (overrides: Partial<SendNotificationInput> = {}): SendNotificationInput =>
+    otp({
+      templateCode: 'identity.email_verification',
+      channel: 'email',
+      fallbackChannels: [],
+      recipient: { userId: USER_ID, phoneE164: '', email: 'Koffi@Exemple.com' },
+      variables: { code: '482913', expires_in_minutes: '15' },
+      idempotencyKey: 'verification-1',
+      ttlSeconds: 900,
+      ...overrides,
+    });
+
+  it('envoie par e-mail le texte rédigé par notification, à l’adresse normalisée', async () => {
+    const email = new FakeProvider('email', [{ accepted: true, providerMessageId: 'brevo-1' }]);
+    const { notifications, useCase } = setup([email]);
+
+    await expect(useCase.execute(emailCode())).resolves.toMatchObject({
+      channelUsed: 'email',
+      status: 'accepted',
+    });
+    expect(email.sent).toHaveLength(1);
+    expect(email.sent[0]).toMatchObject({
+      channel: 'email',
+      templateCode: 'identity.email_verification',
+      phoneE164: null,
+      email: 'koffi@exemple.com',
+      content: { subject: 'Confirmez votre adresse e-mail KSP' },
+    });
+    expect(email.sent[0]!.content!.text).toContain('482913');
+    expect(email.sent[0]!.content!.text).toContain('valable 15 minutes');
+    expect(email.sent[0]!.content!.subject).not.toContain('482913');
+    // Modèle secret : ni le code ni l'adresse en clair dans l'historique.
+    expect(notifications.rows[0]).toMatchObject({
+      targetMasked: 'k***@exemple.com',
+      recipientUserId: USER_ID,
+    });
+    expect(JSON.stringify(notifications.rows)).not.toMatch(/482913|koffi@/);
+  });
+
+  it.each(['', 'koffi@', 'pas une adresse'])(
+    'adresse %p : NOTIFICATION_RECIPIENT_INVALID',
+    async (address) => {
+      const email = new FakeProvider('email');
+      const { notifications, useCase } = setup([email]);
+      await expect(
+        useCase.execute(
+          emailCode({ recipient: { userId: USER_ID, phoneE164: '+2290197000045', email: address } }),
+        ),
+      ).rejects.toMatchObject({ code: 'NOTIFICATION_RECIPIENT_INVALID' });
+      expect(notifications.rows).toHaveLength(0);
+      expect(email.sent).toHaveLength(0);
+    },
+  );
+
+  it('ne part que par e-mail : demandé par WhatsApp, le modèle est inconnu', async () => {
+    const { useCase } = setup([new FakeProvider('whatsapp')]);
+    await expect(useCase.execute(emailCode({ channel: 'whatsapp' }))).rejects.toMatchObject({
+      code: 'NOTIFICATION_TEMPLATE_UNKNOWN',
+    });
+  });
+
+  it('refuse un code qui n’est pas fait de chiffres', async () => {
+    const { useCase } = setup([new FakeProvider('email')]);
+    await expect(
+      useCase.execute(emailCode({ variables: { code: '<b>1</b>', expires_in_minutes: '15' } })),
+    ).rejects.toMatchObject({
+      code: 'NOTIFICATION_VARIABLES_INVALID',
+      details: { invalidVariables: ['code'] },
+    });
   });
 });

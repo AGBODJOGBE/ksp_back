@@ -33,13 +33,18 @@ export class IdentityRecipientDirectory implements RecipientDirectory {
   }
 }
 
-/** Convention protobuf : une chaîne vide vaut une valeur absente. */
+/**
+ * Convention protobuf : une chaîne vide vaut une valeur absente.
+ * Règle : un e-mail ne part que vers une adresse vérifiée par code (factures, documents, avis
+ * d'impayés). Une adresse non vérifiée est ignorée : le message part par les autres canaux et
+ * reste visible dans l'espace KSP.
+ */
 function toContact(user: identityV1.User): RecipientContact {
   return {
     userId: user.id,
     firstName: user.firstName || null,
     phoneE164: user.phoneE164 || null,
-    email: user.email || null,
+    email: user.emailVerified ? user.email || null : null,
     language: user.preferredLanguage || 'fr',
   };
 }

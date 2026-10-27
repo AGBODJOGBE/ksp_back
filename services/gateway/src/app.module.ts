@@ -18,6 +18,8 @@ import { type CleaningApi } from './application/cleaning/cleaning.ports';
 import { RequestCleaningQuoteUseCase } from './application/cleaning/request-cleaning-quote.use-case';
 import { AuthorizeRequestUseCase } from './application/access/authorize-request.use-case';
 import {
+  ChangeEmailUseCase,
+  ConfirmEmailUseCase,
   ConfirmTotpUseCase,
   EnrollTotpUseCase,
   GetMeUseCase,
@@ -212,6 +214,8 @@ export class AppModule {
         identityUseCase(EnrollTotpUseCase),
         identityUseCase(ConfirmTotpUseCase),
         identityUseCase(VerifyMfaUseCase),
+        identityUseCase(ChangeEmailUseCase),
+        identityUseCase(ConfirmEmailUseCase),
         {
           provide: GetPublicKeysUseCase,
           inject: [SigningKeysCache],

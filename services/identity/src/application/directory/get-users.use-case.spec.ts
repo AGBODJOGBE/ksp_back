@@ -12,6 +12,7 @@ const account = (id: string, overrides: Partial<Account> = {}): Account => ({
   lastName: 'Adjovi',
   phoneE164: '+2290197000045',
   email: 'koffi@example.com',
+  emailVerifiedAt: new Date('2026-10-20T09:00:00Z'),
   preferredLanguage: 'fr',
   createdAt: new Date('2026-10-19T12:00:00Z'),
   ...overrides,

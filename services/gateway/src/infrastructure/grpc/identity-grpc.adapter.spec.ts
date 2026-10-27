@@ -14,6 +14,7 @@ const protoUser: identityV1.User = {
   email: '',
   preferredLanguage: 'fr',
   createdAt: '2026-10-17T10:00:00.000Z',
+  emailVerified: false,
 };
 
 const protoSession: identityV1.SessionTokens = {
@@ -54,6 +55,8 @@ function setup(overrides: Partial<Record<string, (request: unknown) => Observabl
   const account = {
     getMe: handler('getMe', () => of({ user: protoUser, profileIncomplete: false })),
     updateMe: handler('updateMe', () => of({ user: protoUser, profileIncomplete: false })),
+    changeEmail: handler('changeEmail', () => of({})),
+    confirmEmail: handler('confirmEmail', () => of({})),
   } as unknown as identityV1.AccountServiceClient;
   const adapter = new IdentityGrpcAdapter(
     auth,
@@ -139,6 +142,7 @@ describe('IdentityGrpcAdapter', () => {
           lastName: 'Adjovi',
           phone: '+2290197000045',
           email: null,
+          emailVerified: false,
           preferredLanguage: 'fr',
           createdAt: '2026-10-17T10:00:00.000Z',
         },
@@ -178,6 +182,40 @@ describe('IdentityGrpcAdapter', () => {
     const { adapter, calls } = setup();
     await adapter.updateMe({ firstName: 'Koffi' });
     expect(calls[0]!.request).toEqual({ firstName: 'Koffi' });
+  });
+
+  it('e-mail du profil : adresse envoyée telle quelle, profil confirmé avec l’adresse vérifiée', async () => {
+    const { adapter, calls } = setup({
+      changeEmail: () =>
+        of({ pendingEmail: 'koffi@exemple.com', expiresInSeconds: 900, resendAfterSeconds: 60 }),
+      confirmEmail: () =>
+        of({
+          user: { ...protoUser, email: 'koffi@exemple.com', emailVerified: true },
+          profileIncomplete: false,
+        }),
+    });
+    await expect(adapter.changeEmail('Koffi@Exemple.com')).resolves.toEqual({
+      pendingEmail: 'koffi@exemple.com',
+      expiresInSeconds: 900,
+      resendAfterSeconds: 60,
+    });
+    expect(calls[0]).toMatchObject({ method: 'changeEmail', request: { email: 'Koffi@Exemple.com' } });
+    await expect(adapter.confirmEmail('482913')).resolves.toMatchObject({
+      user: { email: 'koffi@exemple.com', emailVerified: true },
+      profileIncomplete: false,
+      pendingEmail: null,
+    });
+    expect(calls[1]).toMatchObject({ method: 'confirmEmail', request: { code: '482913' } });
+  });
+
+  it('profil : adresse en attente de confirmation, vide = absente', async () => {
+    const { adapter } = setup({
+      getMe: () => of({ user: protoUser, profileIncomplete: true, pendingEmail: 'koffi@exemple.com' }),
+    });
+    await expect(adapter.getMe()).resolves.toMatchObject({
+      user: { email: null, emailVerified: false },
+      pendingEmail: 'koffi@exemple.com',
+    });
   });
 
   it('réponse hors contrat : erreur interne', async () => {

@@ -18,6 +18,8 @@ export interface UserProfile {
   lastName: string | null;
   phone: string | null;
   email: string | null;
+  /** L'e-mail a été confirmé par un code : seule une adresse vérifiée reçoit des e-mails. */
+  emailVerified: boolean;
   preferredLanguage: string;
   createdAt: string;
 }
@@ -66,6 +68,15 @@ export type SecondFactorMethod = 'totp' | 'recovery_code';
 export interface Profile {
   user: UserProfile;
   profileIncomplete: boolean;
+  /** Adresse en attente de confirmation par code ; null s'il n'y en a pas. */
+  pendingEmail: string | null;
+}
+
+/** Code de confirmation envoyé à la nouvelle adresse e-mail. */
+export interface EmailChange {
+  pendingEmail: string;
+  expiresInSeconds: number;
+  resendAfterSeconds: number;
 }
 
 export interface ProfileChanges {
@@ -105,4 +116,6 @@ export interface IdentityAuth {
 export interface IdentityAccount {
   getMe(): Promise<Profile>;
   updateMe(changes: ProfileChanges): Promise<Profile>;
+  changeEmail(email: string): Promise<EmailChange>;
+  confirmEmail(code: string): Promise<Profile>;
 }

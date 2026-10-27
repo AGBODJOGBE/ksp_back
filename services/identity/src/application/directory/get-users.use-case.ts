@@ -64,6 +64,8 @@ export class GetUsersUseCase {
     const accounts = await this.directory.findByIds(ids);
     return accounts
       .filter((account) => account.status !== 'deleted')
-      .map((account) => (policy.contact ? account : { ...account, phoneE164: null, email: null }));
+      .map((account) =>
+        policy.contact ? account : { ...account, phoneE164: null, email: null, emailVerifiedAt: null },
+      );
   }
 }
