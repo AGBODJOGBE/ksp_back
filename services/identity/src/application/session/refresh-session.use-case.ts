@@ -1,4 +1,5 @@
 import { PERSONAL_CONTEXT } from '../../domain/context/active-context';
+import { canBeActiveContext } from '../../domain/organization/organization';
 import { isProfileIncomplete } from '../../domain/user/profile';
 import { AppError } from '@ksp/platform';
 import { backofficeRoles } from '../../domain/role/role';
@@ -10,7 +11,8 @@ import {
   type SessionPolicy,
 } from '../../domain/session/session-policy';
 import { mfaErrors } from '../mfa/mfa-errors';
-import { backofficeRoleClaims, CUSTOMER_ROLE } from '../role/role-claims';
+import { type OrganizationRepository } from '../organization/organization.ports';
+import { backofficeRoleClaims, CUSTOMER_ROLE, organizationRoleClaims } from '../role/role-claims';
 import { type RoleRepository } from '../role/role.ports';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { type AccessTokenIssuer, type AccessTokenSubject } from '../token/access-token-issuer';
@@ -34,6 +36,8 @@ export type SessionPolicies = Record<SessionCategory, SessionPolicy>;
  * un ancien jeton présenté de nouveau signale un vol : toute la session est révoquée.
  * Back-office : échéance fixe, fermeture après inactivité, rôles relus à chaque renouvellement
  * (un rôle retiré prend effet ici, UC-ID-19).
+ * Sites et applications : le contexte actif de la session est gardé (UC-ID-15) tant que
+ * l'organisation est validée et l'utilisateur membre ; sinon, retour au contexte personnel (ADR-027).
  */
 export class RefreshSessionUseCase {
   constructor(
@@ -45,6 +49,7 @@ export class RefreshSessionUseCase {
     private readonly clock: Clock,
     private readonly policies: SessionPolicies,
     private readonly roles: RoleRepository,
+    private readonly organizations: Pick<OrganizationRepository, 'membership'>,
   ) {}
 
   async execute(refreshToken: string): Promise<Omit<OpenedSession, 'isNewUser'>> {
@@ -75,6 +80,7 @@ export class RefreshSessionUseCase {
       throw invalid();
     }
     const grants = await this.grantsOf(stored, now);
+    const context = await this.contextOf(stored);
 
     const next = this.refreshTokens.generate();
     const sessionExpiresAt = renewedExpiry(session.expiresAt, now, policy);
@@ -83,6 +89,7 @@ export class RefreshSessionUseCase {
       newToken: { id: this.ids.next(), hash: next.hash },
       sessionId: session.id,
       sessionExpiresAt,
+      activeOrgId: context.organizationId,
       now,
     });
     if (!rotated) {
@@ -95,8 +102,10 @@ export class RefreshSessionUseCase {
       userId: account.id,
       sessionId: session.id,
       clientId: session.clientKind,
-      activeContext: PERSONAL_CONTEXT,
+      activeContext: context.organizationId ?? PERSONAL_CONTEXT,
+      organizationName: context.organizationName,
       ...grants,
+      ...(context.roles ? { roles: context.roles } : {}),
     });
     return {
       accessToken: access.token,
@@ -107,6 +116,28 @@ export class RefreshSessionUseCase {
       account,
       profileIncomplete: isProfileIncomplete(account),
       activeContext: access.activeContext,
+    };
+  }
+
+  /**
+   * Organisation active gardée par le renouvellement, avec les rôles du membre ; null (contexte
+   * personnel) si la session n'en a pas, si l'organisation n'est plus validée ou si l'utilisateur
+   * n'en est plus membre. Le back-office reste toujours dans le contexte personnel.
+   */
+  private async contextOf(stored: StoredRefreshToken): Promise<{
+    organizationId: string | null;
+    organizationName: string | null;
+    roles: AccessTokenSubject['roles'] | null;
+  }> {
+    const { session, account } = stored;
+    const personal = { organizationId: null, organizationName: null, roles: null };
+    if (!session.activeOrgId || sessionCategory(session.clientKind) !== 'customer') return personal;
+    const membership = await this.organizations.membership(account.id, session.activeOrgId);
+    if (!membership || !canBeActiveContext(membership.organization.status)) return personal;
+    return {
+      organizationId: membership.organization.id,
+      organizationName: membership.organization.legalName,
+      roles: organizationRoleClaims(membership.organization.id, membership.role),
     };
   }
 

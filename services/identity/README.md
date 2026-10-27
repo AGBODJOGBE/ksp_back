@@ -64,5 +64,15 @@ paiement). identity expose la même lecture aux fronts dans `active_context` (`t
 `individual` ou `business`, `organization_id`) : avec chaque session ouverte ou renouvelée (contexte
 du jeton émis) et dans `GetMe`, `UpdateMe` et `ConfirmEmail` (contexte du jeton de l'appelant).
 
-Aucune organisation n'existe encore (UC-ID-12 à 16 : création, rattachement, `SwitchContext`) :
-toutes les sessions sont ouvertes dans le contexte personnel, donc `individual`.
+Une session s'ouvre dans le contexte personnel (`individual`) ; `SwitchContext` active une
+organisation validée (`business`, avec `organization_name`), voir ci-dessous.
+
+## Comptes entreprise (ADR-027)
+
+| Règle                 | Fonctionnement                                                                                                                                                                                                                                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Création              | `OrganizationService.CreateOrganization` (portail) : raison sociale, adresse, IFU (13 chiffres), RCCM facultatif. État `pending_review` ; le demandeur devient `org_admin`. Un IFU par organisation non refusée ; 3 demandes en attente au plus par compte.                                                                                               |
+| Validation            | `OrganizationAdminService` (back-office) : `super_admin` valide, refuse (motif), suspend (motif) ou réactive ; `super_admin` et `support_agent` consultent. Double authentification revérifiée ; chaque décision est écrite dans `audit_log`.                                                                                                             |
+| Contexte actif        | `AuthService.SwitchContext` : organisation validée dont l'appelant est membre → `sessions.active_org_id` et nouveau jeton d'accès (`ctx` = organisation, rôle `org_admin` de portée `org`). Le renouvellement garde ce contexte, ou revient au personnel si l'organisation n'est plus validée ou le membre retiré. Back-office : contexte personnel seul. |
+| E-mail de facturation | `ChangeOrganizationBillingEmail` puis `ConfirmOrganizationBillingEmail` (`org_admin`, organisation en attente ou validée) : mêmes règles que l'e-mail du profil, limites d'envoi partagées, modèle `identity.organization_email_verification`.                                                                                                            |
+| Événements            | `identity.organization.created`, `identity.member.added`, `identity.organization.validated`, `.rejected`, `.suspended`, `.reactivated` (outbox).                                                                                                                                                                                                          |

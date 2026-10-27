@@ -1,7 +1,13 @@
 import { AppError } from '@ksp/platform';
 import { PERSONAL_CONTEXT } from '../../domain/context/active-context';
+import { ActiveContexts } from '../context/active-contexts';
 import { PendingEmails } from '../email/pending-email';
-import { InMemoryChallenges, InMemoryEmailVerifications, InMemoryIdentityStore } from '../testing/fakes';
+import {
+  InMemoryChallenges,
+  InMemoryEmailVerifications,
+  InMemoryIdentityStore,
+  InMemoryOrganizations,
+} from '../testing/fakes';
 import { GetMeUseCase, UpdateMeUseCase } from './account.use-cases';
 
 function setup() {
@@ -22,7 +28,14 @@ function setup() {
     { now: () => new Date('2026-10-27T12:00:00Z') },
     5,
   );
-  return { store, getMe: new GetMeUseCase(store, pending), updateMe: new UpdateMeUseCase(store, pending) };
+  const organizations = new InMemoryOrganizations();
+  const contexts = new ActiveContexts(organizations);
+  return {
+    store,
+    organizations,
+    getMe: new GetMeUseCase(store, pending, contexts),
+    updateMe: new UpdateMeUseCase(store, pending, contexts),
+  };
 }
 
 async function expectAppError(promise: Promise<unknown>, code: string): Promise<AppError> {
@@ -43,11 +56,24 @@ describe('GetMeUseCase', () => {
     });
   });
 
-  it('une organisation active dans le jeton fait un compte entreprise', async () => {
-    const { getMe } = setup();
+  it('une organisation active dans le jeton fait un compte entreprise, avec sa raison sociale', async () => {
+    const { getMe, organizations } = setup();
     const organizationId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e20';
     await expect(getMe.execute('u-1', organizationId)).resolves.toMatchObject({
-      activeContext: { type: 'business', organizationId },
+      activeContext: { type: 'business', organizationId, organizationName: null },
+    });
+    await organizations.create({
+      id: organizationId,
+      legalName: 'SARL Bénin Propre',
+      address: 'Haie Vive, Cotonou',
+      ifu: '3201912345678',
+      rccm: null,
+      createdBy: 'u-1',
+      memberId: 'm-1',
+      now: new Date('2026-10-27T12:00:00Z'),
+    });
+    await expect(getMe.execute('u-1', organizationId)).resolves.toMatchObject({
+      activeContext: { type: 'business', organizationId, organizationName: 'SARL Bénin Propre' },
     });
   });
 
@@ -70,7 +96,11 @@ describe('UpdateMeUseCase', () => {
     });
     expect(profile.account).toMatchObject({ firstName: 'Jean-Baptiste', lastName: "N'Diaye" });
     expect(profile.profileIncomplete).toBe(false);
-    expect(profile.activeContext).toEqual({ type: 'individual', organizationId: null });
+    expect(profile.activeContext).toEqual({
+      type: 'individual',
+      organizationId: null,
+      organizationName: null,
+    });
   });
 
   it('ne modifie que les champs envoyés', async () => {

@@ -1,3 +1,4 @@
+import { type SwitchContextUseCase } from '../../application/session/switch-context.use-case';
 import { identityV1 } from '@ksp/contracts';
 import { runWithContext } from '@ksp/platform';
 import { type ConfirmTotpUseCase } from '../../application/mfa/confirm-totp.use-case';
@@ -33,7 +34,7 @@ const opened: OpenedSession = {
     createdAt: new Date('2026-10-19T12:00:00Z'),
   },
   profileIncomplete: true,
-  activeContext: { type: 'individual', organizationId: null },
+  activeContext: { type: 'individual', organizationId: null, organizationName: null },
   isNewUser: true,
 };
 
@@ -109,6 +110,19 @@ function controller() {
       recoveryCodes: ['7KQ2M-X9PDA'],
     }),
   } as unknown as ConfirmTotpUseCase;
+  const switches: { userId: string; sessionId: string; organizationId: string | null }[] = [];
+  const switchContext = {
+    execute: async (input: { userId: string; sessionId: string; organizationId: string | null }) => {
+      switches.push(input);
+      return {
+        accessToken: 'jwt-org',
+        accessTokenExpiresAt: new Date('2026-10-27T10:15:00Z'),
+        activeContext: input.organizationId
+          ? { type: 'business', organizationId: input.organizationId, organizationName: 'SARL Bénin Propre' }
+          : { type: 'individual', organizationId: null, organizationName: null },
+      };
+    },
+  } as unknown as SwitchContextUseCase;
   const mfaVerifications: VerifyMfaInput[] = [];
   const verifyMfa = {
     execute: async (input: VerifyMfaInput) => {
@@ -117,6 +131,7 @@ function controller() {
     },
   } as unknown as VerifyMfaUseCase;
   return {
+    switches,
     requests,
     verifications,
     mfaVerifications,
@@ -132,6 +147,7 @@ function controller() {
       enroll,
       confirm,
       verifyMfa,
+      switchContext,
     ),
   };
 }
@@ -226,6 +242,7 @@ describe('AuthGrpcController.verifyOtp', () => {
           activeContext: {
             type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL,
             organizationId: '',
+            organizationName: '',
           },
         },
       },
@@ -371,5 +388,39 @@ describe('AuthGrpcController : double authentification (UC-ID-09)', () => {
     await expect(
       auth.enrollTotp({ mfaToken: 'mfa-1', clientKind: identityV1.ClientKind.CLIENT_KIND_UNSPECIFIED }),
     ).rejects.toMatchObject({ code: 'IDENTITY_CLIENT_KIND_INVALID' });
+  });
+});
+
+describe('AuthGrpcController.switchContext (UC-ID-15)', () => {
+  const user = {
+    userId: 'u-1',
+    sessionId: 's-1',
+    activeContext: 'personal',
+    roles: [],
+    mfa: false,
+  };
+  const ORG = '0192f1c4-0000-7000-8000-0000000000a1';
+
+  it('transmet l’utilisateur et la session du jeton, et rend le nouveau jeton au format du contrat', async () => {
+    const { auth, switches } = controller();
+    const response = await runWithContext({ correlationId: 'c', user }, () =>
+      auth.switchContext({ organizationId: ORG }),
+    );
+    expect(switches).toEqual([{ userId: 'u-1', sessionId: 's-1', organizationId: ORG }]);
+    expect(response).toEqual({
+      accessToken: 'jwt-org',
+      accessTokenExpiresAt: '2026-10-27T10:15:00.000Z',
+      activeContext: {
+        type: identityV1.ContextType.CONTEXT_TYPE_BUSINESS,
+        organizationId: ORG,
+        organizationName: 'SARL Bénin Propre',
+      },
+    });
+  });
+
+  it('organisation vide : retour au contexte personnel', async () => {
+    const { auth, switches } = controller();
+    await runWithContext({ correlationId: 'c', user }, () => auth.switchContext({ organizationId: ' ' }));
+    expect(switches[0].organizationId).toBeNull();
   });
 });

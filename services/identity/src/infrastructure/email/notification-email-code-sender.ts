@@ -6,7 +6,9 @@ import { type EmailAddress } from '../../domain/user/email-address';
 
 /**
  * Envoie le code de confirmation de l'e-mail par appel gRPC direct à notification (même mécanisme
- * que les codes par téléphone, ADR-014), modèle `identity.email_verification`, e-mail seul.
+ * que les codes par téléphone, ADR-014), e-mail seul : modèle `identity.email_verification` pour
+ * l'e-mail du profil, `identity.organization_email_verification` pour l'e-mail de facturation
+ * d'une organisation (raison sociale citée dans le message).
  * L'appel n'est jamais rejoué automatiquement : la clé d'idempotence (identifiant de la demande)
  * garantit un seul envoi.
  */
@@ -22,13 +24,22 @@ export class NotificationEmailCodeSender implements EmailCodeSender {
     email: EmailAddress;
     code: string;
     ttlSeconds: number;
+    organizationName?: string;
   }): Promise<void> {
+    const variables: Record<string, string> = {
+      code: input.code,
+      expires_in_minutes: String(Math.ceil(input.ttlSeconds / 60)),
+    };
+    if (input.organizationName !== undefined) variables['organization_name'] = input.organizationName;
     const request: notificationV1.SendNotificationRequest = {
-      templateCode: 'identity.email_verification',
+      templateCode:
+        input.organizationName === undefined
+          ? 'identity.email_verification'
+          : 'identity.organization_email_verification',
       channel: notificationV1.Channel.CHANNEL_EMAIL,
       fallbackChannels: [],
       recipient: { userId: input.userId, phoneE164: '', email: input.email.value },
-      variables: { code: input.code, expires_in_minutes: String(Math.ceil(input.ttlSeconds / 60)) },
+      variables,
       priority: notificationV1.Priority.PRIORITY_HIGH,
       idempotencyKey: input.verificationId,
       locale: 'fr',

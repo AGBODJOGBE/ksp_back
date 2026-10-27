@@ -76,6 +76,7 @@ model User {
   recoveryCodes      MfaRecoveryCode[]
   mfaChallenges      MfaChallenge[]
   emailVerifications EmailVerification[]
+  memberships        OrganizationMember[]
 
   @@map("users")
 }
@@ -133,7 +134,8 @@ model Session {
   deviceLabel  String?    @map("device_label")
   userAgent    String?    @map("user_agent")
   ip           String?
-  /// Organisation active ; vide pour le contexte personnel (UC-ID-15).
+  /// Organisation active ; vide pour le contexte personnel (UC-ID-15). Relue à chaque renouvellement :
+  /// une organisation suspendue ou un membre retiré ramène la session au contexte personnel (ADR-027).
   activeOrgId  String?    @map("active_org_id") @db.Uuid
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   lastSeenAt   DateTime   @map("last_seen_at") @db.Timestamptz(3)
@@ -290,24 +292,116 @@ model MfaChallenge {
 /// clair : seulement son HMAC. Seule la dernière demande d'un compte peut être confirmée. Les lignes
 /// sont gardées : elles retracent les adresses déclarées, les essais et les confirmations.
 model EmailVerification {
-  id           String    @id @db.Uuid
-  userId       String    @map("user_id") @db.Uuid
+  id             String    @id @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  /// E-mail de facturation d'une organisation (ADR-027) ; vide pour l'e-mail du profil. Les limites
+  /// d'envoi (par adresse, par compte) portent sur toutes les demandes, profil et organisations.
+  organizationId String?   @map("organization_id") @db.Uuid
   /// Adresse à confirmer, en minuscules.
-  email        String
-  codeHash     String    @map("code_hash")
-  attempts     Int       @default(0)
-  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
-  consumedAt   DateTime? @map("consumed_at") @db.Timestamptz(3)
-  ip           String?
-  createdAt    DateTime  @map("created_at") @db.Timestamptz(3)
-  sentAt       DateTime? @map("sent_at") @db.Timestamptz(3)
-  sendFailedAt DateTime? @map("send_failed_at") @db.Timestamptz(3)
+  email          String
+  codeHash       String    @map("code_hash")
+  attempts       Int       @default(0)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt     DateTime? @map("consumed_at") @db.Timestamptz(3)
+  ip             String?
+  createdAt      DateTime  @map("created_at") @db.Timestamptz(3)
+  sentAt         DateTime? @map("sent_at") @db.Timestamptz(3)
+  sendFailedAt   DateTime? @map("send_failed_at") @db.Timestamptz(3)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   /// Dernière demande d'un compte, et limites d'envoi par compte.
   @@index([userId, sentAt])
+  /// Dernière demande d'une organisation.
+  @@index([organizationId, createdAt])
   /// Limites d'envoi par adresse.
   @@index([email, sentAt])
   @@map("email_verifications")
+}
+
+/// État d'une organisation (ADR-027) : demande en attente, validée, refusée ou suspendue par KSP.
+enum OrganizationStatus {
+  pending_review
+  active
+  rejected
+  suspended
+}
+
+/// Rôle d'un membre dans son organisation (portée org).
+enum OrgRole {
+  org_admin
+  org_member
+  org_viewer
+}
+
+/// Organisation cliente : compte entreprise (UC-ID-12 à 16, ADR-027). Un IFU n'appartient qu'à une
+/// organisation non refusée : index unique partiel écrit dans la migration.
+model Organization {
+  id                     String             @id @db.Uuid
+  /// Raison sociale.
+  legalName              String             @map("legal_name")
+  address                String
+  /// Identifiant fiscal unique (Bénin) : 13 chiffres.
+  ifu                    String
+  rccm                   String?
+  /// E-mail de facturation en minuscules, enregistré seulement après confirmation par code (ADR-026).
+  billingEmail           String?            @map("billing_email")
+  billingEmailVerifiedAt DateTime?          @map("billing_email_verified_at") @db.Timestamptz(3)
+  status                 OrganizationStatus
+  createdBy              String             @map("created_by") @db.Uuid
+  createdAt              DateTime           @map("created_at") @db.Timestamptz(3)
+  /// Admin KSP qui a validé ou refusé la demande.
+  reviewedBy             String?            @map("reviewed_by") @db.Uuid
+  reviewedAt             DateTime?          @map("reviewed_at") @db.Timestamptz(3)
+  rejectionReason        String?            @map("rejection_reason")
+  /// Suspension en cours ; effacée à la réactivation (l'historique est dans audit_log).
+  suspendedBy            String?            @map("suspended_by") @db.Uuid
+  suspendedAt            DateTime?          @map("suspended_at") @db.Timestamptz(3)
+  suspensionReason       String?            @map("suspension_reason")
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  members            OrganizationMember[]
+  emailVerifications EmailVerification[]
+
+  /// Liste du back-office : par état, les plus récentes d'abord.
+  @@index([status, id])
+  /// Demandes en attente d'un compte.
+  @@index([createdBy, status])
+  @@map("organizations")
+}
+
+/// Membres d'une organisation. Un membre retiré garde sa ligne (removed_at) pour l'historique ; une
+/// seule appartenance active par compte et organisation : index unique partiel écrit dans la migration.
+model OrganizationMember {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  role           OrgRole
+  /// Vide : le créateur de l'organisation.
+  addedBy        String?   @map("added_by") @db.Uuid
+  joinedAt       DateTime  @map("joined_at") @db.Timestamptz(3)
+  removedAt      DateTime? @map("removed_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, removedAt])
+  @@index([organizationId])
+  @@map("organization_members")
+}
+
+/// Journal des actions du back-office (validation, refus, suspension, réactivation d'une
+/// organisation), en attendant le service audit. Écrit dans la transaction de l'action.
+model AuditEntry {
+  id         String   @id @db.Uuid
+  actorId    String   @map("actor_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  at         DateTime @db.Timestamptz(3)
+  details    Json?
+
+  @@index([entityType, entityId])
+  @@map("audit_log")
 }

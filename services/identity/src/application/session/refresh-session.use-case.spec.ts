@@ -1,5 +1,5 @@
 import { AppError } from '@ksp/platform';
-import { InMemorySessionStore } from '../testing/fakes';
+import { InMemoryOrganizations, InMemorySessionStore } from '../testing/fakes';
 import { InMemoryRoles } from '../testing/mfa-fakes';
 import { type AccessTokenIssuer } from '../token/access-token-issuer';
 import { LogoutUseCase } from './logout.use-case';
@@ -47,6 +47,7 @@ function setup() {
   );
   store.tokens.push({ id: 't-1', hash: 'h(rt-1)', sessionId: 's-1', usedAt: null });
   const roles = new InMemoryRoles();
+  const organizations = new InMemoryOrganizations();
 
   type Subject = {
     authTime: Date;
@@ -64,7 +65,7 @@ function setup() {
         token: 'jwt',
         tokenId: 'j',
         expiresAt: new Date(now.getTime() + 900_000),
-        activeContext: { type: 'individual' as const, organizationId: null },
+        activeContext: { type: 'individual' as const, organizationId: null, organizationName: null },
       };
     },
   } as unknown as AccessTokenIssuer;
@@ -85,6 +86,7 @@ function setup() {
       },
     },
     roles,
+    organizations,
   );
   const logout = new LogoutUseCase(store, { now: () => now });
   const advance = (ms: number) => {
@@ -104,7 +106,7 @@ function setup() {
     });
     store.tokens.push({ id: 't-bo', hash: 'h(rt-bo)', sessionId: 's-bo', usedAt: null });
   };
-  return { refresh, logout, store, account, roles, issued, advance, backofficeSession };
+  return { refresh, logout, store, account, roles, organizations, issued, advance, backofficeSession };
 }
 
 async function expectAppError(promise: Promise<unknown>, code: string): Promise<AppError> {
@@ -133,7 +135,11 @@ describe('RefreshSessionUseCase (UC-ID-04)', () => {
         authTime: new Date('2026-10-01T08:00:00Z'),
       }),
     ]);
-    expect(renewed.activeContext).toEqual({ type: 'individual', organizationId: null });
+    expect(renewed.activeContext).toEqual({
+      type: 'individual',
+      organizationId: null,
+      organizationName: null,
+    });
   });
 
   it('le nouveau jeton sert au renouvellement suivant', async () => {
@@ -255,5 +261,72 @@ describe('RefreshSessionUseCase (sessions du back-office)', () => {
     expect(store.sessions.find((session) => session.id === 's-bo')).toMatchObject({
       revokeReason: 'backoffice_access_removed',
     });
+  });
+});
+
+describe('RefreshSessionUseCase : contexte actif d’une organisation (UC-ID-15, ADR-027)', () => {
+  const ORG = '0192f1c4-0000-7000-8000-0000000000a1';
+
+  function withOrganization(status: 'active' | 'suspended') {
+    const context = setup();
+    const createdAt = new Date('2026-10-01T08:00:00Z');
+    context.organizations.rows.push({
+      id: ORG,
+      legalName: 'SARL Bénin Propre',
+      address: 'Haie Vive, Cotonou',
+      ifu: '3201912345678',
+      rccm: null,
+      billingEmail: null,
+      status,
+      createdBy: 'u-1',
+      createdAt,
+      reviewedBy: null,
+      reviewedAt: null,
+      rejectionReason: null,
+      suspendedAt: null,
+      suspensionReason: null,
+    });
+    context.organizations.memberRows.push({
+      organizationId: ORG,
+      userId: 'u-1',
+      role: 'org_admin',
+      joinedAt: createdAt,
+      removedAt: null,
+    });
+    context.store.sessions[0].activeOrgId = ORG;
+    return context;
+  }
+
+  it('garde l’organisation active, avec le rôle du membre', async () => {
+    const { refresh, store, issued } = withOrganization('active');
+    await refresh.execute('rt-1');
+    expect(issued[0]).toMatchObject({
+      activeContext: ORG,
+      organizationName: 'SARL Bénin Propre',
+      roles: [
+        { role: 'customer', scopeType: 'personal' },
+        { role: 'org_admin', scopeType: 'org', scopeId: ORG },
+      ],
+    });
+    expect(store.sessions[0].activeOrgId).toBe(ORG);
+  });
+
+  it('organisation suspendue : retour au contexte personnel, enregistré dans la session', async () => {
+    const { refresh, store, issued } = withOrganization('suspended');
+    await refresh.execute('rt-1');
+    expect(issued[0]).toMatchObject({
+      activeContext: 'personal',
+      organizationName: null,
+      roles: [{ role: 'customer', scopeType: 'personal' }],
+    });
+    expect(store.sessions[0].activeOrgId).toBeNull();
+  });
+
+  it('membre retiré : retour au contexte personnel', async () => {
+    const { refresh, store, organizations, issued } = withOrganization('active');
+    organizations.memberRows[0].removedAt = new Date('2026-10-18T00:00:00Z');
+    await refresh.execute('rt-1');
+    expect(issued[0]).toMatchObject({ activeContext: 'personal' });
+    expect(store.sessions[0].activeOrgId).toBeNull();
   });
 });

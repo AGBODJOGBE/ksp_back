@@ -10,6 +10,7 @@ import { VerifyMfaUseCase } from '../../application/mfa/verify-mfa.use-case';
 import { RequestOtpUseCase } from '../../application/otp/request-otp.use-case';
 import { LogoutUseCase } from '../../application/session/logout.use-case';
 import { RefreshSessionUseCase } from '../../application/session/refresh-session.use-case';
+import { SwitchContextUseCase } from '../../application/session/switch-context.use-case';
 import { type OpenedSession, VerifyOtpUseCase } from '../../application/session/verify-otp.use-case';
 import { GetSigningKeysUseCase } from '../../application/token/get-signing-keys.use-case';
 import { type SecondFactorMethod } from '../../domain/mfa/mfa-challenge';
@@ -60,6 +61,7 @@ export class AuthGrpcController implements identityV1.AuthServiceController {
     private readonly enrollTotpUseCase: EnrollTotpUseCase,
     private readonly confirmTotpUseCase: ConfirmTotpUseCase,
     private readonly verifyMfaUseCase: VerifyMfaUseCase,
+    private readonly switchContextUseCase: SwitchContextUseCase,
   ) {}
 
   async requestOtp(request: identityV1.RequestOtpRequest): Promise<identityV1.RequestOtpResponse> {
@@ -143,6 +145,20 @@ export class AuthGrpcController implements identityV1.AuthServiceController {
       ...clientDetails(),
     });
     return { session: toSessionTokens(session), recoveryCodesRemaining: session.recoveryCodesRemaining };
+  }
+
+  async switchContext(request: identityV1.SwitchContextRequest): Promise<identityV1.SwitchContextResponse> {
+    const user = requireUser();
+    const switched = await this.switchContextUseCase.execute({
+      userId: user.userId,
+      sessionId: user.sessionId,
+      organizationId: request.organizationId.trim() || null,
+    });
+    return {
+      accessToken: switched.accessToken,
+      accessTokenExpiresAt: switched.accessTokenExpiresAt.toISOString(),
+      activeContext: toActiveContextMessage(switched.activeContext),
+    };
   }
 }
 

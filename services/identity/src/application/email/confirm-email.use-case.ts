@@ -1,11 +1,11 @@
-import { activeContextOf } from '../../domain/context/active-context';
 import { type OtpPolicy } from '../../domain/otp/otp-policy';
-import { challengeState } from '../../domain/otp/otp-verification';
 import { isProfileIncomplete } from '../../domain/user/profile';
 import { type Profile } from '../account/account.use-cases';
+import { type ActiveContexts } from '../context/active-contexts';
 import { type OtpHasher } from '../otp/otp.ports';
 import { type AccountRepository } from '../session/session.ports';
 import { type Clock } from '../shared/system.ports';
+import { checkEmailCode } from './email-code-check';
 import { emailErrors } from './email-errors';
 import {
   EmailAlreadyUsedError,
@@ -34,6 +34,7 @@ export class ConfirmEmailUseCase {
     private readonly hasher: OtpHasher,
     private readonly clock: Clock,
     private readonly policy: OtpPolicy,
+    private readonly contexts: ActiveContexts,
   ) {}
 
   async execute(input: ConfirmEmailInput): Promise<Profile> {
@@ -41,17 +42,14 @@ export class ConfirmEmailUseCase {
     if (!account || account.status === 'deleted') throw emailErrors.userNotFound();
 
     const now = this.clock.now();
-    const verification = await this.verifications.findLatest(account.id);
-    if (!verification) throw emailErrors.expired();
-    const state = challengeState(verification, now, this.policy.maxAttempts);
-    if (state === 'expired') throw emailErrors.expired();
-    if (state === 'exhausted') throw emailErrors.exhausted();
-
-    if (!this.hasher.matches(verification.id, input.code, verification.codeHash)) {
-      const attempts = await this.verifications.registerFailedAttempt(verification.id);
-      if (attempts >= this.policy.maxAttempts) throw emailErrors.exhausted();
-      throw emailErrors.codeInvalid(this.policy.maxAttempts - attempts);
-    }
+    const verification = await checkEmailCode(
+      this.verifications,
+      this.hasher,
+      this.policy,
+      await this.verifications.findLatest(account.id),
+      input.code,
+      now,
+    );
 
     try {
       const confirmed = await this.verifications.confirm({
@@ -64,7 +62,7 @@ export class ConfirmEmailUseCase {
         account: confirmed,
         profileIncomplete: isProfileIncomplete(confirmed),
         pendingEmail: null,
-        activeContext: activeContextOf(input.activeContext),
+        activeContext: await this.contexts.of(input.activeContext),
       };
     } catch (error) {
       if (error instanceof VerificationAlreadyConsumedError) throw emailErrors.expired();
