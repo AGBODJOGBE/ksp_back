@@ -56,7 +56,10 @@ export const configSchema = baseServiceConfigSchema
 
     /** Adresse gRPC d'identity : coordonnées des destinataires des événements (GetUsersByIds). */
     IDENTITY_GRPC_URL: z.string().min(1).default('localhost:50051'),
-    /** Adresse de « Mon espace KSP », pour les liens des messages. */
+    /**
+     * Adresse publique de « Mon espace KSP », pour les liens des messages (factures, devis,
+     * missions). En production : HTTPS et nom public obligatoires (garde-fou ci-dessous).
+     */
     PORTAL_BASE_URL: z.url().default('https://ksp.bj'),
     /** Fuseau des dates écrites dans les messages. */
     NOTIFICATION_TIME_ZONE: z.string().min(1).default('Africa/Porto-Novo'),
@@ -116,7 +119,25 @@ export const configSchema = baseServiceConfigSchema
       message: 'BREVO_API_KEY et EMAIL_SENDER_ADDRESS sont obligatoires avec le prestataire brevo.',
       path: ['BREVO_API_KEY'],
     },
-  );
+  )
+  .refine((cfg) => cfg.NODE_ENV !== 'production' || isPublicHttpsUrl(cfg.PORTAL_BASE_URL), {
+    message:
+      'PORTAL_BASE_URL doit être une adresse HTTPS publique en production : elle figure dans les liens des messages envoyés aux clients.',
+    path: ['PORTAL_BASE_URL'],
+  });
+
+/** Noms réservés au poste local : un lien vers eux ne mènerait nulle part chez le client. */
+const LOCAL_HOST = /^(localhost|.+\.localhost|127(\.\d{1,3}){3}|0\.0\.0\.0|\[::1?\])$/i;
+
+/** Adresse HTTPS dont le nom n'est pas celui du poste local. */
+export function isPublicHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !LOCAL_HOST.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
 
 export type ServiceConfig = z.infer<typeof configSchema>;
 
