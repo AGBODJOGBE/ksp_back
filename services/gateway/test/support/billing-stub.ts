@@ -55,6 +55,12 @@ export const protoInvoice: billingV1.Invoice = {
       recordedAt: '2026-12-16T10:00:00.000Z',
     },
   ],
+  organization: {
+    legalName: 'SARL Bénin Propre',
+    address: 'Lot 12, Haie Vive, Cotonou',
+    ifu: '3201912345678',
+    rccm: '',
+  },
 };
 
 const settings: billingV1.BillingSettings = { paymentTermDays: 10, updatedBy: '', updatedAt: '' };
