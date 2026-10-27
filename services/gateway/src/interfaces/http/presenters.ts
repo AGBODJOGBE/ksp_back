@@ -1,4 +1,5 @@
 import {
+  type EmailChange,
   type MfaChallenge,
   type OtpChallenge,
   type Profile,
@@ -17,6 +18,7 @@ export function presentUser(user: UserProfile) {
     lastName: user.lastName,
     phone: user.phone,
     email: user.email,
+    emailVerified: user.emailVerified,
     preferredLanguage: user.preferredLanguage,
     createdAt: user.createdAt,
   };
@@ -71,5 +73,17 @@ export function presentTotpEnrollment(enrollment: TotpEnrollment) {
 }
 
 export function presentProfile(profile: Profile) {
-  return { user: presentUser(profile.user), profileIncomplete: profile.profileIncomplete };
+  return {
+    user: presentUser(profile.user),
+    profileIncomplete: profile.profileIncomplete,
+    pendingEmail: profile.pendingEmail,
+  };
+}
+
+export function presentEmailChange(change: EmailChange) {
+  return {
+    pendingEmail: change.pendingEmail,
+    expiresInSeconds: change.expiresInSeconds,
+    resendAfterSeconds: change.resendAfterSeconds,
+  };
 }

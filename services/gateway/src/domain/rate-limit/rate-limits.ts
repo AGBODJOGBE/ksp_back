@@ -6,7 +6,9 @@ export type RateLimitCategory =
   | 'otp_verify'
   | 'mfa_verify'
   | 'refresh'
-  | 'cleaning_simulation';
+  | 'cleaning_simulation'
+  | 'email_code_request'
+  | 'email_code_verify';
 
 export interface RateLimitRule {
   limit: number;
@@ -28,6 +30,9 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   refresh: { limit: 60, windowSeconds: 60, key: 'ip' },
   // Simulateur public du Nettoyage (cahier des charges Nettoyage, partie 5).
   cleaning_simulation: { limit: 20, windowSeconds: 60, key: 'ip' },
+  // Code de confirmation de l'e-mail du profil : identity limite aussi par adresse et par compte.
+  email_code_request: { limit: 3, windowSeconds: 60, key: 'user' },
+  email_code_verify: { limit: 10, windowSeconds: 60, key: 'user' },
 };
 
 /** Clé du compteur : une catégorie ne partage jamais ses compteurs avec une autre. */

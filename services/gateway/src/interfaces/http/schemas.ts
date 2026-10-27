@@ -38,6 +38,9 @@ export const requestBodies = {
         .optional(),
     })
     .refine((body) => Object.keys(body).length > 0, { message: 'Au moins un champ à modifier.' }),
+  // identity contrôle la forme de l'adresse (IDENTITY_EMAIL_INVALID) ; ici, seulement sa présence et sa taille.
+  changeEmail: z.strictObject({ email: z.string().min(3).max(254) }),
+  confirmEmail: z.strictObject({ code: z.string().regex(/^[0-9]{4,8}$/) }),
   ...cleaningBodies,
   ...billingBodies,
 };

@@ -61,6 +61,7 @@ export const protoUser: identityV1.User = {
   email: '',
   preferredLanguage: 'fr',
   createdAt: '2026-10-17T10:00:00.000Z',
+  emailVerified: false,
 };
 
 export function protoSession(refreshToken = 'rt-new'): identityV1.SessionTokens {
@@ -118,10 +119,20 @@ export class IdentityStub {
       recoveryCodes: Array.from({ length: 10 }, (_, index) => `7KQ2M-X9PD${index}`),
     }),
     verifyMfa: () => ({ session: protoSession('rt-admin'), recoveryCodesRemaining: 9 }),
-    getMe: () => ({ user: protoUser, profileIncomplete: true }),
+    getMe: () => ({ user: protoUser, profileIncomplete: true, pendingEmail: '' }),
     updateMe: (request) => ({
       user: { ...protoUser, ...request },
       profileIncomplete: !request['firstName'],
+      pendingEmail: '',
+    }),
+    changeEmail: (request) => ({
+      pendingEmail: String(request['email']).trim().toLowerCase(),
+      expiresInSeconds: 900,
+      resendAfterSeconds: 60,
+    }),
+    confirmEmail: () => ({
+      user: { ...protoUser, email: 'koffi@exemple.com', emailVerified: true },
+      profileIncomplete: true,
     }),
   };
 
@@ -188,6 +199,12 @@ class StubAccountController implements identityV1.AccountServiceController {
   updateMe(request: identityV1.UpdateMeRequest) {
     return this.stub.handle('updateMe', { ...request });
   }
+  changeEmail(request: identityV1.ChangeEmailRequest) {
+    return this.stub.handle('changeEmail', { ...request });
+  }
+  confirmEmail(request: identityV1.ConfirmEmailRequest) {
+    return this.stub.handle('confirmEmail', { ...request });
+  }
 }
 
 /** Clés de test : jetons d'accès (publiés par la source JWKS) et jetons de service. */
@@ -247,6 +264,8 @@ export class TestKeys {
       key?: KeyLike;
       kid?: string;
       claims?: Record<string, unknown>;
+      /** Autre utilisateur que USER_ID (compteurs de limites par utilisateur distincts). */
+      subject?: string;
     } = {},
   ): Promise<string> {
     return new SignJWT({
@@ -263,7 +282,7 @@ export class TestKeys {
       .setProtectedHeader({ alg: 'ES256', kid: options.kid ?? 'k-test', typ: 'at+jwt' })
       .setIssuer('ksp-identity')
       .setAudience('ksp-api')
-      .setSubject(USER_ID)
+      .setSubject(options.subject ?? USER_ID)
       .setIssuedAt()
       .setExpirationTime(options.expiresIn ?? '15m')
       .sign(options.key ?? this.accessKey);

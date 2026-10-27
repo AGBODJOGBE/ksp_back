@@ -3,6 +3,8 @@ import { Body, Controller, Inject, Req, Res } from '@nestjs/common';
 import { type Clock } from '../../application/access/access.ports';
 import { type SessionTokens } from '../../application/identity/identity.ports';
 import {
+  ChangeEmailUseCase,
+  ConfirmEmailUseCase,
   ConfirmTotpUseCase,
   EnrollTotpUseCase,
   GetMeUseCase,
@@ -17,6 +19,7 @@ import { type ClientKind, refreshTokenTransport } from '../../domain/client/clie
 import { CLOCK } from '../../tokens';
 import { type GatewayRequest, type GatewayResponse } from './http-types';
 import {
+  presentEmailChange,
   presentMfaRequired,
   presentOtpChallenge,
   presentProfile,
@@ -52,6 +55,8 @@ export class IdentityHttpController {
     private readonly enrollTotpUseCase: EnrollTotpUseCase,
     private readonly confirmTotpUseCase: ConfirmTotpUseCase,
     private readonly verifyMfaUseCase: VerifyMfaUseCase,
+    private readonly changeEmailUseCase: ChangeEmailUseCase,
+    private readonly confirmEmailUseCase: ConfirmEmailUseCase,
     private readonly cookies: RefreshCookies,
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
@@ -160,6 +165,20 @@ export class IdentityHttpController {
   @Route('updateMe')
   async updateMe(@Body() body: unknown) {
     return presentProfile(await this.updateMeUseCase.execute(parseBody(requestBodies.updateMe, body)));
+  }
+
+  @Route('changeEmail')
+  async changeEmail(@Body() body: unknown) {
+    return presentEmailChange(
+      await this.changeEmailUseCase.execute(parseBody(requestBodies.changeEmail, body)),
+    );
+  }
+
+  @Route('confirmEmail')
+  async confirmEmail(@Body() body: unknown) {
+    return presentProfile(
+      await this.confirmEmailUseCase.execute(parseBody(requestBodies.confirmEmail, body)),
+    );
   }
 
   /** Navigateur : jeton de renouvellement dans le cookie ; mobile : dans le corps. */
