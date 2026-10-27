@@ -23,6 +23,11 @@
       "type": "string",
       "format": "uuid"
     },
+    "createdBy": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte qui a demandé la création (prévenu de la décision) ; absent des événements publiés avant son ajout"
+    },
     "reason": {
       "type": "string",
       "minLength": 1,

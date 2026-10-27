@@ -4269,6 +4269,11 @@ paths:
                     dueAt: 2026-12-15T08:15:00Z
                     paidAt: null
                     payments: []
+                    organization:
+                      legalName: SARL Bénin Propre
+                      address: Lot 12, Haie Vive, Cotonou
+                      ifu: '3201912345678'
+                      rccm: RB/COT/19 B 1234
                 nextCursor: null
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -7266,6 +7271,7 @@ components:
         - dueAt
         - paidAt
         - payments
+        - organization
       properties:
         id:
           type: string
@@ -7326,6 +7332,38 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/InvoicePayment'
+        organization:
+          description: |
+            En-tête de la facture d'une organisation : fiche lue dans identity au moment de l'émission. La facture est un
+            document comptable : une modification ultérieure de la fiche ne la change pas. `null` pour un particulier et
+            pour une facture émise avant l'enregistrement de l'en-tête.
+          oneOf:
+            - $ref: '#/components/schemas/InvoiceOrganization'
+            - type: 'null'
+    InvoiceOrganization:
+      type: object
+      additionalProperties: false
+      description: Raison sociale, adresse et identifiants légaux de l'organisation facturée (aucun champ de TVA).
+      required:
+        - legalName
+        - address
+        - ifu
+        - rccm
+      properties:
+        legalName:
+          type: string
+          description: Raison sociale.
+        address:
+          type: string
+        ifu:
+          type: string
+          pattern: ^[0-9]{13}$
+          description: Identifiant fiscal unique (Bénin).
+        rccm:
+          type:
+            - string
+            - 'null'
+          description: Registre du commerce et du crédit mobilier ; `null` s'il n'est pas renseigné.
     InvoiceList:
       type: object
       additionalProperties: false

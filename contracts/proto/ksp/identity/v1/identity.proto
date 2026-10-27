@@ -24,6 +24,16 @@ service IdentityService {
   //   IDENTITY_USER_NOT_FOUND      NOT_FOUND          GetUser seulement
   rpc GetUser(GetUserRequest) returns (GetUserResponse);
   rpc GetUsersByIds(GetUsersByIdsRequest) returns (GetUsersByIdsResponse);
+  // Fiches d'organisations (comptes entreprise, ADR-027) lues par un autre service, sans les
+  // membres ni les décisions du back-office. Appelants autorisés : billing (en-tête des factures,
+  // copié à l'émission) et notification, seul à recevoir l'e-mail de facturation (factures
+  // envoyées à l'entreprise). L'e-mail transmis est toujours vérifié par code ; vide sinon.
+  // Tous les états sont rendus (status) ; les identifiants introuvables sont omis (100 au plus).
+  // Erreurs :
+  //   IDENTITY_CALLER_FORBIDDEN            PERMISSION_DENIED  service appelant non autorisé
+  //   IDENTITY_ORGANIZATION_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)
+  //   IDENTITY_TOO_MANY_ORGANIZATION_IDS   INVALID_ARGUMENT   plus de 100 identifiants
+  rpc GetOrganizationsByIds(GetOrganizationsByIdsRequest) returns (GetOrganizationsByIdsResponse);
   // Réservé aux actions sensibles : les permissions courantes voyagent dans le jeton.
   rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
   rpc GrantRole(GrantRoleRequest) returns (GrantRoleResponse);
@@ -106,6 +116,31 @@ message GetUsersByIdsRequest {
 
 message GetUsersByIdsResponse {
   repeated User users = 1;
+}
+
+// Fiche d'une organisation vue par un autre service (GetOrganizationsByIds) : coordonnées de
+// facturation seulement.
+message OrganizationProfile {
+  string id = 1;
+  // Raison sociale.
+  string legal_name = 2;
+  string address = 3;
+  // Identifiant fiscal unique (Bénin) : 13 chiffres.
+  string ifu = 4;
+  // Vide s'il n'est pas renseigné.
+  string rccm = 5;
+  // E-mail de facturation vérifié par code ; vide s'il n'y en a pas, ou pour un appelant qui
+  // n'a pas droit aux coordonnées.
+  string billing_email = 6;
+  OrganizationStatus status = 7;
+}
+
+message GetOrganizationsByIdsRequest {
+  repeated string organization_ids = 1;
+}
+
+message GetOrganizationsByIdsResponse {
+  repeated OrganizationProfile organizations = 1;
 }
 
 message CheckPermissionRequest {

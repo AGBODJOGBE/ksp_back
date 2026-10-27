@@ -100,6 +100,22 @@ message Invoice {
   string due_at = 16;
   string paid_at = 17;
   repeated InvoicePayment payments = 18;
+  // En-tête de la facture d'une organisation. Absent pour un particulier, et pour une facture
+  // émise avant l'enregistrement de l'en-tête.
+  InvoiceOrganization organization = 19;
+}
+
+// Fiche de l'organisation facturée, copiée d'identity au moment de l'émission : la facture est
+// un document comptable, une modification ultérieure de la fiche ne la change pas. Aucun champ
+// fiscal au-delà de l'IFU et du RCCM (pas de TVA).
+message InvoiceOrganization {
+  // Raison sociale.
+  string legal_name = 1;
+  string address = 2;
+  // Identifiant fiscal unique (Bénin) : 13 chiffres.
+  string ifu = 3;
+  // Vide s'il n'est pas renseigné.
+  string rccm = 4;
 }
 
 message ListMyInvoicesRequest {

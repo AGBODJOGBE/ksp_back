@@ -34,13 +34,20 @@ export interface IdentityEventPayloads {
     rejectedBy: string;
     reason: string;
   };
+  /** `createdBy` : demandeur prévenu de la décision (absent des événements publiés avant son ajout). */
   'identity.organization.suspended': {
     organizationId: string;
     legalName: string;
     suspendedBy: string;
+    createdBy?: string;
     reason: string;
   };
-  'identity.organization.reactivated': { organizationId: string; legalName: string; reactivatedBy: string };
+  'identity.organization.reactivated': {
+    organizationId: string;
+    legalName: string;
+    reactivatedBy: string;
+    createdBy?: string;
+  };
   'identity.member.added': { organizationId: string; userId: string; orgRole: OrgRole };
   'identity.member.removed': { organizationId: string; userId: string; removedBy: string };
   'identity.role.granted': {

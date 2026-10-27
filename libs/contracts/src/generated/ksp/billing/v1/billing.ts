@@ -64,6 +64,26 @@ export interface Invoice {
   dueAt: string;
   paidAt: string;
   payments: InvoicePayment[];
+  /**
+   * En-tête de la facture d'une organisation. Absent pour un particulier, et pour une facture
+   * émise avant l'enregistrement de l'en-tête.
+   */
+  organization?: InvoiceOrganization | undefined;
+}
+
+/**
+ * Fiche de l'organisation facturée, copiée d'identity au moment de l'émission : la facture est
+ * un document comptable, une modification ultérieure de la fiche ne la change pas. Aucun champ
+ * fiscal au-delà de l'IFU et du RCCM (pas de TVA).
+ */
+export interface InvoiceOrganization {
+  /** Raison sociale. */
+  legalName: string;
+  address: string;
+  /** Identifiant fiscal unique (Bénin) : 13 chiffres. */
+  ifu: string;
+  /** Vide s'il n'est pas renseigné. */
+  rccm: string;
 }
 
 export interface ListMyInvoicesRequest {
