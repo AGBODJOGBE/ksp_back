@@ -147,6 +147,20 @@ describe('cleaning en gRPC', () => {
     });
   });
 
+  it('zones desservies publiques : actives seulement, code et nom, sans utilisateur', async () => {
+    const calavi = world.catalog.zones.get('abomey-calavi')!;
+    world.catalog.zones.set('abomey-calavi', { ...calavi, active: false });
+    try {
+      const { zones } = await call((m) => catalog.listServedZones({}, m));
+      expect(zones).toEqual([
+        { code: 'cotonou', commune: 'Cotonou' },
+        { code: 'porto-novo', commune: 'Porto-Novo' },
+      ]);
+    } finally {
+      world.catalog.zones.set('abomey-calavi', calavi);
+    }
+  });
+
   it('demande de devis au nom du client transmis par la gateway', async () => {
     const { request } = await call(
       (m) =>

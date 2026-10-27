@@ -237,6 +237,11 @@ export function presentTeam(team: Team, agents: Agent[]): cleaningV1.Team {
   };
 }
 
+/** Zone vue du public : code et nom affiché, sans les champs d'administration. */
+export function presentServedZone(zone: Zone): cleaningV1.ServedZone {
+  return { code: zone.code, commune: zone.commune };
+}
+
 export function presentZone(zone: Zone): cleaningV1.Zone {
   return {
     code: zone.code,

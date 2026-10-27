@@ -41,7 +41,8 @@ PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cl
 
 - **Zones** : le Nettoyage n'est ouvert que dans certaines communes, au départ Cotonou,
   Porto-Novo et Abomey-Calavi (migration `0003`). L'admin ajoute, réactive ou désactive une zone
-  (`/api/v1/admin/cleaning/zones`). Une zone est une commune identifiée par sa **clé normalisée**
+  (`/api/v1/admin/cleaning/zones`) ; les fronts lisent les zones actives sur la route publique
+  `GET /api/v1/cleaning/zones` (`CatalogService/ListServedZones`). Une zone est une commune identifiée par sa **clé normalisée**
   (minuscules, sans accents, tirets), la même que les coefficients de commune de la grille
   tarifaire : « Abomey Calavi » et « Abomey-Calavi » désignent la même zone, et le coefficient de
   cette clé s'y applique. Demande de devis hors zone : `CLEANING_ZONE_NOT_COVERED` ; le
@@ -49,6 +50,9 @@ PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cl
 - **Visite des lieux obligatoire pour toute demande** (particulier ou entreprise) : le devis ne
   part qu'après une visite réalisée (`CLEANING_VISIT_REQUIRED`). Le réglage
   `visitThresholdSquareMeters` reste dans le contrat mais n'a plus d'effet.
+- **Plan de paiement à l'acceptation** : obligatoire pour un particulier
+  (`CLEANING_VALIDATION_FAILED`, `details.field = paymentPlan`) ; ignoré pour une entreprise, qui
+  règle par sa facture mensuelle.
 - **Paiement manuel** (`RecordPayment`) réservé aux particuliers : une mission d'entreprise se
   règle par sa facture (`CLEANING_PAYMENT_VIA_INVOICE`).
 

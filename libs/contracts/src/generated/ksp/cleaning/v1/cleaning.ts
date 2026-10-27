@@ -273,6 +273,21 @@ export interface SimulateResponse {
   covered: boolean;
 }
 
+/** Zone desservie vue du public. */
+export interface ServedZone {
+  /** Clé normalisée, par exemple "abomey-calavi" (voir Zone). */
+  code: string;
+  /** Nom affiché, par exemple "Abomey-Calavi". */
+  commune: string;
+}
+
+export interface ListServedZonesRequest {
+}
+
+export interface ListServedZonesResponse {
+  zones: ServedZone[];
+}
+
 export interface Page {
   /** 20 par défaut, 100 au plus. */
   limit: number;
@@ -321,6 +336,10 @@ export interface AcceptQuoteRequest {
   idempotencyKey: string;
   /** Début d'un des créneaux proposés dans le devis. */
   slotStart: string;
+  /**
+   * Obligatoire pour un particulier (CLEANING_VALIDATION_FAILED, details.field = "paymentPlan",
+   * s'il manque). Ignoré pour une entreprise : elle règle par sa facture mensuelle (billing).
+   */
   paymentPlan?: PaymentPlan | undefined;
 }
 
@@ -750,6 +769,13 @@ export interface CatalogServiceClient {
    */
 
   simulate(request: SimulateRequest, metadata?: Metadata): Observable<SimulateResponse>;
+
+  /**
+   * Zones desservies actives, par nom de commune : seules les communes où une demande de devis
+   * est acceptée, sans les champs d'administration.
+   */
+
+  listServedZones(request: ListServedZonesRequest, metadata?: Metadata): Observable<ListServedZonesResponse>;
 }
 
 /**
@@ -775,11 +801,21 @@ export interface CatalogServiceController {
     request: SimulateRequest,
     metadata?: Metadata,
   ): Promise<SimulateResponse> | Observable<SimulateResponse> | SimulateResponse;
+
+  /**
+   * Zones desservies actives, par nom de commune : seules les communes où une demande de devis
+   * est acceptée, sans les champs d'administration.
+   */
+
+  listServedZones(
+    request: ListServedZonesRequest,
+    metadata?: Metadata,
+  ): Promise<ListServedZonesResponse> | Observable<ListServedZonesResponse> | ListServedZonesResponse;
 }
 
 export function CatalogServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["listServices", "simulate"];
+    const grpcMethods: string[] = ["listServices", "simulate", "listServedZones"];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("CatalogService", method)(constructor.prototype[method], method, descriptor);
@@ -815,7 +851,8 @@ export interface QuoteServiceClient {
   getRequest(request: GetRequestRequest, metadata?: Metadata): Observable<GetRequestResponse>;
 
   /**
-   * Le client choisit un créneau proposé et son option de paiement ; la mission est créée.
+   * Le client choisit un créneau proposé et, s'il est particulier, son option de paiement ;
+   * la mission est créée.
    * Idempotent par idempotency_key.
    */
 
@@ -854,7 +891,8 @@ export interface QuoteServiceController {
   ): Promise<GetRequestResponse> | Observable<GetRequestResponse> | GetRequestResponse;
 
   /**
-   * Le client choisit un créneau proposé et son option de paiement ; la mission est créée.
+   * Le client choisit un créneau proposé et, s'il est particulier, son option de paiement ;
+   * la mission est créée.
    * Idempotent par idempotency_key.
    */
 

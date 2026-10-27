@@ -36,9 +36,9 @@ curl -s -X POST localhost:3000/api/v1/identity/otp/request \
 
 ## Routes du Nettoyage (lot 2)
 
-36 routes vers `cleaning` (`CLEANING_GRPC_URL`, `localhost:50053` par défaut), déclarées dans `src/domain/routing/cleaning-routes.ts` :
+37 routes vers `cleaning` (`CLEANING_GRPC_URL`, `localhost:50053` par défaut), déclarées dans `src/domain/routing/cleaning-routes.ts` :
 
-- `/api/v1/cleaning/services` (public) et `/api/v1/cleaning/simulations` (public, 20 par minute et par IP) ;
+- `/api/v1/cleaning/services` et `/api/v1/cleaning/zones` (zones desservies actives) : public ; `/api/v1/cleaning/simulations` (public, 20 par minute et par IP) ;
 - `/api/v1/cleaning/quote-requests…` et `/api/v1/cleaning/missions…` : connecté ; la demande de devis exige un profil complet (vérifié auprès d'identity par la gateway) et, comme l'acceptation, l'en-tête `Idempotency-Key` ;
 - `/api/v1/admin/cleaning/…` : rôles `cleaning_supervisor`, `cleaning_agent` ou `cleaning_admin` selon la route (extension `x-ksp-roles`) et double authentification faite pendant la session (`x-ksp-mfa-max-age`, 12 heures).
 

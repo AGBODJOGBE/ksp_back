@@ -196,6 +196,12 @@ const DEFAULTS: Record<Method, () => unknown> = {
     notice: 'Estimation non contractuelle.',
     covered: true,
   }),
+  listServedZones: () => ({
+    zones: [
+      { code: 'abomey-calavi', commune: 'Abomey-Calavi' },
+      { code: 'cotonou', commune: 'Cotonou' },
+    ],
+  }),
   requestQuote: withRequest,
   listMyRequests: () => ({ requests: [protoRequest], nextCursor: '' }),
   getRequest: withRequest,
@@ -299,7 +305,10 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
 
   @Module({
     controllers: [
-      stubController(pick(['listServices', 'simulate']), cleaningV1.CatalogServiceControllerMethods),
+      stubController(
+        pick(['listServices', 'simulate', 'listServedZones']),
+        cleaningV1.CatalogServiceControllerMethods,
+      ),
       stubController(
         pick([
           'requestQuote',
@@ -321,6 +330,7 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
             ![
               'listServices',
               'simulate',
+              'listServedZones',
               'requestQuote',
               'listMyRequests',
               'getRequest',

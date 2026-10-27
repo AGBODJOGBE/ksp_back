@@ -47,11 +47,14 @@ export const cleaningBodies = {
   }),
   acceptCleaningQuote: z.strictObject({
     slotStart: dateTime,
-    paymentPlan: z.strictObject({
-      option: z.enum(['deposit', 'full']),
-      timing: z.enum(['before', 'after']),
-      method: z.enum(['cash', 'mobile_money_offline', 'mobile_money_online']),
-    }),
+    // Facultatif : une entreprise règle par sa facture mensuelle ; cleaning l'exige d'un particulier.
+    paymentPlan: z
+      .strictObject({
+        option: z.enum(['deposit', 'full']),
+        timing: z.enum(['before', 'after']),
+        method: z.enum(['cash', 'mobile_money_offline', 'mobile_money_online']),
+      })
+      .optional(),
   }),
   declineCleaningQuote: optionalReason,
   cancelCleaningRequest: optionalReason,

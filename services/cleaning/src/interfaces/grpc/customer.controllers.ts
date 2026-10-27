@@ -2,7 +2,14 @@ import { cleaningV1, commonV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import { parsePage } from '../../application/shared/validation';
 import { CLEANING_USE_CASES, type CleaningUseCases } from '../../application/use-cases';
-import { money, presentLine, presentMission, presentOffer, presentRequest } from './presenters';
+import {
+  money,
+  presentLine,
+  presentMission,
+  presentOffer,
+  presentRequest,
+  presentServedZone,
+} from './presenters';
 
 /**
  * Adaptateurs gRPC du catalogue public et de l'espace client : traduction des messages et appel
@@ -39,6 +46,10 @@ export class CatalogGrpcController implements cleaningV1.CatalogServiceControlle
       minimumApplied: simulation.minimumApplied,
       communeCoefficientBp: simulation.coefficientBp,
     };
+  }
+
+  async listServedZones(): Promise<cleaningV1.ListServedZonesResponse> {
+    return { zones: (await this.useCases.listServedZones.execute()).map(presentServedZone) };
   }
 }
 

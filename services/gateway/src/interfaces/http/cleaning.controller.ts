@@ -32,6 +32,11 @@ export class CleaningHttpController {
     return this.cleaning.listServices();
   }
 
+  @Route('listServedCleaningZones')
+  listServedZones() {
+    return this.cleaning.listServedZones();
+  }
+
   @Route('simulateCleaning')
   simulate(@Body() body: unknown) {
     return this.cleaning.simulate(parseBody(requestBodies.simulateCleaning, body));

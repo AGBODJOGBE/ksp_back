@@ -77,7 +77,7 @@ export const MAX_PREFERRED_SLOTS = 3;
 
 /**
  * Plan de paiement d'une entreprise : elle règle ses factures mensuelles (service billing) et
- * ne choisit pas d'acompte ; un plan fourni est tout de même respecté.
+ * ne choisit pas d'acompte ; un plan envoyé par le front est ignoré.
  */
 export const BUSINESS_PAYMENT_PLAN: PaymentPlan = { option: 'full', timing: 'after', method: 'cash' };
 
@@ -205,7 +205,21 @@ export interface AcceptQuoteInput {
   requestId: string;
   idempotencyKey: string;
   slotStart: string;
+  /** Obligatoire pour un particulier, ignoré pour une entreprise. */
   paymentPlan?: { option: string; timing: string; method: string } | undefined;
+}
+
+const PAYMENT_PLAN_REQUIRED_MESSAGE =
+  'Choisissez votre option de paiement : acompte ou totalité, avant ou après la mission, et le moyen de paiement.';
+
+/** Plan de la mission : celui de l'entreprise, ou celui choisi par le particulier (obligatoire). */
+function paymentPlanFor(request: QuoteRequest, input: AcceptQuoteInput['paymentPlan']): PaymentPlan {
+  if (request.customerKind === 'business') return BUSINESS_PAYMENT_PLAN;
+  // Message protobuf absent : décodé à null par le serveur gRPC ; un plan vide est refusé de même.
+  if (!input?.option) throw CleaningErrors.invalid('paymentPlan', PAYMENT_PLAN_REQUIRED_MESSAGE);
+  const plan = input as PaymentPlan;
+  if (!isValidPlan(plan)) throw CleaningErrors.invalid('paymentPlan', "L'option de paiement est invalide.");
+  return plan;
 }
 
 /** UC-CL-04 : accepter le devis ; la mission est créée avec l'option de paiement choisie. */
@@ -231,10 +245,7 @@ export class AcceptQuoteUseCase {
     if (!respectsLeadTime(slot.start, now, settings.minimumLeadHours)) {
       throw CleaningErrors.leadTimeTooShort(settings.minimumLeadHours);
     }
-    const plan =
-      (input.paymentPlan?.option ? (input.paymentPlan as PaymentPlan) : undefined) ??
-      (request.organizationId ? BUSINESS_PAYMENT_PLAN : undefined);
-    if (!plan || !isValidPlan(plan)) throw CleaningErrors.invalid('paymentPlan');
+    const plan = paymentPlanFor(request, input.paymentPlan);
 
     const mission: Mission = {
       id: this.deps.ids.next(),
