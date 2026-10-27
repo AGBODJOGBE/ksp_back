@@ -4,6 +4,7 @@ import { type AppError, type GrpcCaller } from '@ksp/platform';
 import { Logger } from '@nestjs/common';
 import { type Observable } from 'rxjs';
 import {
+  type AcceptQuoteInput,
   type CleaningApi,
   type Json,
   type Page,
@@ -19,6 +20,7 @@ import {
   presentMission,
   presentOffer,
   presentRequest,
+  presentServedZone,
   presentSettings,
   presentSimulation,
   presentTeam,
@@ -67,6 +69,11 @@ export class CleaningGrpcAdapter implements CleaningApi {
     return presentSimulation(res);
   }
 
+  async listServedZones(): Promise<Json> {
+    const res = await this.read('listServedZones', (m) => this.clients.catalog.listServedZones({}, m));
+    return { data: res.zones.map(presentServedZone) };
+  }
+
   async requestQuote(input: QuoteRequestInput, idempotencyKey: string): Promise<Json> {
     const res = await this.write('requestQuote', (m) =>
       this.clients.quotes.requestQuote(
@@ -103,14 +110,16 @@ export class CleaningGrpcAdapter implements CleaningApi {
     );
   }
 
-  async acceptQuote(
-    id: string,
-    input: { slotStart: string; paymentPlan: { option: string; timing: string; method: string } },
-    idempotencyKey: string,
-  ): Promise<Json> {
+  async acceptQuote(id: string, input: AcceptQuoteInput, idempotencyKey: string): Promise<Json> {
     const res = await this.write('acceptQuote', (m) =>
       this.clients.quotes.acceptQuote(
-        { requestId: id, idempotencyKey, slotStart: input.slotStart, paymentPlan: input.paymentPlan },
+        {
+          requestId: id,
+          idempotencyKey,
+          slotStart: input.slotStart,
+          // Absent pour une entreprise : cleaning décide (obligatoire pour un particulier).
+          ...(input.paymentPlan ? { paymentPlan: input.paymentPlan } : {}),
+        },
         m,
       ),
     );

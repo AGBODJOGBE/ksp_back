@@ -260,6 +260,10 @@ export function presentTeam(value: cleaningV1.Team | undefined) {
   };
 }
 
+export function presentServedZone(value: cleaningV1.ServedZone) {
+  return { code: value.code, commune: value.commune };
+}
+
 export function presentZone(value: cleaningV1.Zone | undefined) {
   if (!value) throw malformed('zone');
   return {

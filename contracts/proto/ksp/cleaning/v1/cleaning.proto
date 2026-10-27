@@ -65,6 +65,9 @@ service CatalogService {
   // Estimation non contractuelle, sans donnée personnelle ; rien n'est enregistré.
   // Une prestation sans prix répond priced = false, sans erreur.
   rpc Simulate(SimulateRequest) returns (SimulateResponse);
+  // Zones desservies actives, par nom de commune : seules les communes où une demande de devis
+  // est acceptée, sans les champs d'administration.
+  rpc ListServedZones(ListServedZonesRequest) returns (ListServedZonesResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -76,7 +79,8 @@ service QuoteService {
   rpc RequestQuote(RequestQuoteRequest) returns (RequestQuoteResponse);
   rpc ListMyRequests(ListMyRequestsRequest) returns (ListMyRequestsResponse);
   rpc GetRequest(GetRequestRequest) returns (GetRequestResponse);
-  // Le client choisit un créneau proposé et son option de paiement ; la mission est créée.
+  // Le client choisit un créneau proposé et, s'il est particulier, son option de paiement ;
+  // la mission est créée.
   // Idempotent par idempotency_key.
   rpc AcceptQuote(AcceptQuoteRequest) returns (AcceptQuoteResponse);
   rpc DeclineQuote(DeclineQuoteRequest) returns (DeclineQuoteResponse);
@@ -392,6 +396,20 @@ message SimulateResponse {
   bool covered = 10;
 }
 
+// Zone desservie vue du public.
+message ServedZone {
+  // Clé normalisée, par exemple "abomey-calavi" (voir Zone).
+  string code = 1;
+  // Nom affiché, par exemple "Abomey-Calavi".
+  string commune = 2;
+}
+
+message ListServedZonesRequest {}
+
+message ListServedZonesResponse {
+  repeated ServedZone zones = 1;
+}
+
 // ===========================================================================
 // QuoteService
 // ===========================================================================
@@ -444,6 +462,8 @@ message AcceptQuoteRequest {
   string idempotency_key = 2;
   // Début d'un des créneaux proposés dans le devis.
   string slot_start = 3;
+  // Obligatoire pour un particulier (CLEANING_VALIDATION_FAILED, details.field = "paymentPlan",
+  // s'il manque). Ignoré pour une entreprise : elle règle par sa facture mensuelle (billing).
   PaymentPlan payment_plan = 4;
 }
 

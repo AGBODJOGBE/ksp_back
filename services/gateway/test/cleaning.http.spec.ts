@@ -109,6 +109,42 @@ describe('gateway → cleaning', () => {
     expect(cleaning.stub.last('simulate')!.context?.user).toBeUndefined();
   });
 
+  it('zones desservies publiques : aucun jeton, code et nom seulement', async () => {
+    const res = await http().get('/api/v1/cleaning/zones');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      data: [
+        { code: 'abomey-calavi', commune: 'Abomey-Calavi' },
+        { code: 'cotonou', commune: 'Cotonou' },
+      ],
+    });
+    expect(cleaning.stub.last('listServedZones')!.context?.user).toBeUndefined();
+  });
+
+  it('acceptation : plan de paiement transmis s’il est fourni, facultatif sinon (entreprise)', async () => {
+    const accept = (body: object, key: string) =>
+      http()
+        .post(`/api/v1/cleaning/quote-requests/${IDS.request}/accept`)
+        .set('Authorization', `Bearer ${customer}`)
+        .set('Idempotency-Key', key)
+        .send(body);
+    const plan = { option: 'deposit', timing: 'before', method: 'cash' };
+    const withPlan = await accept({ slotStart: '2026-11-05T08:00:00Z', paymentPlan: plan }, 'accepte-0001');
+    expect(withPlan.status).toBe(200);
+    expect(cleaning.stub.last('acceptQuote')!.request['paymentPlan']).toEqual(plan);
+
+    const withoutPlan = await accept({ slotStart: '2026-11-05T08:00:00Z' }, 'accepte-0002');
+    expect(withoutPlan.status).toBe(200);
+    // Message absent sur le fil : le serveur gRPC le décode à null.
+    expect(cleaning.stub.last('acceptQuote')!.request['paymentPlan']).toBeNull();
+
+    const badPlan = await accept(
+      { slotStart: '2026-11-05T08:00:00Z', paymentPlan: { ...plan, method: 'cheque' } },
+      'accepte-0003',
+    );
+    expect(badPlan.status).toBe(400);
+  });
+
   it('devis : montant de chaque ligne calculé, rôles transmis', async () => {
     const res = await http()
       .post(`/api/v1/admin/cleaning/quote-requests/${IDS.request}/quote`)

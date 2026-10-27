@@ -776,6 +776,46 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/zones:
+    get:
+      tags:
+        - Nettoyage
+      operationId: listServedCleaningZones
+      summary: Zones desservies
+      description: |
+        Communes où le Nettoyage est ouvert, par nom de commune : seules les zones actives, où une demande de devis est
+        acceptée (hors zone : `CLEANING_ZONE_NOT_COVERED`). Le `code` est la commune normalisée (minuscules, sans
+        accents, tirets) ; `commune` est le nom à afficher, à renvoyer tel quel dans le champ `commune` d’une
+        simulation ou d’une demande de devis.
+      x-ksp-grpc: ksp.cleaning.v1.CatalogService/ListServedZones
+      x-ksp-access: public
+      x-ksp-rate-limit: public
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningServedZoneList'
+              example:
+                data:
+                  - code: abomey-calavi
+                    commune: Abomey-Calavi
+                  - code: cotonou
+                    commune: Cotonou
+                  - code: porto-novo
+                    commune: Porto-Novo
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/cleaning/simulations:
     post:
       tags:
@@ -1221,7 +1261,9 @@ paths:
       description: |
         UC-CL-04. Le client choisit un créneau proposé et son option de paiement (acompte ou totalité, avant ou après, espèces ou Mobile Money) ; la mission est créée. Idempotent par `Idempotency-Key`.
 
-        Erreurs : `CLEANING_SLOT_INVALID` (400), `CLEANING_REQUEST_NOT_FOUND` (404), `CLEANING_CONCURRENT_UPDATE` (409), `CLEANING_QUOTE_EXPIRED`, `CLEANING_INVALID_TRANSITION`, `CLEANING_LEAD_TIME_TOO_SHORT` (422).
+        `paymentPlan` est obligatoire pour un particulier (`CLEANING_VALIDATION_FAILED`, `details.field` = `paymentPlan`, s’il manque) et ignoré pour une entreprise, qui règle par sa facture mensuelle.
+
+        Erreurs : `CLEANING_VALIDATION_FAILED`, `CLEANING_SLOT_INVALID` (400), `CLEANING_REQUEST_NOT_FOUND` (404), `CLEANING_CONCURRENT_UPDATE` (409), `CLEANING_QUOTE_EXPIRED`, `CLEANING_INVALID_TRANSITION`, `CLEANING_LEAD_TIME_TOO_SHORT` (422).
       x-ksp-grpc: ksp.cleaning.v1.QuoteService/AcceptQuote
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -5593,7 +5635,6 @@ components:
       additionalProperties: false
       required:
         - slotStart
-        - paymentPlan
       properties:
         slotStart:
           type: string
@@ -5601,6 +5642,9 @@ components:
           description: Début d’un des créneaux proposés dans le devis.
         paymentPlan:
           $ref: '#/components/schemas/CleaningPaymentPlan'
+          description: |
+            Obligatoire pour un particulier (`CLEANING_VALIDATION_FAILED` s’il manque) ; ignoré pour une entreprise,
+            qui règle par sa facture mensuelle.
     CleaningOptionalReasonRequest:
       type: object
       additionalProperties: false
@@ -6175,6 +6219,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CleaningZone'
+    CleaningServedZone:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - commune
+      properties:
+        code:
+          type: string
+          description: Commune normalisée (minuscules, sans accents, tirets), par exemple `abomey-calavi`.
+        commune:
+          type: string
+          description: Nom affiché, par exemple `Abomey-Calavi`.
+    CleaningServedZoneList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningServedZone'
     SaveCleaningZoneRequest:
       type: object
       additionalProperties: false

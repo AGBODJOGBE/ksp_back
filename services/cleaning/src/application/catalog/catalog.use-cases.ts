@@ -1,6 +1,6 @@
 import { normalizeCommune, PREMISES_TYPES, type ServiceDefinition } from '../../domain/catalog';
 import { type Simulation, simulate, unknownOptions } from '../../domain/simulator';
-import { isCovered } from '../../domain/zone';
+import { isCovered, type Zone } from '../../domain/zone';
 import { type CleaningDeps } from '../deps';
 import { CleaningErrors } from '../shared/errors';
 import { oneOf, requiredText, requirePositiveInt } from '../shared/validation';
@@ -24,6 +24,15 @@ export class ListServicesUseCase {
 
   async execute(): Promise<ServiceDefinition[]> {
     return (await this.deps.catalog.listServices()).filter((service) => service.active);
+  }
+}
+
+/** Zones desservies publiques : les seules communes actives, où une demande de devis est acceptée. */
+export class ListServedZonesUseCase {
+  constructor(private readonly deps: CleaningDeps) {}
+
+  async execute(): Promise<Zone[]> {
+    return (await this.deps.catalog.listZones()).filter((zone) => zone.active);
   }
 }
 

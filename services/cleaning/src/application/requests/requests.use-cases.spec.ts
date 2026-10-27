@@ -1,5 +1,5 @@
 import { type AppError } from '@ksp/platform';
-import { ListServicesUseCase, SimulateUseCase } from '../catalog/catalog.use-cases';
+import { ListServedZonesUseCase, ListServicesUseCase, SimulateUseCase } from '../catalog/catalog.use-cases';
 import {
   AGENT_ID,
   as,
@@ -22,6 +22,7 @@ import {
 } from './admin-requests.use-cases';
 import {
   AcceptQuoteUseCase,
+  BUSINESS_PAYMENT_PLAN,
   CancelRequestUseCase,
   DeclineQuoteUseCase,
   GetMyRequestUseCase,
@@ -68,6 +69,16 @@ describe('simulateur et catalogue (UC-CL-01)', () => {
   it('liste les seules prestations actives', async () => {
     const services = await new ListServicesUseCase(world).execute();
     expect(services.map((s) => s.code)).toEqual(['home_cleaning']);
+  });
+
+  it('zones desservies publiques : seules les actives, sans connexion, par nom de commune', async () => {
+    const porto = world.catalog.zones.get('porto-novo')!;
+    world.catalog.zones.set('porto-novo', { ...porto, active: false });
+    const zones = await new ListServedZonesUseCase(world).execute();
+    expect(zones.map((zone) => [zone.code, zone.commune])).toEqual([
+      ['abomey-calavi', 'Abomey-Calavi'],
+      ['cotonou', 'Cotonou'],
+    ]);
   });
 
   it('renvoie une fourchette et la mention non contractuelle', async () => {
@@ -319,6 +330,42 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect((await sendQuote(created.id)).status).toBe('quote_sent');
   });
 
+  it('particulier : plan de paiement obligatoire, erreur claire s’il manque', async () => {
+    const created = await request();
+    await sendQuote(created.id);
+    const failure = await asCustomer(() =>
+      new AcceptQuoteUseCase(world).execute({
+        requestId: created.id,
+        idempotencyKey: 'sans-plan',
+        slotStart: SLOT.start,
+      }),
+    ).catch((error: AppError) => error);
+    expect(failure).toMatchObject({
+      code: 'CLEANING_VALIDATION_FAILED',
+      details: { field: 'paymentPlan' },
+      message: expect.stringMatching(/option de paiement/),
+    });
+    // Message absent sur le fil (décodé à null par le serveur gRPC) ou plan vide : même refus.
+    for (const [key, paymentPlan] of [
+      ['plan-null', null as never],
+      ['plan-vide', { option: '', timing: '', method: '' }],
+    ] as const) {
+      expect(
+        await code(
+          asCustomer(() =>
+            new AcceptQuoteUseCase(world).execute({
+              requestId: created.id,
+              idempotencyKey: key,
+              slotStart: SLOT.start,
+              paymentPlan,
+            }),
+          ),
+        ),
+      ).toBe('CLEANING_VALIDATION_FAILED');
+    }
+    expect(world.missions.missions.size).toBe(0);
+  });
+
   it('entreprise : jours par semaine gardés, plan de paiement par défaut, début du contrat publié', async () => {
     const created = await as(
       CUSTOMER_ID,
@@ -363,6 +410,26 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
         asCustomer(() => new RequestQuoteUseCase(world).execute({ ...requestInput('k-8'), daysPerWeek: 8 })),
       ),
     ).toBe('CLEANING_VALIDATION_FAILED');
+  });
+
+  it('entreprise : un plan de paiement envoyé est ignoré (règlement par facture mensuelle)', async () => {
+    const created = await as(CUSTOMER_ID, () => new RequestQuoteUseCase(world).execute(requestInput()), {
+      activeContext: ORGANIZATION_ID,
+    });
+    await sendQuote(created.id);
+    const accepted = await as(
+      CUSTOMER_ID,
+      () =>
+        new AcceptQuoteUseCase(world).execute({
+          requestId: created.id,
+          idempotencyKey: 'acc-b-plan',
+          slotStart: SLOT.start,
+          paymentPlan: { option: 'deposit', timing: 'before', method: 'mobile_money_online' },
+        }),
+      { activeContext: ORGANIZATION_ID },
+    );
+    expect(accepted.mission.mission.payment.plan).toEqual(BUSINESS_PAYMENT_PLAN);
+    expect(accepted.mission.mission.payment).toMatchObject({ depositPercent: 100 });
   });
 
   it('devis expiré : refus CLEANING_QUOTE_EXPIRED', async () => {

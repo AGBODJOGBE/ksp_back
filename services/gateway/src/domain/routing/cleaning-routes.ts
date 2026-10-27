@@ -40,6 +40,15 @@ export const CLEANING_ROUTES = [
     requiresKnownClient: false,
   },
   {
+    operationId: 'listServedCleaningZones',
+    method: 'GET',
+    path: '/api/v1/cleaning/zones',
+    grpc: `${CATALOG}/ListServedZones`,
+    access: { level: 'public' },
+    rateLimit: 'public',
+    requiresKnownClient: false,
+  },
+  {
     operationId: 'requestCleaningQuote',
     method: 'POST',
     path: '/api/v1/cleaning/quote-requests',

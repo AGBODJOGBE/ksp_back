@@ -3,7 +3,7 @@ import {
   SaveServiceUseCase,
   UpdateSettingsUseCase,
 } from './catalog/admin-catalog.use-cases';
-import { ListServicesUseCase, SimulateUseCase } from './catalog/catalog.use-cases';
+import { ListServedZonesUseCase, ListServicesUseCase, SimulateUseCase } from './catalog/catalog.use-cases';
 import { type CleaningDeps } from './deps';
 import {
   CancelMissionAsSupervisorUseCase,
@@ -60,6 +60,7 @@ export function createUseCases(deps: CleaningDeps) {
   return {
     listServices: new ListServicesUseCase(deps),
     simulate: new SimulateUseCase(deps),
+    listServedZones: new ListServedZonesUseCase(deps),
     requestQuote: new RequestQuoteUseCase(deps),
     listMyRequests: new ListMyRequestsUseCase(deps),
     getMyRequest: new GetMyRequestUseCase(deps),

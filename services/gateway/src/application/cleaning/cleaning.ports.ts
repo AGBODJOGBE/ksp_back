@@ -44,6 +44,12 @@ export interface QuoteRequestInput {
   daysPerWeek?: number | undefined;
 }
 
+/** Acceptation du devis : plan de paiement obligatoire pour un particulier, ignoré pour une entreprise. */
+export interface AcceptQuoteInput {
+  slotStart: string;
+  paymentPlan?: { option: string; timing: string; method: string } | undefined;
+}
+
 export interface QuoteInput {
   lines?: { label: string; quantity: number; unitPrice: number }[] | undefined;
   proposedSlots: Slot[];
@@ -87,14 +93,11 @@ export interface SettingsInput {
 export interface CleaningApi {
   listServices(): Promise<Json>;
   simulate(input: SimulationInput): Promise<Json>;
+  listServedZones(): Promise<Json>;
   requestQuote(input: QuoteRequestInput, idempotencyKey: string): Promise<Json>;
   listMyRequests(page: Page): Promise<Json>;
   getMyRequest(id: string): Promise<Json>;
-  acceptQuote(
-    id: string,
-    input: { slotStart: string; paymentPlan: { option: string; timing: string; method: string } },
-    idempotencyKey: string,
-  ): Promise<Json>;
+  acceptQuote(id: string, input: AcceptQuoteInput, idempotencyKey: string): Promise<Json>;
   declineQuote(id: string, reason: string | undefined): Promise<Json>;
   cancelRequest(id: string, reason: string | undefined): Promise<Json>;
   listMyMissions(page: Page): Promise<Json>;
