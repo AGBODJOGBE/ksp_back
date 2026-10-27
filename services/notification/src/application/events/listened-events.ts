@@ -11,7 +11,8 @@ import { ORGANIZATION_RULES } from './organization.rules';
  * Nettoyage : les 11 événements publiés (demande, visite, devis, réservation, planification, fin,
  * annulation, avertissement d'impayés, suspension, reprise, reprogrammation incomplète).
  * Facturation : les 3 événements publiés par billing (facture émise, impayée, réglée).
- * Comptes entreprise (identity) : nouvelle demande (équipe KSP), validation et refus (demandeur).
+ * Comptes entreprise (identity) : nouvelle demande (équipe KSP), validation, refus, suspension et
+ * réactivation (demandeur).
  */
 export const EVENT_RULES: EventRules = { ...CLEANING_RULES, ...BILLING_RULES, ...ORGANIZATION_RULES };
 

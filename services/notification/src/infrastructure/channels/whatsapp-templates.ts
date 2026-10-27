@@ -84,6 +84,15 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
     'reason',
     'link',
   ]),
+  'identity.organization_suspended.customer': spec('ksp_identity_organization_suspended', [
+    'legal_name',
+    'reason',
+    'link',
+  ]),
+  'identity.organization_reactivated.customer': spec('ksp_identity_organization_reactivated', [
+    'legal_name',
+    'link',
+  ]),
   'cleaning.contract_resumed.team': spec('ksp_cleaning_team_contract_resumed', [
     'mission_id',
     'rescheduled_count',

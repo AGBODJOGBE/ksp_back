@@ -2,7 +2,7 @@ import { type EventTemplateDefinition, type RenderedMessage } from '../template'
 
 /**
  * Messages des comptes entreprise (ADR-027), en français : demande à valider pour l'équipe KSP,
- * décision (validation ou refus) pour le client qui a fait la demande. `first_name` est ajouté par
+ * décision (validation, refus, suspension, réactivation) pour le client qui a fait la demande. `first_name` est ajouté par
  * le service à partir du compte du destinataire (vide s'il n'a pas renseigné son nom).
  *
  * Nature : `short` (message court transactionnel) → WhatsApp, e-mail en bascule si l'adresse est
@@ -69,6 +69,31 @@ export const ORGANIZATION_TEMPLATES: readonly EventTemplateDefinition[] = [
         `Nous n'avons pas pu valider le compte entreprise ${v['legal_name']}.`,
         `Motif : ${v['reason']}`,
         `Vous pouvez faire une nouvelle demande depuis Mon espace KSP : ${v['link']}`,
+      ),
+    }),
+  ),
+  template(
+    'identity.organization_suspended.customer',
+    { first_name: FIRST_NAME, legal_name: LEGAL_NAME, reason: REASON, link: LINK },
+    (v) => ({
+      subject: 'Votre compte entreprise est suspendu',
+      text: lines(
+        greeting(v),
+        `KSP a suspendu le compte entreprise ${v['legal_name']}.`,
+        `Motif : ${v['reason']}`,
+        `Vous ne pouvez plus l'utiliser dans Mon espace KSP jusqu'à sa réactivation : ${v['link']}`,
+      ),
+    }),
+  ),
+  template(
+    'identity.organization_reactivated.customer',
+    { first_name: FIRST_NAME, legal_name: LEGAL_NAME, link: LINK },
+    (v) => ({
+      subject: 'Votre compte entreprise est réactivé',
+      text: lines(
+        greeting(v),
+        `Le compte entreprise ${v['legal_name']} est de nouveau actif.`,
+        `Choisissez l'entreprise dans Mon espace KSP pour l'utiliser : ${v['link']}`,
       ),
     }),
   ),

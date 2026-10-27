@@ -6,8 +6,9 @@ import { type EventRule, type NotificationIntent, type RuleContext } from './eve
  *
  * Destinataires : l'équipe KSP qui valide les comptes entreprise
  * (NOTIFICATION_ACCOUNTS_TEAM_USER_IDS ; personne si la liste est vide) pour une nouvelle demande ;
- * le client qui a fait la demande (createdBy) pour la validation ou le refus. La suspension et la
- * réactivation ne sont pas annoncées par message (le motif est visible dans l'espace KSP).
+ * le client qui a fait la demande (createdBy, administrateur de l'organisation) pour la validation,
+ * le refus, la suspension (motif) et la réactivation. Une suspension ou une réactivation publiée
+ * avant l'ajout de createdBy ne désigne personne : rien n'est envoyé.
  *
  * Lien « Mon espace KSP » (chemin du portail à valider) : /mon-espace/entreprise.
  */
@@ -27,7 +28,11 @@ function customer(
 
 type OrganizationEventType = Extract<
   IdentityEventType,
-  'identity.organization.created' | 'identity.organization.validated' | 'identity.organization.rejected'
+  | 'identity.organization.created'
+  | 'identity.organization.validated'
+  | 'identity.organization.rejected'
+  | 'identity.organization.suspended'
+  | 'identity.organization.reactivated'
 >;
 
 export const ORGANIZATION_RULES: { readonly [T in OrganizationEventType]: EventRule<T> } = {
@@ -55,4 +60,26 @@ export const ORGANIZATION_RULES: { readonly [T in OrganizationEventType]: EventR
       reason: event.reason,
     }),
   ],
+
+  'identity.organization.suspended': (event, context) =>
+    event.createdBy
+      ? [
+          customer(event.createdBy, 'identity.organization_suspended.customer', organizationsLink(context), {
+            legal_name: event.legalName,
+            reason: event.reason,
+          }),
+        ]
+      : [],
+
+  'identity.organization.reactivated': (event, context) =>
+    event.createdBy
+      ? [
+          customer(
+            event.createdBy,
+            'identity.organization_reactivated.customer',
+            organizationsLink(context),
+            { legal_name: event.legalName },
+          ),
+        ]
+      : [],
 };

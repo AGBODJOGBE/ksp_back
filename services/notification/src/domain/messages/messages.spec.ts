@@ -141,6 +141,7 @@ describe('Modèles de la facturation', () => {
     total: `150${NBSP}000${NBSP}FCFA`,
     due_on: '11 décembre 2026',
     link: 'https://ksp.bj/mon-espace/factures/i-1',
+    organization_name: '',
   };
 
   it('sont tous au catalogue, documents, par WhatsApp et e-mail', () => {
@@ -170,6 +171,27 @@ describe('Modèles de la facturation', () => {
         'Consultez-la dans Mon espace KSP, rubrique « Mes factures » : https://ksp.bj/mon-espace/factures/i-1',
       ].join('\n'),
     );
+  });
+
+  it('facture d’une organisation : raison sociale dans l’objet seulement', () => {
+    const organization = { ...issued, organization_name: 'SARL Bénin Propre' };
+    const { period: _period, ...withoutPeriod } = organization;
+    const subjects = [
+      findTemplate('billing.invoice_issued.customer')!.render!(organization).subject,
+      findTemplate('billing.invoice_overdue.customer')!.render!(withoutPeriod).subject,
+      findTemplate('billing.invoice_paid.customer')!.render!({
+        ...withoutPeriod,
+        paid_on: '16 décembre 2026',
+        unpaid_left: '0',
+      }).subject,
+    ];
+    expect(subjects).toEqual([
+      'Votre facture FAC-2026-000042 — SARL Bénin Propre',
+      'Facture FAC-2026-000042 impayée — SARL Bénin Propre',
+      'Facture FAC-2026-000042 réglée — SARL Bénin Propre',
+    ]);
+    const text = findTemplate('billing.invoice_issued.customer')!.render!(organization).text;
+    expect(text).toBe(findTemplate('billing.invoice_issued.customer')!.render!(issued).text);
   });
 
   it('numéro de facture ou montant mal formés : refusés', () => {
@@ -205,6 +227,7 @@ describe('Modèles de la facturation', () => {
       paid_on: '16 décembre 2026',
       unpaid_left: unpaidLeft,
       link: 'https://ksp.bj/mon-espace/factures/i-1',
+      organization_name: '',
     };
     expect(invalidVariables(template, variables)).toEqual([]);
     const message = template.render!(variables);
