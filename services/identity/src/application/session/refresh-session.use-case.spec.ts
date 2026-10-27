@@ -60,7 +60,12 @@ function setup() {
   const accessTokens = {
     issue: async (subject: Subject) => {
       issued.push(subject);
-      return { token: 'jwt', tokenId: 'j', expiresAt: new Date(now.getTime() + 900_000) };
+      return {
+        token: 'jwt',
+        tokenId: 'j',
+        expiresAt: new Date(now.getTime() + 900_000),
+        activeContext: { type: 'individual' as const, organizationId: null },
+      };
     },
   } as unknown as AccessTokenIssuer;
   const refresh = new RefreshSessionUseCase(
@@ -123,10 +128,12 @@ describe('RefreshSessionUseCase (UC-ID-04)', () => {
       expect.objectContaining({
         sessionId: 's-1',
         clientId: 'web',
+        activeContext: 'personal',
         // L'heure d'authentification reste celle de la connexion.
         authTime: new Date('2026-10-01T08:00:00Z'),
       }),
     ]);
+    expect(renewed.activeContext).toEqual({ type: 'individual', organizationId: null });
   });
 
   it('le nouveau jeton sert au renouvellement suivant', async () => {

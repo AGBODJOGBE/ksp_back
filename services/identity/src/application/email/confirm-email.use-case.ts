@@ -1,3 +1,4 @@
+import { activeContextOf } from '../../domain/context/active-context';
 import { type OtpPolicy } from '../../domain/otp/otp-policy';
 import { challengeState } from '../../domain/otp/otp-verification';
 import { isProfileIncomplete } from '../../domain/user/profile';
@@ -15,6 +16,8 @@ import {
 export interface ConfirmEmailInput {
   userId: string;
   code: string;
+  /** Contexte du jeton d'accès de l'appelant (claim ctx), renvoyé avec le profil. */
+  activeContext: string;
 }
 
 /**
@@ -57,7 +60,12 @@ export class ConfirmEmailUseCase {
         email: verification.target,
         now,
       });
-      return { account: confirmed, profileIncomplete: isProfileIncomplete(confirmed), pendingEmail: null };
+      return {
+        account: confirmed,
+        profileIncomplete: isProfileIncomplete(confirmed),
+        pendingEmail: null,
+        activeContext: activeContextOf(input.activeContext),
+      };
     } catch (error) {
       if (error instanceof VerificationAlreadyConsumedError) throw emailErrors.expired();
       if (error instanceof EmailAlreadyUsedError) throw emailErrors.alreadyUsed();

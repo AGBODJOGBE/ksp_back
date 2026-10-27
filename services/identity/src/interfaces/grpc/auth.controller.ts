@@ -15,7 +15,7 @@ import { GetSigningKeysUseCase } from '../../application/token/get-signing-keys.
 import { type SecondFactorMethod } from '../../domain/mfa/mfa-challenge';
 import { type OtpChannel } from '../../domain/otp/otp-challenge';
 import { type ClientKind } from '../../domain/session/session-policy';
-import { toUserMessage } from './mappers';
+import { toActiveContextMessage, toUserMessage } from './mappers';
 
 const CHANNEL_IN: Partial<Record<identityV1.OtpChannel, OtpChannel>> = {
   [identityV1.OtpChannel.OTP_CHANNEL_SMS]: 'sms',
@@ -180,5 +180,6 @@ function toSessionTokens(
     sessionId: opened.sessionId,
     user: toUserMessage(opened.account),
     profileIncomplete: opened.profileIncomplete,
+    activeContext: toActiveContextMessage(opened.activeContext),
   };
 }

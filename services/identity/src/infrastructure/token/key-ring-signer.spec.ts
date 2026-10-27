@@ -122,6 +122,7 @@ describe('Chaîne complète : émission par identity, vérification par le kit, 
     const verifier = new AccessTokenVerifier({ keys: createLocalJWKSet({ keys: signer.publicKeys() }) });
     const verified = await verifier.verify(issued.token);
     expect(verified.user).toMatchObject({ userId, sessionId, activeContext: 'personal', mfa: false });
+    expect(issued.activeContext).toEqual({ type: 'individual', organizationId: null });
     expect(verified.clientId).toBe('mobile');
     expect(verified.tokenId).toBe(issued.tokenId);
     expect(issued.expiresAt.getTime() - Date.now()).toBeGreaterThan(890_000);

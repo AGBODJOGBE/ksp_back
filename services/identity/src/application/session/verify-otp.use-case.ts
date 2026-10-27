@@ -1,3 +1,4 @@
+import { type ActiveContext, PERSONAL_CONTEXT } from '../../domain/context/active-context';
 import { isProfileIncomplete } from '../../domain/user/profile';
 import { AppError } from '@ksp/platform';
 import { type OtpPolicy } from '../../domain/otp/otp-policy';
@@ -35,6 +36,8 @@ export interface OpenedSession {
   sessionId: string;
   account: Account;
   profileIncomplete: boolean;
+  /** Contexte du jeton d'accès émis : particulier tant que les organisations n'existent pas. */
+  activeContext: ActiveContext;
   isNewUser: boolean;
 }
 
@@ -170,7 +173,7 @@ export class VerifyOtpUseCase {
       userId: result.account.id,
       sessionId,
       clientId: input.clientKind,
-      activeContext: 'personal',
+      activeContext: PERSONAL_CONTEXT,
       // Sites et applications : le rôle client ; les rôles internes ne servent qu'au back-office.
       roles: [CUSTOMER_ROLE],
       mfa: false,
@@ -185,6 +188,7 @@ export class VerifyOtpUseCase {
       sessionId,
       account: result.account,
       profileIncomplete: isProfileIncomplete(result.account),
+      activeContext: access.activeContext,
       isNewUser: result.isNewUser,
     };
   }
