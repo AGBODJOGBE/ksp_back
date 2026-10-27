@@ -33,6 +33,19 @@ export enum ScopeType {
   UNRECOGNIZED = "UNRECOGNIZED",
 }
 
+/**
+ * Type du contexte actif, tel que le lisent les services métier (cleaning, billing) : le
+ * contexte personnel est celui d'un particulier, une organisation active celui d'une entreprise
+ * (facture mensuelle, pas de choix du moyen de paiement). Pour l'instant, identity n'ouvre que
+ * le contexte personnel : l'organisation et son changement (UC-ID-12 à 16) viendront plus tard.
+ */
+export enum ContextType {
+  CONTEXT_TYPE_UNSPECIFIED = "CONTEXT_TYPE_UNSPECIFIED",
+  CONTEXT_TYPE_INDIVIDUAL = "CONTEXT_TYPE_INDIVIDUAL",
+  CONTEXT_TYPE_BUSINESS = "CONTEXT_TYPE_BUSINESS",
+  UNRECOGNIZED = "UNRECOGNIZED",
+}
+
 export enum OtpChannel {
   OTP_CHANNEL_UNSPECIFIED = "OTP_CHANNEL_UNSPECIFIED",
   OTP_CHANNEL_SMS = "OTP_CHANNEL_SMS",
@@ -98,6 +111,16 @@ export interface User {
    * (factures, documents).
    */
   emailVerified: boolean;
+}
+
+/**
+ * Contexte actif de la session : celui du jeton d'accès (claim ctx) émis avec la réponse ou
+ * présenté par l'appelant.
+ */
+export interface ActiveContext {
+  type: ContextType;
+  /** Organisation active pour CONTEXT_TYPE_BUSINESS ; vide pour un particulier. */
+  organizationId: string;
 }
 
 export interface GetUserRequest {
@@ -254,6 +277,8 @@ export interface SessionTokens {
     | undefined;
   /** Le nom n'est pas encore renseigné : le front invite à le compléter (UC-ID-01). */
   profileIncomplete: boolean;
+  /** Contexte du jeton d'accès émis (aujourd'hui toujours le contexte personnel). */
+  activeContext?: ActiveContext | undefined;
 }
 
 export interface MfaChallenge {
@@ -379,6 +404,8 @@ export interface GetMeResponse {
   profileIncomplete: boolean;
   /** Adresse en attente de confirmation (code envoyé, encore valable) ; vide sinon. */
   pendingEmail: string;
+  /** Contexte du jeton d'accès de l'appelant (x-active-context). */
+  activeContext?: ActiveContext | undefined;
 }
 
 export interface UpdateMeRequest {
@@ -395,6 +422,8 @@ export interface UpdateMeResponse {
   profileIncomplete: boolean;
   /** Adresse en attente de confirmation (code envoyé, encore valable) ; vide sinon. */
   pendingEmail: string;
+  /** Contexte du jeton d'accès de l'appelant (x-active-context). */
+  activeContext?: ActiveContext | undefined;
 }
 
 export interface ChangeEmailRequest {
@@ -418,6 +447,8 @@ export interface ConfirmEmailRequest {
 export interface ConfirmEmailResponse {
   user?: User | undefined;
   profileIncomplete: boolean;
+  /** Contexte du jeton d'accès de l'appelant (x-active-context). */
+  activeContext?: ActiveContext | undefined;
 }
 
 /** Appelé par tous les services autorisés par la carte des services. */
