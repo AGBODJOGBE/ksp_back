@@ -501,3 +501,127 @@ describe('NotifyEventUseCase — impayés, suspension et reprise', () => {
     expect(inbox.processed.has(EVENT_ID)).toBe(true);
   });
 });
+
+describe('NotifyEventUseCase — factures mensuelles (billing)', () => {
+  const INVOICE = '0192f1c4-0000-7000-8000-0000000f1001';
+  const ORG = '0192f1c4-0000-7000-8000-0000000b0001';
+  const LINK = `https://ksp.bj/mon-espace/factures/${INVOICE}`;
+  const withEmail = contact(CUSTOMER, { email: 'Koffi@Example.com' });
+  const ref = {
+    invoiceId: INVOICE,
+    invoiceNumber: 'FAC-2026-000042',
+    customerId: CUSTOMER,
+    organizationId: ORG,
+    source: 'cleaning' as const,
+    contractId: MISSION,
+    total: { amount: 150000, currency: 'XOF' as const },
+  };
+
+  // Novembre 2026 à l'heure du Bénin : fin exclue (1er décembre à minuit), facture émise ce jour-là.
+  const issued = event('billing.invoice.issued', {
+    ...ref,
+    periodStart: '2026-10-31T23:00:00.000Z',
+    periodEnd: '2026-11-30T23:00:00.000Z',
+    issuedAt: '2026-11-30T23:00:00.000Z',
+    dueAt: '2026-12-10T23:00:00.000Z',
+  });
+
+  const overdue = event('billing.invoice.overdue', {
+    ...ref,
+    dueAt: '2026-12-10T23:00:00.000Z',
+    overdueCount: 1,
+  });
+
+  const paid = event('billing.invoice.paid', { ...ref, paidAt: '2026-12-16T10:00:00.000Z', overdueCount: 1 });
+
+  it('facture émise : par e-mail à l’adresse vérifiée, dernier jour facturé, montant entier', async () => {
+    const { useCase, whatsapp, email, inbox, notifications } = setup([withEmail]);
+    await expect(useCase.execute(issued)).resolves.toMatchObject({ accepted: 1, inApp: 1 });
+    expect(whatsapp.sent).toHaveLength(0);
+    expect(email.sent).toHaveLength(1);
+    expect(email.sent[0]).toMatchObject({
+      templateCode: 'billing.invoice_issued.customer',
+      email: 'koffi@example.com',
+      variables: {
+        invoice_number: 'FAC-2026-000042',
+        period: 'du 1 novembre 2026 au 30 novembre 2026',
+        total: `150${NBSP}000${NBSP}FCFA`,
+        due_on: '11 décembre 2026',
+        link: LINK,
+      },
+    });
+    expect(email.sent[0]!.content!.subject).toBe('Votre facture FAC-2026-000042');
+    expect(inbox.inApp).toEqual([
+      expect.objectContaining({
+        userId: CUSTOMER,
+        templateCode: 'billing.invoice_issued.customer',
+        link: LINK,
+      }),
+    ]);
+    expect(notifications.rows[0]!.idempotencyKey).toBe(
+      `${EVENT_ID}:billing.invoice_issued.customer:${CUSTOMER}`,
+    );
+  });
+
+  it('facture émise sans adresse vérifiée : WhatsApp, et la facture reste dans l’espace', async () => {
+    // L'annuaire ne rend une adresse que si elle est vérifiée (ADR-026) : ici, aucune.
+    const { useCase, whatsapp, email, inbox } = setup();
+    await expect(useCase.execute(issued)).resolves.toMatchObject({ accepted: 1, inApp: 1 });
+    expect(email.sent).toHaveLength(0);
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual(['billing.invoice_issued.customer']);
+    expect(inbox.inApp).toHaveLength(1);
+  });
+
+  it('e-mail refusé par le prestataire : bascule sur WhatsApp', async () => {
+    const providers = [
+      new FakeProvider('whatsapp'),
+      new FakeProvider('email', [{ accepted: false, reason: 'provider_unavailable' }]),
+    ];
+    const { useCase, whatsapp, notifications } = setup([withEmail], providers);
+    await expect(useCase.execute(issued)).resolves.toMatchObject({ accepted: 1 });
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(notifications.rows[0]).toMatchObject({
+      channelUsed: 'whatsapp',
+      channelsTried: ['email', 'whatsapp'],
+    });
+  });
+
+  it('facture impayée : un seul message, la facture et son échéance', async () => {
+    const { useCase, whatsapp, email } = setup([withEmail]);
+    await expect(useCase.execute(overdue)).resolves.toMatchObject({ accepted: 1 });
+    expect(whatsapp.sent).toHaveLength(0);
+    expect(email.sent[0]!.content!.subject).toBe('Facture FAC-2026-000042 impayée');
+    expect(email.sent[0]!.content!.text).toContain('à régler avant le 11 décembre 2026');
+    expect(email.sent[0]!.variables['link']).toBe(LINK);
+  });
+
+  it('facture réglée : remerciement, impayées restantes du contrat', async () => {
+    const { useCase, email } = setup([withEmail]);
+    await useCase.execute(paid);
+    expect(email.sent[0]!.content!.subject).toBe('Facture FAC-2026-000042 réglée');
+    expect(email.sent[0]!.content!.text).toContain(
+      `votre facture FAC-2026-000042 de 150${NBSP}000${NBSP}FCFA est réglée en totalité depuis le 16 décembre 2026.`,
+    );
+    expect(email.sent[0]!.content!.text).toContain('Il reste 1 facture impayée sur ce contrat.');
+  });
+
+  it('événement rejoué : la facture ne part qu’une fois', async () => {
+    const { useCase, email, inbox } = setup([withEmail]);
+    await useCase.execute(issued);
+    await expect(useCase.execute(issued)).resolves.toMatchObject({ status: 'duplicate' });
+    inbox.processed.clear();
+    await expect(useCase.execute(issued)).resolves.toMatchObject({ accepted: 0, replayed: 1 });
+    expect(email.sent).toHaveLength(1);
+  });
+
+  it('période illisible : erreur (file d’erreurs après les reprises)', async () => {
+    const { useCase, inbox } = setup();
+    await expect(
+      useCase.execute({
+        ...issued,
+        payload: { ...(issued.payload as object), periodEnd: '2026-10-31T23:00:00.000Z' },
+      }),
+    ).rejects.toThrow('période illisible');
+    expect(inbox.processed.size).toBe(0);
+  });
+});

@@ -1,10 +1,11 @@
 import { type ChannelName } from './channel';
+import { BILLING_TEMPLATES } from './messages/billing.messages';
 import { CLEANING_TEMPLATES } from './messages/cleaning.messages';
 import { IDENTITY_DIRECT_TEMPLATES } from './messages/identity.messages';
 
 /**
  * Modèle de message. Lot 1 : `identity.otp` (envoi direct) ; lot 2 : les messages des événements du
- * Nettoyage et `identity.email_verification` (envoi direct, par e-mail). Le catalogue complet
+ * Nettoyage et de la facturation, et `identity.email_verification` (envoi direct, par e-mail). Le catalogue complet
  * (fichiers versionnés ou édition au back-office) attend le cahier des charges du service notification.
  */
 export interface TemplateDefinition {
@@ -61,6 +62,7 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
   },
   ...Object.fromEntries(IDENTITY_DIRECT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(CLEANING_TEMPLATES.map((template) => [template.code, template])),
+  ...Object.fromEntries(BILLING_TEMPLATES.map((template) => [template.code, template])),
 };
 
 export function findTemplate(code: string): TemplateDefinition | null {
