@@ -35,18 +35,40 @@ export class BillingSchedulerService implements OnApplicationBootstrap, BeforeAp
     if (this.timer) clearInterval(this.timer);
   }
 
-  /** Un seul passage à la fois ; une erreur est journalisée sans arrêter la tâche. */
+  /**
+   * Un seul passage à la fois. Chaque étape a sa propre garde : une émission en échec (identity
+   * indisponible : aucune facture sans en-tête) n'empêche pas le passage en « impayée », et le
+   * passage suivant la reprend. Une erreur est journalisée sans arrêter la tâche.
+   */
   async tick(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
-      const { issued } = await this.useCases.issueDueInvoices.execute();
-      const { overdue } = await this.useCases.markOverdueInvoices.execute();
+      const issued = await this.step('Émission des factures', async () => {
+        const { issued, deferredContractIds } = await this.useCases.issueDueInvoices.execute();
+        if (deferredContractIds.length > 0) {
+          this.logger.warn(
+            `Factures reportées, organisation introuvable dans identity : contrats ${deferredContractIds.join(', ')}`,
+          );
+        }
+        return issued;
+      });
+      const overdue = await this.step(
+        'Passage en impayée',
+        async () => (await this.useCases.markOverdueInvoices.execute()).overdue,
+      );
       if (issued || overdue) this.logger.log(`Factures émises : ${issued} ; passées impayées : ${overdue}`);
-    } catch (error) {
-      this.logger.error(`Facturation planifiée en échec : ${(error as Error).message}`);
     } finally {
       this.running = false;
+    }
+  }
+
+  private async step(name: string, run: () => Promise<number>): Promise<number> {
+    try {
+      return await run();
+    } catch (error) {
+      this.logger.error(`${name} en échec, reprise au prochain passage : ${(error as Error).message}`);
+      return 0;
     }
   }
 }

@@ -37,6 +37,15 @@ export function presentInvoice(invoice: Invoice): billingV1.Invoice {
       recordedBy: payment.recordedBy,
       recordedAt: iso(payment.recordedAt),
     })),
+    // Message absent (undefined) : particulier, ou facture émise avant l'enregistrement de l'en-tête.
+    organization: invoice.organization
+      ? {
+          legalName: invoice.organization.legalName,
+          address: invoice.organization.address,
+          ifu: invoice.organization.ifu,
+          rccm: invoice.organization.rccm ?? '',
+        }
+      : undefined,
   };
 }
 

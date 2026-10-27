@@ -127,6 +127,12 @@ describe('billing en gRPC', () => {
     });
     const detail = await call((m) => invoices.getMyInvoice({ invoiceId: mine[0]!.id }, m), customer);
     expect(detail.invoice?.lines[0]).toMatchObject({ quantity: 1, amount: { amount: 150_000 } });
+    expect(detail.invoice?.organization).toEqual({
+      legalName: 'SARL Bénin Propre',
+      address: 'Lot 12, Haie Vive, Cotonou',
+      ifu: '3201912345678',
+      rccm: 'RB/COT/19 B 1234',
+    });
   });
 
   it('paiement manuel au back-office, réglages, erreurs traduites', async () => {

@@ -70,24 +70,30 @@ model BillingContract {
 
 /// Facture mensuelle : une seule par (contrat, mois).
 model Invoice {
-  id             String           @id @db.Uuid
-  number         String           @unique
-  status         String
-  contractId     String           @map("contract_id") @db.Uuid
-  customerId     String           @map("customer_id") @db.Uuid
-  organizationId String?          @map("organization_id") @db.Uuid
-  source         String
-  periodIndex    Int              @map("period_index")
-  periodStart    DateTime         @map("period_start") @db.Timestamptz(3)
-  periodEnd      DateTime         @map("period_end") @db.Timestamptz(3)
-  lines          Json
-  total          Int
-  issuedAt       DateTime         @map("issued_at") @db.Timestamptz(3)
-  dueAt          DateTime         @map("due_at") @db.Timestamptz(3)
-  paidAt         DateTime?        @map("paid_at") @db.Timestamptz(3)
-  version        Int              @default(0)
-  contract       BillingContract  @relation(fields: [contractId], references: [id])
-  payments       InvoicePayment[]
+  id                    String           @id @db.Uuid
+  number                String           @unique
+  status                String
+  contractId            String           @map("contract_id") @db.Uuid
+  customerId            String           @map("customer_id") @db.Uuid
+  organizationId        String?          @map("organization_id") @db.Uuid
+  source                String
+  periodIndex           Int              @map("period_index")
+  periodStart           DateTime         @map("period_start") @db.Timestamptz(3)
+  periodEnd             DateTime         @map("period_end") @db.Timestamptz(3)
+  lines                 Json
+  total                 Int
+  issuedAt              DateTime         @map("issued_at") @db.Timestamptz(3)
+  dueAt                 DateTime         @map("due_at") @db.Timestamptz(3)
+  paidAt                DateTime?        @map("paid_at") @db.Timestamptz(3)
+  /// En-tête de l'organisation facturée, copié d'identity à l'émission (document comptable : il ne
+  /// suit pas les modifications ultérieures de la fiche). Null pour une facture émise avant.
+  organizationLegalName String?          @map("organization_legal_name")
+  organizationAddress   String?          @map("organization_address")
+  organizationIfu       String?          @map("organization_ifu")
+  organizationRccm      String?          @map("organization_rccm")
+  version               Int              @default(0)
+  contract              BillingContract  @relation(fields: [contractId], references: [id])
+  payments              InvoicePayment[]
 
   @@unique([contractId, periodIndex])
   @@index([customerId, id])

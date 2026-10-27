@@ -3,7 +3,14 @@ import { join } from 'node:path';
 import { ReadinessRegistry } from '@ksp/platform';
 import { Client, Pool } from 'pg';
 import { type BillingDeps } from '../src/application/ports';
-import { asStaff, CUSTOMER_ID, FixedClock, ORGANIZATION_ID } from '../src/application/testing/fakes';
+import {
+  asStaff,
+  CUSTOMER_ID,
+  FixedClock,
+  InMemoryOrganizations,
+  ORGANIZATION_ID,
+  ORGANIZATION_PROFILE,
+} from '../src/application/testing/fakes';
 import { createUseCases } from '../src/application/use-cases';
 import { PrismaContractRepository } from '../src/infrastructure/persistence/prisma-contract.repository';
 import { PrismaInvoiceRepository } from '../src/infrastructure/persistence/prisma-invoice.repository';
@@ -45,10 +52,13 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
     process.env.DATABASE_URL = url.toString();
     prisma = new PrismaService(new ReadinessRegistry());
     await prisma.$connect();
+    const organizations = new InMemoryOrganizations();
+    organizations.profiles.set(ORGANIZATION_ID, ORGANIZATION_PROFILE);
     deps = {
       contracts: new PrismaContractRepository(prisma),
       invoices: new PrismaInvoiceRepository(prisma),
       settings: new PrismaSettingsRepository(prisma),
+      organizations,
       clock: new FixedClock(new Date('2026-10-23T08:00:00Z')),
       ids: new UuidV7Generator(),
     };
@@ -105,6 +115,17 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
       (r) => r.number,
     );
     expect(numbers).toEqual(['FAC-2027-000001', 'FAC-2027-000002']);
+    const headers = await pool.query(
+      'SELECT DISTINCT organization_legal_name, organization_address, organization_ifu, organization_rccm FROM invoices',
+    );
+    expect(headers.rows).toEqual([
+      {
+        organization_legal_name: 'SARL Bénin Propre',
+        organization_address: 'Lot 12, Haie Vive, Cotonou',
+        organization_ifu: '3201912345678',
+        organization_rccm: 'RB/COT/19 B 1234',
+      },
+    ]);
     expect(await outbox()).toEqual(['billing.invoice.issued', 'billing.invoice.issued']);
 
     deps.clock.current = new Date('2027-01-16T08:00:00Z');
@@ -128,6 +149,13 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
       }),
     );
     expect(paid.status).toBe('paid');
+    // L'en-tête copié à l'émission ne change pas avec un paiement.
+    expect(paid.organization).toEqual({
+      legalName: 'SARL Bénin Propre',
+      address: 'Lot 12, Haie Vive, Cotonou',
+      ifu: '3201912345678',
+      rccm: 'RB/COT/19 B 1234',
+    });
     const { rows } = await pool.query("SELECT payload FROM outbox WHERE event_type = 'billing.invoice.paid'");
     expect(rows[0].payload.payload).toMatchObject({ invoiceId: paid.id, overdueCount: 1 });
     expect((await deps.invoices.findById(paid.id))!.payments).toHaveLength(1);

@@ -9,6 +9,8 @@ import {
   type IdGenerator,
   type InvoiceFilter,
   type InvoiceRepository,
+  type OrganizationDirectory,
+  type OrganizationProfile,
   type OutboxMessage,
   type PageRequest,
   type SettingsRepository,
@@ -146,12 +148,29 @@ export class InMemorySettings implements SettingsRepository {
   }
 }
 
+/** Fiches d'identity en mémoire ; `unavailable` simule une panne d'identity. */
+export class InMemoryOrganizations implements OrganizationDirectory {
+  readonly profiles = new Map<string, OrganizationProfile>();
+  readonly lookups: string[][] = [];
+  unavailable = false;
+
+  async findByIds(organizationIds: readonly string[]) {
+    this.lookups.push([...organizationIds]);
+    if (this.unavailable) throw new Error('identity indisponible');
+    return organizationIds.flatMap((id) => {
+      const profile = this.profiles.get(id);
+      return profile ? [profile] : [];
+    });
+  }
+}
+
 export interface TestWorld extends BillingDeps {
   recorder: Recorder;
   clock: FixedClock;
   contracts: InMemoryContracts;
   invoices: InMemoryInvoices;
   settings: InMemorySettings;
+  organizations: InMemoryOrganizations;
 }
 
 export function testWorld(): TestWorld {
@@ -164,6 +183,7 @@ export function testWorld(): TestWorld {
     contracts: new InMemoryContracts(invoices),
     invoices,
     settings: new InMemorySettings(),
+    organizations: withOrganization(new InMemoryOrganizations()),
   };
 }
 
@@ -171,6 +191,20 @@ export const CUSTOMER_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11';
 export const OTHER_CUSTOMER_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e99';
 export const ORGANIZATION_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000';
 export const STAFF_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001';
+
+/** Fiche de l'organisation des tests, telle qu'identity la rend à billing. */
+export const ORGANIZATION_PROFILE: OrganizationProfile = {
+  id: ORGANIZATION_ID,
+  legalName: 'SARL Bénin Propre',
+  address: 'Lot 12, Haie Vive, Cotonou',
+  ifu: '3201912345678',
+  rccm: 'RB/COT/19 B 1234',
+};
+
+function withOrganization(organizations: InMemoryOrganizations): InMemoryOrganizations {
+  organizations.profiles.set(ORGANIZATION_ID, ORGANIZATION_PROFILE);
+  return organizations;
+}
 
 /** Exécute `fn` comme l'utilisateur donné (contexte transmis par la gateway). */
 export function as<T>(

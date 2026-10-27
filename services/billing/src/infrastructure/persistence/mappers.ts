@@ -7,7 +7,13 @@ import {
 } from '../../../prisma/generated';
 import { type OutboxMessage } from '../../application/ports';
 import { type BillingContract, type SuspensionInterval } from '../../domain/contract';
-import { type Invoice, type InvoiceLine, type InvoiceStatus, type PaymentMethod } from '../../domain/invoice';
+import {
+  type Invoice,
+  type InvoiceLine,
+  type InvoiceOrganization,
+  type InvoiceStatus,
+  type PaymentMethod,
+} from '../../domain/invoice';
 
 export type Tx = Prisma.TransactionClient;
 export const json = (value: unknown) => value as Prisma.InputJsonValue;
@@ -91,7 +97,29 @@ export function toInvoice(row: InvoiceRow & { payments: PaymentRow[] }): Invoice
       recordedBy: payment.recordedBy,
       recordedAt: payment.recordedAt,
     })),
+    organization: toInvoiceOrganization(row),
     version: row.version,
+  };
+}
+
+/** En-tête copié à l'émission ; absent (null) pour une facture émise avant son enregistrement. */
+function toInvoiceOrganization(row: InvoiceRow): InvoiceOrganization | null {
+  if (row.organizationLegalName === null) return null;
+  return {
+    legalName: row.organizationLegalName,
+    address: row.organizationAddress ?? '',
+    ifu: row.organizationIfu ?? '',
+    rccm: row.organizationRccm,
+  };
+}
+
+/** Colonnes de l'en-tête, écrites une seule fois, à l'émission. */
+export function invoiceOrganizationColumns(organization: InvoiceOrganization | null) {
+  return {
+    organizationLegalName: organization?.legalName ?? null,
+    organizationAddress: organization?.address ?? null,
+    organizationIfu: organization?.ifu ?? null,
+    organizationRccm: organization?.rccm ?? null,
   };
 }
 
