@@ -236,6 +236,9 @@ paths:
                       preferredLanguage: fr
                       createdAt: '2026-10-17T10:00:00Z'
                     profileIncomplete: true
+                    activeContext:
+                      type: individual
+                      organizationId: null
                     isNewUser: true
                 agentBackOffice:
                   summary: Compte interne, première connexion au back-office
@@ -381,6 +384,9 @@ paths:
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: false
+                activeContext:
+                  type: individual
+                  organizationId: null
                 recoveryCodes:
                   - 7KQ2M-X9PDA
                   - H4TZ8-0RWNC
@@ -470,6 +476,9 @@ paths:
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: false
+                activeContext:
+                  type: individual
+                  organizationId: null
                 recoveryCodesRemaining: 10
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -547,6 +556,9 @@ paths:
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: false
+                activeContext:
+                  type: individual
+                  organizationId: null
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -623,6 +635,9 @@ paths:
       description: |
         `user.email` est l'adresse vérifiée du compte (`emailVerified`), seule destinataire des
         e-mails (factures, documents) ; `pendingEmail`, l'adresse en attente de confirmation par code.
+        `activeContext.type` est le type de compte réel (`individual` ou `business`), celui qui décide
+        du parcours de paiement dans les métiers ; le même objet accompagne chaque session ouverte
+        ou renouvelée.
 
         Erreurs : `IDENTITY_USER_NOT_FOUND` (404) si le compte a été supprimé.
       x-ksp-grpc: ksp.identity.v1.AccountService/GetMe
@@ -652,6 +667,9 @@ paths:
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: true
+                activeContext:
+                  type: individual
+                  organizationId: null
                 pendingEmail: null
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -711,6 +729,9 @@ paths:
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: false
+                activeContext:
+                  type: individual
+                  organizationId: null
                 pendingEmail: null
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -838,6 +859,9 @@ paths:
                   preferredLanguage: fr
                   createdAt: '2026-10-17T10:00:00Z'
                 profileIncomplete: false
+                activeContext:
+                  type: individual
+                  organizationId: null
                 pendingEmail: null
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -4343,7 +4367,16 @@ components:
       type: object
       additionalProperties: false
       required:
-        [status, accessToken, accessTokenExpiresAt, refreshTokenExpiresAt, sessionId, user, profileIncomplete]
+        [
+          status,
+          accessToken,
+          accessTokenExpiresAt,
+          refreshTokenExpiresAt,
+          sessionId,
+          user,
+          profileIncomplete,
+          activeContext,
+        ]
       properties:
         status:
           const: authenticated
@@ -4366,6 +4399,8 @@ components:
         profileIncomplete:
           type: boolean
           description: Le nom n'est pas encore renseigné ; il est obligatoire avant tout paiement.
+        activeContext:
+          $ref: '#/components/schemas/ActiveContext'
 
     VerifyOtpSessionResponse:
       type: object
@@ -4379,6 +4414,7 @@ components:
           sessionId,
           user,
           profileIncomplete,
+          activeContext,
           isNewUser,
         ]
       properties:
@@ -4402,6 +4438,8 @@ components:
           $ref: '#/components/schemas/User'
         profileIncomplete:
           type: boolean
+        activeContext:
+          $ref: '#/components/schemas/ActiveContext'
         isNewUser:
           type: boolean
           description: Le compte vient d'être créé par ce code.
@@ -4488,6 +4526,7 @@ components:
           sessionId,
           user,
           profileIncomplete,
+          activeContext,
           recoveryCodes,
         ]
       properties:
@@ -4511,6 +4550,8 @@ components:
           $ref: '#/components/schemas/User'
         profileIncomplete:
           type: boolean
+        activeContext:
+          $ref: '#/components/schemas/ActiveContext'
         recoveryCodes:
           type: array
           minItems: 10
@@ -4547,6 +4588,7 @@ components:
           sessionId,
           user,
           profileIncomplete,
+          activeContext,
           recoveryCodesRemaining,
         ]
       properties:
@@ -4570,6 +4612,8 @@ components:
           $ref: '#/components/schemas/User'
         profileIncomplete:
           type: boolean
+        activeContext:
+          $ref: '#/components/schemas/ActiveContext'
         recoveryCodesRemaining:
           type: integer
           minimum: 0
@@ -4602,15 +4646,36 @@ components:
           type: integer
           minimum: 0
 
+    ActiveContext:
+      type: object
+      additionalProperties: false
+      required: [type, organizationId]
+      description: |
+        Contexte actif de la session, celui du jeton d'accès (claim `ctx`) : il fixe le type de compte
+        réel que lisent les services métier. `individual` (particulier, contexte personnel) : choix du
+        paiement, tout réglé à la fin. `business` (entreprise, organisation active) : facture mensuelle,
+        pas de choix du moyen de paiement, jours d'intervention par semaine (Nettoyage). Aujourd'hui,
+        identity n'ouvre que le contexte personnel : toutes les sessions sont `individual`.
+      properties:
+        type:
+          type: string
+          enum: [individual, business]
+        organizationId:
+          type: [string, 'null']
+          format: uuid
+          description: Organisation active d'une entreprise ; null pour un particulier.
+
     MeResponse:
       type: object
       additionalProperties: false
-      required: [user, profileIncomplete, pendingEmail]
+      required: [user, profileIncomplete, pendingEmail, activeContext]
       properties:
         user:
           $ref: '#/components/schemas/User'
         profileIncomplete:
           type: boolean
+        activeContext:
+          $ref: '#/components/schemas/ActiveContext'
         pendingEmail:
           type: [string, 'null']
           format: email

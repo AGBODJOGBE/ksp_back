@@ -4,6 +4,7 @@ import { type CleaningServer, IDS, startCleaningStub } from './support/cleaning-
 import {
   type IdentityServer,
   ORIGINS,
+  protoIndividual,
   protoUser,
   startGateway,
   startIdentityStub,
@@ -55,7 +56,11 @@ describe('gateway → cleaning', () => {
   beforeEach(() => {
     identity.stub.reset();
     cleaning.stub.reset();
-    identity.stub.on('getMe', async () => ({ user: protoUser, profileIncomplete: false }));
+    identity.stub.on('getMe', async () => ({
+      user: protoUser,
+      profileIncomplete: false,
+      activeContext: protoIndividual,
+    }));
   });
 
   const http = () => request(app.getHttpServer());
@@ -89,7 +94,11 @@ describe('gateway → cleaning', () => {
   });
 
   it('profil incomplet : rien n’est transmis à cleaning', async () => {
-    identity.stub.on('getMe', async () => ({ user: protoUser, profileIncomplete: true }));
+    identity.stub.on('getMe', async () => ({
+      user: protoUser,
+      profileIncomplete: true,
+      activeContext: protoIndividual,
+    }));
     const res = await http()
       .post('/api/v1/cleaning/quote-requests')
       .set('Authorization', `Bearer ${customer}`)

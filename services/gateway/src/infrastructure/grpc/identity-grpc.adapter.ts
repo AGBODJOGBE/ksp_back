@@ -4,6 +4,8 @@ import { Logger } from '@nestjs/common';
 import { type Metadata } from '@grpc/grpc-js';
 import { type Observable } from 'rxjs';
 import {
+  type ActiveContext,
+  type ContextType,
   type EmailChange,
   type IdentityAccount,
   type IdentityAuth,
@@ -71,6 +73,18 @@ function malformed(what: string): AppError {
 
 const orNull = (value: string | undefined): string | null => (value ? value : null);
 
+const CONTEXT_TYPE: Partial<Record<identityV1.ContextType, ContextType>> = {
+  [identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL]: 'individual',
+  [identityV1.ContextType.CONTEXT_TYPE_BUSINESS]: 'business',
+};
+
+/** Contexte absent ou de type inconnu : réponse hors contrat, jamais un type deviné. */
+function toActiveContext(context: identityV1.ActiveContext | undefined): ActiveContext {
+  const type = context && CONTEXT_TYPE[context.type];
+  if (!type) throw malformed(`contexte actif ${context?.type ?? 'absent'}`);
+  return { type, organizationId: type === 'business' ? orNull(context.organizationId) : null };
+}
+
 function toUser(user: identityV1.User | undefined): UserProfile {
   if (!user) throw malformed('utilisateur absent');
   const status = USER_STATUS[user.status];
@@ -98,6 +112,7 @@ function toSession(tokens: identityV1.SessionTokens | undefined): SessionTokens 
     sessionId: tokens.sessionId,
     user: toUser(tokens.user),
     profileIncomplete: tokens.profileIncomplete,
+    activeContext: toActiveContext(tokens.activeContext),
   };
 }
 
@@ -106,6 +121,7 @@ function toProfile(response: identityV1.GetMeResponse | identityV1.ConfirmEmailR
     user: toUser(response.user),
     profileIncomplete: response.profileIncomplete,
     pendingEmail: 'pendingEmail' in response ? orNull(response.pendingEmail) : null,
+    activeContext: toActiveContext(response.activeContext),
   };
 }
 

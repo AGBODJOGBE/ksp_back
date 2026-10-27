@@ -1,4 +1,5 @@
 import {
+  type ActiveContext,
   type EmailChange,
   type MfaChallenge,
   type OtpChallenge,
@@ -22,6 +23,11 @@ export function presentUser(user: UserProfile) {
     preferredLanguage: user.preferredLanguage,
     createdAt: user.createdAt,
   };
+}
+
+/** Particulier ou entreprise : le type de compte réel, celui que lisent cleaning et billing. */
+export function presentActiveContext(context: ActiveContext) {
+  return { type: context.type, organizationId: context.organizationId };
 }
 
 export function presentOtpChallenge(challenge: OtpChallenge) {
@@ -48,6 +54,7 @@ export function presentSession(session: SessionTokens, refreshTokenInBody: boole
     sessionId: session.sessionId,
     user: presentUser(session.user),
     profileIncomplete: session.profileIncomplete,
+    activeContext: presentActiveContext(session.activeContext),
   };
 }
 
@@ -77,6 +84,7 @@ export function presentProfile(profile: Profile) {
     user: presentUser(profile.user),
     profileIncomplete: profile.profileIncomplete,
     pendingEmail: profile.pendingEmail,
+    activeContext: presentActiveContext(profile.activeContext),
   };
 }
 

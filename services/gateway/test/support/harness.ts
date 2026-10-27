@@ -64,6 +64,12 @@ export const protoUser: identityV1.User = {
   emailVerified: false,
 };
 
+/** Contexte personnel (particulier) : le seul qu'identity ouvre aujourd'hui. */
+export const protoIndividual: identityV1.ActiveContext = {
+  type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL,
+  organizationId: '',
+};
+
 export function protoSession(refreshToken = 'rt-new'): identityV1.SessionTokens {
   return {
     accessToken: 'eyJhbGciOiJFUzI1NiJ9.e30.c2ln',
@@ -73,6 +79,7 @@ export function protoSession(refreshToken = 'rt-new'): identityV1.SessionTokens 
     sessionId: SESSION_ID,
     user: protoUser,
     profileIncomplete: true,
+    activeContext: protoIndividual,
   };
 }
 
@@ -119,11 +126,17 @@ export class IdentityStub {
       recoveryCodes: Array.from({ length: 10 }, (_, index) => `7KQ2M-X9PD${index}`),
     }),
     verifyMfa: () => ({ session: protoSession('rt-admin'), recoveryCodesRemaining: 9 }),
-    getMe: () => ({ user: protoUser, profileIncomplete: true, pendingEmail: '' }),
+    getMe: () => ({
+      user: protoUser,
+      profileIncomplete: true,
+      pendingEmail: '',
+      activeContext: protoIndividual,
+    }),
     updateMe: (request) => ({
       user: { ...protoUser, ...request },
       profileIncomplete: !request['firstName'],
       pendingEmail: '',
+      activeContext: protoIndividual,
     }),
     changeEmail: (request) => ({
       pendingEmail: String(request['email']).trim().toLowerCase(),
@@ -133,6 +146,7 @@ export class IdentityStub {
     confirmEmail: () => ({
       user: { ...protoUser, email: 'koffi@exemple.com', emailVerified: true },
       profileIncomplete: true,
+      activeContext: protoIndividual,
     }),
   };
 

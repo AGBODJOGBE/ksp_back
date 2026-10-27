@@ -2,6 +2,7 @@
 import { AppError, type VerifiedAccessToken } from '@ksp/platform';
 import { type AccessTokenVerifierPort, type RateLimiter, type RateLimitResult } from '../access/access.ports';
 import {
+  type ActiveContext,
   type EmailChange,
   type IdentityAccount,
   type IdentityAuth,
@@ -67,6 +68,9 @@ export const user: UserProfile = {
   createdAt: '2026-10-17T10:00:00.000Z',
 };
 
+/** Contexte personnel : le seul qu'identity ouvre aujourd'hui. */
+export const individual: ActiveContext = { type: 'individual', organizationId: null };
+
 export const session: SessionTokens = {
   accessToken: 'jwt',
   accessTokenExpiresAt: '2026-10-17T10:15:00.000Z',
@@ -75,6 +79,7 @@ export const session: SessionTokens = {
   sessionId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e10',
   user,
   profileIncomplete: true,
+  activeContext: individual,
 };
 
 /** identity simulé : enregistre chaque appel et renvoie une réponse type. */
@@ -131,12 +136,17 @@ export class FakeIdentity implements IdentityAuth, IdentityAccount {
 
   async getMe(): Promise<Profile> {
     this.calls.push({ method: 'getMe', input: undefined });
-    return { user, profileIncomplete: true, pendingEmail: null };
+    return { user, profileIncomplete: true, pendingEmail: null, activeContext: individual };
   }
 
   async updateMe(changes: ProfileChanges): Promise<Profile> {
     this.calls.push({ method: 'updateMe', input: changes });
-    return { user: { ...user, ...changes }, profileIncomplete: false, pendingEmail: null };
+    return {
+      user: { ...user, ...changes },
+      profileIncomplete: false,
+      pendingEmail: null,
+      activeContext: individual,
+    };
   }
 
   async changeEmail(email: string): Promise<EmailChange> {
@@ -150,6 +160,7 @@ export class FakeIdentity implements IdentityAuth, IdentityAccount {
       user: { ...user, email: 'koffi@exemple.com', emailVerified: true },
       profileIncomplete: true,
       pendingEmail: null,
+      activeContext: individual,
     };
   }
 }

@@ -24,6 +24,19 @@ export interface UserProfile {
   createdAt: string;
 }
 
+/**
+ * Contexte actif de la session (claim ctx du jeton) : particulier (contexte personnel) ou
+ * entreprise (organisation active). C'est lui qui décide, dans cleaning et billing, de la
+ * facture mensuelle et de l'absence de choix du moyen de paiement.
+ */
+export type ContextType = 'individual' | 'business';
+
+export interface ActiveContext {
+  type: ContextType;
+  /** Organisation active d'une entreprise ; null pour un particulier. */
+  organizationId: string | null;
+}
+
 export interface OtpChallenge {
   challengeId: string;
   maskedTarget: string;
@@ -40,6 +53,7 @@ export interface SessionTokens {
   sessionId: string;
   user: UserProfile;
   profileIncomplete: boolean;
+  activeContext: ActiveContext;
 }
 
 export interface MfaChallenge {
@@ -70,6 +84,7 @@ export interface Profile {
   profileIncomplete: boolean;
   /** Adresse en attente de confirmation par code ; null s'il n'y en a pas. */
   pendingEmail: string | null;
+  activeContext: ActiveContext;
 }
 
 /** Code de confirmation envoyé à la nouvelle adresse e-mail. */

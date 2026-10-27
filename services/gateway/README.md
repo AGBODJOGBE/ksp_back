@@ -40,6 +40,11 @@ E-mail du profil (lot 2) : `PUT /api/v1/identity/me/email` envoie un code par e-
 adresse, `POST /api/v1/identity/me/email/verify` la confirme (ADR-026). identity ajoute ses propres
 limites par adresse et par compte.
 
+Type de compte : `GET /api/v1/identity/me` et chaque session ouverte ou renouvelée rendent
+`activeContext` (`type` : `individual` ou `business`, `organizationId`), contexte du jeton lu par
+cleaning et billing. Une réponse d'identity sans contexte actif est une erreur interne : déployer
+identity avant la gateway.
+
 ## Routes du Nettoyage (lot 2)
 
 37 routes vers `cleaning` (`CLEANING_GRPC_URL`, `localhost:50053` par défaut), déclarées dans `src/domain/routing/cleaning-routes.ts` :

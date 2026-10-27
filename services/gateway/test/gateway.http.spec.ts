@@ -170,6 +170,7 @@ describe('gateway : routes identity de bout en bout (serveur gRPC identity simul
         isNewUser: true,
         profileIncomplete: true,
         user: { id: USER_ID, firstName: null, email: null, phone: '+2290197000045', status: 'active' },
+        activeContext: { type: 'individual', organizationId: null },
       });
       expect(res.body).not.toHaveProperty('refreshToken');
       const cookie = String(res.headers['set-cookie']);
@@ -335,6 +336,7 @@ describe('gateway : routes identity de bout en bout (serveur gRPC identity simul
         },
         profileIncomplete: true,
         pendingEmail: null,
+        activeContext: { type: 'individual', organizationId: null },
       });
       const call = identity.stub.last('getMe')!;
       expect(call.request).toEqual({});
