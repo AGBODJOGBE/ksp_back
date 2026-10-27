@@ -29,3 +29,4 @@ Chaque décision importante fait l'objet d'une fiche courte : contexte, décisio
 | [ADR-023](0023-double-authentification-back-office.md) | Double authentification du back-office : application et codes de récupération                  | Accepté |
 | [ADR-024](0024-email-brevo.md)                         | E-mail par Brevo (API transactionnelle)                                                        | Accepté |
 | [ADR-025](0025-facturation-contrats-entreprise.md)     | Facturation des contrats d'entreprise : contrats appris par événements, mois civils au prorata | Accepté |
+| [ADR-026](0026-email-du-profil-verifie.md)             | E-mail du profil vérifié par un code envoyé par e-mail                                         | Accepté |
