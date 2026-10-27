@@ -4,13 +4,14 @@ import { Controller } from '@nestjs/common';
 import { GetMeUseCase, type Profile, UpdateMeUseCase } from '../../application/account/account.use-cases';
 import { ChangeEmailUseCase } from '../../application/email/change-email.use-case';
 import { ConfirmEmailUseCase } from '../../application/email/confirm-email.use-case';
-import { toUserMessage } from './mappers';
+import { toActiveContextMessage, toUserMessage } from './mappers';
 
 function toProfileMessage(profile: Profile): identityV1.GetMeResponse {
   return {
     user: toUserMessage(profile.account),
     profileIncomplete: profile.profileIncomplete,
     pendingEmail: profile.pendingEmail ?? '',
+    activeContext: toActiveContextMessage(profile.activeContext),
   };
 }
 
@@ -30,12 +31,15 @@ export class AccountGrpcController implements identityV1.AccountServiceControlle
   ) {}
 
   async getMe(): Promise<identityV1.GetMeResponse> {
-    return toProfileMessage(await this.getMeUseCase.execute(requireUser().userId));
+    const user = requireUser();
+    return toProfileMessage(await this.getMeUseCase.execute(user.userId, user.activeContext));
   }
 
   async updateMe(request: identityV1.UpdateMeRequest): Promise<identityV1.UpdateMeResponse> {
+    const user = requireUser();
     const profile = await this.updateMeUseCase.execute({
-      userId: requireUser().userId,
+      userId: user.userId,
+      activeContext: user.activeContext,
       firstName: request.firstName,
       lastName: request.lastName,
       preferredLanguage: request.preferredLanguage,
@@ -57,10 +61,16 @@ export class AccountGrpcController implements identityV1.AccountServiceControlle
   }
 
   async confirmEmail(request: identityV1.ConfirmEmailRequest): Promise<identityV1.ConfirmEmailResponse> {
+    const user = requireUser();
     const profile = await this.confirmEmailUseCase.execute({
-      userId: requireUser().userId,
+      userId: user.userId,
       code: request.code,
+      activeContext: user.activeContext,
     });
-    return { user: toUserMessage(profile.account), profileIncomplete: profile.profileIncomplete };
+    return {
+      user: toUserMessage(profile.account),
+      profileIncomplete: profile.profileIncomplete,
+      activeContext: toActiveContextMessage(profile.activeContext),
+    };
   }
 }

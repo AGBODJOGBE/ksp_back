@@ -42,7 +42,12 @@ function setup() {
   const accessTokens = {
     issue: async (subject: AccessTokenSubject) => {
       issued.push(subject);
-      return { token: `jwt-${issued.length}`, tokenId: 'j', expiresAt: new Date(now.getTime() + 900_000) };
+      return {
+        token: `jwt-${issued.length}`,
+        tokenId: 'j',
+        expiresAt: new Date(now.getTime() + 900_000),
+        activeContext: { type: 'individual' as const, organizationId: null },
+      };
     },
   } as unknown as AccessTokenIssuer;
   const refreshTokens = { generate: () => ({ token: `rt-${++seq}`, hash: `h-rt-${seq}` }) };

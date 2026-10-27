@@ -1,4 +1,5 @@
 import { AppError } from '@ksp/platform';
+import { type ActiveContext, activeContextOf } from '../../domain/context/active-context';
 import { isProfileIncomplete, normalizeLanguage, normalizeName } from '../../domain/user/profile';
 import { type PendingEmails } from '../email/pending-email';
 import { type Account, type AccountRepository, type ProfileChanges } from '../session/session.ports';
@@ -9,6 +10,8 @@ export interface Profile {
   profileIncomplete: boolean;
   /** Adresse e-mail en attente de confirmation par code ; null s'il n'y en a pas. */
   pendingEmail: string | null;
+  /** Particulier ou entreprise : contexte du jeton d'accès de l'appelant (claim ctx). */
+  activeContext: ActiveContext;
 }
 
 const notFound = () => AppError.notFound('IDENTITY_USER_NOT_FOUND', 'Compte introuvable.');
@@ -19,29 +22,36 @@ function existing(account: Account | null): Account {
   return account;
 }
 
-async function toProfile(account: Account | null, pendingEmails: PendingEmails): Promise<Profile> {
+async function toProfile(
+  account: Account | null,
+  pendingEmails: PendingEmails,
+  activeContext: string,
+): Promise<Profile> {
   const found = existing(account);
   return {
     account: found,
     profileIncomplete: isProfileIncomplete(found),
     pendingEmail: await pendingEmails.of(found),
+    activeContext: activeContextOf(activeContext),
   };
 }
 
-/** Lire son profil. */
+/** Lire son profil, avec le type de compte du contexte actif (`activeContext` : claim ctx du jeton). */
 export class GetMeUseCase {
   constructor(
     private readonly accounts: AccountRepository,
     private readonly pendingEmails: PendingEmails,
   ) {}
 
-  async execute(userId: string): Promise<Profile> {
-    return toProfile(await this.accounts.findById(userId), this.pendingEmails);
+  async execute(userId: string, activeContext: string): Promise<Profile> {
+    return toProfile(await this.accounts.findById(userId), this.pendingEmails, activeContext);
   }
 }
 
 export interface UpdateMeInput {
   userId: string;
+  /** Contexte du jeton d'accès de l'appelant (claim ctx). */
+  activeContext: string;
   firstName?: string;
   lastName?: string;
   preferredLanguage?: string;
@@ -76,7 +86,11 @@ export class UpdateMeUseCase {
     }
 
     existing(await this.accounts.findById(input.userId));
-    return toProfile(await this.accounts.updateProfile(input.userId, changes), this.pendingEmails);
+    return toProfile(
+      await this.accounts.updateProfile(input.userId, changes),
+      this.pendingEmails,
+      input.activeContext,
+    );
   }
 
   private name(value: string, label: string): string {

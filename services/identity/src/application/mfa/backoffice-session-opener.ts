@@ -1,3 +1,4 @@
+import { PERSONAL_CONTEXT } from '../../domain/context/active-context';
 import { isProfileIncomplete } from '../../domain/user/profile';
 import { type SessionPolicy } from '../../domain/session/session-policy';
 import { backofficeRoleClaims } from '../role/role-claims';
@@ -67,7 +68,7 @@ export class BackofficeSessionOpener {
       userId: result.account.id,
       sessionId,
       clientId: step.challenge.clientKind,
-      activeContext: 'personal',
+      activeContext: PERSONAL_CONTEXT,
       roles: backofficeRoleClaims(step.roles),
       mfa: true,
       authTime: now,
@@ -81,6 +82,7 @@ export class BackofficeSessionOpener {
       sessionId,
       account: result.account,
       profileIncomplete: isProfileIncomplete(result.account),
+      activeContext: access.activeContext,
       recoveryCodesRemaining: result.recoveryCodesRemaining,
     };
   }

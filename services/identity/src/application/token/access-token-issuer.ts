@@ -4,6 +4,7 @@ import {
   type AccessTokenClaims,
   type AccessTokenRoleClaim,
 } from '@ksp/contracts';
+import { type ActiveContext, activeContextOf } from '../../domain/context/active-context';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { type TokenSigner } from './token.ports';
 
@@ -25,6 +26,8 @@ export interface IssuedAccessToken {
   token: string;
   tokenId: string;
   expiresAt: Date;
+  /** Contexte écrit dans le jeton (claim ctx), tel que les services métier le lisent. */
+  activeContext: ActiveContext;
 }
 
 /**
@@ -58,6 +61,11 @@ export class AccessTokenIssuer {
       amr: subject.amr,
     };
     const token = await this.signer.sign({ ...claims }, ACCESS_TOKEN.type);
-    return { token, tokenId: claims.jti, expiresAt: new Date(claims.exp * 1000) };
+    return {
+      token,
+      tokenId: claims.jti,
+      expiresAt: new Date(claims.exp * 1000),
+      activeContext: activeContextOf(claims.ctx),
+    };
   }
 }

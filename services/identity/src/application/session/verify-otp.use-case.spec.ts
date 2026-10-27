@@ -36,7 +36,12 @@ function setup() {
   const accessTokens = {
     issue: async (subject: { userId: string; clientId: string; roles: unknown }) => {
       issued.push(subject);
-      return { token: `jwt-${subject.userId}`, tokenId: 'j', expiresAt: new Date(now.getTime() + 900_000) };
+      return {
+        token: `jwt-${subject.userId}`,
+        tokenId: 'j',
+        expiresAt: new Date(now.getTime() + 900_000),
+        activeContext: { type: 'individual' as const, organizationId: null },
+      };
     },
   } as unknown as AccessTokenIssuer;
   const useCase = new VerifyOtpUseCase(
@@ -115,6 +120,7 @@ describe('VerifyOtpUseCase (UC-ID-01, validation du code)', () => {
 
     expect(opened.isNewUser).toBe(true);
     expect(opened.profileIncomplete).toBe(true);
+    expect(opened.activeContext).toEqual({ type: 'individual', organizationId: null });
     expect(opened.account).toMatchObject({ status: 'active', phoneE164: '+2290197000045' });
     expect(store.registered).toEqual([opened.account.id]);
     expect(opened.refreshToken).toMatch(/^rt-/);
@@ -127,6 +133,7 @@ describe('VerifyOtpUseCase (UC-ID-01, validation du code)', () => {
       expect.objectContaining({
         userId: opened.account.id,
         clientId: 'mobile',
+        activeContext: 'personal',
         roles: [{ role: 'customer', scopeType: 'personal' }],
       }),
     ]);

@@ -17,6 +17,11 @@ const protoUser: identityV1.User = {
   emailVerified: false,
 };
 
+const individual: identityV1.ActiveContext = {
+  type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL,
+  organizationId: '',
+};
+
 const protoSession: identityV1.SessionTokens = {
   accessToken: 'jwt',
   accessTokenExpiresAt: '2026-10-17T10:15:00.000Z',
@@ -25,6 +30,7 @@ const protoSession: identityV1.SessionTokens = {
   sessionId: 's-1',
   user: protoUser,
   profileIncomplete: true,
+  activeContext: individual,
 };
 
 type Calls = { method: string; request: unknown; metadata: Metadata }[];
@@ -53,8 +59,12 @@ function setup(overrides: Partial<Record<string, (request: unknown) => Observabl
     getSigningKeys: handler('getSigningKeys', () => of({ keys: [] })),
   } as unknown as identityV1.AuthServiceClient;
   const account = {
-    getMe: handler('getMe', () => of({ user: protoUser, profileIncomplete: false })),
-    updateMe: handler('updateMe', () => of({ user: protoUser, profileIncomplete: false })),
+    getMe: handler('getMe', () =>
+      of({ user: protoUser, profileIncomplete: false, activeContext: individual }),
+    ),
+    updateMe: handler('updateMe', () =>
+      of({ user: protoUser, profileIncomplete: false, activeContext: individual }),
+    ),
     changeEmail: handler('changeEmail', () => of({})),
     confirmEmail: handler('confirmEmail', () => of({})),
   } as unknown as identityV1.AccountServiceClient;
@@ -146,6 +156,7 @@ describe('IdentityGrpcAdapter', () => {
           preferredLanguage: 'fr',
           createdAt: '2026-10-17T10:00:00.000Z',
         },
+        activeContext: { type: 'individual', organizationId: null },
       },
     });
   });
@@ -192,6 +203,7 @@ describe('IdentityGrpcAdapter', () => {
         of({
           user: { ...protoUser, email: 'koffi@exemple.com', emailVerified: true },
           profileIncomplete: false,
+          activeContext: individual,
         }),
     });
     await expect(adapter.changeEmail('Koffi@Exemple.com')).resolves.toEqual({
@@ -210,12 +222,50 @@ describe('IdentityGrpcAdapter', () => {
 
   it('profil : adresse en attente de confirmation, vide = absente', async () => {
     const { adapter } = setup({
-      getMe: () => of({ user: protoUser, profileIncomplete: true, pendingEmail: 'koffi@exemple.com' }),
+      getMe: () =>
+        of({
+          user: protoUser,
+          profileIncomplete: true,
+          pendingEmail: 'koffi@exemple.com',
+          activeContext: individual,
+        }),
     });
     await expect(adapter.getMe()).resolves.toMatchObject({
       user: { email: null, emailVerified: false },
       pendingEmail: 'koffi@exemple.com',
+      activeContext: { type: 'individual', organizationId: null },
     });
+  });
+
+  it('profil : une organisation active fait un compte entreprise', async () => {
+    const organizationId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e20';
+    const { adapter } = setup({
+      getMe: () =>
+        of({
+          user: protoUser,
+          profileIncomplete: false,
+          pendingEmail: '',
+          activeContext: { type: identityV1.ContextType.CONTEXT_TYPE_BUSINESS, organizationId },
+        }),
+    });
+    await expect(adapter.getMe()).resolves.toMatchObject({
+      activeContext: { type: 'business', organizationId },
+    });
+  });
+
+  it('profil sans contexte actif, ou de type inconnu : erreur interne, jamais un type deviné', async () => {
+    for (const activeContext of [
+      undefined,
+      { type: identityV1.ContextType.CONTEXT_TYPE_UNSPECIFIED, organizationId: '' },
+    ]) {
+      const { adapter } = setup({
+        getMe: () => of({ user: protoUser, profileIncomplete: false, pendingEmail: '', activeContext }),
+      });
+      await expect(adapter.getMe()).rejects.toMatchObject({
+        kind: 'INTERNAL',
+        code: 'GATEWAY_UPSTREAM_ERROR',
+      });
+    }
   });
 
   it('réponse hors contrat : erreur interne', async () => {

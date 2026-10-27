@@ -1,3 +1,4 @@
+import { PERSONAL_CONTEXT } from '../../domain/context/active-context';
 import { isProfileIncomplete } from '../../domain/user/profile';
 import { AppError } from '@ksp/platform';
 import { backofficeRoles } from '../../domain/role/role';
@@ -94,7 +95,7 @@ export class RefreshSessionUseCase {
       userId: account.id,
       sessionId: session.id,
       clientId: session.clientKind,
-      activeContext: 'personal',
+      activeContext: PERSONAL_CONTEXT,
       ...grants,
     });
     return {
@@ -105,6 +106,7 @@ export class RefreshSessionUseCase {
       sessionId: session.id,
       account,
       profileIncomplete: isProfileIncomplete(account),
+      activeContext: access.activeContext,
     };
   }
 

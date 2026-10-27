@@ -196,11 +196,12 @@ describe('ConfirmEmailUseCase (confirmer son e-mail par le code)', () => {
     const { change, confirm, store, verifications } = setup();
     await change.execute({ userId: 'u-1', email: 'koffi@exemple.com', ip: null });
 
-    const profile = await confirm.execute({ userId: 'u-1', code: '482913' });
+    const profile = await confirm.execute({ userId: 'u-1', code: '482913', activeContext: 'personal' });
     expect(profile).toMatchObject({
       account: { id: 'u-1', email: 'koffi@exemple.com', emailVerifiedAt: new Date('2026-10-27T12:00:00Z') },
       profileIncomplete: false,
       pendingEmail: null,
+      activeContext: { type: 'individual', organizationId: null },
     });
     expect(store.accounts[0].email).toBe('koffi@exemple.com');
     expect(verifications.verifiedEvents).toEqual(['u-1']);
@@ -217,7 +218,7 @@ describe('ConfirmEmailUseCase (confirmer son e-mail par le code)', () => {
     await expect(pending.of(store.accounts[0])).resolves.toBe('nouvelle@exemple.com');
 
     advance(30);
-    await confirm.execute({ userId: 'u-1', code: '111111' });
+    await confirm.execute({ userId: 'u-1', code: '111111', activeContext: 'personal' });
     expect(store.accounts[0].email).toBe('nouvelle@exemple.com');
     await expect(pending.of(store.accounts[0])).resolves.toBeNull();
   });
@@ -227,35 +228,47 @@ describe('ConfirmEmailUseCase (confirmer son e-mail par le code)', () => {
     await change.execute({ userId: 'u-1', email: 'koffi@exemple.com', ip: null });
 
     const first = await expectAppError(
-      confirm.execute({ userId: 'u-1', code: '000000' }),
+      confirm.execute({ userId: 'u-1', code: '000000', activeContext: 'personal' }),
       'IDENTITY_OTP_INVALID',
     );
     expect(first.details).toEqual({ attemptsRemaining: 4 });
     for (let i = 0; i < 3; i++) {
-      await expectAppError(confirm.execute({ userId: 'u-1', code: '000000' }), 'IDENTITY_OTP_INVALID');
+      await expectAppError(
+        confirm.execute({ userId: 'u-1', code: '000000', activeContext: 'personal' }),
+        'IDENTITY_OTP_INVALID',
+      );
     }
     await expectAppError(
-      confirm.execute({ userId: 'u-1', code: '000000' }),
+      confirm.execute({ userId: 'u-1', code: '000000', activeContext: 'personal' }),
       'IDENTITY_OTP_TOO_MANY_ATTEMPTS',
     );
     await expectAppError(
-      confirm.execute({ userId: 'u-1', code: '482913' }),
+      confirm.execute({ userId: 'u-1', code: '482913', activeContext: 'personal' }),
       'IDENTITY_OTP_TOO_MANY_ATTEMPTS',
     );
   });
 
   it('un code expiré, déjà utilisé ou sans demande est refusé', async () => {
     const { change, confirm, advance } = setup();
-    await expectAppError(confirm.execute({ userId: 'u-1', code: '482913' }), 'IDENTITY_OTP_EXPIRED');
+    await expectAppError(
+      confirm.execute({ userId: 'u-1', code: '482913', activeContext: 'personal' }),
+      'IDENTITY_OTP_EXPIRED',
+    );
 
     await change.execute({ userId: 'u-1', email: 'koffi@exemple.com', ip: null });
     advance(900);
-    await expectAppError(confirm.execute({ userId: 'u-1', code: '482913' }), 'IDENTITY_OTP_EXPIRED');
+    await expectAppError(
+      confirm.execute({ userId: 'u-1', code: '482913', activeContext: 'personal' }),
+      'IDENTITY_OTP_EXPIRED',
+    );
 
     advance(60);
     await change.execute({ userId: 'u-1', email: 'koffi@exemple.com', ip: null });
-    await confirm.execute({ userId: 'u-1', code: '482913' });
-    await expectAppError(confirm.execute({ userId: 'u-1', code: '482913' }), 'IDENTITY_OTP_EXPIRED');
+    await confirm.execute({ userId: 'u-1', code: '482913', activeContext: 'personal' });
+    await expectAppError(
+      confirm.execute({ userId: 'u-1', code: '482913', activeContext: 'personal' }),
+      'IDENTITY_OTP_EXPIRED',
+    );
   });
 
   it('seule la dernière demande compte : le code d’une demande remplacée est expiré', async () => {
@@ -266,8 +279,11 @@ describe('ConfirmEmailUseCase (confirmer son e-mail par le code)', () => {
     codeWillBe('222222');
     await change.execute({ userId: 'u-1', email: 'b@exemple.com', ip: null });
 
-    await expectAppError(confirm.execute({ userId: 'u-1', code: '111111' }), 'IDENTITY_OTP_INVALID');
-    await confirm.execute({ userId: 'u-1', code: '222222' });
+    await expectAppError(
+      confirm.execute({ userId: 'u-1', code: '111111', activeContext: 'personal' }),
+      'IDENTITY_OTP_INVALID',
+    );
+    await confirm.execute({ userId: 'u-1', code: '222222', activeContext: 'personal' });
     expect(store.accounts[0].email).toBe('b@exemple.com');
   });
 
@@ -276,14 +292,23 @@ describe('ConfirmEmailUseCase (confirmer son e-mail par le code)', () => {
     Object.assign(store.accounts[1], { email: 'koffi@exemple.com', emailVerifiedAt: new Date() });
     await change.execute({ userId: 'u-1', email: 'koffi@exemple.com', ip: null });
 
-    await expectAppError(confirm.execute({ userId: 'u-1', code: '000000' }), 'IDENTITY_OTP_INVALID');
-    await expectAppError(confirm.execute({ userId: 'u-1', code: '482913' }), 'IDENTITY_EMAIL_ALREADY_USED');
+    await expectAppError(
+      confirm.execute({ userId: 'u-1', code: '000000', activeContext: 'personal' }),
+      'IDENTITY_OTP_INVALID',
+    );
+    await expectAppError(
+      confirm.execute({ userId: 'u-1', code: '482913', activeContext: 'personal' }),
+      'IDENTITY_EMAIL_ALREADY_USED',
+    );
     expect(store.accounts[0].email).toBeNull();
   });
 
   it('le code d’un compte ne confirme pas l’adresse d’un autre', async () => {
     const { change, confirm } = setup();
     await change.execute({ userId: 'u-1', email: 'koffi@exemple.com', ip: null });
-    await expectAppError(confirm.execute({ userId: 'u-2', code: '482913' }), 'IDENTITY_OTP_EXPIRED');
+    await expectAppError(
+      confirm.execute({ userId: 'u-2', code: '482913', activeContext: 'personal' }),
+      'IDENTITY_OTP_EXPIRED',
+    );
   });
 });

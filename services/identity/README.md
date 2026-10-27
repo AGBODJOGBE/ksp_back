@@ -54,3 +54,15 @@ L'utilisateur connecté déclare ou change son e-mail (`ChangeEmail`, route
 | Unicité          | Une adresse confirmée n'appartient qu'à un compte (index unique). Anti-énumération : ce n'est signalé (`IDENTITY_EMAIL_ALREADY_USED`) qu'après la saisie du bon code.                                           |
 | Traces           | Les lignes de `email_verifications` sont gardées (adresse, adresse IP, essais, dates) ; événements `identity.otp.requested` (`purpose: email_verification`) et `identity.user.verified` (`verifiedVia: email`). |
 | Autres services  | `GetUser` et `GetUsersByIds` rendent `email` et `email_verified` ; notification n'écrit qu'à une adresse vérifiée.                                                                                              |
+
+## Type de compte : contexte actif
+
+Le jeton d'accès porte le contexte actif de la session (claim `ctx`) : `personal` ou l'identifiant
+d'une organisation. cleaning et billing en déduisent le type de client : particulier pour le
+contexte personnel, entreprise pour une organisation (facture mensuelle, pas de choix du moyen de
+paiement). identity expose la même lecture aux fronts dans `active_context` (`type` :
+`individual` ou `business`, `organization_id`) : avec chaque session ouverte ou renouvelée (contexte
+du jeton émis) et dans `GetMe`, `UpdateMe` et `ConfirmEmail` (contexte du jeton de l'appelant).
+
+Aucune organisation n'existe encore (UC-ID-12 à 16 : création, rattachement, `SwitchContext`) :
+toutes les sessions sont ouvertes dans le contexte personnel, donc `individual`.

@@ -33,6 +33,7 @@ const opened: OpenedSession = {
     createdAt: new Date('2026-10-19T12:00:00Z'),
   },
   profileIncomplete: true,
+  activeContext: { type: 'individual', organizationId: null },
   isNewUser: true,
 };
 
@@ -222,6 +223,10 @@ describe('AuthGrpcController.verifyOtp', () => {
             emailVerified: false,
           },
           profileIncomplete: true,
+          activeContext: {
+            type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL,
+            organizationId: '',
+          },
         },
       },
       isNewUser: true,

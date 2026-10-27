@@ -30,14 +30,15 @@ const profile: Profile = {
   },
   profileIncomplete: true,
   pendingEmail: 'koffi@exemple.com',
+  activeContext: { type: 'individual', organizationId: null },
 };
 
 function controller() {
-  const reads: string[] = [];
+  const reads: { userId: string; activeContext: string }[] = [];
   const updates: UpdateMeInput[] = [];
   const getMe = {
-    execute: async (userId: string) => {
-      reads.push(userId);
+    execute: async (userId: string, activeContext: string) => {
+      reads.push({ userId, activeContext });
       return profile;
     },
   } as unknown as GetMeUseCase;
@@ -80,7 +81,7 @@ describe('AccountGrpcController', () => {
   it('lit le profil de l’utilisateur du jeton, au format du contrat', async () => {
     const { reads, account } = controller();
     const response = await runWithContext({ correlationId: 'c', user }, () => account.getMe());
-    expect(reads).toEqual(['u-1']);
+    expect(reads).toEqual([{ userId: 'u-1', activeContext: 'personal' }]);
     expect(response).toEqual({
       user: {
         id: 'u-1',
@@ -95,14 +96,36 @@ describe('AccountGrpcController', () => {
       },
       profileIncomplete: true,
       pendingEmail: 'koffi@exemple.com',
+      activeContext: { type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL, organizationId: '' },
     });
+  });
+
+  it('rend le type entreprise et l’organisation quand le profil vient d’un contexte d’organisation', async () => {
+    const organizationId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e20';
+    const { account } = controller();
+    profile.activeContext = { type: 'business', organizationId };
+    try {
+      const response = await runWithContext({ correlationId: 'c', user }, () => account.getMe());
+      expect(response.activeContext).toEqual({
+        type: identityV1.ContextType.CONTEXT_TYPE_BUSINESS,
+        organizationId,
+      });
+    } finally {
+      profile.activeContext = { type: 'individual', organizationId: null };
+    }
   });
 
   it('modifie le compte de l’utilisateur du jeton, et seulement les champs envoyés', async () => {
     const { updates, account } = controller();
     await runWithContext({ correlationId: 'c', user }, () => account.updateMe({ lastName: 'Adjovi' }));
     expect(updates).toEqual([
-      { userId: 'u-1', firstName: undefined, lastName: 'Adjovi', preferredLanguage: undefined },
+      {
+        userId: 'u-1',
+        activeContext: 'personal',
+        firstName: undefined,
+        lastName: 'Adjovi',
+        preferredLanguage: undefined,
+      },
     ]);
   });
 
@@ -124,8 +147,12 @@ describe('AccountGrpcController', () => {
     const response = await runWithContext({ correlationId: 'c', user }, () =>
       account.confirmEmail({ code: '482913' }),
     );
-    expect(confirmations).toEqual([{ userId: 'u-1', code: '482913' }]);
+    expect(confirmations).toEqual([{ userId: 'u-1', code: '482913', activeContext: 'personal' }]);
     expect(response.user).toMatchObject({ email: 'koffi@exemple.com', emailVerified: true });
+    expect(response.activeContext).toEqual({
+      type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL,
+      organizationId: '',
+    });
   });
 
   it('refuse un appel sans utilisateur connecté', async () => {

@@ -72,6 +72,24 @@ message User {
   bool email_verified = 9;
 }
 
+// Type du contexte actif, tel que le lisent les services métier (cleaning, billing) : le
+// contexte personnel est celui d'un particulier, une organisation active celui d'une entreprise
+// (facture mensuelle, pas de choix du moyen de paiement). Pour l'instant, identity n'ouvre que
+// le contexte personnel : l'organisation et son changement (UC-ID-12 à 16) viendront plus tard.
+enum ContextType {
+  CONTEXT_TYPE_UNSPECIFIED = 0;
+  CONTEXT_TYPE_INDIVIDUAL = 1;
+  CONTEXT_TYPE_BUSINESS = 2;
+}
+
+// Contexte actif de la session : celui du jeton d'accès (claim ctx) émis avec la réponse ou
+// présenté par l'appelant.
+message ActiveContext {
+  ContextType type = 1;
+  // Organisation active pour CONTEXT_TYPE_BUSINESS ; vide pour un particulier.
+  string organization_id = 2;
+}
+
 message GetUserRequest {
   string user_id = 1;
 }
@@ -318,6 +336,8 @@ message SessionTokens {
   User user = 6;
   // Le nom n'est pas encore renseigné : le front invite à le compléter (UC-ID-01).
   bool profile_incomplete = 7;
+  // Contexte du jeton d'accès émis (aujourd'hui toujours le contexte personnel).
+  ActiveContext active_context = 8;
 }
 
 message MfaChallenge {
@@ -469,6 +489,8 @@ message GetMeResponse {
   bool profile_incomplete = 2;
   // Adresse en attente de confirmation (code envoyé, encore valable) ; vide sinon.
   string pending_email = 3;
+  // Contexte du jeton d'accès de l'appelant (x-active-context).
+  ActiveContext active_context = 4;
 }
 
 message UpdateMeRequest {
@@ -483,6 +505,8 @@ message UpdateMeResponse {
   bool profile_incomplete = 2;
   // Adresse en attente de confirmation (code envoyé, encore valable) ; vide sinon.
   string pending_email = 3;
+  // Contexte du jeton d'accès de l'appelant (x-active-context).
+  ActiveContext active_context = 4;
 }
 
 message ChangeEmailRequest {
@@ -506,4 +530,6 @@ message ConfirmEmailRequest {
 message ConfirmEmailResponse {
   User user = 1;
   bool profile_incomplete = 2;
+  // Contexte du jeton d'accès de l'appelant (x-active-context).
+  ActiveContext active_context = 3;
 }

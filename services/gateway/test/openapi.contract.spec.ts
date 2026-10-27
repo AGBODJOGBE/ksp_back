@@ -24,6 +24,7 @@ import { type CleaningServer, startCleaningStub } from './support/cleaning-stub'
 import {
   type IdentityServer,
   ORIGINS,
+  protoIndividual,
   protoUser,
   startGateway,
   startIdentityStub,
@@ -773,7 +774,11 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       return body === undefined ? req : req.send(body as object);
     };
     const completeProfile = () =>
-      identity.stub.on('getMe', async () => ({ user: protoUser, profileIncomplete: false }));
+      identity.stub.on('getMe', async () => ({
+        user: protoUser,
+        profileIncomplete: false,
+        activeContext: protoIndividual,
+      }));
     const cleaningFails = (method: Parameters<typeof cleaning.stub.on>[0], error: AppError) =>
       cleaning.stub.on(method, () => Promise.reject(error));
     const simulationBody = () =>
