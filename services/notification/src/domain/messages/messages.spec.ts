@@ -4,6 +4,7 @@ import { findTemplate, invalidVariables, isEventTemplate } from '../template';
 import { BILLING_TEMPLATES } from './billing.messages';
 import { CLEANING_TEMPLATES, paymentNote, unpaidText } from './cleaning.messages';
 import { formatDate, formatDateTime, formatDuration, formatXof } from './format';
+import { ORGANIZATION_TEMPLATES } from './organization.messages';
 
 const NBSP = '\u00a0';
 
@@ -211,5 +212,29 @@ describe('Modèles de la facturation', () => {
     expect(message.text).toContain('est réglée en totalité depuis le 16 décembre 2026.');
     if (expected) expect(message.text).toContain(expected);
     else expect(message.text).not.toContain('Il reste');
+  });
+});
+
+describe('Comptes entreprise (ADR-027)', () => {
+  it('modèles des événements : au catalogue, par WhatsApp et e-mail, messages courts', () => {
+    for (const template of ORGANIZATION_TEMPLATES) {
+      expect(findTemplate(template.code)).toBe(template);
+      expect(template).toMatchObject({ channels: ['whatsapp', 'email'], kind: 'short', secret: false });
+    }
+  });
+
+  it('code de l’e-mail de facturation : modèle secret, par e-mail, qui cite l’entreprise', () => {
+    const template = findTemplate('identity.organization_email_verification')!;
+    expect(template).toMatchObject({ secret: true, channels: ['email'] });
+    expect(isEventTemplate(template)).toBe(false);
+    const variables = { code: '482913', expires_in_minutes: '15', organization_name: 'SARL Bénin Propre' };
+    expect(invalidVariables(template, variables)).toEqual([]);
+    expect(invalidVariables(template, { code: '482913', expires_in_minutes: '15' })).toEqual([
+      'organization_name',
+    ]);
+    const message = template.render!(variables);
+    expect(message.subject).not.toContain('482913');
+    expect(message.text).toContain('adresse de facturation de SARL Bénin Propre');
+    expect(message.text).toContain('482913');
   });
 });

@@ -80,6 +80,23 @@ export const configSchema = baseServiceConfigSchema
       .pipe(
         z.array(z.uuid('NOTIFICATION_CLEANING_TEAM_USER_IDS : identifiants de comptes (UUID) attendus.')),
       ),
+    /**
+     * Comptes de l'équipe KSP qui valide les comptes entreprise (ADR-027), prévenus de chaque
+     * nouvelle demande. Identifiants séparés par des virgules ; vide par défaut (personne n'est
+     * prévenu : les demandes restent visibles au back-office).
+     */
+    NOTIFICATION_ACCOUNTS_TEAM_USER_IDS: z
+      .string()
+      .default('')
+      .transform((raw) =>
+        raw
+          .split(',')
+          .map((item) => item.trim().toLowerCase())
+          .filter(Boolean),
+      )
+      .pipe(
+        z.array(z.uuid('NOTIFICATION_ACCOUNTS_TEAM_USER_IDS : identifiants de comptes (UUID) attendus.')),
+      ),
   })
   .refine((cfg) => !(cfg.NODE_ENV === 'production' && cfg.NOTIFICATION_WHATSAPP_PROVIDER === 'console'), {
     message:

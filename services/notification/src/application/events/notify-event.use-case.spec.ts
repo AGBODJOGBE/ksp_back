@@ -34,6 +34,7 @@ function setup(
   contacts: RecipientContact[] = [contact(CUSTOMER)],
   providers = [new FakeProvider('whatsapp'), new FakeProvider('email')],
   cleaningTeamUserIds: string[] = [],
+  accountsTeamUserIds: string[] = [],
 ) {
   const notifications = new InMemoryNotifications();
   const directory = new FakeDirectory(contacts);
@@ -46,7 +47,12 @@ function setup(
     inbox,
     clock,
     new SequentialIds(),
-    { portalBaseUrl: 'https://ksp.bj', timeZone: 'Africa/Porto-Novo', cleaningTeamUserIds },
+    {
+      portalBaseUrl: 'https://ksp.bj',
+      timeZone: 'Africa/Porto-Novo',
+      cleaningTeamUserIds,
+      accountsTeamUserIds,
+    },
   );
   const [whatsapp, email] = providers as [FakeProvider, FakeProvider];
   return { notifications, directory, inbox, useCase, whatsapp, email };
@@ -623,5 +629,72 @@ describe('NotifyEventUseCase — factures mensuelles (billing)', () => {
       }),
     ).rejects.toThrow('période illisible');
     expect(inbox.processed.size).toBe(0);
+  });
+});
+
+describe('NotifyEventUseCase — comptes entreprise (ADR-027)', () => {
+  const ORGANIZATION = '0192f1c4-0000-7000-8000-0000000000a1';
+  const STAFF = '0192f1c4-0000-7000-8000-00000000ad01';
+  const TEAM = '0192f1c4-0000-7000-8000-0000000e0101';
+
+  it('nouvelle demande : chaque membre de l’équipe de validation configurée', async () => {
+    const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(TEAM)], undefined, [], [TEAM]);
+    const created = event('identity.organization.created', {
+      organizationId: ORGANIZATION,
+      createdBy: CUSTOMER,
+      legalName: 'SARL Bénin Propre',
+    });
+    await expect(useCase.execute(created)).resolves.toMatchObject({ accepted: 1 });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'identity.organization_requested.team',
+    ]);
+    expect(whatsapp.sent[0]!.content!.text).toContain(
+      'Une nouvelle demande de compte entreprise attend votre validation : SARL Bénin Propre.',
+    );
+  });
+
+  it('nouvelle demande sans équipe configurée : rien à envoyer, événement traité', async () => {
+    const { useCase, whatsapp, inbox } = setup();
+    const created = event('identity.organization.created', {
+      organizationId: ORGANIZATION,
+      createdBy: CUSTOMER,
+      legalName: 'SARL Bénin Propre',
+    });
+    await useCase.execute(created);
+    expect(whatsapp.sent).toEqual([]);
+    expect(inbox.processed.size).toBe(1);
+  });
+
+  it('validation : le demandeur, avec le lien vers son espace entreprise', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(
+      event('identity.organization.validated', {
+        organizationId: ORGANIZATION,
+        legalName: 'SARL Bénin Propre',
+        createdBy: CUSTOMER,
+        validatedBy: STAFF,
+      }),
+    );
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(whatsapp.sent[0]).toMatchObject({ templateCode: 'identity.organization_validated.customer' });
+    expect(whatsapp.sent[0]!.content!.text).toContain(
+      'le compte entreprise SARL Bénin Propre est validé par KSP',
+    );
+    expect(whatsapp.sent[0]!.content!.text).toContain('https://ksp.bj/mon-espace/entreprise');
+  });
+
+  it('refus : le demandeur, avec le motif', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(
+      event('identity.organization.rejected', {
+        organizationId: ORGANIZATION,
+        legalName: 'SARL Bénin Propre',
+        createdBy: CUSTOMER,
+        rejectedBy: STAFF,
+        reason: 'IFU introuvable au registre de la DGI.',
+      }),
+    );
+    expect(whatsapp.sent[0]).toMatchObject({ templateCode: 'identity.organization_rejected.customer' });
+    expect(whatsapp.sent[0]!.content!.text).toContain('Motif : IFU introuvable au registre de la DGI.');
   });
 });

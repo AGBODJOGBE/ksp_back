@@ -2,6 +2,7 @@ import { type ChannelName } from './channel';
 import { BILLING_TEMPLATES } from './messages/billing.messages';
 import { CLEANING_TEMPLATES } from './messages/cleaning.messages';
 import { IDENTITY_DIRECT_TEMPLATES } from './messages/identity.messages';
+import { ORGANIZATION_TEMPLATES } from './messages/organization.messages';
 
 /**
  * Modèle de message. Lot 1 : `identity.otp` (envoi direct) ; lot 2 : les messages des événements du
@@ -63,6 +64,7 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
   ...Object.fromEntries(IDENTITY_DIRECT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(CLEANING_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(BILLING_TEMPLATES.map((template) => [template.code, template])),
+  ...Object.fromEntries(ORGANIZATION_TEMPLATES.map((template) => [template.code, template])),
 };
 
 export function findTemplate(code: string): TemplateDefinition | null {

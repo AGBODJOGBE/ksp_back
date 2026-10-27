@@ -19,6 +19,8 @@ export interface RuleContext {
   timeZone: string;
   /** Comptes de l'équipe Nettoyage prévenus quand l'événement ne désigne personne (peut être vide). */
   cleaningTeamUserIds: readonly string[];
+  /** Comptes de l'équipe KSP qui valide les comptes entreprise (peut être vide). */
+  accountsTeamUserIds: readonly string[];
 }
 
 export type EventRule<T extends KspEventType> = (
