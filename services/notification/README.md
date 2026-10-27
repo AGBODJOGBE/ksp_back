@@ -1,8 +1,8 @@
 # Service notification
 
-Contrat gRPC : `contracts/proto/ksp/notification/v1/notification.proto`. Événement publié : `notification.message.failed` (`contracts/events/notification/`). Événements écoutés : les 11 événements du Nettoyage (`contracts/events/cleaning/`). Décisions : ADR-014 (codes par gRPC direct), ADR-021 (WhatsApp Cloud API de Meta), ADR-024 (e-mail par Brevo), ADR-013 et ADR-022 (jetons de service).
+Contrat gRPC : `contracts/proto/ksp/notification/v1/notification.proto`. Événement publié : `notification.message.failed` (`contracts/events/notification/`). Événements écoutés : les 11 événements du Nettoyage (`contracts/events/cleaning/`) et les 3 de la facturation (`contracts/events/billing/`). Décisions : ADR-014 (codes par gRPC direct), ADR-021 (WhatsApp Cloud API de Meta), ADR-024 (e-mail par Brevo), ADR-025 (facturation des contrats d'entreprise), ADR-026 (e-mail vérifié), ADR-013 et ADR-022 (jetons de service).
 
-Le cahier des charges complet du service (préférences, appareils, édition des modèles, lecture des notifications dans l'application) reste à écrire. Ce service couvre le **lot 1** (envoi des codes de connexion d'identity) et le **lot 2** (messages des événements du Nettoyage, par WhatsApp, e-mail et dans l'espace KSP).
+Le cahier des charges complet du service (préférences, appareils, édition des modèles, lecture des notifications dans l'application) reste à écrire. Ce service couvre le **lot 1** (envoi des codes de connexion d'identity) et le **lot 2** (messages des événements du Nettoyage et des factures mensuelles, par WhatsApp, e-mail et dans l'espace KSP).
 
 ## Démarrer en local
 
@@ -56,7 +56,7 @@ Les journaux ne contiennent ni le jeton, ni le numéro, ni le code : seulement l
 Chaque événement écouté a sa file `notification.<événement>` (quorum), sa file de reprise `.retry` (10 secondes, 5 reprises) et sa file d'erreurs `.dlq`, créées par le kit. Le traitement (`NotifyEventUseCase`) :
 
 1. ignore un événement déjà traité (inbox, table `processed_events`) ;
-2. déduit de l'événement les messages à envoyer (`application/events/cleaning.rules.ts`) et lit les coordonnées des destinataires dans identity (`GetUsersByIds`, jeton de service) ; identity indisponible → reprise par la file. **Seule une adresse e-mail vérifiée par code (`email_verified`) est retenue** : sans elle, aucun e-mail ne part (devis, compte rendu, avis d'impayés, factures) et le message reste visible dans l'espace KSP ;
+2. déduit de l'événement les messages à envoyer (`application/events/cleaning.rules.ts`, `billing.rules.ts`) et lit les coordonnées des destinataires dans identity (`GetUsersByIds`, jeton de service) ; identity indisponible → reprise par la file. **Seule une adresse e-mail vérifiée par code (`email_verified`) est retenue** : sans elle, aucun e-mail ne part (devis, compte rendu, avis d'impayés, factures) et le message reste visible dans l'espace KSP ;
 3. envoie un message par destinataire, avec la clé d'idempotence `<événement>:<modèle>:<destinataire>` (table `notifications`) : une nouvelle livraison n'envoie rien deux fois ;
 4. marque l'événement traité et enregistre une notification par destinataire dans `in_app_notifications`, dans la même transaction.
 
@@ -67,7 +67,7 @@ Un destinataire introuvable (compte inconnu ou supprimé) est sauté ; un échec
 | Nature du message                                | Canal                                                  |
 | ------------------------------------------------ | ------------------------------------------------------ |
 | Court, transactionnel (demande reçue, planning…) | WhatsApp ; e-mail en bascule si l'adresse est vérifiée |
-| Document (devis envoyé, compte rendu de fin)     | E-mail si l'adresse est vérifiée ; WhatsApp sinon      |
+| Document (devis, compte rendu, factures)         | E-mail si l'adresse est vérifiée ; WhatsApp sinon      |
 | Important (avertissement d'impayés, suspension)  | WhatsApp **et** e-mail (deux envois, sans bascule)     |
 | Destinataire sans téléphone ni e-mail            | Notification dans l'espace seulement                   |
 
@@ -84,10 +84,15 @@ Un destinataire introuvable (compte inconnu ou supprimé) est sauté ; un échec
 | `cleaning.contract.suspended`          | client, agents libérés   | `cleaning.contract_suspended.customer` (important), `cleaning.contract_suspended.agent` |
 | `cleaning.contract.resumed`            | client, équipe Nettoyage | `cleaning.contract_resumed.customer`, `cleaning.contract_resumed.team`                  |
 | `cleaning.rescheduling.failed`         | équipe Nettoyage         | `cleaning.rescheduling_failed.team`                                                     |
+| `billing.invoice.issued`               | client du contrat        | `billing.invoice_issued.customer` (document : numéro, période, montant, échéance)       |
+| `billing.invoice.overdue`              | client du contrat        | `billing.invoice_overdue.customer` (document : la facture impayée)                      |
+| `billing.invoice.paid`                 | client du contrat        | `billing.invoice_paid.customer` (document : facture réglée, impayées restantes)         |
 
-Équipe Nettoyage : comptes listés dans `NOTIFICATION_CLEANING_TEAM_USER_IDS` (identifiants séparés par des virgules, vide par défaut), car ces événements ne désignent ni l'admin ni le superviseur. Lien des factures : `PORTAL_BASE_URL` + `/mon-espace/factures`.
+Équipe Nettoyage : comptes listés dans `NOTIFICATION_CLEANING_TEAM_USER_IDS` (identifiants séparés par des virgules, vide par défaut), car ces événements ne désignent ni l'admin ni le superviseur. Lien des factures : `PORTAL_BASE_URL` + `/mon-espace/factures` (avertissement, suspension) ou `/mon-espace/factures/<invoiceId>` (messages de la facturation).
 
-Textes : `src/domain/messages/cleaning.messages.ts` (français, dates à l'heure du Bénin, montants en FCFA entiers). Liens : `PORTAL_BASE_URL` + `/mon-espace/nettoyage/demandes/<id>` ou `/missions/<id>`.
+Factures (`billing.invoice.*`) : destinataire = le compte client qui porte le contrat (`customerId` ; identity n'a pas encore d'organisations). Période écrite jusqu'au dernier jour facturé (la fin publiée par billing est exclue). La facture impayée désigne la facture et son montant ; l'avertissement et la suspension restent les messages du Nettoyage, qui ne nomment pas la facture et ne couvrent ni la dernière facture d'un contrat terminé ni les factures échues pendant une suspension. Le paiement en ligne et la facture PDF viendront avec leurs lots.
+
+Textes : `src/domain/messages/cleaning.messages.ts` et `billing.messages.ts` (français, dates à l'heure du Bénin, montants en FCFA entiers, sans division). Liens : `PORTAL_BASE_URL` + `/mon-espace/nettoyage/demandes/<id>` ou `/missions/<id>`. En production, `PORTAL_BASE_URL` doit être une adresse HTTPS publique (le service refuse de démarrer sinon).
 
 **Ajouter un événement** (suspension, reprise, facture…) : ses modèles dans `domain/messages`, sa règle dans `application/events`, l'entrée dans `listened-events.ts`, le modèle WhatsApp dans `infrastructure/channels/whatsapp-templates.ts`.
 
@@ -112,6 +117,9 @@ Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie
 | `ksp_cleaning_contract_resumed`                                                                                                | prénom, passages reprogrammés, passages à replanifier, lien    |
 | `ksp_cleaning_team_contract_resumed`                                                                                           | prénom, mission, passages reprogrammés, passages à replanifier |
 | `ksp_cleaning_team_rescheduling_failed`                                                                                        | prénom, mission, passages à replanifier                        |
+| `ksp_billing_invoice_issued`                                                                                                   | prénom, numéro, période, montant, échéance, lien               |
+| `ksp_billing_invoice_overdue`                                                                                                  | prénom, numéro, montant, échéance, lien                        |
+| `ksp_billing_invoice_paid`, `ksp_billing_invoice_paid_unpaid_left`                                                             | prénom, numéro, montant, date, (impayées restantes), lien      |
 
 ## E-mail (Brevo)
 
@@ -120,7 +128,7 @@ Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie
 ## Prochaines étapes
 
 - Lecture des notifications dans l'application (liste, marquer comme lue) : RPC à ajouter au contrat, puis routes de la gateway ; événement de notification en direct à définir.
-- Événements à brancher : facturation (billing).
+- Factures : rappel avant l'échéance (aucun événement ni échéancier ne le permet aujourd'hui), avis de règlement partiel (billing ne publie que la facture entièrement réglée), facture PDF en pièce jointe.
 - Statuts de remise WhatsApp (remis, lu, échoué) par webhook : reçus par la gateway sur `/webhooks/whatsapp`, transmis à notification qui vérifie la signature (UC-GW-11) et met à jour la notification retrouvée par `provider_message_id` (index à ajouter).
 - Prestataire SMS (agrégateur à choisir avant la production, ADR-021).
 - Reste du contrat après le cahier des charges du service.
