@@ -4,6 +4,7 @@ import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { GetMeUseCase, UpdateMeUseCase } from './application/account/account.use-cases';
 import { ActiveContexts } from './application/context/active-contexts';
+import { GetOrganizationsUseCase } from './application/directory/get-organizations.use-case';
 import { GetUsersUseCase } from './application/directory/get-users.use-case';
 import { ChangeEmailUseCase } from './application/email/change-email.use-case';
 import { ConfirmEmailUseCase } from './application/email/confirm-email.use-case';
@@ -380,6 +381,11 @@ export class AppModule {
           provide: GetUsersUseCase,
           inject: [PrismaLoginRepository],
           useFactory: (directory: PrismaLoginRepository) => new GetUsersUseCase(directory),
+        },
+        {
+          provide: GetOrganizationsUseCase,
+          inject: [PrismaOrganizationRepository],
+          useFactory: (directory: PrismaOrganizationRepository) => new GetOrganizationsUseCase(directory),
         },
         {
           provide: UpdateMeUseCase,

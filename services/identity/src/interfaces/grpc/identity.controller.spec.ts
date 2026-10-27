@@ -1,7 +1,12 @@
 import { identityV1 } from '@ksp/contracts';
 import { runWithContext } from '@ksp/platform';
+import {
+  GetOrganizationsUseCase,
+  type OrganizationDirectory,
+} from '../../application/directory/get-organizations.use-case';
 import { GetUsersUseCase, type UserDirectory } from '../../application/directory/get-users.use-case';
 import { type Account } from '../../application/session/session.ports';
+import { type Organization } from '../../domain/organization/organization';
 import { IdentityGrpcController } from './identity.controller';
 
 const ID = '0192f1c4-0000-7000-8000-000000000001';
@@ -22,7 +27,33 @@ const directory: UserDirectory = {
   findByIds: async (ids) => (ids.includes(ID) ? [account] : []),
 };
 
-const controller = new IdentityGrpcController(new GetUsersUseCase(directory));
+const ORG_ID = '0192f1c4-0000-7000-8000-00000000a001';
+
+const organization: Organization = {
+  id: ORG_ID,
+  legalName: 'SARL Bénin Propre',
+  address: 'Lot 12, Haie Vive, Cotonou',
+  ifu: '3201912345678',
+  rccm: null,
+  billingEmail: 'compta@benin-propre.bj',
+  status: 'suspended',
+  createdBy: ID,
+  createdAt: new Date('2026-10-27T09:00:00Z'),
+  reviewedBy: null,
+  reviewedAt: null,
+  rejectionReason: null,
+  suspendedAt: new Date('2026-10-28T09:00:00Z'),
+  suspensionReason: 'Usurpation signalée',
+};
+
+const organizations: OrganizationDirectory = {
+  findByIds: async (ids) => (ids.includes(ORG_ID) ? [organization] : []),
+};
+
+const controller = new IdentityGrpcController(
+  new GetUsersUseCase(directory),
+  new GetOrganizationsUseCase(organizations),
+);
 
 const asCaller = <T>(callerService: string, fn: () => Promise<T>) =>
   runWithContext({ correlationId: 'c', callerService }, fn);
@@ -56,6 +87,32 @@ describe('IdentityGrpcController', () => {
     await expect(asCaller('gateway', () => controller.getUser({ userId: ID }))).rejects.toMatchObject({
       code: 'IDENTITY_CALLER_FORBIDDEN',
     });
+  });
+
+  it('GetOrganizationsByIds rend la fiche sans membres ni décisions ; e-mail à notification seul', async () => {
+    const forNotification = await asCaller('notification', () =>
+      controller.getOrganizationsByIds({ organizationIds: [ORG_ID, '0192f1c4-0000-7000-8000-0000000000ff'] }),
+    );
+    expect(forNotification).toEqual({
+      organizations: [
+        {
+          id: ORG_ID,
+          legalName: 'SARL Bénin Propre',
+          address: 'Lot 12, Haie Vive, Cotonou',
+          ifu: '3201912345678',
+          rccm: '',
+          billingEmail: 'compta@benin-propre.bj',
+          status: identityV1.OrganizationStatus.ORGANIZATION_STATUS_SUSPENDED,
+        },
+      ],
+    });
+    const forBilling = await asCaller('billing', () =>
+      controller.getOrganizationsByIds({ organizationIds: [ORG_ID] }),
+    );
+    expect(forBilling.organizations[0]?.billingEmail).toBe('');
+    await expect(
+      asCaller('gateway', () => controller.getOrganizationsByIds({ organizationIds: [ORG_ID] })),
+    ).rejects.toMatchObject({ code: 'IDENTITY_CALLER_FORBIDDEN' });
   });
 
   it('les autres méthodes restent indisponibles', async () => {

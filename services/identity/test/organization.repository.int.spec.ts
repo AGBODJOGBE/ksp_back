@@ -191,6 +191,67 @@ describeWithDatabase('PrismaOrganizationRepository (PostgreSQL)', () => {
     await expect(organizations.findById(organization.id)).resolves.toMatchObject({
       billingEmail: 'compta@beninpropre.bj',
     });
+    await expect(organizations.findByIds([organization.id, uuid()])).resolves.toEqual([
+      expect.objectContaining({ id: organization.id, billingEmail: 'compta@beninpropre.bj' }),
+    ]);
+  });
+
+  it('fiches lues par les autres services : adresse non vérifiée jamais transmise', async () => {
+    const { organization } = await create();
+    // Seconde barrière : une adresse sans date de vérification n'est pas rendue.
+    await pool.query("UPDATE organizations SET billing_email = 'compta@beninpropre.bj' WHERE id = $1", [
+      organization.id,
+    ]);
+    await expect(organizations.findByIds([organization.id])).resolves.toEqual([
+      expect.objectContaining({ id: organization.id, ifu: '3201912345678', billingEmail: null }),
+    ]);
+  });
+
+  it('suspension et réactivation : le demandeur figure dans l’événement', async () => {
+    const { organization } = await create();
+    const decide = (
+      decision: 'validate' | 'suspend' | 'reactivate',
+      from: 'pending_review' | 'active' | 'suspended',
+      to: 'active' | 'suspended',
+      reason: string | null,
+    ) =>
+      organizations.applyDecision({
+        organizationId: organization.id,
+        decision,
+        from,
+        to,
+        actorId: STAFF,
+        reason,
+        auditId: uuid(),
+        now,
+      });
+    await decide('validate', 'pending_review', 'active', null);
+    await decide('suspend', 'active', 'suspended', 'Usurpation signalée');
+    await decide('reactivate', 'suspended', 'active', null);
+    const events = await pool.query(
+      "SELECT event_type, payload FROM outbox WHERE event_type IN ('identity.organization.suspended', 'identity.organization.reactivated') ORDER BY event_type",
+    );
+    expect(events.rows.map((row) => [row.event_type, row.payload.payload])).toEqual([
+      [
+        'identity.organization.reactivated',
+        {
+          organizationId: organization.id,
+          legalName: 'SARL Bénin Propre',
+          reactivatedBy: STAFF,
+          createdBy: CLIENT,
+        },
+      ],
+      [
+        'identity.organization.suspended',
+        {
+          organizationId: organization.id,
+          legalName: 'SARL Bénin Propre',
+          suspendedBy: STAFF,
+          createdBy: CLIENT,
+          reason: 'Usurpation signalée',
+        },
+      ],
+    ]);
   });
 
   it('organisation active d’une session : changée tant que la session est ouverte', async () => {
