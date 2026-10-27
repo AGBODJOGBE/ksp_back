@@ -14,7 +14,8 @@ package ksp.identity.v1;
 // Appelé par tous les services autorisés par la carte des services.
 service IdentityService {
   // GetUser et GetUsersByIds — appelant autorisé : notification (destinataires des événements
-  // métier), qui reçoit le téléphone et l'e-mail. Un compte supprimé est traité comme introuvable ;
+  // métier), qui reçoit le téléphone et l'e-mail. L'e-mail transmis est toujours une adresse
+  // vérifiée par code (email_verified). Un compte supprimé est traité comme introuvable ;
   // GetUsersByIds omet les identifiants introuvables (100 au plus par appel).
   // Erreurs :
   //   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
@@ -61,9 +62,14 @@ message User {
   string last_name = 4;
   // Renseigné uniquement si le service appelant en a besoin (par exemple delivery).
   string phone_e164 = 5;
+  // Adresse e-mail du compte, vide si aucune n'est enregistrée. Une adresse n'est enregistrée
+  // qu'une fois confirmée par le code reçu à cette adresse (ChangeEmail puis ConfirmEmail).
   string email = 6;
   string preferred_language = 7;
   string created_at = 8;
+  // L'e-mail a été confirmé par un code : seule une adresse vérifiée reçoit des e-mails
+  // (factures, documents).
+  bool email_verified = 9;
 }
 
 message GetUserRequest {
@@ -426,6 +432,18 @@ message SigningKey {
 //   IDENTITY_PROFILE_EMPTY_UPDATE   INVALID_ARGUMENT    aucun champ à modifier
 //   IDENTITY_USER_NOT_FOUND         NOT_FOUND           compte inexistant ou supprimé
 //
+// E-mail du profil (ChangeEmail, ConfirmEmail) : mêmes codes d'erreur que les codes par téléphone
+// pour le code lui-même, plus ceux propres à l'adresse.
+//   IDENTITY_EMAIL_INVALID          INVALID_ARGUMENT    adresse mal formée, ou refusée par notification
+//   IDENTITY_EMAIL_ALREADY_VERIFIED FAILED_PRECONDITION cette adresse est déjà celle, vérifiée, du compte
+//   IDENTITY_EMAIL_ALREADY_USED     ALREADY_EXISTS      adresse vérifiée par un autre compte (signalé
+//                                                       seulement après la saisie du bon code)
+//   IDENTITY_OTP_RATE_LIMITED       RESOURCE_EXHAUSTED  details.retryAfterSeconds (par adresse et par compte)
+//   IDENTITY_OTP_SEND_FAILED        UNAVAILABLE         notification n'a pu envoyer l'e-mail
+//   IDENTITY_OTP_INVALID            INVALID_ARGUMENT    details.attemptsRemaining
+//   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION aucun code en attente, ou code expiré
+//   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
+//
 // Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
 // RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) et
 // l'administration (UC-ID-18 à 21) auront leurs propres services.
@@ -434,6 +452,14 @@ service AccountService {
   rpc GetMe(GetMeRequest) returns (GetMeResponse);
   // Seuls les champs renseignés sont modifiés.
   rpc UpdateMe(UpdateMeRequest) returns (UpdateMeResponse);
+  // Déclarer ou changer son e-mail : un code est envoyé PAR E-MAIL à la nouvelle adresse
+  // (notification, modèle identity.email_verification). L'adresse n'est enregistrée qu'à
+  // ConfirmEmail : l'ancienne, vérifiée, reste en place jusque-là. Un nouvel appel annule le code
+  // précédent. La réponse est la même que l'adresse soit libre ou non (anti-énumération).
+  rpc ChangeEmail(ChangeEmailRequest) returns (ChangeEmailResponse);
+  // Confirmer l'adresse par le dernier code reçu : elle devient l'e-mail vérifié du compte
+  // (événement identity.user.verified, verifiedVia = email).
+  rpc ConfirmEmail(ConfirmEmailRequest) returns (ConfirmEmailResponse);
 }
 
 message GetMeRequest {}
@@ -441,6 +467,8 @@ message GetMeRequest {}
 message GetMeResponse {
   User user = 1;
   bool profile_incomplete = 2;
+  // Adresse en attente de confirmation (code envoyé, encore valable) ; vide sinon.
+  string pending_email = 3;
 }
 
 message UpdateMeRequest {
@@ -451,6 +479,31 @@ message UpdateMeRequest {
 }
 
 message UpdateMeResponse {
+  User user = 1;
+  bool profile_incomplete = 2;
+  // Adresse en attente de confirmation (code envoyé, encore valable) ; vide sinon.
+  string pending_email = 3;
+}
+
+message ChangeEmailRequest {
+  string email = 1;
+}
+
+message ChangeEmailResponse {
+  // Adresse à confirmer, normalisée (espaces retirés, minuscules).
+  string pending_email = 1;
+  int32 expires_in_seconds = 2;
+  // Délai avant de pouvoir demander un nouveau code.
+  int32 resend_after_seconds = 3;
+}
+
+message ConfirmEmailRequest {
+  // Code reçu par e-mail.
+  string code = 1;
+}
+
+// Profil à jour : plus aucune adresse en attente après une confirmation réussie.
+message ConfirmEmailResponse {
   User user = 1;
   bool profile_incomplete = 2;
 }

@@ -88,6 +88,9 @@ export interface SendNotificationResponse {
  * Modèles utilisés par ces appels :
  *   identity.otp   variables : code, expires_in_minutes. Modèle secret : l'historique des envois
  *                  ne garde ni le texte ni les variables, seulement le destinataire masqué.
+ *   identity.email_verification
+ *                  canal CHANNEL_EMAIL seul, recipient.email obligatoire ; variables : code,
+ *                  expires_in_minutes. Code de confirmation de l'e-mail du profil. Modèle secret.
  *
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
@@ -116,6 +119,9 @@ export interface NotificationServiceClient {
  * Modèles utilisés par ces appels :
  *   identity.otp   variables : code, expires_in_minutes. Modèle secret : l'historique des envois
  *                  ne garde ni le texte ni les variables, seulement le destinataire masqué.
+ *   identity.email_verification
+ *                  canal CHANNEL_EMAIL seul, recipient.email obligatoire ; variables : code,
+ *                  expires_in_minutes. Code de confirmation de l'e-mail du profil. Modèle secret.
  *
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal

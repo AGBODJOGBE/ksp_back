@@ -11,7 +11,7 @@ export interface IdentityEventPayloads {
   /** Ne contient jamais le code de vérification (ADR-014). */
   'identity.otp.requested': {
     userId?: string | null;
-    purpose: 'login' | 'phone_change' | 'mfa' | 'password_reset' | 'signature';
+    purpose: 'login' | 'phone_change' | 'mfa' | 'password_reset' | 'signature' | 'email_verification';
     channel: 'sms' | 'whatsapp' | 'email';
     targetMasked: string;
   };

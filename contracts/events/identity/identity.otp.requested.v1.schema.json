@@ -14,7 +14,7 @@
       "format": "uuid"
     },
     "purpose": {
-      "enum": ["login", "phone_change", "mfa", "password_reset", "signature"]
+      "enum": ["login", "phone_change", "mfa", "password_reset", "signature", "email_verification"]
     },
     "channel": {
       "enum": ["sms", "whatsapp", "email"]
