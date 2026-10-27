@@ -1,6 +1,7 @@
 import { type RateLimitCategory } from '../rate-limit/rate-limits';
 import { BILLING_ROUTES } from './billing-routes';
 import { CLEANING_ROUTES } from './cleaning-routes';
+import { ORGANIZATION_ROUTES } from './organization-routes';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -152,6 +153,7 @@ export const ROUTE_MANIFEST = [
     rateLimit: 'public',
     requiresKnownClient: false,
   },
+  ...ORGANIZATION_ROUTES,
   ...CLEANING_ROUTES,
   ...BILLING_ROUTES,
 ] as const satisfies readonly RouteDefinition[];

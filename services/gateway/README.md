@@ -45,6 +45,22 @@ Type de compte : `GET /api/v1/identity/me` et chaque session ouverte ou renouvel
 cleaning et billing. Une réponse d'identity sans contexte actif est une erreur interne : déployer
 identity avant la gateway.
 
+## Routes des comptes entreprise (ADR-027)
+
+| Route                                                                                           | Appel                                                           | Accès                                |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------ |
+| `POST /api/v1/identity/context`                                                                 | `AuthService/SwitchContext`                                     | connecté                             |
+| `GET`, `POST /api/v1/identity/organizations`                                                    | `OrganizationService/ListMyOrganizations`, `CreateOrganization` | connecté                             |
+| `GET /api/v1/identity/organizations/{id}`                                                       | `OrganizationService/GetMyOrganization`                         | connecté                             |
+| `PUT /api/v1/identity/organizations/{id}/billing-email`                                         | `OrganizationService/ChangeOrganizationBillingEmail`            | connecté, 3 par utilisateur          |
+| `POST /api/v1/identity/organizations/{id}/billing-email/verify`                                 | `OrganizationService/ConfirmOrganizationBillingEmail`           | connecté, 10 par utilisateur         |
+| `GET /api/v1/admin/identity/organizations[/{id}]`                                               | `OrganizationAdminService/ListOrganizations`, `GetOrganization` | `super_admin`, `support_agent` + MFA |
+| `POST /api/v1/admin/identity/organizations/{id}/validate`, `/reject`, `/suspend`, `/reactivate` | `OrganizationAdminService/…`                                    | `super_admin` + MFA                  |
+
+`activeContext` porte aussi `organizationName` (raison sociale de l'organisation active, null pour
+un particulier). Après `POST /api/v1/identity/context`, le front remplace son jeton d'accès par
+celui de la réponse.
+
 ## Routes du Nettoyage (lot 2)
 
 37 routes vers `cleaning` (`CLEANING_GRPC_URL`, `localhost:50053` par défaut), déclarées dans `src/domain/routing/cleaning-routes.ts` :

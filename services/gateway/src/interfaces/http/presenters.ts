@@ -27,7 +27,11 @@ export function presentUser(user: UserProfile) {
 
 /** Particulier ou entreprise : le type de compte réel, celui que lisent cleaning et billing. */
 export function presentActiveContext(context: ActiveContext) {
-  return { type: context.type, organizationId: context.organizationId };
+  return {
+    type: context.type,
+    organizationId: context.organizationId,
+    organizationName: context.organizationName,
+  };
 }
 
 export function presentOtpChallenge(challenge: OtpChallenge) {

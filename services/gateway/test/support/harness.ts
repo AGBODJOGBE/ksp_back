@@ -64,10 +64,37 @@ export const protoUser: identityV1.User = {
   emailVerified: false,
 };
 
-/** Contexte personnel (particulier) : le seul qu'identity ouvre aujourd'hui. */
+/** Contexte personnel (particulier) : celui de toute session à son ouverture. */
 export const protoIndividual: identityV1.ActiveContext = {
   type: identityV1.ContextType.CONTEXT_TYPE_INDIVIDUAL,
   organizationId: '',
+  organizationName: '',
+};
+
+export const ORGANIZATION_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0a01';
+
+/** Organisation validée, telle qu'identity la renvoie. */
+export const protoOrganization: identityV1.Organization = {
+  id: ORGANIZATION_ID,
+  legalName: 'SARL Bénin Propre',
+  address: 'Lot 1234, Haie Vive, Cotonou',
+  ifu: '3201912345678',
+  rccm: '',
+  billingEmail: 'compta@beninpropre.bj',
+  status: identityV1.OrganizationStatus.ORGANIZATION_STATUS_ACTIVE,
+  createdBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11',
+  createdAt: '2026-10-27T10:00:00.000Z',
+  reviewedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8dad01',
+  reviewedAt: '2026-10-27T11:00:00.000Z',
+  rejectionReason: '',
+  suspendedAt: '',
+  suspensionReason: '',
+};
+
+const protoMembership: identityV1.OrganizationMembership = {
+  organization: protoOrganization,
+  role: identityV1.OrgRole.ORG_ROLE_ADMIN,
+  pendingBillingEmail: '',
 };
 
 export function protoSession(refreshToken = 'rt-new'): identityV1.SessionTokens {
@@ -85,7 +112,9 @@ export function protoSession(refreshToken = 'rt-new'): identityV1.SessionTokens 
 
 type AuthMethod = keyof identityV1.AuthServiceController;
 type AccountMethod = keyof identityV1.AccountServiceController;
-export type StubMethod = AuthMethod | AccountMethod;
+type OrganizationMethod = keyof identityV1.OrganizationServiceController;
+type OrganizationAdminMethod = keyof identityV1.OrganizationAdminServiceController;
+export type StubMethod = AuthMethod | AccountMethod | OrganizationMethod | OrganizationAdminMethod;
 
 export interface RecordedCall {
   method: StubMethod;
@@ -148,6 +177,69 @@ export class IdentityStub {
       profileIncomplete: true,
       activeContext: protoIndividual,
     }),
+    switchContext: (request) => ({
+      accessToken: 'eyJhbGciOiJFUzI1NiJ9.e30.b3Jn',
+      accessTokenExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+      activeContext: request['organizationId']
+        ? {
+            type: identityV1.ContextType.CONTEXT_TYPE_BUSINESS,
+            organizationId: String(request['organizationId']),
+            organizationName: 'SARL Bénin Propre',
+          }
+        : protoIndividual,
+    }),
+    createOrganization: () => ({
+      membership: {
+        ...protoMembership,
+        organization: {
+          ...protoOrganization,
+          billingEmail: '',
+          status: identityV1.OrganizationStatus.ORGANIZATION_STATUS_PENDING_REVIEW,
+          reviewedBy: '',
+          reviewedAt: '',
+        },
+      },
+    }),
+    listMyOrganizations: () => ({ memberships: [protoMembership] }),
+    getMyOrganization: () => ({ membership: protoMembership }),
+    changeOrganizationBillingEmail: (request) => ({
+      pendingEmail: String(request['email']).trim().toLowerCase(),
+      expiresInSeconds: 900,
+      resendAfterSeconds: 60,
+    }),
+    confirmOrganizationBillingEmail: () => ({ membership: protoMembership }),
+    listOrganizations: () => ({ organizations: [protoOrganization], nextCursor: ORGANIZATION_ID }),
+    getOrganization: () => ({
+      organization: protoOrganization,
+      members: [
+        {
+          userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11',
+          role: identityV1.OrgRole.ORG_ROLE_ADMIN,
+          firstName: 'Koffi',
+          lastName: '',
+          phoneE164: '+2290197000045',
+          joinedAt: '2026-10-27T10:00:00.000Z',
+        },
+      ],
+    }),
+    validateOrganization: () => ({ organization: protoOrganization }),
+    rejectOrganization: (request) => ({
+      organization: {
+        ...protoOrganization,
+        status: identityV1.OrganizationStatus.ORGANIZATION_STATUS_REJECTED,
+        billingEmail: '',
+        rejectionReason: String(request['reason']),
+      },
+    }),
+    suspendOrganization: (request) => ({
+      organization: {
+        ...protoOrganization,
+        status: identityV1.OrganizationStatus.ORGANIZATION_STATUS_SUSPENDED,
+        suspendedAt: '2026-10-28T09:00:00.000Z',
+        suspensionReason: String(request['reason']),
+      },
+    }),
+    reactivateOrganization: () => ({ organization: protoOrganization }),
   };
 
   /** Remplace la réponse d'une méthode (erreur métier, délai…) jusqu'à reset(). */
@@ -200,6 +292,54 @@ class StubAuthController implements identityV1.AuthServiceController {
   }
   verifyMfa(request: identityV1.VerifyMfaRequest) {
     return this.stub.handle('verifyMfa', { ...request });
+  }
+  switchContext(request: identityV1.SwitchContextRequest) {
+    return this.stub.handle('switchContext', { ...request });
+  }
+}
+
+@Controller()
+@identityV1.OrganizationServiceControllerMethods()
+class StubOrganizationController implements identityV1.OrganizationServiceController {
+  constructor(@Inject(STUB) private readonly stub: IdentityStub) {}
+  createOrganization(request: identityV1.CreateOrganizationRequest) {
+    return this.stub.handle('createOrganization', { ...request });
+  }
+  listMyOrganizations(request: identityV1.ListMyOrganizationsRequest) {
+    return this.stub.handle('listMyOrganizations', { ...request });
+  }
+  getMyOrganization(request: identityV1.GetMyOrganizationRequest) {
+    return this.stub.handle('getMyOrganization', { ...request });
+  }
+  changeOrganizationBillingEmail(request: identityV1.ChangeOrganizationBillingEmailRequest) {
+    return this.stub.handle('changeOrganizationBillingEmail', { ...request });
+  }
+  confirmOrganizationBillingEmail(request: identityV1.ConfirmOrganizationBillingEmailRequest) {
+    return this.stub.handle('confirmOrganizationBillingEmail', { ...request });
+  }
+}
+
+@Controller()
+@identityV1.OrganizationAdminServiceControllerMethods()
+class StubOrganizationAdminController implements identityV1.OrganizationAdminServiceController {
+  constructor(@Inject(STUB) private readonly stub: IdentityStub) {}
+  listOrganizations(request: identityV1.ListOrganizationsRequest) {
+    return this.stub.handle('listOrganizations', { ...request });
+  }
+  getOrganization(request: identityV1.GetOrganizationRequest) {
+    return this.stub.handle('getOrganization', { ...request });
+  }
+  validateOrganization(request: identityV1.ValidateOrganizationRequest) {
+    return this.stub.handle('validateOrganization', { ...request });
+  }
+  rejectOrganization(request: identityV1.RejectOrganizationRequest) {
+    return this.stub.handle('rejectOrganization', { ...request });
+  }
+  suspendOrganization(request: identityV1.SuspendOrganizationRequest) {
+    return this.stub.handle('suspendOrganization', { ...request });
+  }
+  reactivateOrganization(request: identityV1.ReactivateOrganizationRequest) {
+    return this.stub.handle('reactivateOrganization', { ...request });
   }
 }
 
@@ -313,7 +453,12 @@ export async function startIdentityStub(keys: TestKeys): Promise<IdentityServer>
   const stub = new IdentityStub();
 
   @Module({
-    controllers: [StubAuthController, StubAccountController],
+    controllers: [
+      StubAuthController,
+      StubAccountController,
+      StubOrganizationController,
+      StubOrganizationAdminController,
+    ],
     providers: [{ provide: STUB, useValue: stub }],
   })
   class StubModule {}

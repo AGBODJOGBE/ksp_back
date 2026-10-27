@@ -68,8 +68,8 @@ export const user: UserProfile = {
   createdAt: '2026-10-17T10:00:00.000Z',
 };
 
-/** Contexte personnel : le seul qu'identity ouvre aujourd'hui. */
-export const individual: ActiveContext = { type: 'individual', organizationId: null };
+/** Contexte personnel : celui de toute session à son ouverture. */
+export const individual: ActiveContext = { type: 'individual', organizationId: null, organizationName: null };
 
 export const session: SessionTokens = {
   accessToken: 'jwt',
