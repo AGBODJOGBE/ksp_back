@@ -6,6 +6,16 @@ import { type OtpChallenge, type OtpChannel } from '../../domain/otp/otp-challen
 import { clientKindsOf, sessionCategory } from '../../domain/session/session-policy';
 import { type StoredOtpChallenge } from '../../domain/otp/otp-verification';
 import { type PhoneNumber } from '../../domain/user/phone-number';
+import { type EmailAddress } from '../../domain/user/email-address';
+import {
+  type EmailCodeRequestedEvent,
+  type EmailConfirmation,
+  EmailAlreadyUsedError,
+  type EmailVerificationRepository,
+  type NewEmailVerification,
+  type StoredEmailVerification,
+  VerificationAlreadyConsumedError,
+} from '../email/email.ports';
 import { type OtpChallengeRepository, type OtpRequestedEvent } from '../otp/otp.ports';
 import {
   type RefreshRotation,
@@ -132,6 +142,7 @@ export class InMemoryIdentityStore implements AccountRepository, LoginRepository
         lastName: null,
         phoneE164: plan.phoneE164,
         email: null,
+        emailVerifiedAt: null,
         preferredLanguage: 'fr',
         createdAt: plan.now,
       };
@@ -257,5 +268,81 @@ export class InMemorySessionStore implements SessionStore {
       session.revokeReason = reason;
     }
     return active.length;
+  }
+}
+
+type VerificationRow = NewEmailVerification & {
+  attempts: number;
+  sentAt?: Date;
+  sendFailedAt?: Date;
+  consumedAt?: Date;
+};
+
+/** Demandes de confirmation d'e-mail en mémoire ; la confirmation écrit dans les comptes du magasin. */
+export class InMemoryEmailVerifications implements EmailVerificationRepository {
+  readonly rows: VerificationRow[] = [];
+  readonly events: EmailCodeRequestedEvent[] = [];
+  readonly verifiedEvents: string[] = [];
+
+  constructor(private readonly store: InMemoryIdentityStore) {}
+
+  async sentAtForEmailSince(email: EmailAddress, since: Date): Promise<Date[]> {
+    return this.sentSince((row) => row.email.value === email.value, since);
+  }
+  async sentAtForUserSince(userId: string, since: Date): Promise<Date[]> {
+    return this.sentSince((row) => row.userId === userId, since);
+  }
+  async create(verification: NewEmailVerification): Promise<void> {
+    this.rows.push({ ...verification, attempts: 0 });
+  }
+  async markSent(id: string, sentAt: Date, event: EmailCodeRequestedEvent): Promise<void> {
+    this.row(id).sentAt = sentAt;
+    this.events.push(event);
+  }
+  async markSendFailed(id: string, failedAt: Date): Promise<void> {
+    this.row(id).sendFailedAt = failedAt;
+  }
+  async findLatest(userId: string): Promise<StoredEmailVerification | null> {
+    const row = this.rows.filter((candidate) => candidate.userId === userId).at(-1);
+    if (!row) return null;
+    return {
+      id: row.id,
+      userId: row.userId,
+      target: row.email.value,
+      codeHash: row.codeHash,
+      attempts: row.attempts,
+      expiresAt: row.expiresAt,
+      sentAt: row.sentAt ?? null,
+      sendFailedAt: row.sendFailedAt ?? null,
+      consumedAt: row.consumedAt ?? null,
+    };
+  }
+  async registerFailedAttempt(id: string): Promise<number> {
+    const row = this.row(id);
+    row.attempts += 1;
+    return row.attempts;
+  }
+  async confirm(confirmation: EmailConfirmation): Promise<Account> {
+    const row = this.row(confirmation.verificationId);
+    if (row.consumedAt) throw new VerificationAlreadyConsumedError();
+    const taken = this.store.accounts.some(
+      (account) => account.email === confirmation.email && account.id !== confirmation.userId,
+    );
+    if (taken) throw new EmailAlreadyUsedError();
+    row.consumedAt = confirmation.now;
+    const account = this.store.accounts.find((candidate) => candidate.id === confirmation.userId)!;
+    Object.assign(account, { email: confirmation.email, emailVerifiedAt: confirmation.now });
+    this.verifiedEvents.push(account.id);
+    return account;
+  }
+
+  private row(id: string): VerificationRow {
+    return this.rows.find((candidate) => candidate.id === id)!;
+  }
+
+  private sentSince(match: (row: VerificationRow) => boolean, since: Date): Date[] {
+    return this.rows
+      .filter((row) => match(row) && row.sentAt && row.sentAt >= since)
+      .map((row) => row.sentAt as Date);
   }
 }

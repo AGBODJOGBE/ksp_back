@@ -13,6 +13,7 @@ function setup() {
     lastName: 'Adjovi',
     phoneE164: '+2290197000045',
     email: null,
+    emailVerifiedAt: null,
     preferredLanguage: 'fr',
     createdAt: new Date('2026-10-19T12:00:00Z'),
   });

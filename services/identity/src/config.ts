@@ -19,6 +19,11 @@ export const configSchema = baseServiceConfigSchema.safeExtend({
   OTP_MAX_PER_DAY: z.coerce.number().int().positive().default(10),
   OTP_BLOCK_SECONDS: z.coerce.number().int().positive().default(3600),
   /**
+   * Validité du code de confirmation de l'e-mail du profil : 15 minutes, un e-mail arrivant moins
+   * vite qu'un message WhatsApp. Les autres règles (longueur, essais, limites) sont celles des codes.
+   */
+  EMAIL_OTP_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+  /**
    * Clés de signature des jetons (ADR-020), fournies par le coffre à secrets : liste JSON
    * [{ kid, status: next | active | retired, privateKeyPem }]. Vide hors production : clé temporaire.
    */
@@ -94,4 +99,9 @@ export function otpPolicyFrom(config: ServiceConfig): OtpPolicy {
     maxPerDay: config.OTP_MAX_PER_DAY,
     blockSeconds: config.OTP_BLOCK_SECONDS,
   };
+}
+
+/** Règles du code de confirmation de l'e-mail : celles des codes, avec sa propre validité. */
+export function emailOtpPolicyFrom(config: ServiceConfig): OtpPolicy {
+  return { ...otpPolicyFrom(config), ttlSeconds: config.EMAIL_OTP_TTL_SECONDS };
 }

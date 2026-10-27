@@ -10,7 +10,10 @@ export interface Account {
   firstName: string | null;
   lastName: string | null;
   phoneE164: string | null;
+  /** Adresse e-mail, en minuscules ; null si aucune n'est enregistrée. */
   email: string | null;
+  /** Confirmation de l'adresse par code ; seule une adresse vérifiée reçoit des e-mails. */
+  emailVerifiedAt: Date | null;
   preferredLanguage: string;
   createdAt: Date;
 }

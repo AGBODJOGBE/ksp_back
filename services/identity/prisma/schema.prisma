@@ -64,13 +64,18 @@ model User {
   updatedAt           DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletionRequestedAt DateTime?  @map("deletion_requested_at") @db.Timestamptz(3)
   anonymizedAt        DateTime?  @map("anonymized_at") @db.Timestamptz(3)
+  /// Adresse e-mail en minuscules, enregistrée seulement après confirmation par code ; unique entre comptes.
+  email               String?    @unique
+  /// Confirmation de l'adresse par le code reçu à cette adresse.
+  emailVerifiedAt     DateTime?  @map("email_verified_at") @db.Timestamptz(3)
 
-  phones          UserPhone[]
-  sessions        Session[]
-  roleAssignments RoleAssignment[]
-  mfaFactors      MfaFactor[]
-  recoveryCodes   MfaRecoveryCode[]
-  mfaChallenges   MfaChallenge[]
+  phones             UserPhone[]
+  sessions           Session[]
+  roleAssignments    RoleAssignment[]
+  mfaFactors         MfaFactor[]
+  recoveryCodes      MfaRecoveryCode[]
+  mfaChallenges      MfaChallenge[]
+  emailVerifications EmailVerification[]
 
   @@map("users")
 }
@@ -279,4 +284,30 @@ model MfaChallenge {
 
   @@index([userId])
   @@map("mfa_challenges")
+}
+
+/// Codes de confirmation de l'e-mail du profil, envoyés par e-mail. Le code n'est jamais stocké en
+/// clair : seulement son HMAC. Seule la dernière demande d'un compte peut être confirmée. Les lignes
+/// sont gardées : elles retracent les adresses déclarées, les essais et les confirmations.
+model EmailVerification {
+  id           String    @id @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  /// Adresse à confirmer, en minuscules.
+  email        String
+  codeHash     String    @map("code_hash")
+  attempts     Int       @default(0)
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt   DateTime? @map("consumed_at") @db.Timestamptz(3)
+  ip           String?
+  createdAt    DateTime  @map("created_at") @db.Timestamptz(3)
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(3)
+  sendFailedAt DateTime? @map("send_failed_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Dernière demande d'un compte, et limites d'envoi par compte.
+  @@index([userId, sentAt])
+  /// Limites d'envoi par adresse.
+  @@index([email, sentAt])
+  @@map("email_verifications")
 }

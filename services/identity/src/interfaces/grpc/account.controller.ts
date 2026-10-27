@@ -1,11 +1,17 @@
 import { identityV1 } from '@ksp/contracts';
-import { requireUser } from '@ksp/platform';
+import { currentContext, requireUser } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
 import { GetMeUseCase, type Profile, UpdateMeUseCase } from '../../application/account/account.use-cases';
+import { ChangeEmailUseCase } from '../../application/email/change-email.use-case';
+import { ConfirmEmailUseCase } from '../../application/email/confirm-email.use-case';
 import { toUserMessage } from './mappers';
 
 function toProfileMessage(profile: Profile): identityV1.GetMeResponse {
-  return { user: toUserMessage(profile.account), profileIncomplete: profile.profileIncomplete };
+  return {
+    user: toUserMessage(profile.account),
+    profileIncomplete: profile.profileIncomplete,
+    pendingEmail: profile.pendingEmail ?? '',
+  };
 }
 
 /**
@@ -19,6 +25,8 @@ export class AccountGrpcController implements identityV1.AccountServiceControlle
   constructor(
     private readonly getMeUseCase: GetMeUseCase,
     private readonly updateMeUseCase: UpdateMeUseCase,
+    private readonly changeEmailUseCase: ChangeEmailUseCase,
+    private readonly confirmEmailUseCase: ConfirmEmailUseCase,
   ) {}
 
   async getMe(): Promise<identityV1.GetMeResponse> {
@@ -33,5 +41,26 @@ export class AccountGrpcController implements identityV1.AccountServiceControlle
       preferredLanguage: request.preferredLanguage,
     });
     return toProfileMessage(profile);
+  }
+
+  async changeEmail(request: identityV1.ChangeEmailRequest): Promise<identityV1.ChangeEmailResponse> {
+    const result = await this.changeEmailUseCase.execute({
+      userId: requireUser().userId,
+      email: request.email,
+      ip: currentContext()?.client?.ip ?? null,
+    });
+    return {
+      pendingEmail: result.pendingEmail,
+      expiresInSeconds: result.expiresInSeconds,
+      resendAfterSeconds: result.resendAfterSeconds,
+    };
+  }
+
+  async confirmEmail(request: identityV1.ConfirmEmailRequest): Promise<identityV1.ConfirmEmailResponse> {
+    const profile = await this.confirmEmailUseCase.execute({
+      userId: requireUser().userId,
+      code: request.code,
+    });
+    return { user: toUserMessage(profile.account), profileIncomplete: profile.profileIncomplete };
   }
 }

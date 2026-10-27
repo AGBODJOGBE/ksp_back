@@ -13,6 +13,7 @@ const account: Account = {
   lastName: null,
   phoneE164: '+2290197000045',
   email: null,
+  emailVerifiedAt: null,
   preferredLanguage: 'fr',
   createdAt: new Date('2026-10-19T12:00:00Z'),
 };
@@ -39,6 +40,7 @@ describe('IdentityGrpcController', () => {
         email: '',
         preferredLanguage: 'fr',
         createdAt: '2026-10-19T12:00:00.000Z',
+        emailVerified: false,
       },
     });
   });

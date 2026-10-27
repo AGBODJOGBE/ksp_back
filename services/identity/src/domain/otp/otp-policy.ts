@@ -44,3 +44,12 @@ export function decideSend(sentAt: Date[], now: Date, policy: OtpPolicy): SendDe
   const wait = Math.max(...waits);
   return wait > 0 ? { allowed: false, retryAfterSeconds: Math.ceil(wait) } : { allowed: true };
 }
+
+/**
+ * Décision la plus stricte de plusieurs limites (par exemple par adresse et par compte) :
+ * refus si l'une refuse, avec le délai le plus long.
+ */
+export function strictest(decisions: readonly SendDecision[]): SendDecision {
+  const waits = decisions.flatMap((decision) => (decision.allowed ? [] : [decision.retryAfterSeconds]));
+  return waits.length === 0 ? { allowed: true } : { allowed: false, retryAfterSeconds: Math.max(...waits) };
+}

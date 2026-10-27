@@ -20,6 +20,7 @@ function setup() {
     lastName: 'Adjovi',
     phoneE164: '+2290197000045',
     email: null,
+    emailVerifiedAt: null,
     preferredLanguage: 'fr',
     createdAt: now,
   };

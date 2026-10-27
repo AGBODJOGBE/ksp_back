@@ -1,5 +1,6 @@
 import { AppError } from '@ksp/platform';
-import { InMemoryChallenges, InMemoryIdentityStore } from '../testing/fakes';
+import { PendingEmails } from '../email/pending-email';
+import { InMemoryChallenges, InMemoryEmailVerifications, InMemoryIdentityStore } from '../testing/fakes';
 import { GetMeUseCase, UpdateMeUseCase } from './account.use-cases';
 
 function setup() {
@@ -11,10 +12,16 @@ function setup() {
     lastName: null,
     phoneE164: '+2290197000045',
     email: null,
+    emailVerifiedAt: null,
     preferredLanguage: 'fr',
     createdAt: new Date('2026-10-19T12:00:00Z'),
   });
-  return { store, getMe: new GetMeUseCase(store), updateMe: new UpdateMeUseCase(store) };
+  const pending = new PendingEmails(
+    new InMemoryEmailVerifications(store),
+    { now: () => new Date('2026-10-27T12:00:00Z') },
+    5,
+  );
+  return { store, getMe: new GetMeUseCase(store, pending), updateMe: new UpdateMeUseCase(store, pending) };
 }
 
 async function expectAppError(promise: Promise<unknown>, code: string): Promise<AppError> {
@@ -28,8 +35,9 @@ describe('GetMeUseCase', () => {
   it('renvoie le profil et signale qu’il reste à compléter', async () => {
     const { getMe } = setup();
     await expect(getMe.execute('u-1')).resolves.toMatchObject({
-      account: { id: 'u-1', phoneE164: '+2290197000045' },
+      account: { id: 'u-1', phoneE164: '+2290197000045', email: null },
       profileIncomplete: true,
+      pendingEmail: null,
     });
   });
 
