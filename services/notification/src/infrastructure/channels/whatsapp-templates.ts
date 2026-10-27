@@ -82,4 +82,31 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
     'mission_id',
     'failed_count',
   ]),
+  // Facturation mensuelle des contrats d'entreprise (ADR-025).
+  'billing.invoice_issued.customer': spec('ksp_billing_invoice_issued', [
+    'invoice_number',
+    'period',
+    'total',
+    'due_on',
+    'link',
+  ]),
+  'billing.invoice_overdue.customer': spec('ksp_billing_invoice_overdue', [
+    'invoice_number',
+    'total',
+    'due_on',
+    'link',
+  ]),
+  // Deux modèles : sans ou avec des factures encore impayées sur le contrat.
+  'billing.invoice_paid.customer': {
+    name: (v) =>
+      (v['unpaid_left'] ?? '0') === '0' ? 'ksp_billing_invoice_paid' : 'ksp_billing_invoice_paid_unpaid_left',
+    parameters: (v) => [
+      name(v),
+      v['invoice_number'] ?? '',
+      v['total'] ?? '',
+      v['paid_on'] ?? '',
+      ...((v['unpaid_left'] ?? '0') === '0' ? [] : [v['unpaid_left'] ?? '']),
+      v['link'] ?? '',
+    ],
+  },
 };

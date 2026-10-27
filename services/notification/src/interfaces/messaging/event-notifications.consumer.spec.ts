@@ -18,13 +18,16 @@ const envelope = {
 describe('EventNotificationsConsumer', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('s’abonne aux 11 événements du Nettoyage (files notification.<événement>)', async () => {
+  it('s’abonne aux 11 événements du Nettoyage et aux 3 de la facturation (files notification.<événement>)', async () => {
     const subscribed: string[] = [];
     const consumer = {
       subscribe: async (type: string) => void subscribed.push(type),
     } as unknown as RabbitMqConsumer;
     await new EventNotificationsConsumer(consumer, {} as NotifyEventUseCase).onApplicationBootstrap();
     expect(subscribed.sort()).toEqual([
+      'billing.invoice.issued',
+      'billing.invoice.overdue',
+      'billing.invoice.paid',
       'cleaning.booking.confirmed',
       'cleaning.contract.resumed',
       'cleaning.contract.suspended',

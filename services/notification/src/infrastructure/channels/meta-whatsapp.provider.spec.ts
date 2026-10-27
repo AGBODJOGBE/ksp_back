@@ -226,6 +226,36 @@ describe('MetaWhatsAppProvider', () => {
     ]);
   });
 
+  it.each([
+    [
+      '0',
+      'ksp_billing_invoice_paid',
+      ['Awa', 'FAC-2026-000042', 'montant', '16 décembre 2026', 'https://ksp.bj/f'],
+    ],
+    [
+      '2',
+      'ksp_billing_invoice_paid_unpaid_left',
+      ['Awa', 'FAC-2026-000042', 'montant', '16 décembre 2026', '2', 'https://ksp.bj/f'],
+    ],
+  ])('facture réglée, %s impayée(s) restante(s) : modèle %s', async (unpaidLeft, name, parameters) => {
+    const { calls, whatsapp } = provider(() => json(200, { messages: [{ id: 'wamid.p' }] }));
+    await whatsapp.send({
+      ...message,
+      templateCode: 'billing.invoice_paid.customer',
+      variables: {
+        first_name: 'Awa',
+        invoice_number: 'FAC-2026-000042',
+        total: 'montant',
+        paid_on: '16 décembre 2026',
+        unpaid_left: unpaidLeft,
+        link: 'https://ksp.bj/f',
+      },
+    });
+    const template = JSON.parse(calls[0]!.init.body as string).template;
+    expect(template.name).toBe(name);
+    expect(template.components[0].parameters.map((p: { text: string }) => p.text)).toEqual(parameters);
+  });
+
   it('destinataire sans numéro : refus sans appel à Meta', async () => {
     const { calls, whatsapp } = provider(() => json(200, { messages: [{ id: 'x' }] }));
     await expect(whatsapp.send({ ...message, phoneE164: null })).resolves.toEqual({

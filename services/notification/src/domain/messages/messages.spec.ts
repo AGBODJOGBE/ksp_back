@@ -1,6 +1,7 @@
 import { eventChannelPlan, eventDispatchPlans } from '../channel';
 import { EmailAddress } from '../recipient';
 import { findTemplate, invalidVariables, isEventTemplate } from '../template';
+import { BILLING_TEMPLATES } from './billing.messages';
 import { CLEANING_TEMPLATES, paymentNote, unpaidText } from './cleaning.messages';
 import { formatDate, formatDateTime, formatDuration, formatXof } from './format';
 
@@ -128,5 +129,87 @@ describe('Code de confirmation de l’e-mail (identity.email_verification)', () 
     expect(message.text).toContain('482913');
     expect(message.text).toContain('valable 1 minute.');
     expect(message.text.startsWith('Bonjour,\n')).toBe(true);
+  });
+});
+
+describe('Modèles de la facturation', () => {
+  const issued = {
+    first_name: 'Koffi',
+    invoice_number: 'FAC-2026-000042',
+    period: 'du 1 novembre 2026 au 30 novembre 2026',
+    total: `150${NBSP}000${NBSP}FCFA`,
+    due_on: '11 décembre 2026',
+    link: 'https://ksp.bj/mon-espace/factures/i-1',
+  };
+
+  it('sont tous au catalogue, documents, par WhatsApp et e-mail', () => {
+    expect(BILLING_TEMPLATES.map((template) => template.code)).toEqual([
+      'billing.invoice_issued.customer',
+      'billing.invoice_overdue.customer',
+      'billing.invoice_paid.customer',
+    ]);
+    for (const template of BILLING_TEMPLATES) {
+      expect(findTemplate(template.code)).toBe(template);
+      expect(template).toMatchObject({ kind: 'document', secret: false, channels: ['whatsapp', 'email'] });
+    }
+  });
+
+  it('facture émise : numéro, période, montant en FCFA entiers, échéance et lien', () => {
+    const template = findTemplate('billing.invoice_issued.customer')!;
+    expect(invalidVariables(template, issued)).toEqual([]);
+    const message = template.render!(issued);
+    expect(message.subject).toBe('Votre facture FAC-2026-000042');
+    expect(message.text).toBe(
+      [
+        'Bonjour Koffi,',
+        'Votre facture FAC-2026-000042 est disponible : période du 1 novembre 2026 au 30 novembre 2026, ' +
+          `montant 150${NBSP}000${NBSP}FCFA.`,
+        'Elle est à régler avant le 11 décembre 2026, en espèces, par virement ou par Mobile Money ' +
+          "auprès de l'équipe KSP.",
+        'Consultez-la dans Mon espace KSP, rubrique « Mes factures » : https://ksp.bj/mon-espace/factures/i-1',
+      ].join('\n'),
+    );
+  });
+
+  it('numéro de facture ou montant mal formés : refusés', () => {
+    const template = findTemplate('billing.invoice_issued.customer')!;
+    expect(
+      invalidVariables(template, { ...issued, invoice_number: 'FAC-42', total: '1500.50 FCFA' }),
+    ).toEqual(['invoice_number', 'total']);
+  });
+
+  it('facture impayée : désigne la facture, sans reprendre l’avertissement du Nettoyage', () => {
+    const template = findTemplate('billing.invoice_overdue.customer')!;
+    const { period: _period, ...variables } = issued;
+    const message = template.render!({ ...variables, first_name: '' });
+    expect(message.subject).toBe('Facture FAC-2026-000042 impayée');
+    expect(message.text.startsWith('Bonjour,\n')).toBe(true);
+    expect(message.text).toContain(
+      `Votre facture FAC-2026-000042 de 150${NBSP}000${NBSP}FCFA, à régler avant le 11 décembre 2026, ` +
+        "n'est pas entièrement réglée",
+    );
+    expect(message.text).not.toContain('suspen');
+  });
+
+  it.each([
+    ['0', null],
+    ['1', 'Il reste 1 facture impayée sur ce contrat.'],
+    ['2', 'Il reste 2 factures impayées sur ce contrat.'],
+  ])('facture réglée, %s impayée(s) restante(s)', (unpaidLeft, expected) => {
+    const template = findTemplate('billing.invoice_paid.customer')!;
+    const variables = {
+      first_name: 'Koffi',
+      invoice_number: 'FAC-2026-000042',
+      total: `150${NBSP}000${NBSP}FCFA`,
+      paid_on: '16 décembre 2026',
+      unpaid_left: unpaidLeft,
+      link: 'https://ksp.bj/mon-espace/factures/i-1',
+    };
+    expect(invalidVariables(template, variables)).toEqual([]);
+    const message = template.render!(variables);
+    expect(message.subject).toBe('Facture FAC-2026-000042 réglée');
+    expect(message.text).toContain('est réglée en totalité depuis le 16 décembre 2026.');
+    if (expected) expect(message.text).toContain(expected);
+    else expect(message.text).not.toContain('Il reste');
   });
 });

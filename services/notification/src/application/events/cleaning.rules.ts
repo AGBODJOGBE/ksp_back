@@ -1,7 +1,8 @@
 import { type CleaningEventType } from '@ksp/contracts';
 import { paymentNote, unpaidText } from '../../domain/messages/cleaning.messages';
-import { formatDate, formatDateTime, formatDuration, formatXof } from '../../domain/messages/format';
+import { formatDuration, formatXof } from '../../domain/messages/format';
 import { type EventRule, type NotificationIntent, type RuleContext } from './event-rules';
+import { eventDate as day, eventDateTime as dateTime } from './rule-dates';
 
 /**
  * Messages des événements du Nettoyage (cahier des charges Nettoyage, parties 6 et 10).
@@ -34,19 +35,6 @@ function team(
 
 function missionLink(context: RuleContext, missionId: string): string {
   return `${context.portalBaseUrl}/mon-espace/nettoyage/missions/${encodeURIComponent(missionId)}`;
-}
-
-/** Date écrite en toutes lettres ; un événement à la date illisible est refusé (file d'erreurs). */
-function dateTime(iso: string, context: RuleContext): string {
-  const text = formatDateTime(iso, context.timeZone);
-  if (!text) throw new Error(`date illisible dans l'événement : ${iso}`);
-  return text;
-}
-
-function day(iso: string, context: RuleContext): string {
-  const text = formatDate(iso, context.timeZone);
-  if (!text) throw new Error(`date illisible dans l'événement : ${iso}`);
-  return text;
 }
 
 function customer(

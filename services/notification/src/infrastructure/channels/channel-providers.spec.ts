@@ -1,5 +1,11 @@
 import { ConfigError, loadConfig } from '@ksp/platform';
-import { configSchema, emailProviderKind, type ServiceConfig, whatsappProviderKind } from '../../config';
+import {
+  configSchema,
+  emailProviderKind,
+  isPublicHttpsUrl,
+  type ServiceConfig,
+  whatsappProviderKind,
+} from '../../config';
 import { BrevoEmailProvider } from './brevo-email.provider';
 import { createChannelProviders } from './channel-providers';
 import { ConsoleEmailProvider } from './console-email.provider';
@@ -180,5 +186,28 @@ describe('Garde-fou de production', () => {
     expect(() => config({ NODE_ENV: 'development', WHATSAPP_API_VERSION: '23' })).toThrow(
       /WHATSAPP_API_VERSION/,
     );
+  });
+});
+
+describe('Adresse publique du portail (liens des messages)', () => {
+  it('https://ksp.bj par défaut ; adresse locale acceptée hors production', () => {
+    expect(config({ NODE_ENV: 'development' }).PORTAL_BASE_URL).toBe('https://ksp.bj');
+    expect(
+      config({ NODE_ENV: 'development', PORTAL_BASE_URL: 'http://localhost:3010' }).PORTAL_BASE_URL,
+    ).toBe('http://localhost:3010');
+    expect(() => config({ ...PRODUCTION, ...META })).not.toThrow();
+  });
+
+  it.each(['http://ksp.bj', 'https://localhost:3010', 'https://127.0.0.1', 'https://portail.localhost'])(
+    'refus au démarrage en production : %s',
+    (url) => {
+      expect(() => config({ ...PRODUCTION, ...META, PORTAL_BASE_URL: url })).toThrow(/PORTAL_BASE_URL/);
+    },
+  );
+
+  it('adresse HTTPS publique', () => {
+    expect(isPublicHttpsUrl('https://staging.ksp.bj')).toBe(true);
+    expect(isPublicHttpsUrl('https://[::1]')).toBe(false);
+    expect(isPublicHttpsUrl('pas une adresse')).toBe(false);
   });
 });
