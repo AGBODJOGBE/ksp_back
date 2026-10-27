@@ -1,6 +1,6 @@
 # Service notification
 
-Contrat gRPC : `contracts/proto/ksp/notification/v1/notification.proto`. Événement publié : `notification.message.failed` (`contracts/events/notification/`). Événements écoutés : les 7 événements du Nettoyage (`contracts/events/cleaning/`). Décisions : ADR-014 (codes par gRPC direct), ADR-021 (WhatsApp Cloud API de Meta), ADR-024 (e-mail par Brevo), ADR-013 et ADR-022 (jetons de service).
+Contrat gRPC : `contracts/proto/ksp/notification/v1/notification.proto`. Événement publié : `notification.message.failed` (`contracts/events/notification/`). Événements écoutés : les 11 événements du Nettoyage (`contracts/events/cleaning/`). Décisions : ADR-014 (codes par gRPC direct), ADR-021 (WhatsApp Cloud API de Meta), ADR-024 (e-mail par Brevo), ADR-013 et ADR-022 (jetons de service).
 
 Le cahier des charges complet du service (préférences, appareils, édition des modèles, lecture des notifications dans l'application) reste à écrire. Ce service couvre le **lot 1** (envoi des codes de connexion d'identity) et le **lot 2** (messages des événements du Nettoyage, par WhatsApp, e-mail et dans l'espace KSP).
 
@@ -64,21 +64,28 @@ Un destinataire introuvable (compte inconnu ou supprimé) est sauté ; un échec
 
 **Règle de choix du canal** (`eventChannelPlan`) : un seul message externe par destinataire, plus la notification dans l'espace.
 
-| Nature du message                                | Canal                                            |
-| ------------------------------------------------ | ------------------------------------------------ |
-| Court, transactionnel (demande reçue, planning…) | WhatsApp ; e-mail en bascule si l'adresse existe |
-| Document (devis envoyé, compte rendu de fin)     | E-mail si l'adresse existe ; WhatsApp sinon      |
-| Destinataire sans téléphone ni e-mail            | Notification dans l'espace seulement             |
+| Nature du message                                | Canal                                              |
+| ------------------------------------------------ | -------------------------------------------------- |
+| Court, transactionnel (demande reçue, planning…) | WhatsApp ; e-mail en bascule si l'adresse existe   |
+| Document (devis envoyé, compte rendu de fin)     | E-mail si l'adresse existe ; WhatsApp sinon        |
+| Important (avertissement d'impayés, suspension)  | WhatsApp **et** e-mail (deux envois, sans bascule) |
+| Destinataire sans téléphone ni e-mail            | Notification dans l'espace seulement               |
 
-| Événement                    | Destinataires        | Modèles                                                                    |
-| ---------------------------- | -------------------- | -------------------------------------------------------------------------- |
-| `cleaning.quote.requested`   | client               | `cleaning.quote_requested.customer` (visite annoncée si `visitRequired`)   |
-| `cleaning.visit.scheduled`   | client, agent        | `cleaning.visit_scheduled.customer`, `cleaning.visit_scheduled.agent`      |
-| `cleaning.quote.sent`        | client               | `cleaning.quote_sent.customer` (document)                                  |
-| `cleaning.booking.confirmed` | client               | `cleaning.booking_confirmed.customer` (montant, passages, paiement choisi) |
-| `cleaning.mission.scheduled` | client, chaque agent | `cleaning.mission_scheduled.customer`, `cleaning.mission_scheduled.agent`  |
-| `cleaning.mission.completed` | client               | `cleaning.mission_completed.customer` (document)                           |
-| `cleaning.request.cancelled` | client               | `cleaning.request_cancelled.customer` (texte selon le motif)               |
+| Événement                              | Destinataires            | Modèles                                                                                 |
+| -------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------- |
+| `cleaning.quote.requested`             | client                   | `cleaning.quote_requested.customer` (visite annoncée si `visitRequired`)                |
+| `cleaning.visit.scheduled`             | client, agent            | `cleaning.visit_scheduled.customer`, `cleaning.visit_scheduled.agent`                   |
+| `cleaning.quote.sent`                  | client                   | `cleaning.quote_sent.customer` (document)                                               |
+| `cleaning.booking.confirmed`           | client                   | `cleaning.booking_confirmed.customer` (montant, passages, paiement choisi)              |
+| `cleaning.mission.scheduled`           | client, chaque agent     | `cleaning.mission_scheduled.customer`, `cleaning.mission_scheduled.agent`               |
+| `cleaning.mission.completed`           | client                   | `cleaning.mission_completed.customer` (document)                                        |
+| `cleaning.request.cancelled`           | client                   | `cleaning.request_cancelled.customer` (texte selon le motif)                            |
+| `cleaning.contract.suspension_warning` | client                   | `cleaning.suspension_warning.customer` (important : seuil de suspension annoncé)        |
+| `cleaning.contract.suspended`          | client, agents libérés   | `cleaning.contract_suspended.customer` (important), `cleaning.contract_suspended.agent` |
+| `cleaning.contract.resumed`            | client, équipe Nettoyage | `cleaning.contract_resumed.customer`, `cleaning.contract_resumed.team`                  |
+| `cleaning.rescheduling.failed`         | équipe Nettoyage         | `cleaning.rescheduling_failed.team`                                                     |
+
+Équipe Nettoyage : comptes listés dans `NOTIFICATION_CLEANING_TEAM_USER_IDS` (identifiants séparés par des virgules, vide par défaut), car ces événements ne désignent ni l'admin ni le superviseur. Lien des factures : `PORTAL_BASE_URL` + `/mon-espace/factures`.
 
 Textes : `src/domain/messages/cleaning.messages.ts` (français, dates à l'heure du Bénin, montants en FCFA entiers). Liens : `PORTAL_BASE_URL` + `/mon-espace/nettoyage/demandes/<id>` ou `/missions/<id>`.
 
@@ -88,17 +95,23 @@ Textes : `src/domain/messages/cleaning.messages.ts` (français, dates à l'heure
 
 Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie « utility », français). Paramètres du corps dans l'ordre ; `{{1}}` est toujours le prénom (« Madame, Monsieur » s'il manque).
 
-| Modèle Meta                                                                                                                    | Paramètres                                              |
-| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| `ksp_cleaning_quote_requested`, `ksp_cleaning_quote_requested_visit`                                                           | prénom, lien                                            |
-| `ksp_cleaning_visit_scheduled`                                                                                                 | prénom, date, lien                                      |
-| `ksp_cleaning_visit_assigned`                                                                                                  | prénom, date                                            |
-| `ksp_cleaning_quote_sent`                                                                                                      | prénom, montant, date de validité, lien                 |
-| `ksp_cleaning_booking_confirmed`                                                                                               | prénom, nombre de passages, montant, paiement, lien     |
-| `ksp_cleaning_mission_scheduled`                                                                                               | prénom, date, durée, lien                               |
-| `ksp_cleaning_mission_assigned`                                                                                                | prénom, date, durée                                     |
-| `ksp_cleaning_mission_completed`                                                                                               | prénom, passages réalisés, date, lien                   |
-| `ksp_cleaning_cancelled_by_customer`, `ksp_cleaning_cancelled_by_supervisor`, `ksp_cleaning_rejected`, `ksp_cleaning_declined` | prénom, « votre demande » ou « votre prestation », lien |
+| Modèle Meta                                                                                                                    | Paramètres                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
+| `ksp_cleaning_quote_requested`, `ksp_cleaning_quote_requested_visit`                                                           | prénom, lien                                                   |
+| `ksp_cleaning_visit_scheduled`                                                                                                 | prénom, date, lien                                             |
+| `ksp_cleaning_visit_assigned`                                                                                                  | prénom, date                                                   |
+| `ksp_cleaning_quote_sent`                                                                                                      | prénom, montant, date de validité, lien                        |
+| `ksp_cleaning_booking_confirmed`                                                                                               | prénom, nombre de passages, montant, paiement, lien            |
+| `ksp_cleaning_mission_scheduled`                                                                                               | prénom, date, durée, lien                                      |
+| `ksp_cleaning_mission_assigned`                                                                                                | prénom, date, durée                                            |
+| `ksp_cleaning_mission_completed`                                                                                               | prénom, passages réalisés, date, lien                          |
+| `ksp_cleaning_cancelled_by_customer`, `ksp_cleaning_cancelled_by_supervisor`, `ksp_cleaning_rejected`, `ksp_cleaning_declined` | prénom, « votre demande » ou « votre prestation », lien        |
+| `ksp_cleaning_suspension_warning`                                                                                              | prénom, impayés (« 1 facture impayée »), seuil, lien           |
+| `ksp_cleaning_contract_suspended`                                                                                              | prénom, impayés, lien                                          |
+| `ksp_cleaning_interventions_cancelled`                                                                                         | prénom                                                         |
+| `ksp_cleaning_contract_resumed`                                                                                                | prénom, passages reprogrammés, passages à replanifier, lien    |
+| `ksp_cleaning_team_contract_resumed`                                                                                           | prénom, mission, passages reprogrammés, passages à replanifier |
+| `ksp_cleaning_team_rescheduling_failed`                                                                                        | prénom, mission, passages à replanifier                        |
 
 ## E-mail (Brevo)
 
@@ -107,7 +120,7 @@ Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie
 ## Prochaines étapes
 
 - Lecture des notifications dans l'application (liste, marquer comme lue) : RPC à ajouter au contrat, puis routes de la gateway ; événement de notification en direct à définir.
-- Événements à brancher : suspension, reprise, avertissement et échec de reprogrammation du Nettoyage, facturation (billing).
+- Événements à brancher : facturation (billing).
 - Statuts de remise WhatsApp (remis, lu, échoué) par webhook : reçus par la gateway sur `/webhooks/whatsapp`, transmis à notification qui vérifie la signature (UC-GW-11) et met à jour la notification retrouvée par `provider_message_id` (index à ajouter).
 - Prestataire SMS (agrégateur à choisir avant la production, ADR-021).
 - Reste du contrat après le cahier des charges du service.

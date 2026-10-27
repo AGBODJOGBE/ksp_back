@@ -33,6 +33,7 @@ const contact = (userId: string, overrides: Partial<RecipientContact> = {}): Rec
 function setup(
   contacts: RecipientContact[] = [contact(CUSTOMER)],
   providers = [new FakeProvider('whatsapp'), new FakeProvider('email')],
+  cleaningTeamUserIds: string[] = [],
 ) {
   const notifications = new InMemoryNotifications();
   const directory = new FakeDirectory(contacts);
@@ -45,7 +46,7 @@ function setup(
     inbox,
     clock,
     new SequentialIds(),
-    { portalBaseUrl: 'https://ksp.bj', timeZone: 'Africa/Porto-Novo' },
+    { portalBaseUrl: 'https://ksp.bj', timeZone: 'Africa/Porto-Novo', cleaningTeamUserIds },
   );
   const [whatsapp, email] = providers as [FakeProvider, FakeProvider];
   return { notifications, directory, inbox, useCase, whatsapp, email };
@@ -83,7 +84,7 @@ const missionScheduled = event('cleaning.mission.scheduled', {
   agentIds: [AGENT_1, AGENT_2],
 });
 
-describe('NotifyEventUseCase — messages des 7 événements du Nettoyage', () => {
+describe('NotifyEventUseCase — messages des 7 premiers événements du Nettoyage', () => {
   it('cleaning.quote.requested : accusé de réception au client, visite annoncée', async () => {
     const { useCase, whatsapp, inbox } = setup();
     await expect(useCase.execute(quoteRequested)).resolves.toMatchObject({
@@ -337,5 +338,166 @@ describe('NotifyEventUseCase — fiabilité', () => {
       useCase.execute({ eventId: EVENT_ID, type: 'identity.user.registered', payload: {} }),
     ).resolves.toMatchObject({ status: 'ignored' });
     expect(directory.lookups).toHaveLength(0);
+  });
+});
+
+describe('NotifyEventUseCase — impayés, suspension et reprise', () => {
+  const MISSION_ID = '0192f1c4-0000-7000-8000-0000000d0001';
+  const ORG = '0192f1c4-0000-7000-8000-0000000b0001';
+  const TEAM_1 = '0192f1c4-0000-7000-8000-0000000e0001';
+  const TEAM_2 = '0192f1c4-0000-7000-8000-0000000e0002';
+  const withEmail = contact(CUSTOMER, { email: 'koffi@example.com' });
+
+  const warning = event('cleaning.contract.suspension_warning', {
+    missionId: MISSION_ID,
+    customerId: CUSTOMER,
+    organizationId: ORG,
+    unpaidCount: 1,
+    suspensionThreshold: 2,
+  });
+
+  const suspended = event('cleaning.contract.suspended', {
+    missionId: MISSION_ID,
+    customerId: CUSTOMER,
+    organizationId: ORG,
+    cause: 'unpaid_invoices',
+    unpaidCount: 2,
+    threshold: 2,
+    cancelledInterventionIds: ['0192f1c4-0000-7000-8000-0000000f0001'],
+    releasedAgentIds: [AGENT_1, AGENT_1, AGENT_2],
+    suspendedAt: '2026-11-11T08:00:00Z',
+  });
+
+  const resumed = event('cleaning.contract.resumed', {
+    missionId: MISSION_ID,
+    customerId: CUSTOMER,
+    organizationId: ORG,
+    cause: 'unpaid_invoices',
+    unpaidCount: 0,
+    resumedAt: '2026-11-12T08:00:00Z',
+    rescheduledCount: 3,
+    failedCount: 1,
+  });
+
+  const reschedulingFailed = event('cleaning.rescheduling.failed', {
+    missionId: MISSION_ID,
+    customerId: CUSTOMER,
+    organizationId: ORG,
+    interventionIds: ['0192f1c4-0000-7000-8000-0000000f0002'],
+    failedCount: 1,
+  });
+
+  it('avertissement : message important, par WhatsApp ET par e-mail, seuil annoncé', async () => {
+    const { useCase, whatsapp, email, notifications } = setup([withEmail]);
+    await expect(useCase.execute(warning)).resolves.toMatchObject({ accepted: 2, inApp: 1 });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.suspension_warning.customer',
+    ]);
+    expect(email.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.suspension_warning.customer',
+    ]);
+    expect(email.sent[0]!.content!.text).toContain(
+      'Votre contrat de nettoyage compte 1 facture impayée. Au seuil de 2 impayés, le service sera suspendu',
+    );
+    expect(email.sent[0]!.variables['link']).toBe('https://ksp.bj/mon-espace/factures');
+    expect(notifications.rows.map((row) => [row.idempotencyKey, row.targetMasked])).toEqual([
+      [`${EVENT_ID}:cleaning.suspension_warning.customer:${CUSTOMER}:whatsapp`, '+229********45'],
+      [`${EVENT_ID}:cleaning.suspension_warning.customer:${CUSTOMER}:email`, 'k***@example.com'],
+    ]);
+  });
+
+  it('avertissement sans adresse e-mail : WhatsApp seul', async () => {
+    const { useCase, whatsapp, email } = setup();
+    await expect(useCase.execute(warning)).resolves.toMatchObject({ accepted: 1 });
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('message important rejoué : aucun des deux canaux ne repart', async () => {
+    const { useCase, whatsapp, email, inbox } = setup([withEmail]);
+    await useCase.execute(warning);
+    inbox.processed.clear();
+    await expect(useCase.execute(warning)).resolves.toMatchObject({ accepted: 0, replayed: 2 });
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(email.sent).toHaveLength(1);
+  });
+
+  it('suspension : le client (WhatsApp et e-mail) et chaque agent libéré, une seule fois', async () => {
+    const { useCase, whatsapp, email } = setup([withEmail, contact(AGENT_1), contact(AGENT_2)]);
+    await expect(useCase.execute(suspended)).resolves.toMatchObject({ accepted: 4, inApp: 3 });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.contract_suspended.customer',
+      'cleaning.contract_suspended.agent',
+      'cleaning.contract_suspended.agent',
+    ]);
+    expect(email.sent[0]!.content!.text).toContain(
+      'Votre prestation de nettoyage est suspendue : 2 factures impayées, le seuil de suspension est atteint.',
+    );
+    expect(whatsapp.sent[1]!.content!.text).toContain('le contrat du client est suspendu');
+  });
+
+  it('suspension d’un particulier : passages impayés, lien vers la mission', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute({
+      ...suspended,
+      payload: {
+        ...(suspended.payload as object),
+        cause: 'unpaid_interventions',
+        unpaidCount: 1,
+        releasedAgentIds: [],
+      },
+    });
+    expect(whatsapp.sent[0]!.content!.text).toContain('suspendue : 1 passage impayé');
+    expect(whatsapp.sent[0]!.variables['link']).toBe(
+      `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION_ID}`,
+    );
+  });
+
+  it('reprise : le client et chaque membre de l’équipe Nettoyage configurée', async () => {
+    const { useCase, whatsapp } = setup(
+      [contact(CUSTOMER), contact(TEAM_1, { firstName: 'Awa' }), contact(TEAM_2)],
+      undefined,
+      [TEAM_1, TEAM_2],
+    );
+    await expect(useCase.execute(resumed)).resolves.toMatchObject({ accepted: 3 });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.contract_resumed.customer',
+      'cleaning.contract_resumed.team',
+      'cleaning.contract_resumed.team',
+    ]);
+    const customerText = whatsapp.sent[0]!.content!.text;
+    expect(customerText).toContain('votre prestation de nettoyage reprend');
+    expect(customerText).toContain('3 passages reprogrammés.');
+    expect(customerText).toContain('replanifier le passage restant');
+    expect(whatsapp.sent[1]!.content!.text).toContain(
+      `La mission ${MISSION_ID} a repris après règlement des impayés : 3 passages reprogrammés, 1 passage à replanifier à la main au back-office.`,
+    );
+  });
+
+  it('reprise sans équipe configurée : le client seul', async () => {
+    const { useCase, whatsapp, directory } = setup();
+    await useCase.execute(resumed);
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(directory.lookups).toEqual([[CUSTOMER]]);
+  });
+
+  it('reprogrammation incomplète : l’équipe Nettoyage seulement', async () => {
+    const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(TEAM_1)], undefined, [TEAM_1]);
+    await expect(useCase.execute(reschedulingFailed)).resolves.toMatchObject({ accepted: 1 });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.rescheduling_failed.team',
+    ]);
+    expect(whatsapp.sent[0]!.content!.text).toContain('1 passage à replanifier à la main au back-office');
+  });
+
+  it('reprogrammation incomplète sans équipe configurée : rien à envoyer, événement traité', async () => {
+    const { useCase, whatsapp, inbox, directory } = setup();
+    await expect(useCase.execute(reschedulingFailed)).resolves.toMatchObject({
+      status: 'processed',
+      inApp: 0,
+    });
+    expect(whatsapp.sent).toHaveLength(0);
+    expect(directory.lookups).toHaveLength(0);
+    expect(inbox.processed.has(EVENT_ID)).toBe(true);
   });
 });

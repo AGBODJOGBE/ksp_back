@@ -41,3 +41,21 @@ export function eventChannelPlan(
   const order: ChannelName[] = kind === 'document' ? ['email', 'whatsapp'] : ['whatsapp', 'email'];
   return order.filter((channel) => (channel === 'email' ? contact.hasEmail : contact.hasPhone));
 }
+
+/**
+ * Envois d'un message d'événement : un plan de canaux par envoi.
+ * - `short` et `document` : un seul envoi, avec bascule (`eventChannelPlan`) ;
+ * - `important` (avertissement, suspension) : un envoi par WhatsApp ET un par e-mail, chacun sans
+ *   bascule, pour que le message soit vu.
+ * Aucun envoi si le destinataire n'a ni téléphone ni e-mail.
+ */
+export function eventDispatchPlans(
+  kind: 'short' | 'document' | 'important',
+  contact: { hasPhone: boolean; hasEmail: boolean },
+): ChannelName[][] {
+  if (kind !== 'important') {
+    const plan = eventChannelPlan(kind, contact);
+    return plan.length > 0 ? [plan] : [];
+  }
+  return eventChannelPlan('short', contact).map((channel) => [channel]);
+}

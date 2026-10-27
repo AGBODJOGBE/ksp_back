@@ -27,9 +27,10 @@ export interface RenderedMessage {
 
 /**
  * Nature d'un message déclenché par un événement, qui fixe l'ordre des canaux (voir channel.ts) :
- * `short` (court, transactionnel) ou `document` (devis, compte rendu).
+ * `short` (court, transactionnel), `document` (devis, compte rendu) ou `important` (avertissement
+ * et suspension pour impayés : envoyé par WhatsApp et par e-mail).
  */
-export type MessageKind = 'short' | 'document';
+export type MessageKind = 'short' | 'document' | 'important';
 
 /** Modèle d'un message déclenché par un événement métier : il porte son propre texte. */
 export interface EventTemplateDefinition extends TemplateDefinition {

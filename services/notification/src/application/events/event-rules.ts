@@ -17,6 +17,8 @@ export interface RuleContext {
   portalBaseUrl: string;
   /** Fuseau des dates écrites dans les messages. */
   timeZone: string;
+  /** Comptes de l'équipe Nettoyage prévenus quand l'événement ne désigne personne (peut être vide). */
+  cleaningTeamUserIds: readonly string[];
 }
 
 export type EventRule<T extends KspEventType> = (

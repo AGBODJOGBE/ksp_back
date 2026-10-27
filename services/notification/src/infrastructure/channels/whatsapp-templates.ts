@@ -60,4 +60,26 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
       v['link'] ?? '',
     ],
   },
+  // Impayés, suspension et reprise (cahier des charges Nettoyage, partie 10).
+  'cleaning.suspension_warning.customer': spec('ksp_cleaning_suspension_warning', [
+    'unpaid_text',
+    'threshold',
+    'link',
+  ]),
+  'cleaning.contract_suspended.customer': spec('ksp_cleaning_contract_suspended', ['unpaid_text', 'link']),
+  'cleaning.contract_suspended.agent': spec('ksp_cleaning_interventions_cancelled', []),
+  'cleaning.contract_resumed.customer': spec('ksp_cleaning_contract_resumed', [
+    'rescheduled_count',
+    'failed_count',
+    'link',
+  ]),
+  'cleaning.contract_resumed.team': spec('ksp_cleaning_team_contract_resumed', [
+    'mission_id',
+    'rescheduled_count',
+    'failed_count',
+  ]),
+  'cleaning.rescheduling_failed.team': spec('ksp_cleaning_team_rescheduling_failed', [
+    'mission_id',
+    'failed_count',
+  ]),
 };

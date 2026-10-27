@@ -6,8 +6,9 @@ import { type EventRules } from './event-rules';
  * Événements écoutés par notification, avec leur règle. Chaque événement a sa file
  * `notification.<événement>` (et ses files `.retry` et `.dlq`).
  *
- * À venir : événements de suspension, de reprise, d'avertissement et d'échec de reprogrammation du
- * Nettoyage, et ceux de la facturation (billing) — une règle et ses modèles par événement.
+ * Nettoyage : les 11 événements publiés (demande, visite, devis, réservation, planification, fin,
+ * annulation, avertissement d'impayés, suspension, reprise, reprogrammation incomplète).
+ * À venir : les événements de la facturation (billing) — une règle et ses modèles par événement.
  */
 export const EVENT_RULES: EventRules = { ...CLEANING_RULES };
 
