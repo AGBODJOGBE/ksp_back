@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
+import { type BillingEventPayloads, type BillingEventType } from './billing.events';
 import { type CleaningEventPayloads, type CleaningEventType } from './cleaning.events';
 import { type IdentityEventPayloads, type IdentityEventType } from './identity.events';
 import { type NotificationEventPayloads, type NotificationEventType } from './notification.events';
@@ -156,6 +157,7 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     recurrence: { period: 'week', visitsPerPeriod: 1, durationMonths: 3 },
     paymentPlan: { option: 'deposit', timing: 'before', method: 'cash' },
     depositAmount: xof(144000),
+    startsAt: '2026-11-05T08:00:00Z',
   },
   'cleaning.mission.scheduled': {
     missionId: uuid,
@@ -177,6 +179,41 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     customerId: uuid,
     cancelledBy: 'customer',
     outcome: 'cancelled',
+  },
+  'cleaning.contract.suspension_warning': {
+    missionId: uuid,
+    customerId: uuid,
+    organizationId: uuid,
+    unpaidCount: 1,
+    suspensionThreshold: 2,
+  },
+  'cleaning.contract.suspended': {
+    missionId: uuid,
+    customerId: uuid,
+    organizationId: uuid,
+    cause: 'unpaid_invoices',
+    unpaidCount: 2,
+    threshold: 2,
+    cancelledInterventionIds: [uuid],
+    releasedAgentIds: [uuid],
+    suspendedAt: '2026-12-15T06:00:00Z',
+  },
+  'cleaning.contract.resumed': {
+    missionId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    cause: 'unpaid_interventions',
+    unpaidCount: 0,
+    resumedAt: '2026-12-20T06:00:00Z',
+    rescheduledCount: 3,
+    failedCount: 1,
+  },
+  'cleaning.rescheduling.failed': {
+    missionId: uuid,
+    customerId: uuid,
+    organizationId: uuid,
+    interventionIds: [uuid],
+    failedCount: 1,
   },
 };
 
@@ -210,5 +247,51 @@ describe('Contrats des événements cleaning', () => {
     const base = cleaningExamples['cleaning.quote.sent'];
     expect(validate({ ...base, total: { amount: 450.5, currency: 'XOF' } })).toBe(false);
     expect(validate({ ...base, total: { amount: 450, currency: 'EUR' } })).toBe(false);
+  });
+});
+
+const invoice = {
+  invoiceId: uuid,
+  invoiceNumber: 'FAC-2026-000042',
+  customerId: uuid,
+  organizationId: uuid,
+  source: 'cleaning' as const,
+  contractId: uuid,
+  total: xof(160000),
+};
+
+const billingExamples: { [K in BillingEventType]: BillingEventPayloads[K] } = {
+  'billing.invoice.issued': {
+    ...invoice,
+    periodStart: '2026-11-05T08:00:00Z',
+    periodEnd: '2026-12-05T08:00:00Z',
+    issuedAt: '2026-12-05T08:00:00Z',
+    dueAt: '2026-12-15T08:00:00Z',
+  },
+  'billing.invoice.overdue': { ...invoice, dueAt: '2026-12-15T08:00:00Z', overdueCount: 1 },
+  'billing.invoice.paid': { ...invoice, paidAt: '2026-12-16T10:00:00Z', overdueCount: 0 },
+};
+
+describe('Contrats des événements billing', () => {
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  addFormats(ajv);
+  ajv.addKeyword('x-event-type').addKeyword('x-event-version');
+  const schemas = loadSchemas('billing');
+
+  it('chaque type TypeScript a un schéma, et inversement', () => {
+    expect([...schemas.keys()].sort()).toEqual(Object.keys(billingExamples).sort());
+  });
+
+  it.each(Object.entries(billingExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
+    const validate = ajv.compile(schemas.get(type)!);
+    expect(validate(payload)).toBe(true);
+  });
+
+  it('aucun événement billing n’accepte d’adresse, et les montants sont des entiers en XOF', () => {
+    for (const [type, payload] of Object.entries(billingExamples)) {
+      const validate = ajv.compile(schemas.get(type)!);
+      expect(validate({ ...payload, address: 'Rue 12, Cotonou' })).toBe(false);
+      expect(validate({ ...payload, total: { amount: 10.5, currency: 'XOF' } })).toBe(false);
+    }
   });
 });

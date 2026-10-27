@@ -1,4 +1,5 @@
 import { type RateLimitCategory } from '../rate-limit/rate-limits';
+import { BILLING_ROUTES } from './billing-routes';
 import { CLEANING_ROUTES } from './cleaning-routes';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -133,6 +134,7 @@ export const ROUTE_MANIFEST = [
     requiresKnownClient: false,
   },
   ...CLEANING_ROUTES,
+  ...BILLING_ROUTES,
 ] as const satisfies readonly RouteDefinition[];
 
 export type OperationId = (typeof ROUTE_MANIFEST)[number]['operationId'];

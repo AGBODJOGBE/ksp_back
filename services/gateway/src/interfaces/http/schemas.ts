@@ -1,5 +1,6 @@
 import { AppError } from '@ksp/platform';
 import { z } from 'zod';
+import { billingBodies } from './billing-schemas';
 import { cleaningBodies } from './cleaning-schemas';
 
 /**
@@ -38,6 +39,7 @@ export const requestBodies = {
     })
     .refine((body) => Object.keys(body).length > 0, { message: 'Au moins un champ à modifier.' }),
   ...cleaningBodies,
+  ...billingBodies,
 };
 
 /** Champ refusé et raison, sans reprendre la valeur envoyée (elle peut être un code ou un jeton). */

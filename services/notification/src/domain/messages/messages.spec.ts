@@ -1,7 +1,7 @@
-import { eventChannelPlan } from '../channel';
+import { eventChannelPlan, eventDispatchPlans } from '../channel';
 import { EmailAddress } from '../recipient';
 import { findTemplate, invalidVariables, isEventTemplate } from '../template';
-import { CLEANING_TEMPLATES, paymentNote } from './cleaning.messages';
+import { CLEANING_TEMPLATES, paymentNote, unpaidText } from './cleaning.messages';
 import { formatDate, formatDateTime, formatDuration, formatXof } from './format';
 
 const NBSP = '\u00a0';
@@ -36,6 +36,30 @@ describe('Règle de choix du canal des messages d’événements', () => {
     expect(eventChannelPlan('document', { hasPhone: true, hasEmail: true })).toEqual(['email', 'whatsapp']);
     expect(eventChannelPlan('document', { hasPhone: true, hasEmail: false })).toEqual(['whatsapp']);
     expect(eventChannelPlan('document', { hasPhone: false, hasEmail: false })).toEqual([]);
+  });
+});
+
+describe('Envois d’un message d’événement', () => {
+  it('court ou document : un seul envoi, avec bascule', () => {
+    expect(eventDispatchPlans('short', { hasPhone: true, hasEmail: true })).toEqual([['whatsapp', 'email']]);
+    expect(eventDispatchPlans('document', { hasPhone: false, hasEmail: false })).toEqual([]);
+  });
+
+  it('important : un envoi par WhatsApp et un par e-mail, sans bascule', () => {
+    expect(eventDispatchPlans('important', { hasPhone: true, hasEmail: true })).toEqual([
+      ['whatsapp'],
+      ['email'],
+    ]);
+    expect(eventDispatchPlans('important', { hasPhone: false, hasEmail: true })).toEqual([['email']]);
+    expect(eventDispatchPlans('important', { hasPhone: false, hasEmail: false })).toEqual([]);
+  });
+});
+
+describe('Impayés', () => {
+  it('factures d’entreprise ou passages d’un particulier, au singulier ou au pluriel', () => {
+    expect(unpaidText('unpaid_invoices', 1)).toBe('1 facture impayée');
+    expect(unpaidText('unpaid_invoices', 3)).toBe('3 factures impayées');
+    expect(unpaidText('unpaid_interventions', 2)).toBe('2 passages impayés');
   });
 });
 

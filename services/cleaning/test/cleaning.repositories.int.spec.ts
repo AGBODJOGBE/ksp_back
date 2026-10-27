@@ -15,6 +15,7 @@ import {
 import { createUseCases } from '../src/application/use-cases';
 import { PrismaAgentRepository } from '../src/infrastructure/persistence/prisma-agent.repository';
 import { PrismaCatalogRepository } from '../src/infrastructure/persistence/prisma-catalog.repository';
+import { PrismaContractInvoiceRepository } from '../src/infrastructure/persistence/prisma-contract-invoice.repository';
 import { PrismaMissionRepository } from '../src/infrastructure/persistence/prisma-mission.repository';
 import { PrismaQuoteRequestRepository } from '../src/infrastructure/persistence/prisma-quote-request.repository';
 import { PrismaService } from '../src/infrastructure/prisma/prisma.service';
@@ -58,6 +59,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       requests: new PrismaQuoteRequestRepository(prisma),
       missions: new PrismaMissionRepository(prisma),
       agents: new PrismaAgentRepository(prisma),
+      invoices: new PrismaContractInvoiceRepository(prisma),
       clock: new FixedClock(),
       ids: new UuidV7Generator(),
     };
@@ -82,6 +84,11 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       maxOpenRequests: 5,
     });
     expect(await deps.catalog.listServices()).toEqual([]);
+    expect((await deps.catalog.listZones()).map((zone) => zone.code)).toEqual([
+      'abomey-calavi',
+      'cotonou',
+      'porto-novo',
+    ]);
   });
 
   it('parcours complet : grille versionnée, demande idempotente, devis, acceptation, passage', async () => {
@@ -132,6 +139,17 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     const { rows } = await pool.query('SELECT payload FROM outbox');
     expect(JSON.stringify(rows)).not.toContain('Lot 12');
 
+    // Visite des lieux réalisée : obligatoire avant tout devis.
+    const visited = await asSupervisor(() =>
+      useCases.scheduleVisit.execute({
+        requestId: a.id,
+        scheduledAt: '2026-10-26T09:00:00Z',
+        agentId: AGENT_ID,
+      }),
+    );
+    await asSupervisor(() =>
+      useCases.completeVisit.execute({ visitId: visited.visit!.id, report: 'Visite faite.' }),
+    );
     await asSupervisor(() =>
       useCases.sendQuote.execute({
         requestId: a.id,
@@ -181,6 +199,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     ]);
     expect(await outbox()).toEqual([
       'cleaning.quote.requested',
+      'cleaning.visit.scheduled',
       'cleaning.quote.sent',
       'cleaning.booking.confirmed',
       'cleaning.mission.scheduled',
@@ -245,5 +264,87 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       (await pool.query('SELECT count(*)::int AS n FROM interventions WHERE mission_id = $1', [other.id]))
         .rows[0].n,
     ).toBe(0);
+  });
+
+  it('impayés d’entreprise : inbox idempotente, suspension, puis reprise avec reprogrammation', async () => {
+    const missionId = '0192f1c4-0000-7000-8000-0000000000c1';
+    const interventionId = '0192f1c4-0000-7000-8000-0000000000c2';
+    await prisma.mission.create({
+      data: {
+        id: missionId,
+        requestId: '0192f1c4-0000-7000-8000-0000000000c3',
+        quoteId: '0192f1c4-0000-7000-8000-0000000000c4',
+        acceptanceKey: 'b',
+        customerId: CUSTOMER_ID,
+        organizationId: '0192f1c4-0000-7000-8000-0000000000c5',
+        status: 'scheduled',
+        serviceCode: 'home_cleaning',
+        commune: 'Cotonou',
+        address: 'Zone industrielle',
+        chosenSlotStart: new Date('2026-11-12T08:00:00Z'),
+        chosenSlotEnd: new Date('2026-11-12T10:00:00Z'),
+        recurrence: { period: 'week', visitsPerPeriod: 1, durationMonths: 3 },
+        plannedInterventions: 13,
+        paymentPlan: { option: 'full', timing: 'after', method: 'cash' },
+        paymentTotal: 130000,
+        depositPercent: 100,
+        depositAmount: 130000,
+        createdAt: new Date('2026-10-01T08:00:00Z'),
+        updatedAt: new Date('2026-10-01T08:00:00Z'),
+        interventions: {
+          create: {
+            id: interventionId,
+            status: 'planned',
+            scheduledStart: new Date('2026-11-12T08:00:00Z'),
+            scheduledEnd: new Date('2026-11-12T10:00:00Z'),
+            durationMinutes: 120,
+            agentIds: [OTHER_AGENT_ID],
+          },
+        },
+      },
+    });
+    const invoiceEvent = (eventId: string, invoiceId: string, status: 'overdue' | 'paid') =>
+      useCases.handleInvoiceEvent.execute({
+        eventId,
+        eventType: `billing.invoice.${status}`,
+        invoiceId,
+        contractId: missionId,
+        source: 'cleaning',
+        status,
+      });
+    const invoice1 = '0192f1c4-0000-7000-8000-0000000000d1';
+    const invoice2 = '0192f1c4-0000-7000-8000-0000000000d2';
+    expect(await invoiceEvent('0192f1c4-0000-7000-8000-0000000000e1', invoice1, 'overdue')).toBe('warned');
+    // Même événement reçu deux fois en parallèle : un seul enregistrement dans l'inbox.
+    await Promise.allSettled([
+      invoiceEvent('0192f1c4-0000-7000-8000-0000000000e2', invoice2, 'overdue'),
+      invoiceEvent('0192f1c4-0000-7000-8000-0000000000e2', invoice2, 'overdue'),
+    ]);
+    expect(await deps.invoices.countOverdue(missionId)).toBe(2);
+    const suspended = (await deps.missions.findById(missionId))!;
+    expect(suspended.suspension).toMatchObject({ cause: 'unpaid_invoices', unpaidCount: 2 });
+    expect(suspended.interventions[0]).toMatchObject({
+      status: 'cancelled',
+      cancellationCause: 'suspension',
+    });
+
+    expect(await invoiceEvent('0192f1c4-0000-7000-8000-0000000000e3', invoice1, 'paid')).toBe('resumed');
+    // Un « overdue » arrivé après le règlement ne ramène pas la facture en impayée.
+    await invoiceEvent('0192f1c4-0000-7000-8000-0000000000e4', invoice1, 'overdue');
+    expect(await deps.invoices.countOverdue(missionId)).toBe(1);
+    const resumed = (await deps.missions.findById(missionId))!;
+    expect(resumed.suspension).toBeNull();
+    expect(resumed.interventions.filter((i) => i.status === 'planned')).toHaveLength(1);
+    const events = await outbox();
+    expect(events.filter((type) => type.startsWith('cleaning.contract.'))).toEqual([
+      'cleaning.contract.suspension_warning',
+      'cleaning.contract.suspended',
+      'cleaning.contract.resumed',
+    ]);
+    const { rows } = await pool.query(
+      "SELECT payload FROM outbox WHERE event_type LIKE 'cleaning.contract.%'",
+    );
+    expect(JSON.stringify(rows)).not.toContain('Zone industrielle');
+    expect(await deps.missions.listIndividualRecurring()).toEqual([]);
   });
 });

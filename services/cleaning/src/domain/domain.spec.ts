@@ -16,9 +16,10 @@ import {
 import { applyCoefficient, percentOf, roundToStep } from './money';
 import { newPaymentState, paymentRefusal, paymentStatus, type PaymentState } from './payment';
 import { buildQuote, findProposedSlot, isQuoteExpired, isValidLine } from './quote';
-import { canTransitionRequest, effectiveRequestStatus, isVisitRequired } from './quote-request';
+import { canSendQuote, canTransitionRequest, effectiveRequestStatus } from './quote-request';
 import { isValidRecurrence, plannedInterventions } from './recurrence';
 import { conflictingAgents, isFreeCancellation, overlaps, respectsLeadTime, slotFrom } from './schedule';
+import { INITIAL_ZONES, isCovered, isValidZoneCode, zoneCode } from './zone';
 import { DEFAULT_SETTINGS, settingsProblems } from './settings';
 import { priceRange, simulate, unknownOptions } from './simulator';
 
@@ -164,11 +165,31 @@ describe('demande de devis', () => {
     expect(canTransitionRequest('declined', 'quote_sent')).toBe(false);
   });
 
-  it('visite obligatoire pour une entreprise ou au-delà de 300 m²', () => {
-    expect(isVisitRequired('business', 'room', 2, 300)).toBe(true);
-    expect(isVisitRequired('individual', 'square_meter', 301, 300)).toBe(true);
-    expect(isVisitRequired('individual', 'square_meter', 300, 300)).toBe(false);
-    expect(isVisitRequired('individual', 'room', 400, 300)).toBe(false);
+  it('visite des lieux réalisée obligatoire avant tout devis, pour toutes les demandes', () => {
+    const visit = (status: 'scheduled' | 'completed' | 'cancelled') =>
+      ({ visit: { status } }) as Parameters<typeof canSendQuote>[0];
+    expect(canSendQuote({ visit: null })).toBe(false);
+    expect(canSendQuote(visit('scheduled'))).toBe(false);
+    expect(canSendQuote(visit('cancelled'))).toBe(false);
+    expect(canSendQuote(visit('completed'))).toBe(true);
+    expect(canTransitionRequest('quote_sent', 'visit_scheduled')).toBe(true);
+  });
+
+  it('zones desservies : clé normalisée comme les coefficients, zone désactivée non desservie', () => {
+    const zones = INITIAL_ZONES.map((commune) => ({
+      code: zoneCode(commune),
+      commune,
+      active: commune !== 'Porto-Novo',
+      updatedBy: null,
+      updatedAt: null,
+    }));
+    expect(zones.map((zone) => zone.code)).toEqual(['cotonou', 'porto-novo', 'abomey-calavi']);
+    expect(isCovered(zones, 'Abomey Calavi')).toBe(true);
+    expect(isCovered(zones, ' COTONOU ')).toBe(true);
+    expect(isCovered(zones, 'Porto-Novo')).toBe(false);
+    expect(isCovered(zones, 'Parakou')).toBe(false);
+    expect(isValidZoneCode(zoneCode('Sèmè-Podji'))).toBe(true);
+    expect(isValidZoneCode(zoneCode('!!'))).toBe(false);
   });
 
   it('un devis envoyé dont la validité est dépassée est affiché expiré', () => {
@@ -275,6 +296,8 @@ describe('mission et passages', () => {
     afterPhotoFileIds: [],
     startedAt: null,
     completedAt: null,
+    cancellationCause: null,
+    cancelledAt: null,
   });
   const mission = (interventions: Intervention[], plannedInterventions = 1) => ({
     status: 'scheduled' as const,

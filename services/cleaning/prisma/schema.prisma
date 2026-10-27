@@ -80,6 +80,11 @@ model CleaningSettings {
   visitThresholdSquareMeters Int       @default(300) @map("visit_threshold_square_meters")
   maxOpenRequests            Int       @default(5) @map("max_open_requests")
   depositPercent             Int       @default(30) @map("deposit_percent")
+  /// Règles d'impayés (partie 10 du cahier des charges).
+  businessWarningUnpaidInvoices           Int       @default(1) @map("business_warning_unpaid_invoices")
+  businessSuspensionUnpaidInvoices        Int       @default(2) @map("business_suspension_unpaid_invoices")
+  individualSuspensionUnpaidInterventions Int       @default(1) @map("individual_suspension_unpaid_interventions")
+  individualPaymentGraceHours             Int       @default(24) @map("individual_payment_grace_hours")
   updatedBy                  String?   @map("updated_by")
   updatedAt                  DateTime? @map("updated_at") @db.Timestamptz(3)
 
@@ -105,6 +110,8 @@ model QuoteRequest {
   comment             String?
   recurrence          Json?
   requestedTeamSize   Int        @default(0) @map("requested_team_size")
+  /// Entreprise : jours d'intervention par semaine, null si non précisés.
+  daysPerWeek         Int?       @map("days_per_week")
   recommendedTeamSize Int        @map("recommended_team_size")
   estimateLow         Int?       @map("estimate_low")
   estimateHigh        Int?       @map("estimate_high")
@@ -183,6 +190,13 @@ model Mission {
   depositPercent       Int              @map("deposit_percent")
   depositAmount        Int              @map("deposit_amount")
   cancellationReason   String?          @map("cancellation_reason")
+  daysPerWeek          Int?             @map("days_per_week")
+  /// Suspension pour impayés en cours : unpaid_invoices ou unpaid_interventions, null sinon.
+  suspensionCause      String?          @map("suspension_cause")
+  suspendedSince       DateTime?        @map("suspended_since") @db.Timestamptz(3)
+  suspensionUnpaid     Int?             @map("suspension_unpaid_count")
+  /// Impayés au dernier avertissement envoyé (0 : aucun).
+  warningLevel         Int              @default(0) @map("warning_level")
   createdAt            DateTime         @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime         @map("updated_at") @db.Timestamptz(3)
   version              Int              @default(0)
@@ -210,6 +224,9 @@ model Intervention {
   afterPhotoFileIds  String[]  @default([]) @map("after_photo_file_ids") @db.Uuid
   startedAt          DateTime? @map("started_at") @db.Timestamptz(3)
   completedAt        DateTime? @map("completed_at") @db.Timestamptz(3)
+  /// suspension (impayés, reprogrammable) ou manual ; null si le passage n'est pas annulé.
+  cancellationCause  String?   @map("cancellation_cause")
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(3)
   mission            Mission   @relation(fields: [missionId], references: [id])
 
   @@index([missionId])
@@ -287,4 +304,29 @@ model AuditEntry {
 
   @@index([entityType, entityId])
   @@map("audit_log")
+}
+
+/// Factures d'entreprise connues par les événements de billing (overdue, paid) : compte des
+/// impayés d'un contrat, indépendant de l'ordre d'arrivée des événements.
+model ContractInvoice {
+  invoiceId String   @id @map("invoice_id") @db.Uuid
+  missionId String   @map("mission_id") @db.Uuid
+  /// overdue ou paid ; une facture payée ne redevient jamais impayée.
+  status    String
+  updatedAt DateTime @map("updated_at") @db.Timestamptz(3)
+
+  @@index([missionId, status])
+  @@map("contract_invoices")
+}
+
+/// Zone desservie : une commune (clé normalisée, la même que les coefficients de commune).
+model ServiceZone {
+  code      String    @id
+  commune   String
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedBy String?   @map("updated_by")
+  updatedAt DateTime? @map("updated_at") @db.Timestamptz(3)
+
+  @@map("service_zones")
 }

@@ -145,6 +145,23 @@ export class CleaningAdminHttpController {
     return this.cleaning.updateSettings(parseBody(requestBodies.updateCleaningSettings, body));
   }
 
+  // --- Zones desservies ------------------------------------------------------------------------
+
+  @Route('listCleaningZones')
+  listZones() {
+    return this.cleaning.listZones();
+  }
+
+  @Route('saveCleaningZone')
+  saveZone(@Body() body: unknown) {
+    return this.cleaning.saveZone(parseBody(requestBodies.saveCleaningZone, body).commune);
+  }
+
+  @Route('deactivateCleaningZone')
+  deactivateZone(@Param('code') code: unknown) {
+    return this.cleaning.deactivateZone(parseParam(cleaningParams.zoneCode, code, 'code'));
+  }
+
   @Route('listCleaningAgents')
   listAgents() {
     return this.cleaning.listAgents();

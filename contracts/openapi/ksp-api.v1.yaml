@@ -51,6 +51,10 @@ tags:
     description: Simulateur public, demandes de devis et missions du client (UC-CL-01 à 05)
   - name: Nettoyage (back-office)
     description: Demandes, visites, devis, missions, catalogue, agents et équipes (UC-CL-06 à 12)
+  - name: Facturation
+    description: Factures mensuelles des contrats d'entreprise, dans l'espace du client (CDC Nettoyage, partie 10)
+  - name: Facturation (back-office)
+    description: Factures, paiements manuels et réglages de la facturation
 
 # Valeurs proposées par le cahier des charges Gateway (partie 4), réglables par configuration.
 x-ksp-rate-limits:
@@ -845,6 +849,7 @@ paths:
                     communeCoefficientBp: 11000
                     recommendedTeamSize: 2
                     notice: 'Estimation non contractuelle : le prix définitif figure dans le devis établi par KSP.'
+                    covered: true
                 sansPrix:
                   value:
                     serviceCode: pest_control
@@ -856,6 +861,7 @@ paths:
                     communeCoefficientBp: 0
                     recommendedTeamSize: 1
                     notice: "Le prix de cette prestation n'est pas encore publié : demandez un devis, KSP vous répondra."
+                    covered: true
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -879,7 +885,8 @@ paths:
       description: |
         UC-CL-02. Profil complet exigé : la gateway le vérifie auprès d’identity avant l’appel. Idempotent par `Idempotency-Key`. Le type de client (particulier ou entreprise) vient du contexte actif.
 
-        Erreurs : `CLEANING_VALIDATION_FAILED`, `CLEANING_SLOT_INVALID` (400), `CLEANING_SERVICE_NOT_FOUND` (404), `IDENTITY_PROFILE_INCOMPLETE`, `CLEANING_LEAD_TIME_TOO_SHORT`, `CLEANING_TOO_MANY_OPEN_REQUESTS` (422).
+        Erreurs : `CLEANING_VALIDATION_FAILED`, `CLEANING_SLOT_INVALID` (400), `CLEANING_SERVICE_NOT_FOUND` (404), `IDENTITY_PROFILE_INCOMPLETE`, `CLEANING_LEAD_TIME_TOO_SHORT`, `CLEANING_TOO_MANY_OPEN_REQUESTS`,
+        `CLEANING_ZONE_NOT_COVERED` (422, commune hors des zones desservies, `details.commune`).
       x-ksp-grpc: ksp.cleaning.v1.QuoteService/RequestQuote
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -934,6 +941,7 @@ paths:
                 comment: Portail bleu.
                 recurrence: null
                 requestedTeamSize: null
+                daysPerWeek: null
                 recommendedTeamSize: 2
                 estimate:
                   low:
@@ -1011,6 +1019,7 @@ paths:
                     comment: Portail bleu.
                     recurrence: null
                     requestedTeamSize: null
+                    daysPerWeek: null
                     recommendedTeamSize: 2
                     estimate:
                       low:
@@ -1129,6 +1138,7 @@ paths:
                 comment: Portail bleu.
                 recurrence: null
                 requestedTeamSize: null
+                daysPerWeek: null
                 recommendedTeamSize: 2
                 estimate:
                   low:
@@ -1262,6 +1272,7 @@ paths:
                   comment: Portail bleu.
                   recurrence: null
                   requestedTeamSize: null
+                  daysPerWeek: null
                   recommendedTeamSize: 2
                   estimate:
                     low:
@@ -1353,6 +1364,7 @@ paths:
                       afterPhotoFileIds: []
                       startedAt: null
                       completedAt: null
+                      cancellationCause: null
                   payment:
                     plan:
                       option: deposit
@@ -1379,6 +1391,8 @@ paths:
                         recordedBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001
                         recordedAt: 2026-10-24T09:00:00Z
                   cancellationReason: null
+                  daysPerWeek: null
+                  suspension: null
                   createdAt: 2026-10-23T09:00:00Z
                   updatedAt: 2026-10-24T09:00:00Z
         '400':
@@ -1566,6 +1580,7 @@ paths:
                         afterPhotoFileIds: []
                         startedAt: null
                         completedAt: null
+                        cancellationCause: null
                     payment:
                       plan:
                         option: deposit
@@ -1592,6 +1607,8 @@ paths:
                           recordedBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001
                           recordedAt: 2026-10-24T09:00:00Z
                     cancellationReason: null
+                    daysPerWeek: null
+                    suspension: null
                     createdAt: 2026-10-23T09:00:00Z
                     updatedAt: 2026-10-24T09:00:00Z
                 nextCursor: null
@@ -1666,6 +1683,7 @@ paths:
                     afterPhotoFileIds: []
                     startedAt: null
                     completedAt: null
+                    cancellationCause: null
                 payment:
                   plan:
                     option: deposit
@@ -1692,6 +1710,8 @@ paths:
                       recordedBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001
                       recordedAt: 2026-10-24T09:00:00Z
                 cancellationReason: null
+                daysPerWeek: null
+                suspension: null
                 createdAt: 2026-10-23T09:00:00Z
                 updatedAt: 2026-10-24T09:00:00Z
         '400':
@@ -1921,7 +1941,8 @@ paths:
       operationId: scheduleCleaningVisit
       summary: Planifier la visite technique
       description: |
-        UC-CL-07. Obligatoire pour un client entreprise ou au-delà de 300 m². Le client est prévenu (`cleaning.visit.scheduled`).
+        UC-CL-07. Obligatoire pour toute demande, particulier ou entreprise, avant l’envoi du devis (décision du 2026-10-23) ;
+        possible aussi après l’envoi d’un devis, qui devra alors être renvoyé. Le client est prévenu (`cleaning.visit.scheduled`).
 
         Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ScheduleVisit
@@ -2044,7 +2065,8 @@ paths:
 
         Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
 
-        Erreurs : `CLEANING_VISIT_REQUIRED`, `CLEANING_PRICE_NOT_SET`, `CLEANING_LEAD_TIME_TOO_SHORT` (422).
+        Erreurs : `CLEANING_VISIT_REQUIRED` (visite des lieux réalisée obligatoire pour toute demande), `CLEANING_PRICE_NOT_SET`,
+        `CLEANING_LEAD_TIME_TOO_SHORT` (422).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SendQuote
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -2204,7 +2226,8 @@ paths:
 
         Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
 
-        Erreurs : `CLEANING_TEAM_UNAVAILABLE` (409, `details.agentIds`), `CLEANING_NO_INTERVENTION_LEFT` (422).
+        Erreurs : `CLEANING_TEAM_UNAVAILABLE` (409, `details.agentIds`), `CLEANING_NO_INTERVENTION_LEFT` (422),
+        `CLEANING_CONTRACT_SUSPENDED` (422, mission suspendue pour impayés).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ScheduleIntervention
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -2270,7 +2293,9 @@ paths:
 
         Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
 
-        Erreurs : `CLEANING_PAYMENT_INVALID` (400).
+        Réservé aux missions de particuliers : une mission d’entreprise se règle par sa facture (`/api/v1/admin/billing/invoices/{id}/payments`).
+
+        Erreurs : `CLEANING_PAYMENT_INVALID` (400), `CLEANING_PAYMENT_VIA_INVOICE` (422, mission d’entreprise).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RecordPayment
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -2773,7 +2798,10 @@ paths:
       operationId: updateCleaningSettings
       summary: Réglages du Nettoyage
       description: |
-        UC-CL-11. Validité des devis, délais, seuil de visite, demandes ouvertes, acompte.
+        UC-CL-11. Validité des devis, délais, seuil de visite, demandes ouvertes, acompte, et règles d'impayés
+        (CDC Nettoyage, partie 10) : avertissement et suspension des entreprises, suspension des particuliers en
+        récurrent, délai de grâce. Un réglage d'impayés absent garde sa valeur en vigueur. Le délai de règlement des
+        factures se règle dans la facturation (`/api/v1/admin/billing/settings`).
 
         Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/UpdateSettings
@@ -2797,6 +2825,10 @@ paths:
               visitThresholdSquareMeters: 300
               maxOpenRequests: 5
               depositPercent: 30
+              businessWarningUnpaidInvoices: 1
+              businessSuspensionUnpaidInvoices: 2
+              individualSuspensionUnpaidInterventions: 1
+              individualPaymentGraceHours: 24
       responses:
         '200':
           description: Succès
@@ -2815,6 +2847,160 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/zones:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: listCleaningZones
+      summary: Zones desservies
+      description: |
+        Communes où le Nettoyage est ouvert, actives et désactivées (au départ Cotonou, Porto-Novo, Abomey-Calavi). La clé
+        d’une zone est la commune normalisée, la même que celle des coefficients de commune de la grille tarifaire.
+
+        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListZones
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningZoneList'
+              example:
+                data:
+                  - code: abomey-calavi
+                    commune: Abomey-Calavi
+                    active: true
+                    updatedBy: null
+                    updatedAt: null
+                  - code: cotonou
+                    commune: Cotonou
+                    active: true
+                    updatedBy: null
+                    updatedAt: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: saveCleaningZone
+      summary: Ajouter (ou réactiver) une zone desservie
+      description: |
+        Ouvre le Nettoyage dans une commune ; une zone désactivée portant la même clé est réactivée.
+
+        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `CLEANING_VALIDATION_FAILED` (400).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SaveZone
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveCleaningZoneRequest'
+            example:
+              commune: Sèmè-Podji
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningZone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/zones/{code}/deactivate:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: deactivateCleaningZone
+      summary: Désactiver une zone desservie
+      description: |
+        Les nouvelles demandes de devis y sont refusées (`CLEANING_ZONE_NOT_COVERED`) ; les missions en cours continuent.
+
+        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `CLEANING_ZONE_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/DeactivateZone
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningZoneCode'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningZone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -3131,6 +3317,403 @@ paths:
         '504':
           $ref: '#/components/responses/GatewayTimeout'
 
+  /api/v1/billing/invoices:
+    get:
+      tags:
+        - Facturation
+      operationId: listMyInvoices
+      summary: Mes factures
+      description: |
+        Factures de l'organisation active (contexte entreprise) ou du client lui-même (contexte personnel), les plus
+        récentes d'abord. Une facture est « en attente de paiement » jusqu'à l'échéance, puis « impayée ».
+      x-ksp-grpc: ksp.billing.v1.BillingService/ListMyInvoices
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/InvoiceStatus'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceList'
+              example:
+                data:
+                  - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7001
+                    number: FAC-2026-000042
+                    status: pending_payment
+                    customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                    organizationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000
+                    source: cleaning
+                    contractId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000
+                    periodIndex: 1
+                    periodStart: 2026-11-05T08:00:00Z
+                    periodEnd: 2026-12-05T08:00:00Z
+                    lines:
+                      - label: Prestation de nettoyage — mois 1 sur 3
+                        quantity: 1
+                        unitPrice:
+                          amount: 160000
+                          currency: XOF
+                        amount:
+                          amount: 160000
+                          currency: XOF
+                    total:
+                      amount: 160000
+                      currency: XOF
+                    paid:
+                      amount: 0
+                      currency: XOF
+                    balance:
+                      amount: 160000
+                      currency: XOF
+                    issuedAt: 2026-12-05T08:15:00Z
+                    dueAt: 2026-12-15T08:15:00Z
+                    paidAt: null
+                    payments: []
+                nextCursor: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/billing/invoices/{id}:
+    get:
+      tags:
+        - Facturation
+      operationId: getMyInvoice
+      summary: Détail d’une de mes factures
+      description: |
+        Hors du périmètre du client (autre client, autre organisation) : 404, sans révéler l'existence de la facture.
+
+        Erreurs : `BILLING_INVOICE_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.billing.v1.BillingService/GetMyInvoice
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/billing/invoices:
+    get:
+      tags:
+        - Facturation (back-office)
+      operationId: listInvoices
+      summary: Factures (back-office)
+      description: |
+        Toutes les factures, filtrables par état, client, organisation ou contrat (mission du Nettoyage).
+
+        Rôles : `finance_officer`, `cleaning_supervisor`, `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.billing.v1.BillingAdminService/ListInvoices
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - cleaning_supervisor
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/InvoiceStatus'
+        - name: customerId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: organizationId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: contractId
+          in: query
+          required: false
+          description: Contrat chez le service source (pour le Nettoyage, la mission).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/billing/invoices/{id}:
+    get:
+      tags:
+        - Facturation (back-office)
+      operationId: getInvoice
+      summary: Détail d’une facture (back-office)
+      description: |
+        Rôles : `finance_officer`, `cleaning_supervisor`, `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `BILLING_INVOICE_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.billing.v1.BillingAdminService/GetInvoice
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - cleaning_supervisor
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/billing/invoices/{id}/payments:
+    post:
+      tags:
+        - Facturation (back-office)
+      operationId: recordInvoicePayment
+      summary: Enregistrer un paiement manuel
+      description: |
+        Paiement reçu hors ligne (espèces, virement, Mobile Money hors ligne). Paiement partiel accepté, jamais
+        au-delà du reste dû ; la facture devient « payée » au total, ce qui peut débloquer un contrat suspendu.
+
+        Rôles : `finance_officer`, `cleaning_supervisor`, `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `BILLING_PAYMENT_INVALID` (400, `details.reason`), `BILLING_INVOICE_NOT_FOUND` (404),
+        `BILLING_CONCURRENT_UPDATE` (409), `BILLING_INVALID_TRANSITION` (422, facture déjà payée ou annulée).
+      x-ksp-grpc: ksp.billing.v1.BillingAdminService/RecordInvoicePayment
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - cleaning_supervisor
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordInvoicePaymentRequest'
+            example:
+              amount: 160000
+              method: bank_transfer
+              reference: VIR-2026-1215
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/billing/settings:
+    get:
+      tags:
+        - Facturation (back-office)
+      operationId: getBillingSettings
+      summary: Réglages de la facturation
+      description: |
+        Délai de règlement des factures après leur émission (10 jours par défaut).
+
+        Rôles : `cleaning_admin`, `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.billing.v1.BillingAdminService/GetBillingSettings
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    put:
+      tags:
+        - Facturation (back-office)
+      operationId: updateBillingSettings
+      summary: Modifier les réglages de la facturation
+      description: |
+        S'applique aux factures émises ensuite ; les échéances déjà fixées ne changent pas.
+
+        Rôles : `cleaning_admin`, `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.billing.v1.BillingAdminService/UpdateBillingSettings
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBillingSettingsRequest'
+            example:
+              paymentTermDays: 10
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 components:
   securitySchemes:
     bearerAuth:
@@ -3172,6 +3755,20 @@ components:
         minimum: 1
 
   parameters:
+    InvoiceId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant de la facture (UUID).
+      schema:
+        type: string
+        format: uuid
+    InvoiceStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/InvoiceStatus'
     CleaningId:
       name: id
       in: path
@@ -3180,6 +3777,14 @@ components:
       schema:
         type: string
         format: uuid
+    CleaningZoneCode:
+      name: code
+      in: path
+      required: true
+      description: Clé de la zone (commune normalisée, par exemple `abomey-calavi`).
+      schema:
+        type: string
+        pattern: ^[a-z][a-z0-9_-]{1,99}$
     CleaningServiceCode:
       name: code
       in: path
@@ -4048,6 +4653,7 @@ components:
         - communeCoefficientBp
         - recommendedTeamSize
         - notice
+        - covered
       properties:
         serviceCode:
           type: string
@@ -4077,6 +4683,11 @@ components:
         notice:
           type: string
           description: Mention « estimation non contractuelle », ou raison de l’absence de prix.
+        covered:
+          type: boolean
+          description: |
+            Vrai si la commune est dans une zone desservie. L’estimation est donnée dans tous les cas ; une demande
+            de devis hors zone est refusée (`CLEANING_ZONE_NOT_COVERED`).
     CleaningSiteVisit:
       type: object
       additionalProperties: false
@@ -4190,6 +4801,7 @@ components:
         - comment
         - recurrence
         - requestedTeamSize
+        - daysPerWeek
         - recommendedTeamSize
         - estimate
         - visit
@@ -4258,6 +4870,13 @@ components:
             - integer
             - 'null'
           minimum: 1
+        daysPerWeek:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          maximum: 7
+          description: Entreprise — jours d'intervention par semaine indiqués à la demande ; null si non précisés.
         recommendedTeamSize:
           type: integer
           minimum: 1
@@ -4345,6 +4964,7 @@ components:
         - afterPhotoFileIds
         - startedAt
         - completedAt
+        - cancellationCause
       properties:
         id:
           type: string
@@ -4396,6 +5016,14 @@ components:
             - string
             - 'null'
           format: date-time
+        cancellationCause:
+          description: |
+            Passage annulé : `suspension` (impayés, reprogrammé automatiquement au déblocage) ou `manual` ; null sinon.
+          oneOf:
+            - enum:
+                - suspension
+                - manual
+            - type: 'null'
     CleaningPaymentPlan:
       type: object
       additionalProperties: false
@@ -4501,6 +5129,8 @@ components:
         - interventions
         - payment
         - cancellationReason
+        - daysPerWeek
+        - suspension
         - createdAt
         - updatedAt
       properties:
@@ -4553,12 +5183,44 @@ components:
           type:
             - string
             - 'null'
+        daysPerWeek:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          maximum: 7
+        suspension:
+          description: |
+            Suspension pour impayés en cours (CDC Nettoyage, partie 10) : passages à venir annulés, agents libérés,
+            aucune planification possible (`CLEANING_CONTRACT_SUSPENDED`) jusqu'au déblocage ; null sinon.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningSuspension'
+            - type: 'null'
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
+    CleaningSuspension:
+      type: object
+      additionalProperties: false
+      required:
+        - cause
+        - since
+        - unpaidCount
+      properties:
+        cause:
+          enum:
+            - unpaid_invoices
+            - unpaid_interventions
+          description: Factures d'entreprise impayées, ou passages impayés d'un particulier en récurrent.
+        since:
+          type: string
+          format: date-time
+        unpaidCount:
+          type: integer
+          minimum: 1
     CleaningMissionList:
       type: object
       additionalProperties: false
@@ -4718,6 +5380,10 @@ components:
         - visitThresholdSquareMeters
         - maxOpenRequests
         - depositPercent
+        - businessWarningUnpaidInvoices
+        - businessSuspensionUnpaidInvoices
+        - individualSuspensionUnpaidInterventions
+        - individualPaymentGraceHours
         - updatedBy
         - updatedAt
       properties:
@@ -4737,6 +5403,7 @@ components:
           type: integer
           minimum: 1
           maximum: 100000
+          description: Sans effet depuis la décision du 2026-10-23 (visite des lieux obligatoire pour toute demande).
         maxOpenRequests:
           type: integer
           minimum: 1
@@ -4745,6 +5412,26 @@ components:
           type: integer
           minimum: 0
           maximum: 100
+        businessWarningUnpaidInvoices:
+          type: integer
+          minimum: 1
+          maximum: 24
+          description: Entreprise — factures impayées à partir desquelles le client est averti (1 par défaut).
+        businessSuspensionUnpaidInvoices:
+          type: integer
+          minimum: 1
+          maximum: 24
+          description: Entreprise — factures impayées qui suspendent le contrat (2 par défaut).
+        individualSuspensionUnpaidInterventions:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Particulier en récurrent — passages impayés qui suspendent le service (1 par défaut).
+        individualPaymentGraceHours:
+          type: integer
+          minimum: 1
+          maximum: 720
+          description: Heures laissées après un passage pour enregistrer son paiement (24 par défaut).
         updatedBy:
           type:
             - string
@@ -4896,6 +5583,11 @@ components:
           type: integer
           minimum: 1
           maximum: 50
+        daysPerWeek:
+          type: integer
+          minimum: 1
+          maximum: 7
+          description: Entreprise — jours d'intervention par semaine, si connus.
     AcceptCleaningQuoteRequest:
       type: object
       additionalProperties: false
@@ -5165,6 +5857,7 @@ components:
           type: integer
           minimum: 1
           maximum: 100000
+          description: Sans effet depuis la décision du 2026-10-23 (visite des lieux obligatoire pour toute demande).
         maxOpenRequests:
           type: integer
           minimum: 1
@@ -5173,6 +5866,26 @@ components:
           type: integer
           minimum: 0
           maximum: 100
+        businessWarningUnpaidInvoices:
+          type: integer
+          minimum: 1
+          maximum: 24
+          description: Entreprise — factures impayées à partir desquelles le client est averti Si absent, la valeur en vigueur est conservée.
+        businessSuspensionUnpaidInvoices:
+          type: integer
+          minimum: 1
+          maximum: 24
+          description: Entreprise — factures impayées qui suspendent le contrat Si absent, la valeur en vigueur est conservée.
+        individualSuspensionUnpaidInterventions:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Particulier en récurrent — passages impayés qui suspendent le service Si absent, la valeur en vigueur est conservée.
+        individualPaymentGraceHours:
+          type: integer
+          minimum: 1
+          maximum: 720
+          description: Heures laissées après un passage pour enregistrer son paiement Si absent, la valeur en vigueur est conservée.
     RegisterCleaningAgentRequest:
       type: object
       additionalProperties: false
@@ -5221,3 +5934,254 @@ components:
           items:
             type: string
             format: uuid
+    InvoiceStatus:
+      enum:
+        - pending_payment
+        - overdue
+        - paid
+        - cancelled
+      description: |
+        `pending_payment` jusqu'à l'échéance (émission + délai de règlement), puis `overdue` (impayée) ; `paid` quand
+        les paiements atteignent le total ; `cancelled` réservé à une correction.
+    InvoiceLine:
+      type: object
+      additionalProperties: false
+      required:
+        - label
+        - quantity
+        - unitPrice
+        - amount
+      properties:
+        label:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          $ref: '#/components/schemas/Money'
+        amount:
+          $ref: '#/components/schemas/Money'
+    InvoicePayment:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - amount
+        - method
+        - reference
+        - recordedBy
+        - recordedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        amount:
+          $ref: '#/components/schemas/Money'
+        method:
+          $ref: '#/components/schemas/InvoicePaymentMethod'
+        reference:
+          type:
+            - string
+            - 'null'
+        recordedBy:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    InvoicePaymentMethod:
+      enum:
+        - cash
+        - bank_transfer
+        - mobile_money_offline
+    Invoice:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - number
+        - status
+        - customerId
+        - organizationId
+        - source
+        - contractId
+        - periodIndex
+        - periodStart
+        - periodEnd
+        - lines
+        - total
+        - paid
+        - balance
+        - issuedAt
+        - dueAt
+        - paidAt
+        - payments
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          pattern: ^FAC-[0-9]{4}-[0-9]{6}$
+          description: Numéro continu par année.
+        status:
+          $ref: '#/components/schemas/InvoiceStatus'
+        customerId:
+          type: string
+          format: uuid
+        organizationId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        source:
+          enum:
+            - cleaning
+        contractId:
+          type: string
+          format: uuid
+          description: Contrat chez le service source (pour le Nettoyage, la mission).
+        periodIndex:
+          type: integer
+          minimum: 1
+          description: Rang du mois facturé dans le contrat.
+        periodStart:
+          type: string
+          format: date-time
+        periodEnd:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoiceLine'
+        total:
+          $ref: '#/components/schemas/Money'
+        paid:
+          $ref: '#/components/schemas/Money'
+        balance:
+          $ref: '#/components/schemas/Money'
+        issuedAt:
+          type: string
+          format: date-time
+        dueAt:
+          type: string
+          format: date-time
+        paidAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        payments:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoicePayment'
+    InvoiceList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Invoice'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    BillingSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - paymentTermDays
+        - updatedBy
+        - updatedAt
+      properties:
+        paymentTermDays:
+          type: integer
+          minimum: 1
+          maximum: 90
+          description: Délai de règlement après l'émission, en jours (10 par défaut).
+        updatedBy:
+          type:
+            - string
+            - 'null'
+        updatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    RecordInvoicePaymentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - amount
+        - method
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          description: Entier en FCFA, au plus le reste dû.
+        method:
+          $ref: '#/components/schemas/InvoicePaymentMethod'
+        reference:
+          type: string
+          minLength: 0
+          maxLength: 100
+    UpdateBillingSettingsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - paymentTermDays
+      properties:
+        paymentTermDays:
+          type: integer
+          minimum: 1
+          maximum: 90
+    CleaningZone:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - commune
+        - active
+        - updatedBy
+        - updatedAt
+      properties:
+        code:
+          type: string
+          description: Commune normalisée (minuscules, sans accents, tirets), clé des coefficients de commune.
+        commune:
+          type: string
+        active:
+          type: boolean
+        updatedBy:
+          type:
+            - string
+            - 'null'
+        updatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    CleaningZoneList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningZone'
+    SaveCleaningZoneRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - commune
+      properties:
+        commune:
+          type: string
+          minLength: 1
+          maxLength: 100

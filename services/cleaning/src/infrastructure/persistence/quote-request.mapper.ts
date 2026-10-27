@@ -68,6 +68,7 @@ export function toRequest(row: RequestWithRelations): QuoteRequest {
     comment: row.comment,
     recurrence: recurrenceFromJson(row.recurrence),
     requestedTeamSize: row.requestedTeamSize,
+    daysPerWeek: row.daysPerWeek,
     recommendedTeamSize: row.recommendedTeamSize,
     estimate:
       row.estimateLow !== null && row.estimateHigh !== null
@@ -108,6 +109,7 @@ export function requestColumns(request: QuoteRequest) {
     comment: request.comment,
     recurrence: recurrenceToJson(request.recurrence),
     requestedTeamSize: request.requestedTeamSize,
+    daysPerWeek: request.daysPerWeek,
     recommendedTeamSize: request.recommendedTeamSize,
     estimateLow: request.estimate?.low ?? null,
     estimateHigh: request.estimate?.high ?? null,

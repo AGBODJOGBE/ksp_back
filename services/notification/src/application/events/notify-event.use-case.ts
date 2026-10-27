@@ -1,5 +1,5 @@
 import { type KspEventType } from '@ksp/contracts';
-import { eventChannelPlan } from '../../domain/channel';
+import { eventDispatchPlans } from '../../domain/channel';
 import { EmailAddress, PhoneNumber } from '../../domain/recipient';
 import { findTemplate, invalidVariables, isEventTemplate } from '../../domain/template';
 import { type MessageDispatcher } from '../send/message-dispatcher';
@@ -46,7 +46,7 @@ const LOCALE = 'fr';
  * 2. La règle de l'événement donne les messages à envoyer ; les coordonnées des destinataires sont
  *    lues dans identity. Une panne d'identity lève une erreur : l'événement est repris plus tard
  *    (file de reprise, puis file d'erreurs).
- * 3. Chaque message part par le canal que fixe sa nature (`eventChannelPlan`), avec une clé
+ * 3. Chaque message part par les canaux que fixe sa nature (`eventDispatchPlans`), avec une clé
  *    d'idempotence `<événement>:<modèle>:<destinataire>` : une nouvelle livraison du même événement
  *    n'envoie rien deux fois.
  * 4. L'événement est marqué traité et les notifications dans l'espace sont enregistrées, dans la même
@@ -103,35 +103,44 @@ export class NotifyEventUseCase {
 
       const phone = PhoneNumber.parse(contact.phoneE164 ?? '');
       const email = EmailAddress.parse(contact.email);
-      const plan = eventChannelPlan(template.kind, { hasPhone: phone !== null, hasEmail: email !== null });
-      if (plan.length === 0) {
+      const plans = eventDispatchPlans(template.kind, { hasPhone: phone !== null, hasEmail: email !== null });
+      if (plans.length === 0) {
         result.unreachable += 1;
         continue;
       }
-      const outcome = await this.dispatcher.dispatch({
-        notification: {
-          id: this.ids.next(),
-          idempotencyKey: `${event.eventId}:${template.code}:${contact.userId}`,
-          templateCode: template.code,
-          requestedChannel: plan[0],
-          targetMasked: [phone?.masked(), email?.masked()].filter(Boolean).join(' · '),
-          recipientUserId: contact.userId,
-          createdAt: now,
-          expiresAt: null,
-        },
-        plan,
-        message: {
-          templateCode: template.code,
-          phoneE164: phone?.e164 ?? null,
-          email: email?.value ?? null,
-          variables,
-          content,
-          locale: LOCALE,
-        },
-      });
-      if (outcome.kind === 'accepted') result.accepted += 1;
-      else if (outcome.kind === 'failed') result.failed += 1;
-      else result.replayed += 1;
+      for (const plan of plans) {
+        // Un envoi par canal (message important) : la clé porte le canal, pour ne doublonner aucun des deux.
+        const single = template.kind === 'important';
+        const outcome = await this.dispatcher.dispatch({
+          notification: {
+            id: this.ids.next(),
+            idempotencyKey: `${event.eventId}:${template.code}:${contact.userId}${single ? `:${plan[0]}` : ''}`,
+            templateCode: template.code,
+            requestedChannel: plan[0],
+            targetMasked: [
+              plan.includes('whatsapp') ? phone?.masked() : undefined,
+              plan.includes('email') ? email?.masked() : undefined,
+            ]
+              .filter(Boolean)
+              .join(' · '),
+            recipientUserId: contact.userId,
+            createdAt: now,
+            expiresAt: null,
+          },
+          plan,
+          message: {
+            templateCode: template.code,
+            phoneE164: phone?.e164 ?? null,
+            email: email?.value ?? null,
+            variables,
+            content,
+            locale: LOCALE,
+          },
+        });
+        if (outcome.kind === 'accepted') result.accepted += 1;
+        else if (outcome.kind === 'failed') result.failed += 1;
+        else result.replayed += 1;
+      }
     }
 
     const completion = await this.inbox.complete(event.eventId, inApp);

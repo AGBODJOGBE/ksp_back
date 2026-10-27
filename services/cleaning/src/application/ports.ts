@@ -5,6 +5,7 @@ import { type Intervention, type Mission, type MissionStatus } from '../domain/m
 import { type QuoteRequest, type RequestStatus } from '../domain/quote-request';
 import { type BusyPeriod } from '../domain/schedule';
 import { type CleaningSettings } from '../domain/settings';
+import { type Zone } from '../domain/zone';
 import { type PageRequest, type PageResult } from './shared/validation';
 
 /**
@@ -19,7 +20,7 @@ export type OutboxMessage = {
 export interface AuditEntry {
   actorId: string;
   action: string;
-  entityType: 'quote_request' | 'mission' | 'service' | 'settings' | 'agent' | 'team';
+  entityType: 'quote_request' | 'mission' | 'service' | 'settings' | 'agent' | 'team' | 'zone';
   entityId: string;
   at: Date;
   /** Identifiants et montants seulement : jamais d'adresse ni de commentaire. */
@@ -49,6 +50,10 @@ export interface CatalogRepository {
   ): Promise<ServiceDefinition>;
   getSettings(): Promise<StoredSettings>;
   saveSettings(settings: CleaningSettings, changes: Changes): Promise<StoredSettings>;
+  /** Zones desservies, actives et désactivées, par nom de commune. */
+  listZones(): Promise<Zone[]>;
+  /** Crée ou modifie la zone (clé = commune normalisée). */
+  saveZone(zone: Zone, changes: Changes): Promise<Zone>;
 }
 
 export type CreateResult<T> = { created: true; value: T } | { created: false; value: T };
@@ -112,6 +117,36 @@ export interface MissionRepository {
   ): Promise<{ conflicts: string[]; saved: boolean }>;
   /** Missions non terminées du client (bloquent la suppression du compte). */
   pendingForCustomer(customerId: string): Promise<{ id: string; status: MissionStatus }[]>;
+  /**
+   * Reprogrammation : verrouille les agents donnés, lit leurs périodes occupées (passages actifs
+   * et indisponibilités), laisse `plan` construire la mission et ses changements, puis enregistre
+   * si la version n'a pas changé. Renvoie false en cas de modification concurrente.
+   */
+  saveWithAgenda(
+    agentIds: string[],
+    plan: (busy: BusyPeriod[]) => { mission: Mission; changes: Changes },
+  ): Promise<boolean>;
+  /** Missions de particuliers en récurrent, non terminées : surveillance des passages impayés. */
+  listIndividualRecurring(): Promise<Mission[]>;
+}
+
+export type ContractInvoiceStatus = 'overdue' | 'paid';
+
+/**
+ * Factures d'entreprise apprises par les événements de billing. L'inbox et l'état sont écrits
+ * dans la même transaction ; une facture payée ne redevient jamais impayée, quel que soit
+ * l'ordre d'arrivée des événements.
+ */
+export interface ContractInvoiceRepository {
+  record(input: {
+    eventId: string;
+    consumer: string;
+    invoiceId: string;
+    missionId: string;
+    status: ContractInvoiceStatus;
+    at: Date;
+  }): Promise<'processed' | 'duplicate'>;
+  countOverdue(missionId: string): Promise<number>;
 }
 
 export interface AgentRepository {

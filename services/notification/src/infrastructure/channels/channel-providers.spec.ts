@@ -68,6 +68,30 @@ describe('Jeton de service vers identity', () => {
   });
 });
 
+describe('Équipe Nettoyage prévenue sans destinataire désigné', () => {
+  it('vide par défaut', () => {
+    expect(config({ NODE_ENV: 'development' }).NOTIFICATION_CLEANING_TEAM_USER_IDS).toEqual([]);
+  });
+
+  it('identifiants séparés par des virgules, espaces tolérés, en minuscules', () => {
+    const cfg = config({
+      NODE_ENV: 'development',
+      NOTIFICATION_CLEANING_TEAM_USER_IDS:
+        ' 0192F1C4-0000-7000-8000-0000000E0001 ,0192f1c4-0000-7000-8000-0000000e0002,',
+    });
+    expect(cfg.NOTIFICATION_CLEANING_TEAM_USER_IDS).toEqual([
+      '0192f1c4-0000-7000-8000-0000000e0001',
+      '0192f1c4-0000-7000-8000-0000000e0002',
+    ]);
+  });
+
+  it('un identifiant mal formé : refus au démarrage', () => {
+    expect(() => config({ NODE_ENV: 'development', NOTIFICATION_CLEANING_TEAM_USER_IDS: 'admin' })).toThrow(
+      /NOTIFICATION_CLEANING_TEAM_USER_IDS/,
+    );
+  });
+});
+
 describe('Choix du prestataire e-mail', () => {
   it('console par défaut hors production', () => {
     const cfg = config({ NODE_ENV: 'development', NOTIFICATION_EMAIL_PROVIDER: '' });

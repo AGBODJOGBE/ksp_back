@@ -10,6 +10,7 @@ import {
   presentRequest,
   presentSettings,
   presentTeam,
+  presentZone,
 } from './presenters';
 
 const amount = (value: { amount: number } | undefined) => (value ? value.amount : null);
@@ -182,8 +183,29 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
       visitThresholdSquareMeters: s?.visitThresholdSquareMeters ?? 0,
       maxOpenRequests: s?.maxOpenRequests ?? 0,
       depositPercent: s?.depositPercent ?? -1,
+      // 0 : valeur en vigueur conservée (réglages de la partie 10).
+      businessWarningUnpaidInvoices: s?.businessWarningUnpaidInvoices ?? 0,
+      businessSuspensionUnpaidInvoices: s?.businessSuspensionUnpaidInvoices ?? 0,
+      individualSuspensionUnpaidInterventions: s?.individualSuspensionUnpaidInterventions ?? 0,
+      individualPaymentGraceHours: s?.individualPaymentGraceHours ?? 0,
     });
     return { settings: presentSettings(saved) };
+  }
+
+  // --- Zones desservies ----------------------------------------------------------------------
+
+  async listZones(): Promise<cleaningV1.ListZonesResponse> {
+    return { zones: (await this.useCases.listZones.execute()).map(presentZone) };
+  }
+
+  async saveZone(request: cleaningV1.SaveZoneRequest): Promise<cleaningV1.SaveZoneResponse> {
+    return { zone: presentZone(await this.useCases.saveZone.execute({ commune: request.commune })) };
+  }
+
+  async deactivateZone(
+    request: cleaningV1.DeactivateZoneRequest,
+  ): Promise<cleaningV1.DeactivateZoneResponse> {
+    return { zone: presentZone(await this.useCases.deactivateZone.execute({ code: request.code })) };
   }
 
   // --- Agents et équipes ---------------------------------------------------------------------

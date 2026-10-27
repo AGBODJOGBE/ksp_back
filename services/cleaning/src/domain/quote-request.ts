@@ -1,4 +1,4 @@
-import { type PremisesType, type ServiceUnit } from './catalog';
+import { type PremisesType } from './catalog';
 import { type Quote } from './quote';
 import { type Recurrence } from './recurrence';
 import { type Slot } from './schedule';
@@ -23,8 +23,9 @@ export type CustomerKind = 'individual' | 'business';
 const TRANSITIONS: Record<RequestStatus, readonly RequestStatus[]> = {
   received: ['visit_scheduled', 'quote_sent', 'rejected', 'cancelled'],
   visit_scheduled: ['visit_scheduled', 'quote_sent', 'rejected', 'cancelled'],
-  // Un devis révisé peut remplacer le précédent tant que le client n'a pas répondu.
-  quote_sent: ['quote_sent', 'accepted', 'declined', 'expired', 'cancelled'],
+  // Un devis révisé peut remplacer le précédent tant que le client n'a pas répondu ; une visite
+  // des lieux peut encore être demandée avant l'acceptation (partie 10) : le devis devra être renvoyé.
+  quote_sent: ['quote_sent', 'visit_scheduled', 'accepted', 'declined', 'expired', 'cancelled'],
   accepted: [],
   declined: [],
   rejected: [],
@@ -65,6 +66,8 @@ export interface QuoteRequest {
   comment: string | null;
   recurrence: Recurrence | null;
   requestedTeamSize: number;
+  /** Entreprise : jours d'intervention par semaine (1 à 7), null si non précisés. */
+  daysPerWeek: number | null;
   recommendedTeamSize: number;
   estimate: { low: number; high: number } | null;
   visit: SiteVisit | null;
@@ -78,16 +81,14 @@ export interface QuoteRequest {
 }
 
 /**
- * Visite technique obligatoire pour un client entreprise, ou pour une surface au-delà du seuil
- * (300 m² par défaut).
+ * Visite des lieux obligatoire avant tout devis, pour toutes les demandes, particulier ou
+ * entreprise (décision du 2026-10-23, qui remplace la règle « entreprise ou plus de 300 m² ») :
+ * le devis ne peut être envoyé qu'après une visite réalisée.
  */
-export function isVisitRequired(
-  customerKind: CustomerKind,
-  unit: ServiceUnit,
-  quantity: number,
-  thresholdSquareMeters: number,
-): boolean {
-  return customerKind === 'business' || (unit === 'square_meter' && quantity > thresholdSquareMeters);
+export const VISIT_REQUIRED = true;
+
+export function canSendQuote(request: Pick<QuoteRequest, 'visit'>): boolean {
+  return request.visit?.status === 'completed';
 }
 
 /** État affiché : un devis envoyé dont la validité est dépassée est expiré, même avant son archivage. */

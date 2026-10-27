@@ -8,7 +8,8 @@ import { formatXof } from './format';
  *
  * Nature du message (règle de choix du canal, voir channel.ts) :
  * - short : message court transactionnel → WhatsApp, e-mail en bascule ;
- * - document : devis, compte rendu → e-mail si l'adresse existe, WhatsApp sinon ou en bascule.
+ * - document : devis, compte rendu → e-mail si l'adresse existe, WhatsApp sinon ou en bascule ;
+ * - important : avertissement et suspension pour impayés → WhatsApp et e-mail.
  */
 
 const FIRST_NAME = /^[^\n]{0,100}$/;
@@ -16,6 +17,8 @@ const TEXT = /^[^\n]{1,300}$/;
 const LINK = /^https?:\/\/\S{1,300}$/;
 const COUNT = /^[1-9][0-9]{0,4}$/;
 const AMOUNT = /^[0-9\u00a0]{1,20}\u00a0FCFA$/;
+const COUNT_OR_ZERO = /^(0|[1-9][0-9]{0,4})$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function greeting(variables: Readonly<Record<string, string>>): string {
   const name = variables['first_name']?.trim();
@@ -24,6 +27,11 @@ function greeting(variables: Readonly<Record<string, string>>): string {
 
 function lines(...parts: string[]): string {
   return parts.join('\n');
+}
+
+/** « 1 passage », « 3 passages ». */
+function counted(count: string, singular: string, plural: string): string {
+  return count === '1' ? `1 ${singular}` : `${count} ${plural}`;
 }
 
 function passages(count: string): string {
@@ -188,6 +196,104 @@ export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
       text: lines(greeting(v), cancellationText(v), `Détails : ${v['link']}`),
     }),
   ),
+  // Impayés, suspension et reprise (cahier des charges Nettoyage, partie 10).
+  template(
+    'cleaning.suspension_warning.customer',
+    'important',
+    { first_name: FIRST_NAME, unpaid_text: TEXT, threshold: COUNT, link: LINK },
+    (v) => ({
+      subject: 'Factures impayées : risque de suspension',
+      text: lines(
+        greeting(v),
+        `Votre contrat de nettoyage compte ${v['unpaid_text']}. Au seuil de ${v['threshold']} impayés, ` +
+          'le service sera suspendu et les passages à venir annulés.',
+        `Réglez vos factures dans Mon espace KSP : ${v['link']}`,
+      ),
+    }),
+  ),
+  template(
+    'cleaning.contract_suspended.customer',
+    'important',
+    { first_name: FIRST_NAME, unpaid_text: TEXT, link: LINK },
+    (v) => ({
+      subject: 'Prestation de nettoyage suspendue',
+      text: lines(
+        greeting(v),
+        `Votre prestation de nettoyage est suspendue : ${v['unpaid_text']}, le seuil de suspension est atteint. ` +
+          'Les passages à venir sont annulés.',
+        'Dès votre règlement, le service reprendra et vos passages seront reprogrammés.',
+        `Réglez dans Mon espace KSP : ${v['link']}`,
+      ),
+    }),
+  ),
+  template('cleaning.contract_suspended.agent', 'short', { first_name: FIRST_NAME }, (v) => ({
+    subject: 'Passages de nettoyage annulés',
+    text: lines(
+      greeting(v),
+      'Des passages de nettoyage qui vous étaient confiés sont annulés : le contrat du client est suspendu. ' +
+        'Consultez votre planning dans votre espace KSP.',
+    ),
+  })),
+  template(
+    'cleaning.contract_resumed.customer',
+    'short',
+    { first_name: FIRST_NAME, rescheduled_count: COUNT_OR_ZERO, failed_count: COUNT_OR_ZERO, link: LINK },
+    (v) => ({
+      subject: 'Prestation de nettoyage reprise',
+      text: lines(
+        greeting(v),
+        'Merci pour votre règlement : votre prestation de nettoyage reprend.',
+        ...(v['rescheduled_count'] !== '0'
+          ? [`${counted(v['rescheduled_count'], 'passage reprogrammé', 'passages reprogrammés')}.`]
+          : []),
+        ...(v['failed_count'] !== '0'
+          ? [
+              `Un superviseur vous contactera pour replanifier ${
+                v['failed_count'] === '1'
+                  ? 'le passage restant'
+                  : `les ${v['failed_count']} passages restants`
+              }.`,
+            ]
+          : []),
+        `Suivi : ${v['link']}`,
+      ),
+    }),
+  ),
+  template(
+    'cleaning.contract_resumed.team',
+    'short',
+    {
+      first_name: FIRST_NAME,
+      mission_id: UUID,
+      rescheduled_count: COUNT_OR_ZERO,
+      failed_count: COUNT_OR_ZERO,
+    },
+    (v) => ({
+      subject: 'Prestation de nettoyage reprise après règlement',
+      text: lines(
+        greeting(v),
+        `La mission ${v['mission_id']} a repris après règlement des impayés : ` +
+          `${counted(v['rescheduled_count'], 'passage reprogrammé', 'passages reprogrammés')}` +
+          (v['failed_count'] !== '0'
+            ? `, ${counted(v['failed_count'], 'passage', 'passages')} à replanifier à la main au back-office.`
+            : '.'),
+      ),
+    }),
+  ),
+  template(
+    'cleaning.rescheduling_failed.team',
+    'short',
+    { first_name: FIRST_NAME, mission_id: UUID, failed_count: COUNT },
+    (v) => ({
+      subject: 'Passages de nettoyage à replanifier',
+      text: lines(
+        greeting(v),
+        `Reprogrammation incomplète pour la mission ${v['mission_id']} : ` +
+          `${counted(v['failed_count'], 'passage', 'passages')} à replanifier à la main au back-office, ` +
+          "faute d'agents libres.",
+      ),
+    }),
+  ),
 ];
 
 const PAYMENT_METHODS: Readonly<Record<string, string>> = {
@@ -210,4 +316,12 @@ export function paymentNote(plan: {
       : `totalité (${formatXof(plan.total)})`;
   const when = plan.timing === 'before' ? "avant l'intervention" : "après l'intervention";
   return `Paiement choisi : ${what}, ${when}, ${PAYMENT_METHODS[plan.method] ?? 'selon le moyen convenu'}.`;
+}
+
+/** « 2 factures impayées » (entreprise) ou « 1 passage impayé » (particulier en récurrent). */
+export function unpaidText(cause: string, count: number): string {
+  const n = String(count);
+  return cause === 'unpaid_interventions'
+    ? counted(n, 'passage impayé', 'passages impayés')
+    : counted(n, 'facture impayée', 'factures impayées');
 }

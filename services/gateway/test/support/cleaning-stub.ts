@@ -44,6 +44,7 @@ export const protoRequest: cleaningV1.QuoteRequest = {
   preferredSlots: [SLOT],
   comment: '',
   requestedTeamSize: 0,
+  daysPerWeek: 0,
   recommendedTeamSize: 2,
   estimate: { low: xof(32000), high: xof(41000) },
   quote: {
@@ -92,6 +93,7 @@ export const protoMission: cleaningV1.Mission = {
       afterPhotoFileIds: [],
       startedAt: '',
       completedAt: '',
+      cancellationCause: '',
     },
   ],
   payment: {
@@ -104,6 +106,8 @@ export const protoMission: cleaningV1.Mission = {
     payments: [],
   },
   cancellationReason: '',
+  daysPerWeek: 2,
+  suspension: { cause: 'unpaid_invoices', since: '2026-12-15T06:00:00.000Z', unpaidCount: 2 },
   createdAt: '2026-10-23T09:00:00.000Z',
   updatedAt: '2026-10-23T09:00:00.000Z',
 };
@@ -132,6 +136,17 @@ const settings: cleaningV1.Settings = {
   visitThresholdSquareMeters: 300,
   maxOpenRequests: 5,
   depositPercent: 30,
+  businessWarningUnpaidInvoices: 1,
+  businessSuspensionUnpaidInvoices: 2,
+  individualSuspensionUnpaidInterventions: 1,
+  individualPaymentGraceHours: 24,
+  updatedBy: '',
+  updatedAt: '',
+};
+const zone: cleaningV1.Zone = {
+  code: 'abomey-calavi',
+  commune: 'Abomey-Calavi',
+  active: true,
   updatedBy: '',
   updatedAt: '',
 };
@@ -179,6 +194,7 @@ const DEFAULTS: Record<Method, () => unknown> = {
     communeCoefficientBp: 11000,
     recommendedTeamSize: 2,
     notice: 'Estimation non contractuelle.',
+    covered: true,
   }),
   requestQuote: withRequest,
   listMyRequests: () => ({ requests: [protoRequest], nextCursor: '' }),
@@ -211,6 +227,9 @@ const DEFAULTS: Record<Method, () => unknown> = {
   getCatalog: () => ({ services: [definition], settings }),
   saveService: () => ({ service: definition }),
   updateSettings: () => ({ settings }),
+  listZones: () => ({ zones: [zone] }),
+  saveZone: () => ({ zone }),
+  deactivateZone: () => ({ zone: { ...zone, active: false } }),
   listAgents: () => ({ agents: [agent] }),
   registerAgent: () => ({ agent }),
   declareUnavailability: () => ({ agent }),

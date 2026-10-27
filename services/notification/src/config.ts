@@ -60,6 +60,23 @@ export const configSchema = baseServiceConfigSchema
     PORTAL_BASE_URL: z.url().default('https://ksp.bj'),
     /** Fuseau des dates écrites dans les messages. */
     NOTIFICATION_TIME_ZONE: z.string().min(1).default('Africa/Porto-Novo'),
+    /**
+     * Comptes de l'équipe Nettoyage (admin, superviseurs) prévenus quand un événement ne désigne
+     * personne : reprise après impayés, reprogrammation à finir à la main. Identifiants séparés par
+     * des virgules ; vide par défaut (personne n'est prévenu).
+     */
+    NOTIFICATION_CLEANING_TEAM_USER_IDS: z
+      .string()
+      .default('')
+      .transform((raw) =>
+        raw
+          .split(',')
+          .map((item) => item.trim().toLowerCase())
+          .filter(Boolean),
+      )
+      .pipe(
+        z.array(z.uuid('NOTIFICATION_CLEANING_TEAM_USER_IDS : identifiants de comptes (UUID) attendus.')),
+      ),
   })
   .refine((cfg) => !(cfg.NODE_ENV === 'production' && cfg.NOTIFICATION_WHATSAPP_PROVIDER === 'console'), {
     message:

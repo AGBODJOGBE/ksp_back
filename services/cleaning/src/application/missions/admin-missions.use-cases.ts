@@ -26,6 +26,8 @@ import {
   requirePositiveInt,
   requireUuid,
 } from '../shared/validation';
+import { isBusinessContract } from '../../domain/standing';
+import { EvaluateStandingUseCase } from '../standing/standing.use-cases';
 import { cancelled, saveMission } from './customer-missions.use-cases';
 
 const MISSION_STATUSES: readonly MissionStatus[] = [
@@ -99,6 +101,7 @@ export class ScheduleInterventionUseCase {
     const now = this.deps.clock.now();
     if (isTerminalMission(mission.status))
       throw CleaningErrors.invalidTransition(mission.status, 'scheduled');
+    if (mission.suspension) throw CleaningErrors.contractSuspended();
     if (remainingToSchedule(mission) === 0) throw CleaningErrors.noInterventionLeft();
     const start = parseDate('scheduledStart', input.scheduledStart);
     if (start <= now) throw CleaningErrors.slotInvalid('Le passage doit être planifié dans le futur.');
@@ -130,6 +133,8 @@ export class ScheduleInterventionUseCase {
       afterPhotoFileIds: [],
       startedAt: null,
       completedAt: null,
+      cancellationCause: null,
+      cancelledAt: null,
     };
     const updated: Mission = {
       ...mission,
@@ -306,9 +311,16 @@ export class CompleteInterventionUseCase extends InterventionAction {
   }
 }
 
-/** Paiement manuel coché par le superviseur : espèces ou Mobile Money hors ligne. */
+/**
+ * Paiement manuel coché par le superviseur : espèces ou Mobile Money hors ligne. Pour un
+ * particulier en récurrent, la régularisation peut débloquer la mission (partie 10).
+ */
 export class RecordPaymentUseCase {
-  constructor(private readonly deps: CleaningDeps) {}
+  private readonly evaluate: EvaluateStandingUseCase;
+
+  constructor(private readonly deps: CleaningDeps) {
+    this.evaluate = new EvaluateStandingUseCase(deps);
+  }
 
   async execute(input: {
     missionId: string;
@@ -319,6 +331,8 @@ export class RecordPaymentUseCase {
     const staff = requireStaff(SUPERVISION);
     const mission = await visibleMission(this.deps, staff, input.missionId);
     if (mission.status === 'cancelled') throw CleaningErrors.invalidTransition(mission.status, 'paid');
+    // Une mission d'entreprise se règle par ses factures mensuelles (service billing).
+    if (isBusinessContract(mission)) throw CleaningErrors.paymentViaInvoice();
     const method = input.method as PaymentMethod;
     const refusal = paymentRefusal(mission.payment, input.amount, method, true);
     if (refusal) throw CleaningErrors.paymentInvalid(refusal);
@@ -332,7 +346,7 @@ export class RecordPaymentUseCase {
       recordedAt: now,
     };
     const payment = { ...mission.payment, payments: [...mission.payment.payments, record] };
-    return saveMission(
+    const view = await saveMission(
       this.deps,
       { ...mission, payment },
       {
@@ -349,6 +363,10 @@ export class RecordPaymentUseCase {
         ],
       },
     );
+    if (!mission.suspension) return view;
+    if ((await this.evaluate.execute(mission.id)) !== 'resumed') return view;
+    const resumed = await this.deps.missions.findById(mission.id);
+    return resumed ? missionView(this.deps, resumed) : view;
   }
 }
 
@@ -363,7 +381,7 @@ export class CancelMissionAsSupervisorUseCase {
       throw CleaningErrors.invalidTransition(mission.status, 'cancelled');
     const reason = requiredText('reason', input.reason, 500);
     const now = this.deps.clock.now();
-    return saveMission(this.deps, cancelled(mission, reason), {
+    return saveMission(this.deps, cancelled(mission, reason, now), {
       events: [
         {
           type: 'cleaning.request.cancelled',

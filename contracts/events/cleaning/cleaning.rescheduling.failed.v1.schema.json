@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.rescheduling.failed.v1.schema.json",
+  "title": "cleaning.rescheduling.failed",
+  "description": "Reprogrammation automatique incomplète après un déblocage : faute d'agents libres, des passages restent à replanifier à la main au back-office (CDC Nettoyage, partie 10). Écouté par notification (admin et superviseur).",
+  "x-event-type": "cleaning.rescheduling.failed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["missionId", "customerId", "organizationId", "interventionIds", "failedCount"],
+  "properties": {
+    "missionId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": { "type": ["string", "null"], "format": "uuid" },
+    "interventionIds": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uuid" },
+      "description": "Passages annulés par la suspension et non reprogrammés"
+    },
+    "failedCount": { "type": "integer", "minimum": 1 }
+  }
+}

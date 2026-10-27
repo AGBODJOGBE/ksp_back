@@ -20,6 +20,23 @@ export const CleaningErrors = {
       "Cette action n'est pas possible dans l'état actuel du dossier.",
       { from, to },
     ),
+  zoneNotCovered: (commune: string) =>
+    AppError.precondition(
+      'CLEANING_ZONE_NOT_COVERED',
+      "KSP n'intervient pas encore dans cette commune. Le service est ouvert dans les zones desservies.",
+      { commune },
+    ),
+  zoneNotFound: () => AppError.notFound('CLEANING_ZONE_NOT_FOUND', 'Cette zone est introuvable.'),
+  paymentViaInvoice: () =>
+    AppError.precondition(
+      'CLEANING_PAYMENT_VIA_INVOICE',
+      "Une mission d'entreprise se règle par sa facture mensuelle : enregistrez le paiement sur la facture.",
+    ),
+  contractSuspended: () =>
+    AppError.precondition(
+      'CLEANING_CONTRACT_SUSPENDED',
+      'Cette mission est suspendue pour impayés : aucun passage ne peut être planifié avant régularisation.',
+    ),
   quoteExpired: () =>
     AppError.precondition('CLEANING_QUOTE_EXPIRED', 'Ce devis a expiré. Demandez-en un nouveau.'),
   priceNotSet: () =>
@@ -30,7 +47,7 @@ export const CleaningErrors = {
   visitRequired: () =>
     AppError.precondition(
       'CLEANING_VISIT_REQUIRED',
-      'Une visite technique doit être réalisée avant d’envoyer le devis.',
+      'Une visite des lieux doit être réalisée avant d’envoyer le devis.',
     ),
   leadTimeTooShort: (minimumHours: number) =>
     AppError.precondition(

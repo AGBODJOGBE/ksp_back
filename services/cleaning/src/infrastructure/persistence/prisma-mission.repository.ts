@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '../../../prisma/generated';
 import { type Changes, type MissionFilter, type MissionRepository } from '../../application/ports';
 import { type PageRequest, type PageResult } from '../../application/shared/validation';
 import {
@@ -12,7 +13,7 @@ import { type BusyPeriod } from '../../domain/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { UuidV7Generator } from '../system/system';
 import { cursorFilter, json, pageArgs, toPage, type Tx, writeChanges } from './changes';
-import { interventionColumns, MISSION_INCLUDE, toMission } from './mission.mapper';
+import { interventionColumns, MISSION_INCLUDE, suspensionColumns, toMission } from './mission.mapper';
 
 const ids = new UuidV7Generator();
 
@@ -68,7 +69,7 @@ export class PrismaMissionRepository implements MissionRepository {
         'SELECT user_id FROM agents WHERE user_id = ANY($1::uuid[]) ORDER BY user_id FOR UPDATE',
         intervention.agentIds,
       );
-      const found = conflicts(await this.busyPeriods(tx, intervention));
+      const found = conflicts(await this.busyPeriods(tx, intervention.agentIds, intervention.id));
       if (found.length) return { conflicts: found, saved: false };
       if (!(await this.update(tx, mission))) return { conflicts: [], saved: false };
       await writeChanges(tx, changes, () => ids.next());
@@ -85,19 +86,50 @@ export class PrismaMissionRepository implements MissionRepository {
     return rows.map((row) => ({ id: row.id, status: row.status as MissionStatus }));
   }
 
-  /** Passages actifs et indisponibilités des agents du passage, hors ce passage lui-même. */
-  private async busyPeriods(tx: Tx, intervention: Intervention): Promise<BusyPeriod[]> {
+  async saveWithAgenda(
+    agentIds: string[],
+    plan: (busy: BusyPeriod[]) => { mission: Mission; changes: Changes },
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      // Même verrou que la planification manuelle : aucune double réservation possible.
+      await tx.$queryRawUnsafe(
+        'SELECT user_id FROM agents WHERE user_id = ANY($1::uuid[]) ORDER BY user_id FOR UPDATE',
+        agentIds,
+      );
+      const busy = agentIds.length ? await this.busyPeriods(tx, agentIds, null) : [];
+      const { mission, changes } = plan(busy.filter((period) => agentIds.includes(period.agentId)));
+      if (!(await this.update(tx, mission))) return false;
+      await writeChanges(tx, changes, () => ids.next());
+      return true;
+    });
+  }
+
+  async listIndividualRecurring(): Promise<Mission[]> {
+    const rows = await this.prisma.mission.findMany({
+      where: {
+        organizationId: null,
+        recurrence: { not: Prisma.DbNull },
+        status: { notIn: [...TERMINAL_MISSION_STATUSES] },
+      },
+      include: MISSION_INCLUDE,
+      orderBy: { id: 'asc' },
+    });
+    return rows.map(toMission);
+  }
+
+  /** Passages actifs et indisponibilités des agents donnés, hors un passage éventuel. */
+  private async busyPeriods(tx: Tx, agentIds: string[], excludedId: string | null): Promise<BusyPeriod[]> {
     const [interventions, unavailabilities] = await Promise.all([
       tx.intervention.findMany({
         where: {
-          id: { not: intervention.id },
+          ...(excludedId ? { id: { not: excludedId } } : {}),
           status: { in: [...ACTIVE_INTERVENTION_STATUSES] },
-          agentIds: { hasSome: intervention.agentIds },
+          agentIds: { hasSome: agentIds },
         },
         select: { agentIds: true, scheduledStart: true, scheduledEnd: true },
       }),
       tx.agentUnavailability.findMany({
-        where: { agentId: { in: intervention.agentIds } },
+        where: { agentId: { in: agentIds } },
         select: { agentId: true, startsAt: true, endsAt: true },
       }),
     ]);
@@ -122,6 +154,7 @@ export class PrismaMissionRepository implements MissionRepository {
       data: {
         status: mission.status,
         cancellationReason: mission.cancellationReason,
+        ...suspensionColumns(mission),
         updatedAt: mission.updatedAt,
         version: { increment: 1 },
       },

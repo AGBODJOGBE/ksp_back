@@ -36,12 +36,17 @@ import "ksp/common/v1/money.proto";
 //   CLEANING_INVALID_TRANSITION         FAILED_PRECONDITION details.from, details.to
 //   CLEANING_QUOTE_EXPIRED              FAILED_PRECONDITION devis au-delà de sa date de validité
 //   CLEANING_PRICE_NOT_SET              FAILED_PRECONDITION prestation sans prix dans la grille (devis)
-//   CLEANING_VISIT_REQUIRED             FAILED_PRECONDITION visite technique obligatoire avant le devis
+//   CLEANING_VISIT_REQUIRED             FAILED_PRECONDITION visite des lieux réalisée obligatoire avant tout devis
+//                                                           (toutes les demandes, décision du 2026-10-23)
 //   CLEANING_LEAD_TIME_TOO_SHORT        FAILED_PRECONDITION details.minimumHours
 //   CLEANING_CANCELLATION_TOO_LATE      FAILED_PRECONDITION details.freeCancellationHours
 //   CLEANING_TOO_MANY_OPEN_REQUESTS     FAILED_PRECONDITION details.maximum
 //   CLEANING_CHECKLIST_INCOMPLETE       FAILED_PRECONDITION liste de contrôle non cochée à la clôture
 //   CLEANING_NO_INTERVENTION_LEFT       FAILED_PRECONDITION tous les passages prévus sont déjà planifiés
+//   CLEANING_CONTRACT_SUSPENDED         FAILED_PRECONDITION mission suspendue pour impayés (partie 10)
+//   CLEANING_ZONE_NOT_COVERED           FAILED_PRECONDITION commune hors des zones desservies (details.commune)
+//   CLEANING_ZONE_NOT_FOUND             NOT_FOUND           zone inconnue
+//   CLEANING_PAYMENT_VIA_INVOICE        FAILED_PRECONDITION mission d'entreprise : paiement par sa facture (billing)
 //   CLEANING_TEAM_UNAVAILABLE           ALREADY_EXISTS      details.agentIds : agents déjà pris sur le créneau
 //   CLEANING_CONCURRENT_UPDATE          ALREADY_EXISTS      dossier modifié en même temps par un autre appel
 //   CLEANING_AGENT_ALREADY_REGISTERED   ALREADY_EXISTS
@@ -121,6 +126,12 @@ service CleaningAdminService {
   rpc GetCatalog(GetCatalogRequest) returns (GetCatalogResponse);
   rpc SaveService(SaveServiceRequest) returns (SaveServiceResponse);
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse);
+
+  // Zones desservies (cleaning_admin) : une demande de devis hors zone est refusée.
+  rpc ListZones(ListZonesRequest) returns (ListZonesResponse);
+  // Ajoute la commune, ou la réactive si elle existe déjà.
+  rpc SaveZone(SaveZoneRequest) returns (SaveZoneResponse);
+  rpc DeactivateZone(DeactivateZoneRequest) returns (DeactivateZoneResponse);
 
   // Agents et équipes (cleaning_admin).
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
@@ -257,6 +268,8 @@ message QuoteRequest {
   string closing_reason = 21;
   string created_at = 22;
   string updated_at = 23;
+  // Entreprise : jours d'intervention par semaine indiqués, 0 si non précisés.
+  int32 days_per_week = 24;
 }
 
 message ChecklistItem {
@@ -286,6 +299,8 @@ message Intervention {
   repeated string after_photo_file_ids = 9;
   string started_at = 10;
   string completed_at = 11;
+  // Passage annulé : "suspension" (impayés, reprogrammable au déblocage) ou "manual" ; vide sinon.
+  string cancellation_cause = 12;
 }
 
 message Mission {
@@ -308,6 +323,17 @@ message Mission {
   string cancellation_reason = 15;
   string created_at = 16;
   string updated_at = 17;
+  // Suspension pour impayés en cours, absente sinon (CDC Nettoyage, partie 10).
+  Suspension suspension = 18;
+  // Jours d'intervention par semaine indiqués par l'entreprise, 0 si non précisés.
+  int32 days_per_week = 19;
+}
+
+message Suspension {
+  // "unpaid_invoices" (entreprise) ou "unpaid_interventions" (particulier).
+  string cause = 1;
+  string since = 2;
+  int32 unpaid_count = 3;
 }
 
 message CatalogOption {
@@ -362,6 +388,8 @@ message SimulateResponse {
   int32 recommended_team_size = 8;
   // Mention « estimation non contractuelle », ou raison de l'absence de prix.
   string notice = 9;
+  // Vrai si la commune est dans une zone desservie ; l'estimation est donnée dans tous les cas.
+  bool covered = 10;
 }
 
 // ===========================================================================
@@ -386,6 +414,8 @@ message RequestQuoteRequest {
   string comment = 9;
   Recurrence recurrence = 10;
   int32 requested_team_size = 11;
+  // Entreprise : jours d'intervention par semaine, si connus (1 à 7) ; 0 si non précisés.
+  int32 days_per_week = 12;
 }
 
 message RequestQuoteResponse {
@@ -681,11 +711,22 @@ message Settings {
   int32 quote_validity_days = 1;
   int32 minimum_lead_hours = 2;
   int32 free_cancellation_hours = 3;
+  // Sans effet depuis la décision du 2026-10-23 : visite des lieux obligatoire pour toute demande.
   int32 visit_threshold_square_meters = 4;
   int32 max_open_requests = 5;
   int32 deposit_percent = 6;
   string updated_by = 7;
   string updated_at = 8;
+  // Règles de paiement et de suspension (CDC Nettoyage, partie 10). À l'écriture, 0 laisse la
+  // valeur en vigueur inchangée (aucune n'accepte 0).
+  // Factures d'entreprise impayées à partir desquelles le client est averti (1 par défaut).
+  int32 business_warning_unpaid_invoices = 9;
+  // Factures d'entreprise impayées qui suspendent le contrat (2 par défaut).
+  int32 business_suspension_unpaid_invoices = 10;
+  // Passages impayés d'un particulier en récurrent qui suspendent le service (1 par défaut).
+  int32 individual_suspension_unpaid_interventions = 11;
+  // Heures laissées après la fin d'un passage pour enregistrer son paiement (24 par défaut).
+  int32 individual_payment_grace_hours = 12;
 }
 
 message GetCatalogRequest {}
@@ -709,6 +750,40 @@ message UpdateSettingsRequest {
 
 message UpdateSettingsResponse {
   Settings settings = 1;
+}
+
+// Zone desservie : une commune, identifiée par sa clé normalisée (minuscules, sans accents,
+// tirets), la même que celle des coefficients de commune de la grille tarifaire.
+message Zone {
+  // Clé normalisée, par exemple "abomey-calavi".
+  string code = 1;
+  // Nom affiché, par exemple "Abomey-Calavi".
+  string commune = 2;
+  bool active = 3;
+  string updated_by = 4;
+  string updated_at = 5;
+}
+
+message ListZonesRequest {}
+
+message ListZonesResponse {
+  repeated Zone zones = 1;
+}
+
+message SaveZoneRequest {
+  string commune = 1;
+}
+
+message SaveZoneResponse {
+  Zone zone = 1;
+}
+
+message DeactivateZoneRequest {
+  string code = 1;
+}
+
+message DeactivateZoneResponse {
+  Zone zone = 1;
 }
 
 // ===========================================================================

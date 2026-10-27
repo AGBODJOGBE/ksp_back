@@ -3,6 +3,7 @@ import { effectiveRequestStatus, type QuoteRequest } from '../domain/quote-reque
 import {
   type AgentRepository,
   type CatalogRepository,
+  type ContractInvoiceRepository,
   type MissionRepository,
   type QuoteRequestRepository,
 } from './ports';
@@ -14,6 +15,7 @@ export interface CleaningDeps {
   requests: QuoteRequestRepository;
   missions: MissionRepository;
   agents: AgentRepository;
+  invoices: ContractInvoiceRepository;
   clock: Clock;
   ids: IdGenerator;
 }

@@ -25,15 +25,16 @@ export async function saveMission(
   return missionView(deps, { ...next, version: next.version + 1 });
 }
 
-/** Annule la mission et ses passages non commencés. */
-export function cancelled(mission: Mission, reason: string | null): Mission {
+/** Annule la mission et ses passages non commencés (et lève une éventuelle suspension). */
+export function cancelled(mission: Mission, reason: string | null, now: Date): Mission {
   return {
     ...mission,
     status: 'cancelled',
     cancellationReason: reason,
+    suspension: null,
     interventions: mission.interventions.map((intervention) =>
       intervention.status === 'planned' || intervention.status === 'on_hold'
-        ? { ...intervention, status: 'cancelled' }
+        ? { ...intervention, status: 'cancelled', cancellationCause: 'manual', cancelledAt: now }
         : intervention,
     ),
   };
@@ -76,7 +77,7 @@ export class CancelMyMissionUseCase {
       throw CleaningErrors.cancellationTooLate(settings.freeCancellationHours);
     }
     const reason = optionalText('reason', input.reason, 500);
-    return saveMission(this.deps, cancelled(mission, reason), {
+    return saveMission(this.deps, cancelled(mission, reason, this.deps.clock.now()), {
       events: [
         {
           type: 'cleaning.request.cancelled',

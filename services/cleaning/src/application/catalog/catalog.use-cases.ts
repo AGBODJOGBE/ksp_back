@@ -1,5 +1,6 @@
 import { normalizeCommune, PREMISES_TYPES, type ServiceDefinition } from '../../domain/catalog';
 import { type Simulation, simulate, unknownOptions } from '../../domain/simulator';
+import { isCovered } from '../../domain/zone';
 import { type CleaningDeps } from '../deps';
 import { CleaningErrors } from '../shared/errors';
 import { oneOf, requiredText, requirePositiveInt } from '../shared/validation';
@@ -39,6 +40,8 @@ export interface SimulationResult {
   serviceCode: string;
   simulation: Simulation;
   notice: string;
+  /** Commune dans une zone desservie ; l'estimation est donnée dans tous les cas. */
+  covered: boolean;
 }
 
 /** UC-CL-01 : simulateur public. Calcul local, rien n'est enregistré. */
@@ -62,6 +65,7 @@ export class SimulateUseCase {
       serviceCode: service.code,
       simulation,
       notice: simulation.priced ? ESTIMATE_NOTICE : PRICE_NOT_SET_NOTICE,
+      covered: isCovered(await this.deps.catalog.listZones(), commune),
     };
   }
 }

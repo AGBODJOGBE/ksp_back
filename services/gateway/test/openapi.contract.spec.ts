@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { DEFAULT_RATE_LIMITS } from '../src/domain/rate-limit/rate-limits';
 import { ROUTE_MANIFEST, type RouteDefinition } from '../src/domain/routing/route-manifest';
 import { RESERVED_PREFIXES } from '../src/domain/routing/manifest-rules';
+import { BillingHttpController } from '../src/interfaces/http/billing.controller';
 import { CleaningAdminHttpController } from '../src/interfaces/http/cleaning-admin.controller';
 import { CleaningHttpController } from '../src/interfaces/http/cleaning.controller';
 import { IdentityHttpController } from '../src/interfaces/http/identity.controller';
@@ -18,6 +19,7 @@ import { JwksHttpController } from '../src/interfaces/http/jwks.controller';
 import { expressPath } from '../src/interfaces/http/route.decorator';
 import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
 import { requestBodies } from '../src/interfaces/http/schemas';
+import { type BillingServer, startBillingStub } from './support/billing-stub';
 import { type CleaningServer, startCleaningStub } from './support/cleaning-stub';
 import {
   type IdentityServer,
@@ -166,6 +168,7 @@ describe('contrat OpenAPI : manifeste de routage', () => {
       JwksHttpController,
       CleaningHttpController,
       CleaningAdminHttpController,
+      BillingHttpController,
     ]) {
       expect(Reflect.getMetadata(PATH_METADATA, controller)).toBe('/');
       for (const handler of handlers(controller)) {
@@ -249,6 +252,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   let keys: TestKeys;
   let identity: IdentityServer;
   let cleaning: CleaningServer;
+  let billing: BillingServer;
   let app: NestExpressApplication;
   let token: string;
   let staffToken: string;
@@ -259,7 +263,13 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     keys = await TestKeys.create();
     identity = await startIdentityStub(keys);
     cleaning = await startCleaningStub(keys);
-    app = await startGateway({ identityUrl: identity.url, cleaningUrl: cleaning.url, keys });
+    billing = await startBillingStub(keys);
+    app = await startGateway({
+      identityUrl: identity.url,
+      cleaningUrl: cleaning.url,
+      billingUrl: billing.url,
+      keys,
+    });
     token = await keys.accessToken();
     const staff = (mfa: boolean) =>
       keys.accessToken({
@@ -280,11 +290,13 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     await app?.close();
     await identity?.close();
     await cleaning?.close();
+    await billing?.close();
   });
 
   beforeEach(() => {
     identity.stub.reset();
     cleaning.stub.reset();
+    billing.stub.reset();
   });
 
   const http = () => request(app.getHttpServer());
@@ -625,7 +637,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       operation('simulateCleaning').op.requestBody!.content['application/json'].example as object;
 
     const successes = operations
-      .filter(({ path }) => path.includes('/cleaning'))
+      .filter(({ path }) => path.includes('/cleaning') || path.includes('/billing'))
       .map(
         ({ op }) =>
           [
@@ -693,6 +705,60 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           cleaningFails('acceptQuote', AppError.precondition('CLEANING_QUOTE_EXPIRED', 'Ce devis a expiré.'));
           return call('acceptCleaningQuote');
         },
+      ],
+      [
+        'facture d’un autre client',
+        'getMyInvoice',
+        404,
+        () => {
+          billing.stub.on('getMyInvoice', () =>
+            Promise.reject(AppError.notFound('BILLING_INVOICE_NOT_FOUND', 'Facture introuvable.')),
+          );
+          return call('getMyInvoice');
+        },
+      ],
+      [
+        'factures : état inconnu',
+        'listMyInvoices',
+        400,
+        () =>
+          from(http().get('/api/v1/billing/invoices?status=late')).set('Authorization', `Bearer ${token}`),
+      ],
+      [
+        'factures du back-office pour un client',
+        'listInvoices',
+        403,
+        () => call('listInvoices', { auth: 'customer' }),
+      ],
+      [
+        'paiement au-delà du reste dû',
+        'recordInvoicePayment',
+        400,
+        () => {
+          billing.stub.on('recordInvoicePayment', () =>
+            Promise.reject(
+              AppError.invalid('BILLING_PAYMENT_INVALID', 'Paiement refusé.', { reason: 'exceeds_balance' }),
+            ),
+          );
+          return call('recordInvoicePayment');
+        },
+      ],
+      [
+        'facture déjà payée',
+        'recordInvoicePayment',
+        422,
+        () => {
+          billing.stub.on('recordInvoicePayment', () =>
+            Promise.reject(AppError.precondition('BILLING_INVALID_TRANSITION', 'Facture déjà payée.')),
+          );
+          return call('recordInvoicePayment');
+        },
+      ],
+      [
+        'réglages de facturation : délai hors bornes',
+        'updateBillingSettings',
+        400,
+        () => call('updateBillingSettings', { body: { paymentTermDays: 0 } }),
       ],
       [
         'back-office sans rôle',

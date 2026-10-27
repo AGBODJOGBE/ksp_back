@@ -1,20 +1,35 @@
 import { type CleaningEventType } from '@ksp/contracts';
-import { paymentNote } from '../../domain/messages/cleaning.messages';
+import { paymentNote, unpaidText } from '../../domain/messages/cleaning.messages';
 import { formatDate, formatDateTime, formatDuration, formatXof } from '../../domain/messages/format';
 import { type EventRule, type NotificationIntent, type RuleContext } from './event-rules';
 
 /**
- * Messages des 7 événements du Nettoyage déjà publiés (cahier des charges Nettoyage, partie 6).
+ * Messages des événements du Nettoyage (cahier des charges Nettoyage, parties 6 et 10).
  *
- * Destinataires : le client (customerId) et, pour les visites et les passages planifiés, les agents
- * affectés. Le superviseur n'est pas prévenu : aucun événement ne dit lequel (point à valider).
+ * Destinataires : le client (customerId) ; les agents affectés (visites, passages planifiés) ou
+ * libérés (suspension) ; l'équipe Nettoyage configurée (NOTIFICATION_CLEANING_TEAM_USER_IDS) pour
+ * la reprise après impayés et la reprogrammation à finir à la main, car ces événements ne désignent
+ * ni l'admin ni le superviseur.
  *
- * Liens « Mon espace KSP » (chemins du portail à valider) :
- *   /mon-espace/nettoyage/demandes/<requestId> et /mon-espace/nettoyage/missions/<missionId>.
+ * Liens « Mon espace KSP » (chemins du portail à valider) : /mon-espace/nettoyage/demandes/<requestId>,
+ * /mon-espace/nettoyage/missions/<missionId> et /mon-espace/factures.
  */
 
 function requestLink(context: RuleContext, requestId: string): string {
   return `${context.portalBaseUrl}/mon-espace/nettoyage/demandes/${encodeURIComponent(requestId)}`;
+}
+
+function invoicesLink(context: RuleContext): string {
+  return `${context.portalBaseUrl}/mon-espace/factures`;
+}
+
+/** Un message par membre de l'équipe Nettoyage configurée ; aucun si la liste est vide. */
+function team(
+  context: RuleContext,
+  templateCode: string,
+  variables: Record<string, string>,
+): NotificationIntent[] {
+  return context.cleaningTeamUserIds.map((userId) => ({ userId, templateCode, variables, link: null }));
 }
 
 function missionLink(context: RuleContext, missionId: string): string {
@@ -123,4 +138,48 @@ export const CLEANING_RULES: { readonly [T in CleaningEventType]: EventRule<T> }
       },
     ),
   ],
+
+  'cleaning.contract.suspension_warning': (event, context) => [
+    customer(event.customerId, 'cleaning.suspension_warning.customer', invoicesLink(context), {
+      unpaid_text: unpaidText('unpaid_invoices', event.unpaidCount),
+      threshold: String(event.suspensionThreshold),
+    }),
+  ],
+
+  'cleaning.contract.suspended': (event, context) => [
+    customer(
+      event.customerId,
+      'cleaning.contract_suspended.customer',
+      event.cause === 'unpaid_invoices' ? invoicesLink(context) : missionLink(context, event.missionId),
+      { unpaid_text: unpaidText(event.cause, event.unpaidCount) },
+    ),
+    ...[...new Set(event.releasedAgentIds)].map((agentId) => ({
+      userId: agentId,
+      templateCode: 'cleaning.contract_suspended.agent',
+      variables: {},
+      link: null,
+    })),
+  ],
+
+  'cleaning.contract.resumed': (event, context) => {
+    const counts = {
+      rescheduled_count: String(event.rescheduledCount),
+      failed_count: String(event.failedCount),
+    };
+    return [
+      customer(
+        event.customerId,
+        'cleaning.contract_resumed.customer',
+        missionLink(context, event.missionId),
+        counts,
+      ),
+      ...team(context, 'cleaning.contract_resumed.team', { ...counts, mission_id: event.missionId }),
+    ];
+  },
+
+  'cleaning.rescheduling.failed': (event, context) =>
+    team(context, 'cleaning.rescheduling_failed.team', {
+      mission_id: event.missionId,
+      failed_count: String(event.failedCount),
+    }),
 };

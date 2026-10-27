@@ -6,7 +6,7 @@ import {
   MAX_PROPOSED_SLOTS,
   MIN_PROPOSED_SLOTS,
 } from '../../domain/quote';
-import { isVisitRequired, type QuoteRequest, type RequestStatus } from '../../domain/quote-request';
+import { canSendQuote, type QuoteRequest, type RequestStatus } from '../../domain/quote-request';
 import { respectsLeadTime } from '../../domain/schedule';
 import { type PriceLine, priceLines, simulate } from '../../domain/simulator';
 import { type CleaningDeps, presentRequest } from '../deps';
@@ -223,13 +223,8 @@ export class SendQuoteUseCase {
       this.deps.catalog.getSettings(),
     ]);
     if (!service) throw CleaningErrors.serviceNotFound();
-    const visitNeeded = isVisitRequired(
-      request.customerKind,
-      service.unit,
-      request.quantity,
-      settings.visitThresholdSquareMeters,
-    );
-    if (visitNeeded && request.visit?.status !== 'completed') throw CleaningErrors.visitRequired();
+    // Visite des lieux réalisée obligatoire avant tout devis (décision du 2026-10-23).
+    if (!canSendQuote(request)) throw CleaningErrors.visitRequired();
 
     const lines = input.lines.length ? input.lines : this.prefill(request, service);
     if (!lines.every(isValidLine) || linesSubtotal(lines) < 0) throw CleaningErrors.invalid('lines');

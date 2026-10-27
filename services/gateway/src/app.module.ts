@@ -1,4 +1,4 @@
-import { cleaningV1, identityV1 } from '@ksp/contracts';
+import { billingV1, cleaningV1, identityV1 } from '@ksp/contracts';
 import {
   AccessTokenVerifier,
   createLoggerModule,
@@ -13,6 +13,7 @@ import {
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { type Clock, type RateLimiter } from './application/access/access.ports';
+import { type BillingApi } from './application/billing/billing.ports';
 import { type CleaningApi } from './application/cleaning/cleaning.ports';
 import { RequestCleaningQuoteUseCase } from './application/cleaning/request-cleaning-quote.use-case';
 import { AuthorizeRequestUseCase } from './application/access/authorize-request.use-case';
@@ -29,6 +30,7 @@ import {
 } from './application/identity/identity.use-cases';
 import { GetPublicKeysUseCase } from './application/keys/public-keys';
 import { clientOriginsFrom, DEV_IDENTITY_JWKS_URL, type GatewayConfig, rateLimitsFrom } from './config';
+import { BillingGrpcAdapter } from './infrastructure/grpc/billing-grpc.adapter';
 import { CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
 import { IdentityGrpcAdapter } from './infrastructure/grpc/identity-grpc.adapter';
 import { HttpJwksSource } from './infrastructure/keys/http-jwks.source';
@@ -36,6 +38,7 @@ import { KeysReadiness } from './infrastructure/keys/keys-readiness';
 import { type JwksSource, SigningKeysCache } from './infrastructure/keys/signing-keys-cache';
 import { InMemoryRateLimiter } from './infrastructure/rate-limit/in-memory-rate-limiter';
 import { SystemClock } from './infrastructure/system/system-clock';
+import { BillingHttpController } from './interfaces/http/billing.controller';
 import { CleaningAdminHttpController } from './interfaces/http/cleaning-admin.controller';
 import { CleaningHttpController } from './interfaces/http/cleaning.controller';
 import { IdentityHttpController } from './interfaces/http/identity.controller';
@@ -43,6 +46,8 @@ import { JwksHttpController } from './interfaces/http/jwks.controller';
 import { RefreshCookies } from './interfaces/http/refresh-cookie';
 import { RouteGuard } from './interfaces/http/route.guard';
 import {
+  BILLING_API,
+  BILLING_GRPC_CLIENT,
   CLEANING_API,
   CLEANING_GRPC_CLIENT,
   CLOCK,
@@ -68,6 +73,7 @@ export class AppModule {
         ClientsModule.register([
           grpcClientOptions(IDENTITY_GRPC_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
           grpcClientOptions(CLEANING_GRPC_CLIENT, 'cleaning', config.CLEANING_GRPC_URL),
+          grpcClientOptions(BILLING_GRPC_CLIENT, 'billing', config.BILLING_GRPC_URL),
         ]),
       ],
       controllers: [
@@ -76,6 +82,7 @@ export class AppModule {
         JwksHttpController,
         CleaningHttpController,
         CleaningAdminHttpController,
+        BillingHttpController,
       ],
       providers: [
         ReadinessRegistry,
@@ -147,6 +154,25 @@ export class AppModule {
               // Coupe-circuit propre à cleaning : une panne n'affecte pas les autres routes (UC-GW-07).
               new GrpcCaller({
                 target: 'cleaning',
+                defaultDeadlineMs: config.GRPC_DEADLINE_MS,
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        {
+          provide: BILLING_API,
+          inject: [BILLING_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
+          useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): BillingApi =>
+            new BillingGrpcAdapter(
+              {
+                invoices: grpc.getService<billingV1.BillingServiceClient>(billingV1.BILLING_SERVICE_NAME),
+                admin: grpc.getService<billingV1.BillingAdminServiceClient>(
+                  billingV1.BILLING_ADMIN_SERVICE_NAME,
+                ),
+              },
+              // Coupe-circuit propre à billing : une panne n'affecte pas les autres routes (UC-GW-07).
+              new GrpcCaller({
+                target: 'billing',
                 defaultDeadlineMs: config.GRPC_DEADLINE_MS,
                 ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
               }),

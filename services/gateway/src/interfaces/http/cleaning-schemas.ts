@@ -43,6 +43,7 @@ export const cleaningBodies = {
     comment: text(2000, 0).optional(),
     recurrence: recurrence.optional(),
     requestedTeamSize: int(1, 50).optional(),
+    daysPerWeek: int(1, 7).optional(),
   }),
   acceptCleaningQuote: z.strictObject({
     slotStart: dateTime,
@@ -109,7 +110,12 @@ export const cleaningBodies = {
     visitThresholdSquareMeters: int(1, 100_000),
     maxOpenRequests: int(1, 100),
     depositPercent: int(0, 100),
+    businessWarningUnpaidInvoices: int(1, 24).optional(),
+    businessSuspensionUnpaidInvoices: int(1, 24).optional(),
+    individualSuspensionUnpaidInterventions: int(1, 50).optional(),
+    individualPaymentGraceHours: int(1, 720).optional(),
   }),
+  saveCleaningZone: z.strictObject({ commune: text(100) }),
   registerCleaningAgent: z.strictObject({ agentId: uuid, displayName: text(100) }),
   declareCleaningUnavailability: z.strictObject({
     start: dateTime,
@@ -124,6 +130,7 @@ export const cleaningBodies = {
 export const cleaningParams = {
   id: uuid,
   serviceCode: code,
+  zoneCode: z.string().regex(/^[a-z][a-z0-9_-]{1,99}$/),
   page: z.strictObject({
     limit: z.coerce.number().int().min(1).max(100).optional(),
     cursor: uuid.optional(),

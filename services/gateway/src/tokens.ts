@@ -5,3 +5,5 @@ export const RATE_LIMITER = Symbol('RATE_LIMITER');
 export const IDENTITY_GRPC_CLIENT = Symbol('IDENTITY_GRPC_CLIENT');
 export const CLEANING_GRPC_CLIENT = Symbol('CLEANING_GRPC_CLIENT');
 export const CLEANING_API = Symbol('CLEANING_API');
+export const BILLING_GRPC_CLIENT = Symbol('BILLING_GRPC_CLIENT');
+export const BILLING_API = Symbol('BILLING_API');

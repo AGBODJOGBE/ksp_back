@@ -44,6 +44,21 @@ export interface Intervention {
   afterPhotoFileIds: string[];
   startedAt: Date | null;
   completedAt: Date | null;
+  /** Passage annulé par une suspension pour impayés (reprogrammable au déblocage) ou à la main. */
+  cancellationCause: InterventionCancellationCause | null;
+  cancelledAt: Date | null;
+}
+
+export type InterventionCancellationCause = 'suspension' | 'manual';
+
+/** Factures d'entreprise impayées, ou passages impayés d'un particulier en récurrent. */
+export type SuspensionCause = 'unpaid_invoices' | 'unpaid_interventions';
+
+/** Suspension pour impayés en cours (CDC Nettoyage, partie 10). */
+export interface Suspension {
+  cause: SuspensionCause;
+  since: Date;
+  unpaidCount: number;
 }
 
 export interface Mission {
@@ -62,6 +77,11 @@ export interface Mission {
   interventions: Intervention[];
   payment: PaymentState;
   cancellationReason: string | null;
+  /** Entreprise : jours d'intervention par semaine indiqués à la demande, null si non précisés. */
+  daysPerWeek: number | null;
+  suspension: Suspension | null;
+  /** Nombre d'impayés au dernier avertissement envoyé (0 : aucun) : un avertissement n'est pas répété. */
+  warningLevel: number;
   createdAt: Date;
   updatedAt: Date;
   version: number;

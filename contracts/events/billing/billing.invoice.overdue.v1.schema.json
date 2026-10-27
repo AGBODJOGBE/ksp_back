@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/billing/billing.invoice.overdue.v1.schema.json",
+  "title": "billing.invoice.overdue",
+  "description": "Échéance dépassée sans règlement complet : la facture passe « impayée ». Écouté par cleaning (avertissement, suspension) et notification.",
+  "x-event-type": "billing.invoice.overdue",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "invoiceId",
+    "invoiceNumber",
+    "customerId",
+    "organizationId",
+    "source",
+    "contractId",
+    "total",
+    "dueAt",
+    "overdueCount"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "integer", "minimum": 0 },
+        "currency": { "const": "XOF" }
+      }
+    }
+  },
+  "properties": {
+    "invoiceId": { "type": "string", "format": "uuid" },
+    "invoiceNumber": { "type": "string", "pattern": "^FAC-[0-9]{4}-[0-9]{6}$" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": { "type": ["string", "null"], "format": "uuid" },
+    "source": { "enum": ["cleaning"] },
+    "contractId": { "type": "string", "format": "uuid" },
+    "total": { "$ref": "#/$defs/money" },
+    "dueAt": { "type": "string", "format": "date-time" },
+    "overdueCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Factures impayées du contrat, celle-ci comprise (information ; cleaning tient son propre compte)"
+    }
+  }
+}

@@ -22,6 +22,7 @@ describe('gateway → cleaning', () => {
   let app: NestExpressApplication;
   let customer: string;
   let staff: string;
+  let admin: string;
 
   beforeAll(async () => {
     keys = await TestKeys.create();
@@ -34,6 +35,13 @@ describe('gateway → cleaning', () => {
         client_id: 'backoffice',
         mfa: true,
         roles: [{ role: 'cleaning_supervisor', scopeType: 'global' }],
+      },
+    });
+    admin = await keys.accessToken({
+      claims: {
+        client_id: 'backoffice',
+        mfa: true,
+        roles: [{ role: 'cleaning_admin', scopeType: 'global' }],
       },
     });
   });
@@ -138,5 +146,68 @@ describe('gateway → cleaning', () => {
       .get('/api/v1/cleaning/missions?limit=500')
       .set('Authorization', `Bearer ${customer}`);
     expect(bad.status).toBe(400);
+  });
+
+  it('partie 10 : jours par semaine transmis, réglages d’impayés absents envoyés à 0, suspension présentée', async () => {
+    const quote = await http()
+      .post('/api/v1/cleaning/quote-requests')
+      .set('Authorization', `Bearer ${customer}`)
+      .set('Idempotency-Key', 'cle-jours-001')
+      .send({ ...QUOTE_BODY, daysPerWeek: 3 });
+    expect(quote.status).toBe(200);
+    expect(cleaning.stub.last('requestQuote')!.request).toMatchObject({ daysPerWeek: 3 });
+
+    const settings = await http()
+      .put('/api/v1/admin/cleaning/catalog/settings')
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${admin}`)
+      .send({
+        quoteValidityDays: 15,
+        minimumLeadHours: 48,
+        freeCancellationHours: 24,
+        visitThresholdSquareMeters: 300,
+        maxOpenRequests: 5,
+        depositPercent: 30,
+        businessSuspensionUnpaidInvoices: 3,
+      });
+    expect(settings.status).toBe(200);
+    expect(settings.body).toMatchObject({
+      businessWarningUnpaidInvoices: 1,
+      individualPaymentGraceHours: 24,
+    });
+    expect(cleaning.stub.last('updateSettings')!.request['settings']).toMatchObject({
+      businessWarningUnpaidInvoices: 0,
+      businessSuspensionUnpaidInvoices: 3,
+      individualSuspensionUnpaidInterventions: 0,
+      individualPaymentGraceHours: 0,
+    });
+
+    const mission = await http()
+      .get(`/api/v1/cleaning/missions/${IDS.mission}`)
+      .set('Authorization', `Bearer ${customer}`);
+    expect(mission.body).toMatchObject({
+      daysPerWeek: 2,
+      suspension: { cause: 'unpaid_invoices', since: '2026-12-15T06:00:00.000Z', unpaidCount: 2 },
+    });
+    expect(mission.body.interventions[0].cancellationCause).toBeNull();
+
+    const zone = await http()
+      .post('/api/v1/admin/cleaning/zones/abomey-calavi/deactivate')
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${admin}`);
+    expect(zone.status).toBe(200);
+    expect(zone.body).toMatchObject({ code: 'abomey-calavi', active: false, updatedBy: null });
+    expect(cleaning.stub.last('deactivateZone')!.request).toEqual({ code: 'abomey-calavi' });
+    const supervisorZone = await http()
+      .get('/api/v1/admin/cleaning/zones')
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${staff}`);
+    expect(supervisorZone.status).toBe(403);
+
+    const simulation = await http()
+      .post('/api/v1/cleaning/simulations')
+      .send({ serviceCode: 'home_cleaning', premisesType: 'house', quantity: 6, commune: 'Parakou' });
+    expect(simulation.status).toBe(200);
+    expect(simulation.body.covered).toBe(true);
   });
 });

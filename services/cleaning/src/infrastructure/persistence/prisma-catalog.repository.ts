@@ -16,6 +16,7 @@ import {
 } from '../../domain/catalog';
 import { BASIS_POINTS } from '../../domain/money';
 import { type CleaningSettings, DEFAULT_SETTINGS } from '../../domain/settings';
+import { type Zone } from '../../domain/zone';
 import { UuidV7Generator } from '../system/system';
 import { PrismaService } from '../prisma/prisma.service';
 import { json, writeChanges } from './changes';
@@ -146,5 +147,34 @@ export class PrismaCatalogRepository implements CatalogRepository {
       await writeChanges(tx, changes, () => ids.next());
     });
     return values;
+  }
+
+  async listZones(): Promise<Zone[]> {
+    const rows = await this.prisma.serviceZone.findMany({ orderBy: { commune: 'asc' } });
+    return rows.map((row) => ({
+      code: row.code,
+      commune: row.commune,
+      active: row.active,
+      updatedBy: row.updatedBy,
+      updatedAt: row.updatedAt,
+    }));
+  }
+
+  async saveZone(zone: Zone, changes: Changes): Promise<Zone> {
+    const values = {
+      commune: zone.commune,
+      active: zone.active,
+      updatedBy: zone.updatedBy,
+      updatedAt: zone.updatedAt,
+    };
+    await this.prisma.$transaction(async (tx) => {
+      await tx.serviceZone.upsert({
+        where: { code: zone.code },
+        create: { code: zone.code, ...values },
+        update: values,
+      });
+      await writeChanges(tx, changes, () => ids.next());
+    });
+    return zone;
   }
 }

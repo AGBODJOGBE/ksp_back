@@ -49,6 +49,8 @@ export const configSchema = z
     SERVICE_CLIENT_SECRET: optionalText,
     /** Adresse gRPC de cleaning (lot 2). */
     CLEANING_GRPC_URL: z.string().min(1).default('localhost:50053'),
+    /** Adresse gRPC de billing (lot 2, facturation minimale). */
+    BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
     JWKS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(600),
     JWKS_RELOAD_COOLDOWN_SECONDS: z.coerce.number().int().nonnegative().default(30),
 

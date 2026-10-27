@@ -19,7 +19,7 @@ export class CatalogGrpcController implements cleaningV1.CatalogServiceControlle
   }
 
   async simulate(request: cleaningV1.SimulateRequest): Promise<cleaningV1.SimulateResponse> {
-    const { serviceCode, simulation, notice } = await this.useCases.simulate.execute(request);
+    const { serviceCode, simulation, notice, covered } = await this.useCases.simulate.execute(request);
     const base = {
       serviceCode,
       notice,
@@ -27,6 +27,7 @@ export class CatalogGrpcController implements cleaningV1.CatalogServiceControlle
       breakdown: [] as cleaningV1.PriceLine[],
       minimumApplied: false,
       communeCoefficientBp: 0,
+      covered,
     };
     if (!simulation.priced) return { ...base, priced: false };
     return {
