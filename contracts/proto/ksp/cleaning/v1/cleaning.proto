@@ -43,7 +43,10 @@ import "ksp/common/v1/money.proto";
 //   CLEANING_TOO_MANY_OPEN_REQUESTS     FAILED_PRECONDITION details.maximum
 //   CLEANING_CHECKLIST_INCOMPLETE       FAILED_PRECONDITION liste de contrôle non cochée à la clôture
 //   CLEANING_NO_INTERVENTION_LEFT       FAILED_PRECONDITION tous les passages prévus sont déjà planifiés
-//   CLEANING_CONTRACT_SUSPENDED         FAILED_PRECONDITION mission suspendue pour impayés (partie 10)
+//   CLEANING_CONTRACT_SUSPENDED         FAILED_PRECONDITION mission suspendue : impayés (partie 10) ou organisation
+//                                                           suspendue par KSP (ADR-030)
+//   CLEANING_ORGANIZATION_SUSPENDED     FAILED_PRECONDITION organisation suspendue par KSP : ni demande ni
+//                                                           acceptation de devis en son nom (ADR-030)
 //   CLEANING_ZONE_NOT_COVERED           FAILED_PRECONDITION commune hors des zones desservies (details.commune)
 //   CLEANING_ZONE_NOT_FOUND             NOT_FOUND           zone inconnue
 //   CLEANING_PAYMENT_VIA_INVOICE        FAILED_PRECONDITION mission d'entreprise : paiement par sa facture (billing)
@@ -323,7 +326,7 @@ message Intervention {
   repeated string after_photo_file_ids = 9;
   string started_at = 10;
   string completed_at = 11;
-  // Passage annulé : "suspension" (impayés, reprogrammable au déblocage) ou "manual" ; vide sinon.
+  // Passage annulé : "suspension" (reprogrammable au déblocage) ou "manual" ; vide sinon.
   string cancellation_cause = 12;
 }
 
@@ -347,7 +350,7 @@ message Mission {
   string cancellation_reason = 15;
   string created_at = 16;
   string updated_at = 17;
-  // Suspension pour impayés en cours, absente sinon (CDC Nettoyage, partie 10).
+  // Suspension en cours, absente sinon (CDC Nettoyage, partie 10 ; ADR-030).
   Suspension suspension = 18;
   // Jours d'intervention par semaine indiqués par l'entreprise, 0 si non précisés.
   int32 days_per_week = 19;
@@ -363,10 +366,15 @@ message Mission {
 }
 
 message Suspension {
-  // "unpaid_invoices" (entreprise) ou "unpaid_interventions" (particulier).
+  // Plus ancienne cause encore active : "unpaid_invoices" (entreprise), "unpaid_interventions"
+  // (particulier) ou "organization_suspended" (organisation suspendue par KSP, ADR-030).
   string cause = 1;
   string since = 2;
+  // Impayés connus à la dernière décision ; 0 possible pour une organisation suspendue.
   int32 unpaid_count = 3;
+  // Toutes les causes actives, la plus ancienne d'abord : la mission reprend quand il n'en reste
+  // aucune (ADR-030).
+  repeated string causes = 4;
 }
 
 message CatalogOption {

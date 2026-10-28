@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.contract.resumed.v1.schema.json",
   "title": "cleaning.contract.resumed",
-  "description": "Mission débloquée : les impayés sont repassés sous le seuil ; les passages annulés par la suspension ont été reprogrammés automatiquement quand des agents étaient libres (CDC Nettoyage, partie 10). Écouté par notification (admin, superviseur, client) et billing (reprise de la facturation).",
+  "description": "Mission débloquée : la dernière cause de suspension est levée (impayés repassés sous le seuil, ou organisation réactivée par KSP) ; les passages annulés par la suspension ont été reprogrammés automatiquement quand des agents étaient libres (CDC Nettoyage, partie 10 ; ADR-030). Tant qu'une autre cause reste active, seul cleaning.contract.suspension_updated est publié. Écouté par notification (admin, superviseur, client) et billing (reprise de la facturation).",
   "x-event-type": "cleaning.contract.resumed",
   "x-event-version": 1,
   "type": "object",
@@ -21,7 +21,10 @@
     "missionId": { "type": "string", "format": "uuid" },
     "customerId": { "type": "string", "format": "uuid" },
     "organizationId": { "type": ["string", "null"], "format": "uuid" },
-    "cause": { "enum": ["unpaid_invoices", "unpaid_interventions"] },
+    "cause": {
+      "enum": ["unpaid_invoices", "unpaid_interventions", "organization_suspended"],
+      "description": "Dernière cause levée, celle qui débloque la mission (organization_suspended ajouté par l'ADR-030)"
+    },
     "unpaidCount": { "type": "integer", "minimum": 0 },
     "resumedAt": { "type": "string", "format": "date-time" },
     "rescheduledCount": {

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.contract.suspended.v1.schema.json",
   "title": "cleaning.contract.suspended",
-  "description": "Mission suspendue pour impayés : passages à venir annulés, agents libérés (CDC Nettoyage, partie 10). Écouté par notification (client, admin, superviseur) et billing (pause de la facturation).",
+  "description": "Mission suspendue, pour impayés ou parce que KSP a suspendu l'organisation cliente : passages à venir annulés, agents libérés (CDC Nettoyage, partie 10 ; ADR-030). Publié au début de la suspension seulement : une seconde cause qui s'ajoute à une suspension en cours est annoncée par cleaning.contract.suspension_updated. Écouté par notification (client, agents) et billing (pause de la facturation).",
   "x-event-type": "cleaning.contract.suspended",
   "x-event-version": 1,
   "type": "object",
@@ -23,11 +23,19 @@
     "customerId": { "type": "string", "format": "uuid" },
     "organizationId": { "type": ["string", "null"], "format": "uuid" },
     "cause": {
-      "enum": ["unpaid_invoices", "unpaid_interventions"],
-      "description": "unpaid_invoices : factures d'entreprise ; unpaid_interventions : passages d'un particulier"
+      "enum": ["unpaid_invoices", "unpaid_interventions", "organization_suspended"],
+      "description": "unpaid_invoices : factures d'entreprise ; unpaid_interventions : passages d'un particulier ; organization_suspended : organisation suspendue par KSP (ajouté par l'ADR-030)"
     },
-    "unpaidCount": { "type": "integer", "minimum": 1 },
-    "threshold": { "type": "integer", "minimum": 1 },
+    "unpaidCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Impayés au moment de la suspension ; 0 possible quand cause = organization_suspended"
+    },
+    "threshold": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Seuil de suspension pour impayés (à titre d'information quand cause = organization_suspended)"
+    },
     "cancelledInterventionIds": {
       "type": "array",
       "items": { "type": "string", "format": "uuid" }

@@ -1841,7 +1841,8 @@ paths:
         UC-CL-02. Profil complet exigé : la gateway le vérifie auprès d’identity avant l’appel. Idempotent par `Idempotency-Key`. Le type de client (particulier ou entreprise) vient du contexte actif.
 
         Erreurs : `CLEANING_VALIDATION_FAILED`, `CLEANING_SLOT_INVALID` (400), `CLEANING_SERVICE_NOT_FOUND` (404), `IDENTITY_PROFILE_INCOMPLETE`, `CLEANING_LEAD_TIME_TOO_SHORT`, `CLEANING_TOO_MANY_OPEN_REQUESTS`,
-        `CLEANING_ZONE_NOT_COVERED` (422, commune hors des zones desservies, `details.commune`).
+        `CLEANING_ZONE_NOT_COVERED` (422, commune hors des zones desservies, `details.commune`),
+        `CLEANING_ORGANIZATION_SUSPENDED` (422, contexte actif sur une organisation suspendue par KSP, ADR-030).
       x-ksp-grpc: ksp.cleaning.v1.QuoteService/RequestQuote
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -2178,7 +2179,8 @@ paths:
 
         `paymentPlan` est obligatoire pour un particulier (`CLEANING_VALIDATION_FAILED`, `details.field` = `paymentPlan`, s’il manque) et ignoré pour une entreprise, qui règle par sa facture mensuelle.
 
-        Erreurs : `CLEANING_VALIDATION_FAILED`, `CLEANING_SLOT_INVALID` (400), `CLEANING_REQUEST_NOT_FOUND` (404), `CLEANING_CONCURRENT_UPDATE` (409), `CLEANING_QUOTE_EXPIRED`, `CLEANING_INVALID_TRANSITION`, `CLEANING_LEAD_TIME_TOO_SHORT` (422).
+        Erreurs : `CLEANING_VALIDATION_FAILED`, `CLEANING_SLOT_INVALID` (400), `CLEANING_REQUEST_NOT_FOUND` (404), `CLEANING_CONCURRENT_UPDATE` (409), `CLEANING_QUOTE_EXPIRED`, `CLEANING_INVALID_TRANSITION`, `CLEANING_LEAD_TIME_TOO_SHORT` (422),
+        `CLEANING_ORGANIZATION_SUSPENDED` (422, demande d’une organisation suspendue par KSP, ADR-030).
       x-ksp-grpc: ksp.cleaning.v1.QuoteService/AcceptQuote
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -3194,7 +3196,7 @@ paths:
         Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
         Erreurs : `CLEANING_TEAM_UNAVAILABLE` (409, `details.agentIds`), `CLEANING_NO_INTERVENTION_LEFT` (422),
-        `CLEANING_CONTRACT_SUSPENDED` (422, mission suspendue pour impayés).
+        `CLEANING_CONTRACT_SUSPENDED` (422, mission suspendue : impayés ou organisation suspendue par KSP).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ScheduleIntervention
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -6440,7 +6442,7 @@ components:
           format: date-time
         cancellationCause:
           description: |
-            Passage annulé : `suspension` (impayés, reprogrammé automatiquement au déblocage) ou `manual` ; null sinon.
+            Passage annulé : `suspension` (reprogrammé automatiquement au déblocage) ou `manual` ; null sinon.
           oneOf:
             - enum:
                 - suspension
@@ -6639,7 +6641,7 @@ components:
           maximum: 7
         suspension:
           description: |
-            Suspension pour impayés en cours (CDC Nettoyage, partie 10) : passages à venir annulés, agents libérés,
+            Suspension en cours (CDC Nettoyage, partie 10 ; ADR-030) : passages à venir annulés, agents libérés,
             aucune planification possible (`CLEANING_CONTRACT_SUSPENDED`) jusqu'au déblocage ; null sinon.
           oneOf:
             - $ref: '#/components/schemas/CleaningSuspension'
@@ -6655,6 +6657,7 @@ components:
       additionalProperties: false
       required:
         - cause
+        - causes
         - since
         - unpaidCount
       properties:
@@ -6662,13 +6665,29 @@ components:
           enum:
             - unpaid_invoices
             - unpaid_interventions
-          description: Factures d'entreprise impayées, ou passages impayés d'un particulier en récurrent.
+            - organization_suspended
+          description: |
+            Plus ancienne cause encore active : factures d'entreprise impayées, passages impayés d'un particulier en
+            récurrent, ou organisation suspendue par KSP (ADR-030).
+        causes:
+          type: array
+          minItems: 1
+          items:
+            enum:
+              - unpaid_invoices
+              - unpaid_interventions
+              - organization_suspended
+          description: |
+            Toutes les causes actives, la plus ancienne d'abord (ajout, ADR-030). Les causes se cumulent : la mission
+            reprend quand il n'en reste aucune (un règlement ne lève pas la suspension de l'organisation, et
+            inversement).
         since:
           type: string
           format: date-time
         unpaidCount:
           type: integer
-          minimum: 1
+          minimum: 0
+          description: Impayés connus à la dernière décision ; 0 possible pour une organisation suspendue.
     CleaningMissionList:
       type: object
       additionalProperties: false

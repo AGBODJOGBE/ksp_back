@@ -234,6 +234,16 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     rescheduledCount: 3,
     failedCount: 1,
   },
+  'cleaning.contract.suspension_updated': {
+    missionId: uuid,
+    customerId: uuid,
+    organizationId: uuid,
+    change: 'cause_lifted',
+    cause: 'organization_suspended',
+    causes: ['unpaid_invoices'],
+    unpaidCount: 2,
+    updatedAt: '2026-12-18T06:00:00Z',
+  },
   'cleaning.rescheduling.failed': {
     missionId: uuid,
     customerId: uuid,
@@ -267,6 +277,33 @@ describe('Contrats des événements cleaning', () => {
       }
     },
   );
+
+  it('suspension et reprise portent aussi la cause « organisation suspendue » (ADR-030)', () => {
+    const suspended = ajv.compile(schemas.get('cleaning.contract.suspended')!);
+    const resumed = ajv.compile(schemas.get('cleaning.contract.resumed')!);
+    const cause = 'organization_suspended';
+    expect(suspended({ ...cleaningExamples['cleaning.contract.suspended'], cause, unpaidCount: 0 })).toBe(
+      true,
+    );
+    expect(resumed({ ...cleaningExamples['cleaning.contract.resumed'], cause })).toBe(true);
+    expect(suspended({ ...cleaningExamples['cleaning.contract.suspended'], cause: 'fraud' })).toBe(false);
+  });
+
+  it('changement de cause : la mission reste suspendue, au moins une cause active (ADR-030)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.contract.suspension_updated')!);
+    const base = cleaningExamples['cleaning.contract.suspension_updated'];
+    expect(
+      validate({
+        ...base,
+        change: 'cause_added',
+        cause: 'unpaid_invoices',
+        causes: ['organization_suspended', 'unpaid_invoices'],
+      }),
+    ).toBe(true);
+    expect(validate({ ...base, causes: [] })).toBe(false);
+    expect(validate({ ...base, change: 'resumed' })).toBe(false);
+    expect(validate({ ...base, causes: ['unpaid_invoices', 'unpaid_invoices'] })).toBe(false);
+  });
 
   it('les montants sont des entiers en XOF', () => {
     const validate = ajv.compile(schemas.get('cleaning.quote.sent')!);
