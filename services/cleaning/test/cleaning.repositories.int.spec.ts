@@ -38,6 +38,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
   let prisma: PrismaService;
   let deps: CleaningDeps;
   let useCases: ReturnType<typeof createUseCases>;
+  const clock = new FixedClock();
 
   beforeAll(async () => {
     const admin = new Client({ connectionString: databaseUrl });
@@ -63,7 +64,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       invoices: new PrismaContractInvoiceRepository(prisma),
       people: { userNames: async () => new Map(), organizationNames: async () => new Map() },
       fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
-      clock: new FixedClock(),
+      clock,
       ids: new UuidV7Generator(),
     };
     useCases = createUseCases(deps);
@@ -150,9 +151,13 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
         agentId: AGENT_ID,
       }),
     );
+    // Le compte rendu ne s'enregistre qu'à partir de l'heure prévue de la visite (contrôle des dates).
+    const scheduledNow = clock.current;
+    clock.current = new Date('2026-10-26T09:30:00Z');
     await asSupervisor(() =>
       useCases.completeVisit.execute({ visitId: visited.visit!.id, report: 'Visite faite.' }),
     );
+    clock.current = scheduledNow;
     await asSupervisor(() =>
       useCases.sendQuote.execute({
         requestId: a.id,
