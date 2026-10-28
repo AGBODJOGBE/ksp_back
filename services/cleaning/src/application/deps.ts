@@ -1,10 +1,12 @@
 import { type Mission } from '../domain/mission';
 import { effectiveRequestStatus, type QuoteRequest } from '../domain/quote-request';
+import { type FieldDatePolicy } from '../domain/schedule';
 import {
   type AgentRepository,
   type CatalogRepository,
   type ContractInvoiceRepository,
   type MissionRepository,
+  type PeopleDirectory,
   type QuoteRequestRepository,
 } from './ports';
 import { type Clock, type IdGenerator } from './shared/system.ports';
@@ -16,6 +18,10 @@ export interface CleaningDeps {
   missions: MissionRepository;
   agents: AgentRepository;
   invoices: ContractInvoiceRepository;
+  /** Noms affichés au back-office, lus dans identity (ADR-029). */
+  people: PeopleDirectory;
+  /** Contrôles de dates du terrain, réglables par configuration. */
+  fieldDates: FieldDatePolicy;
   clock: Clock;
   ids: IdGenerator;
 }

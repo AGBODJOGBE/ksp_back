@@ -1,7 +1,16 @@
-import { PlatformModule } from '@ksp/platform';
-import { type DynamicModule, Module } from '@nestjs/common';
+import { identityV1 } from '@ksp/contracts';
+import {
+  GrpcCaller,
+  grpcClientOptions,
+  PlatformModule,
+  SERVICE_TOKEN_PROVIDER,
+  type ServiceTokenProvider,
+} from '@ksp/platform';
+import { type DynamicModule, Logger, Module } from '@nestjs/common';
+import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { CLEANING_USE_CASES, createUseCases } from './application/use-cases';
 import { type ServiceConfig } from './config';
+import { IdentityPeopleDirectory } from './infrastructure/identity/identity-people-directory';
 import { BillingEventsConsumer } from './infrastructure/messaging/billing-events.consumer';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { PrismaAgentRepository } from './infrastructure/persistence/prisma-agent.repository';
@@ -23,13 +32,18 @@ import {
   QuoteGrpcController,
 } from './interfaces/grpc/customer.controllers';
 
+const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
+
 /** Racine de composition : relie les cas d'usage à leurs adaptateurs. */
 @Module({})
 export class AppModule {
   static forRoot(config: ServiceConfig): DynamicModule {
     return {
       module: AppModule,
-      imports: [PlatformModule.forRoot(config)],
+      imports: [
+        PlatformModule.forRoot(config),
+        ClientsModule.register([grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL)]),
+      ],
       controllers: [
         CatalogGrpcController,
         QuoteGrpcController,
@@ -56,6 +70,8 @@ export class AppModule {
             PrismaMissionRepository,
             PrismaAgentRepository,
             PrismaContractInvoiceRepository,
+            IDENTITY_CLIENT,
+            { token: SERVICE_TOKEN_PROVIDER, optional: true },
           ],
           useFactory: (
             catalog: PrismaCatalogRepository,
@@ -63,16 +79,36 @@ export class AppModule {
             missions: PrismaMissionRepository,
             agents: PrismaAgentRepository,
             invoices: PrismaContractInvoiceRepository,
-          ) =>
-            createUseCases({
+            grpc: ClientGrpc,
+            serviceTokens: ServiceTokenProvider | undefined,
+          ) => {
+            if (!serviceTokens) {
+              new Logger('Cleaning').warn(
+                'Aucun jeton de service : appels vers identity non authentifiés (développement uniquement).',
+              );
+            }
+            return createUseCases({
               catalog,
               requests,
               missions,
               agents,
               invoices,
+              people: new IdentityPeopleDirectory(
+                grpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
+                new GrpcCaller({
+                  target: 'identity',
+                  ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+                }),
+              ),
+              fieldDates: {
+                blockEarlyInterventionStart: config.CLEANING_BLOCK_EARLY_INTERVENTION_START,
+                blockEarlyVisitReport: config.CLEANING_BLOCK_EARLY_VISIT_REPORT,
+                timeZone: config.CLEANING_TIME_ZONE,
+              },
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
-            }),
+            });
+          },
         },
       ],
     };

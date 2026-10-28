@@ -66,7 +66,7 @@ export class QuoteGrpcController implements cleaningV1.QuoteServiceController {
     request: cleaningV1.ListMyRequestsRequest,
   ): Promise<cleaningV1.ListMyRequestsResponse> {
     const page = await this.useCases.listMyRequests.execute(parsePage(request.page));
-    return { requests: page.items.map(presentRequest), nextCursor: page.nextCursor ?? '' };
+    return { requests: page.items.map((item) => presentRequest(item)), nextCursor: page.nextCursor ?? '' };
   }
 
   async getRequest(request: cleaningV1.GetRequestRequest): Promise<cleaningV1.GetRequestResponse> {
@@ -96,7 +96,7 @@ export class MissionGrpcController implements cleaningV1.MissionServiceControlle
     request: cleaningV1.ListMyMissionsRequest,
   ): Promise<cleaningV1.ListMyMissionsResponse> {
     const page = await this.useCases.listMyMissions.execute(parsePage(request.page));
-    return { missions: page.items.map(presentMission), nextCursor: page.nextCursor ?? '' };
+    return { missions: page.items.map((item) => presentMission(item)), nextCursor: page.nextCursor ?? '' };
   }
 
   async getMission(request: cleaningV1.GetMissionRequest): Promise<cleaningV1.GetMissionResponse> {

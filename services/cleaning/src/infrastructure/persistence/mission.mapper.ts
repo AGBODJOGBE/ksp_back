@@ -68,6 +68,7 @@ export function toMission(row: MissionWithRelations): Mission {
         reference: payment.reference,
         recordedBy: payment.recordedBy,
         recordedAt: payment.recordedAt,
+        idempotencyKey: payment.idempotencyKey,
       })),
     },
     cancellationReason: row.cancellationReason,

@@ -1,5 +1,6 @@
 import { type Zone } from '../../domain/zone';
 import { type cleaningV1 } from '@ksp/contracts';
+import { type NameBook, NO_NAMES } from '../../application/backoffice/backoffice-names.use-case';
 import { type MissionView } from '../../application/deps';
 import { type StoredSettings } from '../../application/ports';
 import { type Agent, type Team } from '../../domain/agent';
@@ -16,6 +17,11 @@ import { type PriceLine } from '../../domain/simulator';
 export const money = (amount: number) => ({ amount, currency: CURRENCY });
 const iso = (date: Date | null | undefined) => (date ? date.toISOString() : '');
 const text = (value: string | null | undefined) => value ?? '';
+/** Nom affiché au back-office (ADR-029) ; chaîne vide s'il est inconnu. */
+const userName = (names: NameBook, userId: string | null | undefined) =>
+  (userId && names.users.get(userId)) || '';
+const organizationName = (names: NameBook, organizationId: string | null | undefined) =>
+  (organizationId && names.organizations.get(organizationId)) || '';
 
 export const presentSlot = (slot: Slot): cleaningV1.TimeSlot => ({
   start: iso(slot.start),
@@ -50,7 +56,8 @@ function presentQuote(quote: Quote): cleaningV1.Quote {
   };
 }
 
-export function presentRequest(request: QuoteRequest): cleaningV1.QuoteRequest {
+/** Demande ; les noms (back-office) restent vides sans annuaire, par exemple dans l'espace client. */
+export function presentRequest(request: QuoteRequest, names: NameBook = NO_NAMES): cleaningV1.QuoteRequest {
   return {
     id: request.id,
     status: request.status,
@@ -79,6 +86,7 @@ export function presentRequest(request: QuoteRequest): cleaningV1.QuoteRequest {
           agentId: request.visit.agentId,
           report: text(request.visit.report),
           completedAt: iso(request.visit.completedAt),
+          agentName: userName(names, request.visit.agentId),
         }
       : undefined,
     quote: request.quote ? presentQuote(request.quote) : undefined,
@@ -87,10 +95,15 @@ export function presentRequest(request: QuoteRequest): cleaningV1.QuoteRequest {
     createdAt: iso(request.createdAt),
     updatedAt: iso(request.updatedAt),
     daysPerWeek: request.daysPerWeek ?? 0,
+    customerName: userName(names, request.customerId),
+    organizationName: organizationName(names, request.organizationId),
   };
 }
 
-export function presentMission({ mission, agentNames }: MissionView): cleaningV1.Mission {
+export function presentMission(
+  { mission, agentNames }: MissionView,
+  names: NameBook = NO_NAMES,
+): cleaningV1.Mission {
   const { payment } = mission;
   return {
     id: mission.id,
@@ -133,6 +146,7 @@ export function presentMission({ mission, agentNames }: MissionView): cleaningV1
         reference: text(record.reference),
         recordedBy: record.recordedBy,
         recordedAt: iso(record.recordedAt),
+        recordedByName: userName(names, record.recordedBy),
       })),
     },
     cancellationReason: text(mission.cancellationReason),
@@ -146,6 +160,10 @@ export function presentMission({ mission, agentNames }: MissionView): cleaningV1
         }
       : undefined,
     daysPerWeek: mission.daysPerWeek ?? 0,
+    customerKind: mission.organizationId ? 'business' : 'individual',
+    organizationId: text(mission.organizationId),
+    customerName: userName(names, mission.customerId),
+    organizationName: organizationName(names, mission.organizationId),
   };
 }
 
@@ -167,7 +185,10 @@ export function presentOffer(service: ServiceDefinition): cleaningV1.ServiceOffe
   };
 }
 
-export function presentDefinition(service: ServiceDefinition): cleaningV1.ServiceDefinition {
+export function presentDefinition(
+  service: ServiceDefinition,
+  names: NameBook = NO_NAMES,
+): cleaningV1.ServiceDefinition {
   const { pricing } = service;
   return {
     code: service.code,
@@ -193,11 +214,12 @@ export function presentDefinition(service: ServiceDefinition): cleaningV1.Servic
       checklist: pricing.checklist.map((item) => ({ ...item, done: false })),
       updatedBy: pricing.updatedBy,
       updatedAt: pricing.version ? iso(pricing.updatedAt) : '',
+      updatedByName: userName(names, pricing.updatedBy),
     },
   };
 }
 
-export function presentSettings(settings: StoredSettings): cleaningV1.Settings {
+export function presentSettings(settings: StoredSettings, names: NameBook = NO_NAMES): cleaningV1.Settings {
   return {
     quoteValidityDays: settings.quoteValidityDays,
     minimumLeadHours: settings.minimumLeadHours,
@@ -211,6 +233,7 @@ export function presentSettings(settings: StoredSettings): cleaningV1.Settings {
     individualPaymentGraceHours: settings.individualPaymentGraceHours,
     updatedBy: text(settings.updatedBy),
     updatedAt: iso(settings.updatedAt),
+    updatedByName: userName(names, settings.updatedBy),
   };
 }
 
@@ -242,12 +265,13 @@ export function presentServedZone(zone: Zone): cleaningV1.ServedZone {
   return { code: zone.code, commune: zone.commune };
 }
 
-export function presentZone(zone: Zone): cleaningV1.Zone {
+export function presentZone(zone: Zone, names: NameBook = NO_NAMES): cleaningV1.Zone {
   return {
     code: zone.code,
     commune: zone.commune,
     active: zone.active,
     updatedBy: text(zone.updatedBy),
     updatedAt: iso(zone.updatedAt),
+    updatedByName: userName(names, zone.updatedBy),
   };
 }

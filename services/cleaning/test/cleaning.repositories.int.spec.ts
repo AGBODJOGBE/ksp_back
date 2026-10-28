@@ -13,6 +13,7 @@ import {
   OTHER_AGENT_ID,
 } from '../src/application/testing/fakes';
 import { createUseCases } from '../src/application/use-cases';
+import { DEFAULT_FIELD_DATE_POLICY } from '../src/domain/schedule';
 import { PrismaAgentRepository } from '../src/infrastructure/persistence/prisma-agent.repository';
 import { PrismaCatalogRepository } from '../src/infrastructure/persistence/prisma-catalog.repository';
 import { PrismaContractInvoiceRepository } from '../src/infrastructure/persistence/prisma-contract-invoice.repository';
@@ -60,6 +61,8 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       missions: new PrismaMissionRepository(prisma),
       agents: new PrismaAgentRepository(prisma),
       invoices: new PrismaContractInvoiceRepository(prisma),
+      people: { userNames: async () => new Map(), organizationNames: async () => new Map() },
+      fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
       clock: new FixedClock(),
       ids: new UuidV7Generator(),
     };

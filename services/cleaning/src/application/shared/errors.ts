@@ -1,4 +1,6 @@
 import { AppError } from '@ksp/platform';
+import { CURRENCY, formatXof } from '../../domain/money';
+import { formatDateTimeFr, formatDayFr, localDay } from '../../domain/schedule';
 
 /** Erreurs du service (contrat gRPC, en-tête de cleaning.proto). Messages en français, pour l'utilisateur. */
 export const CleaningErrors = {
@@ -87,4 +89,29 @@ export const CleaningErrors = {
     AppError.conflict('CLEANING_AGENT_ALREADY_REGISTERED', 'Ce compte est déjà rattaché comme agent.'),
   paymentInvalid: (reason: string) =>
     AppError.invalid('CLEANING_PAYMENT_INVALID', 'Ce paiement ne peut pas être enregistré.', { reason }),
+  /** Paiement au-delà du reste dû : le montant encore attendu est rappelé (message et détails). */
+  paymentExceedsBalance: (remainingDue: number) =>
+    AppError.invalid(
+      'CLEANING_PAYMENT_INVALID',
+      remainingDue > 0
+        ? `Ce paiement dépasse le reste dû : ${formatXof(remainingDue)}.`
+        : 'Cette mission est déjà entièrement payée : aucun paiement de plus ne peut être enregistré.',
+      { reason: 'exceeds_balance', remainingDue: { amount: remainingDue, currency: CURRENCY } },
+    ),
+  interventionTooEarly: (scheduledStart: Date, timeZone: string) =>
+    AppError.precondition(
+      'CLEANING_INTERVENTION_TOO_EARLY',
+      `Ce passage est prévu le ${formatDayFr(scheduledStart, timeZone)} : il ne peut pas être démarré avant ce jour.`,
+      {
+        scheduledStart: scheduledStart.toISOString(),
+        scheduledDate: localDay(scheduledStart, timeZone),
+        timeZone,
+      },
+    ),
+  visitTooEarly: (scheduledAt: Date, timeZone: string) =>
+    AppError.precondition(
+      'CLEANING_VISIT_TOO_EARLY',
+      `La visite est prévue le ${formatDateTimeFr(scheduledAt, timeZone)} : son compte rendu ne peut pas être enregistré avant cette heure.`,
+      { scheduledAt: scheduledAt.toISOString(), timeZone },
+    ),
 };

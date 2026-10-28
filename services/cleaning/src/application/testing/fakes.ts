@@ -9,7 +9,12 @@ import {
   type Mission,
 } from '../../domain/mission';
 import { isOpenRequest, type QuoteRequest } from '../../domain/quote-request';
-import { type BusyPeriod, slotFrom } from '../../domain/schedule';
+import {
+  type BusyPeriod,
+  DEFAULT_FIELD_DATE_POLICY,
+  type FieldDatePolicy,
+  slotFrom,
+} from '../../domain/schedule';
 import { type CleaningSettings, DEFAULT_SETTINGS } from '../../domain/settings';
 import { type CleaningDeps } from '../deps';
 import {
@@ -22,6 +27,7 @@ import {
   type MissionFilter,
   type MissionRepository,
   type NewPricing,
+  type PeopleDirectory,
   type QuoteRequestFilter,
   type QuoteRequestRepository,
   type StoredSettings,
@@ -258,7 +264,9 @@ export class InMemoryRequests implements QuoteRequestRepository {
     const items = [...this.requests.values()].filter(
       (r) =>
         (!filter.customerId || r.customerId === filter.customerId) &&
-        (!filter.status || r.status === filter.status),
+        (!filter.status || r.status === filter.status) &&
+        (!filter.communeCode || zoneCode(r.commune) === filter.communeCode) &&
+        (!filter.customerKind || r.customerKind === filter.customerKind),
     );
     return paginate(items, page);
   }
@@ -320,6 +328,30 @@ export class InMemoryAgents implements AgentRepository {
   }
 }
 
+/** Annuaire d'identity simulé : noms connus, appels comptés, panne possible (lecture au mieux). */
+export class InMemoryPeople implements PeopleDirectory {
+  readonly users = new Map<string, string>();
+  readonly organizations = new Map<string, string>();
+  readonly calls: { kind: 'users' | 'organizations'; ids: string[] }[] = [];
+  /** Simule identity indisponible : l'adaptateur réel rend alors des noms absents. */
+  down = false;
+
+  async userNames(userIds: readonly string[]) {
+    this.calls.push({ kind: 'users', ids: [...userIds] });
+    if (this.down) return new Map<string, string>();
+    return new Map(userIds.flatMap((id) => (this.users.has(id) ? [[id, this.users.get(id)!] as const] : [])));
+  }
+  async organizationNames(organizationIds: readonly string[]) {
+    this.calls.push({ kind: 'organizations', ids: [...organizationIds] });
+    if (this.down) return new Map<string, string>();
+    return new Map(
+      organizationIds.flatMap((id) =>
+        this.organizations.has(id) ? [[id, this.organizations.get(id)!] as const] : [],
+      ),
+    );
+  }
+}
+
 export interface TestWorld extends CleaningDeps {
   recorder: Recorder;
   clock: FixedClock;
@@ -328,6 +360,8 @@ export interface TestWorld extends CleaningDeps {
   missions: InMemoryMissions;
   agents: InMemoryAgents;
   invoices: InMemoryContractInvoices;
+  people: InMemoryPeople;
+  fieldDates: FieldDatePolicy;
 }
 
 export function testWorld(): TestWorld {
@@ -342,6 +376,8 @@ export function testWorld(): TestWorld {
     missions,
     agents: new InMemoryAgents(recorder),
     invoices: new InMemoryContractInvoices(),
+    people: new InMemoryPeople(),
+    fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
   };
 }
 
@@ -379,6 +415,9 @@ export const asCustomer = <T>(fn: () => T, userId = CUSTOMER_ID) => as(userId, f
 export const asSupervisor = <T>(fn: () => T) =>
   as(SUPERVISOR_ID, fn, { roles: ['cleaning_supervisor'], mfa: true });
 export const asAdmin = <T>(fn: () => T) => as(SUPERVISOR_ID, fn, { roles: ['cleaning_admin'], mfa: true });
+export const SUPER_ADMIN_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0009';
+export const asSuperAdmin = <T>(fn: () => T, mfa = true) =>
+  as(SUPER_ADMIN_ID, fn, { roles: ['super_admin'], mfa });
 export const asAgent = <T>(fn: () => T, agentId = AGENT_ID) =>
   as(agentId, fn, { roles: ['cleaning_agent'], mfa: true });
 

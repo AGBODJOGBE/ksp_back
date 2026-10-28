@@ -109,6 +109,7 @@ describe('règle des impayés (partie 10)', () => {
             reference: null,
             recordedBy: 's',
             recordedAt: NOW,
+            idempotencyKey: null,
           },
         ],
       },

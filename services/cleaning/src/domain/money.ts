@@ -24,3 +24,12 @@ export function percentOf(amount: number, percent: number): number {
 export function applyCoefficient(amount: number, coefficientBp: number): number {
   return Math.round((amount * coefficientBp) / BASIS_POINTS);
 }
+
+const NBSP = ' ';
+
+/** 12500 → « 12 500 FCFA » (espace insécable), montant entier, sans division. */
+export function formatXof(amount: number): string {
+  const digits = String(Math.trunc(Math.abs(amount)));
+  const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
+  return `${amount < 0 ? '-' : ''}${grouped}${NBSP}FCFA`;
+}

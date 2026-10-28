@@ -1,8 +1,13 @@
 import { cleaningV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
+import { type MissionView } from '../../application/deps';
+import { type StoredSettings } from '../../application/ports';
 import { parsePage } from '../../application/shared/validation';
 import { CLEANING_USE_CASES, type CleaningUseCases } from '../../application/use-cases';
+import { type ServiceDefinition } from '../../domain/catalog';
+import { type QuoteRequest } from '../../domain/quote-request';
 import { type PriceLine } from '../../domain/simulator';
+import { type Zone } from '../../domain/zone';
 import {
   presentAgent,
   presentDefinition,
@@ -24,7 +29,10 @@ function toLine(line: cleaningV1.PriceLine): PriceLine {
   };
 }
 
-/** Adaptateur gRPC du back-office Nettoyage (UC-CL-06 à 12). Les droits sont vérifiés par chaque cas d'usage. */
+/**
+ * Adaptateur gRPC du back-office Nettoyage (UC-CL-06 à 12). Les droits sont vérifiés par chaque
+ * cas d'usage ; chaque réponse est complétée des noms affichés (ADR-029).
+ */
 @Controller()
 @cleaningV1.CleaningAdminServiceControllerMethods()
 export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServiceController {
@@ -38,33 +46,39 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
     const page = await this.useCases.listQuoteRequests.execute({
       page: parsePage(request.page),
       status: request.status,
+      commune: request.commune,
+      customerKind: request.customerKind,
     });
-    return { requests: page.items.map(presentRequest), nextCursor: page.nextCursor ?? '' };
+    const names = await this.useCases.resolveNames.forRequests(page.items);
+    return {
+      requests: page.items.map((item) => presentRequest(item, names)),
+      nextCursor: page.nextCursor ?? '',
+    };
   }
 
   async getQuoteRequest(
     request: cleaningV1.GetQuoteRequestRequest,
   ): Promise<cleaningV1.GetQuoteRequestResponse> {
-    return { request: presentRequest(await this.useCases.getQuoteRequest.execute(request.requestId)) };
+    return { request: await this.request(await this.useCases.getQuoteRequest.execute(request.requestId)) };
   }
 
   async rejectQuoteRequest(
     request: cleaningV1.RejectQuoteRequestRequest,
   ): Promise<cleaningV1.RejectQuoteRequestResponse> {
-    return { request: presentRequest(await this.useCases.rejectQuoteRequest.execute(request)) };
+    return { request: await this.request(await this.useCases.rejectQuoteRequest.execute(request)) };
   }
 
   async scheduleVisit(request: cleaningV1.ScheduleVisitRequest): Promise<cleaningV1.ScheduleVisitResponse> {
-    return { request: presentRequest(await this.useCases.scheduleVisit.execute(request)) };
+    return { request: await this.request(await this.useCases.scheduleVisit.execute(request)) };
   }
 
   async completeVisit(request: cleaningV1.CompleteVisitRequest): Promise<cleaningV1.CompleteVisitResponse> {
-    return { request: presentRequest(await this.useCases.completeVisit.execute(request)) };
+    return { request: await this.request(await this.useCases.completeVisit.execute(request)) };
   }
 
   async sendQuote(request: cleaningV1.SendQuoteRequest): Promise<cleaningV1.SendQuoteResponse> {
     const result = await this.useCases.sendQuote.execute({ ...request, lines: request.lines.map(toLine) });
-    return { request: presentRequest(result) };
+    return { request: await this.request(result) };
   }
 
   // --- Missions et passages ------------------------------------------------------------------
@@ -74,44 +88,50 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
       page: parsePage(request.page),
       status: request.status,
     });
-    return { missions: page.items.map(presentMission), nextCursor: page.nextCursor ?? '' };
+    const names = await this.useCases.resolveNames.forMissions(page.items.map((view) => view.mission));
+    return {
+      missions: page.items.map((view) => presentMission(view, names)),
+      nextCursor: page.nextCursor ?? '',
+    };
   }
 
   async getMissionDetail(
     request: cleaningV1.GetMissionDetailRequest,
   ): Promise<cleaningV1.GetMissionDetailResponse> {
-    return { mission: presentMission(await this.useCases.getMissionDetail.execute(request.missionId)) };
+    return { mission: await this.mission(await this.useCases.getMissionDetail.execute(request.missionId)) };
   }
 
   async scheduleIntervention(
     request: cleaningV1.ScheduleInterventionRequest,
   ): Promise<cleaningV1.ScheduleInterventionResponse> {
-    return { mission: presentMission(await this.useCases.scheduleIntervention.execute(request)) };
+    return { mission: await this.mission(await this.useCases.scheduleIntervention.execute(request)) };
   }
 
   async startIntervention(
     request: cleaningV1.StartInterventionRequest,
   ): Promise<cleaningV1.StartInterventionResponse> {
-    return { mission: presentMission(await this.useCases.startIntervention.execute(request.interventionId)) };
+    return {
+      mission: await this.mission(await this.useCases.startIntervention.execute(request.interventionId)),
+    };
   }
 
   async updateChecklist(
     request: cleaningV1.UpdateChecklistRequest,
   ): Promise<cleaningV1.UpdateChecklistResponse> {
-    return { mission: presentMission(await this.useCases.updateChecklist.execute(request)) };
+    return { mission: await this.mission(await this.useCases.updateChecklist.execute(request)) };
   }
 
   async reportIncident(
     request: cleaningV1.ReportIncidentRequest,
   ): Promise<cleaningV1.ReportIncidentResponse> {
-    return { mission: presentMission(await this.useCases.reportIncident.execute(request)) };
+    return { mission: await this.mission(await this.useCases.reportIncident.execute(request)) };
   }
 
   async resumeIntervention(
     request: cleaningV1.ResumeInterventionRequest,
   ): Promise<cleaningV1.ResumeInterventionResponse> {
     return {
-      mission: presentMission(await this.useCases.resumeIntervention.execute(request.interventionId)),
+      mission: await this.mission(await this.useCases.resumeIntervention.execute(request.interventionId)),
     };
   }
 
@@ -119,7 +139,7 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
     request: cleaningV1.CompleteInterventionRequest,
   ): Promise<cleaningV1.CompleteInterventionResponse> {
     return {
-      mission: presentMission(await this.useCases.completeIntervention.execute(request.interventionId)),
+      mission: await this.mission(await this.useCases.completeIntervention.execute(request.interventionId)),
     };
   }
 
@@ -129,21 +149,29 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
       amount: request.amount?.amount ?? 0,
       method: request.method,
       reference: request.reference,
+      idempotencyKey: request.idempotencyKey,
     });
-    return { mission: presentMission(result) };
+    return { mission: await this.mission(result) };
   }
 
   async cancelMissionAsSupervisor(
     request: cleaningV1.CancelMissionAsSupervisorRequest,
   ): Promise<cleaningV1.CancelMissionAsSupervisorResponse> {
-    return { mission: presentMission(await this.useCases.cancelMissionAsSupervisor.execute(request)) };
+    return { mission: await this.mission(await this.useCases.cancelMissionAsSupervisor.execute(request)) };
   }
 
   // --- Catalogue, grille, réglages -----------------------------------------------------------
 
   async getCatalog(): Promise<cleaningV1.GetCatalogResponse> {
     const { services, settings } = await this.useCases.getCatalog.execute();
-    return { services: services.map(presentDefinition), settings: presentSettings(settings) };
+    const names = await this.useCases.resolveNames.forAuthors([
+      ...services.map((service) => service.pricing.updatedBy),
+      settings.updatedBy,
+    ]);
+    return {
+      services: services.map((service) => presentDefinition(service, names)),
+      settings: presentSettings(settings, names),
+    };
   }
 
   async saveService(request: cleaningV1.SaveServiceRequest): Promise<cleaningV1.SaveServiceResponse> {
@@ -169,7 +197,7 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
         checklist: (pricing?.checklist ?? []).map((item) => ({ code: item.code, label: item.label })),
       },
     });
-    return { service: presentDefinition(saved) };
+    return { service: await this.definition(saved) };
   }
 
   async updateSettings(
@@ -189,23 +217,25 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
       individualSuspensionUnpaidInterventions: s?.individualSuspensionUnpaidInterventions ?? 0,
       individualPaymentGraceHours: s?.individualPaymentGraceHours ?? 0,
     });
-    return { settings: presentSettings(saved) };
+    return { settings: await this.settings(saved) };
   }
 
   // --- Zones desservies ----------------------------------------------------------------------
 
   async listZones(): Promise<cleaningV1.ListZonesResponse> {
-    return { zones: (await this.useCases.listZones.execute()).map(presentZone) };
+    const zones = await this.useCases.listZones.execute();
+    const names = await this.useCases.resolveNames.forAuthors(zones.map((zone) => zone.updatedBy));
+    return { zones: zones.map((zone) => presentZone(zone, names)) };
   }
 
   async saveZone(request: cleaningV1.SaveZoneRequest): Promise<cleaningV1.SaveZoneResponse> {
-    return { zone: presentZone(await this.useCases.saveZone.execute({ commune: request.commune })) };
+    return { zone: await this.zone(await this.useCases.saveZone.execute({ commune: request.commune })) };
   }
 
   async deactivateZone(
     request: cleaningV1.DeactivateZoneRequest,
   ): Promise<cleaningV1.DeactivateZoneResponse> {
-    return { zone: presentZone(await this.useCases.deactivateZone.execute({ code: request.code })) };
+    return { zone: await this.zone(await this.useCases.deactivateZone.execute({ code: request.code })) };
   }
 
   // --- Agents et équipes ---------------------------------------------------------------------
@@ -240,5 +270,30 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
   async updateTeam(request: cleaningV1.UpdateTeamRequest): Promise<cleaningV1.UpdateTeamResponse> {
     const team = await this.useCases.updateTeam.execute(request);
     return { team: presentTeam(team, await this.useCases.listAgents.execute()) };
+  }
+
+  // --- Noms affichés (ADR-029) -----------------------------------------------------------------
+
+  private async request(request: QuoteRequest): Promise<cleaningV1.QuoteRequest> {
+    return presentRequest(request, await this.useCases.resolveNames.forRequests([request]));
+  }
+
+  private async mission(view: MissionView): Promise<cleaningV1.Mission> {
+    return presentMission(view, await this.useCases.resolveNames.forMissions([view.mission]));
+  }
+
+  private async definition(service: ServiceDefinition): Promise<cleaningV1.ServiceDefinition> {
+    return presentDefinition(
+      service,
+      await this.useCases.resolveNames.forAuthors([service.pricing.updatedBy]),
+    );
+  }
+
+  private async settings(settings: StoredSettings): Promise<cleaningV1.Settings> {
+    return presentSettings(settings, await this.useCases.resolveNames.forAuthors([settings.updatedBy]));
+  }
+
+  private async zone(zone: Zone): Promise<cleaningV1.Zone> {
+    return presentZone(zone, await this.useCases.resolveNames.forAuthors([zone.updatedBy]));
   }
 }
