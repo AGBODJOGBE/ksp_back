@@ -63,6 +63,8 @@ export interface PaymentRecord {
   reference: string;
   recordedBy: string;
   recordedAt: string;
+  /** Back-office : nom affiché de la personne qui a enregistré le paiement (ADR-029). */
+  recordedByName: string;
 }
 
 export interface PaymentState {
@@ -89,6 +91,8 @@ export interface SiteVisit {
   agentId: string;
   report: string;
   completedAt: string;
+  /** Back-office : nom affiché de l'agent de la visite (fiche agent du Nettoyage). */
+  agentName: string;
 }
 
 export interface Quote {
@@ -150,6 +154,10 @@ export interface QuoteRequest {
   updatedAt: string;
   /** Entreprise : jours d'intervention par semaine indiqués, 0 si non précisés. */
   daysPerWeek: number;
+  /** Back-office : nom affiché du client (prénom et nom du compte, ADR-029). */
+  customerName: string;
+  /** Back-office : raison sociale de l'organisation, vide pour un particulier (ADR-029). */
+  organizationName: string;
 }
 
 export interface ChecklistItem {
@@ -211,6 +219,17 @@ export interface Mission {
     | undefined;
   /** Jours d'intervention par semaine indiqués par l'entreprise, 0 si non précisés. */
   daysPerWeek: number;
+  /**
+   * "individual" ou "business" (organisation au nom de laquelle le devis a été accepté) : une
+   * mission d'entreprise se règle par sa facture, jamais par un paiement manuel.
+   */
+  customerKind: string;
+  /** Organisation de la mission, vide pour un particulier. */
+  organizationId: string;
+  /** Back-office : nom affiché du client (ADR-029). */
+  customerName: string;
+  /** Back-office : raison sociale de l'organisation, vide pour un particulier (ADR-029). */
+  organizationName: string;
 }
 
 export interface Suspension {
@@ -396,8 +415,15 @@ export interface ListQuoteRequestsRequest {
   page?:
     | Page
     | undefined;
-  /** Filtre facultatif sur l'état. */
+  /**
+   * Filtres facultatifs, cumulables, toujours paginés par curseur.
+   * État de la demande.
+   */
   status: string;
+  /** Code de zone (commune normalisée, par exemple "abomey-calavi", voir Zone). */
+  commune: string;
+  /** "individual" ou "business". */
+  customerKind: string;
 }
 
 export interface ListQuoteRequestsResponse {
@@ -542,6 +568,11 @@ export interface RecordPaymentRequest {
   /** "cash" ou "mobile_money_offline". */
   method: string;
   reference: string;
+  /**
+   * Facultative (8 à 100 caractères : lettres, chiffres, "_" et "-") : un second envoi avec la
+   * même clé pour la même mission n'enregistre rien de plus. Vide : aucun contrôle de rejeu.
+   */
+  idempotencyKey: string;
 }
 
 export interface RecordPaymentResponse {
@@ -582,6 +613,8 @@ export interface PricingRule {
   checklist: ChecklistItem[];
   updatedBy: string;
   updatedAt: string;
+  /** Back-office : nom affiché de l'auteur de la version (ADR-029). */
+  updatedByName: string;
 }
 
 export interface ServiceDefinition {
@@ -615,6 +648,8 @@ export interface Settings {
   individualSuspensionUnpaidInterventions: number;
   /** Heures laissées après la fin d'un passage pour enregistrer son paiement (24 par défaut). */
   individualPaymentGraceHours: number;
+  /** Back-office : nom affiché de l'auteur de la dernière modification (ADR-029), ignoré à l'écriture. */
+  updatedByName: string;
 }
 
 export interface GetCatalogRequest {
@@ -653,6 +688,8 @@ export interface Zone {
   active: boolean;
   updatedBy: string;
   updatedAt: string;
+  /** Back-office : nom affiché de l'auteur de la dernière modification (ADR-029). */
+  updatedByName: string;
 }
 
 export interface ListZonesRequest {
@@ -1001,12 +1038,17 @@ export const MISSION_SERVICE_NAME = "MissionService";
 /**
  * ---------------------------------------------------------------------------
  * Back-office (UC-CL-06 à 12). Rôles : cleaning_supervisor, cleaning_agent (ses passages
- * uniquement), cleaning_admin ; double authentification exigée.
+ * uniquement), cleaning_admin ; super_admin a partout la portée de cleaning_admin.
+ * Double authentification exigée.
+ *
+ * Noms affichés (champs *_name) : lus dans identity au moment de la réponse (ADR-029), pour le
+ * back-office seulement ; vides dans l'espace client, pour un compte sans nom, ou si identity
+ * est indisponible (la réponse n'échoue jamais pour un nom manquant).
  * ---------------------------------------------------------------------------
  */
 
 export interface CleaningAdminServiceClient {
-  /** Demandes, visites, devis (cleaning_supervisor, cleaning_admin). */
+  /** Demandes, visites, devis (cleaning_supervisor, cleaning_admin, super_admin). */
 
   listQuoteRequests(request: ListQuoteRequestsRequest, metadata?: Metadata): Observable<ListQuoteRequestsResponse>;
 
@@ -1020,7 +1062,7 @@ export interface CleaningAdminServiceClient {
 
   sendQuote(request: SendQuoteRequest, metadata?: Metadata): Observable<SendQuoteResponse>;
 
-  /** Missions et passages (cleaning_supervisor, cleaning_admin ; cleaning_agent : ses passages). */
+  /** Missions et passages (cleaning_supervisor, cleaning_admin, super_admin ; cleaning_agent : ses passages). */
 
   listMissions(request: ListMissionsRequest, metadata?: Metadata): Observable<ListMissionsResponse>;
 
@@ -1049,7 +1091,11 @@ export interface CleaningAdminServiceClient {
     metadata?: Metadata,
   ): Observable<CompleteInterventionResponse>;
 
-  /** Paiement manuel coché par le superviseur (espèces, Mobile Money hors ligne). */
+  /**
+   * Paiement manuel coché par le superviseur (espèces, Mobile Money hors ligne).
+   * Idempotent par idempotency_key (facultative) : un second envoi avec la même clé renvoie la
+   * mission sans enregistrer un second paiement.
+   */
 
   recordPayment(request: RecordPaymentRequest, metadata?: Metadata): Observable<RecordPaymentResponse>;
 
@@ -1059,7 +1105,7 @@ export interface CleaningAdminServiceClient {
   ): Observable<CancelMissionAsSupervisorResponse>;
 
   /**
-   * Catalogue, grille tarifaire et réglages (cleaning_admin). Chaque modification de prix
+   * Catalogue, grille tarifaire et réglages (cleaning_admin, super_admin). Chaque modification de prix
    * crée une nouvelle version datée, avec son auteur ; un devis envoyé garde son prix.
    */
 
@@ -1069,7 +1115,7 @@ export interface CleaningAdminServiceClient {
 
   updateSettings(request: UpdateSettingsRequest, metadata?: Metadata): Observable<UpdateSettingsResponse>;
 
-  /** Zones desservies (cleaning_admin) : une demande de devis hors zone est refusée. */
+  /** Zones desservies (cleaning_admin, super_admin) : une demande de devis hors zone est refusée. */
 
   listZones(request: ListZonesRequest, metadata?: Metadata): Observable<ListZonesResponse>;
 
@@ -1079,7 +1125,7 @@ export interface CleaningAdminServiceClient {
 
   deactivateZone(request: DeactivateZoneRequest, metadata?: Metadata): Observable<DeactivateZoneResponse>;
 
-  /** Agents et équipes (cleaning_admin). */
+  /** Agents et équipes (cleaning_admin, super_admin ; listes : aussi cleaning_supervisor). */
 
   listAgents(request: ListAgentsRequest, metadata?: Metadata): Observable<ListAgentsResponse>;
 
@@ -1100,12 +1146,17 @@ export interface CleaningAdminServiceClient {
 /**
  * ---------------------------------------------------------------------------
  * Back-office (UC-CL-06 à 12). Rôles : cleaning_supervisor, cleaning_agent (ses passages
- * uniquement), cleaning_admin ; double authentification exigée.
+ * uniquement), cleaning_admin ; super_admin a partout la portée de cleaning_admin.
+ * Double authentification exigée.
+ *
+ * Noms affichés (champs *_name) : lus dans identity au moment de la réponse (ADR-029), pour le
+ * back-office seulement ; vides dans l'espace client, pour un compte sans nom, ou si identity
+ * est indisponible (la réponse n'échoue jamais pour un nom manquant).
  * ---------------------------------------------------------------------------
  */
 
 export interface CleaningAdminServiceController {
-  /** Demandes, visites, devis (cleaning_supervisor, cleaning_admin). */
+  /** Demandes, visites, devis (cleaning_supervisor, cleaning_admin, super_admin). */
 
   listQuoteRequests(
     request: ListQuoteRequestsRequest,
@@ -1137,7 +1188,7 @@ export interface CleaningAdminServiceController {
     metadata?: Metadata,
   ): Promise<SendQuoteResponse> | Observable<SendQuoteResponse> | SendQuoteResponse;
 
-  /** Missions et passages (cleaning_supervisor, cleaning_admin ; cleaning_agent : ses passages). */
+  /** Missions et passages (cleaning_supervisor, cleaning_admin, super_admin ; cleaning_agent : ses passages). */
 
   listMissions(
     request: ListMissionsRequest,
@@ -1184,7 +1235,11 @@ export interface CleaningAdminServiceController {
     metadata?: Metadata,
   ): Promise<CompleteInterventionResponse> | Observable<CompleteInterventionResponse> | CompleteInterventionResponse;
 
-  /** Paiement manuel coché par le superviseur (espèces, Mobile Money hors ligne). */
+  /**
+   * Paiement manuel coché par le superviseur (espèces, Mobile Money hors ligne).
+   * Idempotent par idempotency_key (facultative) : un second envoi avec la même clé renvoie la
+   * mission sans enregistrer un second paiement.
+   */
 
   recordPayment(
     request: RecordPaymentRequest,
@@ -1200,7 +1255,7 @@ export interface CleaningAdminServiceController {
     | CancelMissionAsSupervisorResponse;
 
   /**
-   * Catalogue, grille tarifaire et réglages (cleaning_admin). Chaque modification de prix
+   * Catalogue, grille tarifaire et réglages (cleaning_admin, super_admin). Chaque modification de prix
    * crée une nouvelle version datée, avec son auteur ; un devis envoyé garde son prix.
    */
 
@@ -1219,7 +1274,7 @@ export interface CleaningAdminServiceController {
     metadata?: Metadata,
   ): Promise<UpdateSettingsResponse> | Observable<UpdateSettingsResponse> | UpdateSettingsResponse;
 
-  /** Zones desservies (cleaning_admin) : une demande de devis hors zone est refusée. */
+  /** Zones desservies (cleaning_admin, super_admin) : une demande de devis hors zone est refusée. */
 
   listZones(
     request: ListZonesRequest,
@@ -1238,7 +1293,7 @@ export interface CleaningAdminServiceController {
     metadata?: Metadata,
   ): Promise<DeactivateZoneResponse> | Observable<DeactivateZoneResponse> | DeactivateZoneResponse;
 
-  /** Agents et équipes (cleaning_admin). */
+  /** Agents et équipes (cleaning_admin, super_admin ; listes : aussi cleaning_supervisor). */
 
   listAgents(
     request: ListAgentsRequest,

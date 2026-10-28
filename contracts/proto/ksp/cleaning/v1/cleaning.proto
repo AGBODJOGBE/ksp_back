@@ -50,7 +50,12 @@ import "ksp/common/v1/money.proto";
 //   CLEANING_TEAM_UNAVAILABLE           ALREADY_EXISTS      details.agentIds : agents déjà pris sur le créneau
 //   CLEANING_CONCURRENT_UPDATE          ALREADY_EXISTS      dossier modifié en même temps par un autre appel
 //   CLEANING_AGENT_ALREADY_REGISTERED   ALREADY_EXISTS
-//   CLEANING_PAYMENT_INVALID            INVALID_ARGUMENT    montant ou moyen de paiement refusé
+//   CLEANING_PAYMENT_INVALID            INVALID_ARGUMENT    montant ou moyen de paiement refusé (details.reason) ;
+//                                                           au-delà du reste dû : details.remainingDue (Money)
+//   CLEANING_INTERVENTION_TOO_EARLY     FAILED_PRECONDITION passage démarré avant le jour prévu (details.scheduledDate,
+//                                                           details.timeZone) ; règle réglable par configuration
+//   CLEANING_VISIT_TOO_EARLY            FAILED_PRECONDITION compte rendu de visite avant l'heure prévue
+//                                                           (details.scheduledAt) ; règle réglable par configuration
 //   CLEANING_CALLER_FORBIDDEN           PERMISSION_DENIED   HasPendingObligations appelé par un autre service qu'identity
 //   AUTH_REQUIRED                       UNAUTHENTICATED
 //   AUTH_FORBIDDEN                      PERMISSION_DENIED   rôle du back-office manquant
@@ -99,10 +104,15 @@ service MissionService {
 
 // ---------------------------------------------------------------------------
 // Back-office (UC-CL-06 à 12). Rôles : cleaning_supervisor, cleaning_agent (ses passages
-// uniquement), cleaning_admin ; double authentification exigée.
+// uniquement), cleaning_admin ; super_admin a partout la portée de cleaning_admin.
+// Double authentification exigée.
+//
+// Noms affichés (champs *_name) : lus dans identity au moment de la réponse (ADR-029), pour le
+// back-office seulement ; vides dans l'espace client, pour un compte sans nom, ou si identity
+// est indisponible (la réponse n'échoue jamais pour un nom manquant).
 // ---------------------------------------------------------------------------
 service CleaningAdminService {
-  // Demandes, visites, devis (cleaning_supervisor, cleaning_admin).
+  // Demandes, visites, devis (cleaning_supervisor, cleaning_admin, super_admin).
   rpc ListQuoteRequests(ListQuoteRequestsRequest) returns (ListQuoteRequestsResponse);
   rpc GetQuoteRequest(GetQuoteRequestRequest) returns (GetQuoteRequestResponse);
   rpc RejectQuoteRequest(RejectQuoteRequestRequest) returns (RejectQuoteRequestResponse);
@@ -110,7 +120,7 @@ service CleaningAdminService {
   rpc CompleteVisit(CompleteVisitRequest) returns (CompleteVisitResponse);
   rpc SendQuote(SendQuoteRequest) returns (SendQuoteResponse);
 
-  // Missions et passages (cleaning_supervisor, cleaning_admin ; cleaning_agent : ses passages).
+  // Missions et passages (cleaning_supervisor, cleaning_admin, super_admin ; cleaning_agent : ses passages).
   rpc ListMissions(ListMissionsRequest) returns (ListMissionsResponse);
   rpc GetMissionDetail(GetMissionDetailRequest) returns (GetMissionDetailResponse);
   // Planifie un passage avec ses agents ; un passage d'une mission récurrente peut avoir
@@ -122,22 +132,24 @@ service CleaningAdminService {
   rpc ResumeIntervention(ResumeInterventionRequest) returns (ResumeInterventionResponse);
   rpc CompleteIntervention(CompleteInterventionRequest) returns (CompleteInterventionResponse);
   // Paiement manuel coché par le superviseur (espèces, Mobile Money hors ligne).
+  // Idempotent par idempotency_key (facultative) : un second envoi avec la même clé renvoie la
+  // mission sans enregistrer un second paiement.
   rpc RecordPayment(RecordPaymentRequest) returns (RecordPaymentResponse);
   rpc CancelMissionAsSupervisor(CancelMissionAsSupervisorRequest) returns (CancelMissionAsSupervisorResponse);
 
-  // Catalogue, grille tarifaire et réglages (cleaning_admin). Chaque modification de prix
+  // Catalogue, grille tarifaire et réglages (cleaning_admin, super_admin). Chaque modification de prix
   // crée une nouvelle version datée, avec son auteur ; un devis envoyé garde son prix.
   rpc GetCatalog(GetCatalogRequest) returns (GetCatalogResponse);
   rpc SaveService(SaveServiceRequest) returns (SaveServiceResponse);
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse);
 
-  // Zones desservies (cleaning_admin) : une demande de devis hors zone est refusée.
+  // Zones desservies (cleaning_admin, super_admin) : une demande de devis hors zone est refusée.
   rpc ListZones(ListZonesRequest) returns (ListZonesResponse);
   // Ajoute la commune, ou la réactive si elle existe déjà.
   rpc SaveZone(SaveZoneRequest) returns (SaveZoneResponse);
   rpc DeactivateZone(DeactivateZoneRequest) returns (DeactivateZoneResponse);
 
-  // Agents et équipes (cleaning_admin).
+  // Agents et équipes (cleaning_admin, super_admin ; listes : aussi cleaning_supervisor).
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse);
   rpc DeclareUnavailability(DeclareUnavailabilityRequest) returns (DeclareUnavailabilityResponse);
@@ -197,6 +209,8 @@ message PaymentRecord {
   string reference = 4;
   string recorded_by = 5;
   string recorded_at = 6;
+  // Back-office : nom affiché de la personne qui a enregistré le paiement (ADR-029).
+  string recorded_by_name = 7;
 }
 
 message PaymentState {
@@ -219,6 +233,8 @@ message SiteVisit {
   string agent_id = 4;
   string report = 5;
   string completed_at = 6;
+  // Back-office : nom affiché de l'agent de la visite (fiche agent du Nettoyage).
+  string agent_name = 7;
 }
 
 message Quote {
@@ -274,6 +290,10 @@ message QuoteRequest {
   string updated_at = 23;
   // Entreprise : jours d'intervention par semaine indiqués, 0 si non précisés.
   int32 days_per_week = 24;
+  // Back-office : nom affiché du client (prénom et nom du compte, ADR-029).
+  string customer_name = 25;
+  // Back-office : raison sociale de l'organisation, vide pour un particulier (ADR-029).
+  string organization_name = 26;
 }
 
 message ChecklistItem {
@@ -331,6 +351,15 @@ message Mission {
   Suspension suspension = 18;
   // Jours d'intervention par semaine indiqués par l'entreprise, 0 si non précisés.
   int32 days_per_week = 19;
+  // "individual" ou "business" (organisation au nom de laquelle le devis a été accepté) : une
+  // mission d'entreprise se règle par sa facture, jamais par un paiement manuel.
+  string customer_kind = 20;
+  // Organisation de la mission, vide pour un particulier.
+  string organization_id = 21;
+  // Back-office : nom affiché du client (ADR-029).
+  string customer_name = 22;
+  // Back-office : raison sociale de l'organisation, vide pour un particulier (ADR-029).
+  string organization_name = 23;
 }
 
 message Suspension {
@@ -526,8 +555,13 @@ message CancelMissionResponse {
 
 message ListQuoteRequestsRequest {
   Page page = 1;
-  // Filtre facultatif sur l'état.
+  // Filtres facultatifs, cumulables, toujours paginés par curseur.
+  // État de la demande.
   string status = 2;
+  // Code de zone (commune normalisée, par exemple "abomey-calavi", voir Zone).
+  string commune = 3;
+  // "individual" ou "business".
+  string customer_kind = 4;
 }
 
 message ListQuoteRequestsResponse {
@@ -672,6 +706,9 @@ message RecordPaymentRequest {
   // "cash" ou "mobile_money_offline".
   string method = 3;
   string reference = 4;
+  // Facultative (8 à 100 caractères : lettres, chiffres, "_" et "-") : un second envoi avec la
+  // même clé pour la même mission n'enregistre rien de plus. Vide : aucun contrôle de rejeu.
+  string idempotency_key = 5;
 }
 
 message RecordPaymentResponse {
@@ -716,6 +753,8 @@ message PricingRule {
   repeated ChecklistItem checklist = 8;
   string updated_by = 9;
   string updated_at = 10;
+  // Back-office : nom affiché de l'auteur de la version (ADR-029).
+  string updated_by_name = 11;
 }
 
 message ServiceDefinition {
@@ -747,6 +786,8 @@ message Settings {
   int32 individual_suspension_unpaid_interventions = 11;
   // Heures laissées après la fin d'un passage pour enregistrer son paiement (24 par défaut).
   int32 individual_payment_grace_hours = 12;
+  // Back-office : nom affiché de l'auteur de la dernière modification (ADR-029), ignoré à l'écriture.
+  string updated_by_name = 13;
 }
 
 message GetCatalogRequest {}
@@ -782,6 +823,8 @@ message Zone {
   bool active = 3;
   string updated_by = 4;
   string updated_at = 5;
+  // Back-office : nom affiché de l'auteur de la dernière modification (ADR-029).
+  string updated_by_name = 6;
 }
 
 message ListZonesRequest {}

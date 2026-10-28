@@ -49,6 +49,8 @@ tags:
     description: Organisations du client, changement de contexte, e-mail de facturation (UC-ID-12 à 16, ADR-027)
   - name: Comptes entreprise (back-office)
     description: Validation, refus, suspension des comptes entreprise (ADR-027)
+  - name: Comptes (back-office)
+    description: Recherche d'un compte KSP par numéro de téléphone, par exemple pour rattacher un agent (ADR-029)
   - name: Clés publiques
     description: Vérification des jetons d'accès (UC-ID-22)
   - name: Nettoyage
@@ -105,6 +107,11 @@ x-ksp-rate-limits:
     per: minute
     key: user
     description: identity annule aussi le code après 5 essais faux.
+  account_lookup:
+    limit: 20
+    per: minute
+    key: user
+    description: Recherche de compte par téléphone au back-office (ADR-029) ; freine l'énumération des numéros.
 
 # Préfixes réservés, sans route pour l'instant.
 x-ksp-reserved-prefixes:
@@ -1595,6 +1602,66 @@ paths:
         '504':
           $ref: '#/components/responses/GatewayTimeout'
 
+  /api/v1/admin/identity/accounts/lookup:
+    post:
+      tags: [Comptes (back-office)]
+      operationId: findAccountByPhone
+      summary: Retrouver un compte par son numéro
+      description: |
+        Retrouve le compte KSP d'un numéro E.164, par exemple pour le rattacher comme agent du
+        Nettoyage (`POST /api/v1/admin/cleaning/agents`). Rend l'identifiant, le nom, l'état et le
+        numéro masqué ; jamais l'e-mail ni le numéro complet. Le numéro voyage dans le corps, jamais
+        dans l'adresse (journalisée). Un compte supprimé est introuvable.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED`, `IDENTITY_PHONE_INVALID` (400), `IDENTITY_USER_NOT_FOUND` (404).
+
+        Rôles : `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/FindAccountByPhone
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: account_lookup
+      x-ksp-roles:
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FindAccountByPhoneRequest'
+            example:
+              phone: '+2290197000045'
+      responses:
+        '200':
+          description: Compte trouvé
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAccountMatch'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
   /api/v1/cleaning/services:
     get:
       tags:
@@ -2678,15 +2745,16 @@ paths:
       operationId: listCleaningQuoteRequests
       summary: Demandes de devis (back-office)
       description: |
-        UC-CL-06.
+        UC-CL-06. Filtres facultatifs et cumulables : état, zone (`commune`, code de zone) et type de client (`customerKind`) ; toujours paginé par curseur. Chaque demande porte le nom du client et de son organisation (`customerName`, `organizationName`).
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListQuoteRequests
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -2694,6 +2762,8 @@ paths:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/CleaningRequestStatus'
+        - $ref: '#/components/parameters/CleaningCommuneFilter'
+        - $ref: '#/components/parameters/CleaningCustomerKind'
       responses:
         '200':
           description: Succès
@@ -2727,13 +2797,14 @@ paths:
       description: |
         UC-CL-06.
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/GetQuoteRequest
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -2774,13 +2845,14 @@ paths:
       description: |
         UC-CL-06.
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RejectQuoteRequest
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -2834,13 +2906,14 @@ paths:
         UC-CL-07. Obligatoire pour toute demande, particulier ou entreprise, avant l’envoi du devis (décision du 2026-10-23) ;
         possible aussi après l’envoi d’un devis, qui devra alors être renvoyé. Le client est prévenu (`cleaning.visit.scheduled`).
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ScheduleVisit
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -2892,15 +2965,16 @@ paths:
       operationId: completeCleaningVisit
       summary: Compte rendu de visite
       description: |
-        UC-CL-07.
+        UC-CL-07. Refusé avant l’heure prévue de la visite (`CLEANING_VISIT_TOO_EARLY`, 422, `details.scheduledAt`), règle réglable par la configuration du service.
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CompleteVisit
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -2953,7 +3027,7 @@ paths:
       description: |
         UC-CL-08. Lignes préremplies depuis la grille en vigueur (ajustement de commune et minimum de commande compris), modifiables ; 1 à 3 créneaux ; prix figé à l’envoi.
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
         Erreurs : `CLEANING_VISIT_REQUIRED` (visite des lieux réalisée obligatoire pour toute demande), `CLEANING_PRICE_NOT_SET`,
         `CLEANING_LEAD_TIME_TOO_SHORT` (422).
@@ -2963,6 +3037,7 @@ paths:
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3018,7 +3093,7 @@ paths:
       description: |
         UC-CL-09, 10. Un agent ne voit que les missions où il est affecté.
 
-        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListMissions
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -3026,6 +3101,7 @@ paths:
         - cleaning_supervisor
         - cleaning_agent
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3066,7 +3142,7 @@ paths:
       description: |
         UC-CL-09, 10.
 
-        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/GetMissionDetail
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -3074,6 +3150,7 @@ paths:
         - cleaning_supervisor
         - cleaning_agent
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3114,7 +3191,7 @@ paths:
       description: |
         UC-CL-09. Date, durée et agents (choisis un à un et/ou par équipe). Un contrat récurrent peut avoir d’autres agents à chaque passage.
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
         Erreurs : `CLEANING_TEAM_UNAVAILABLE` (409, `details.agentIds`), `CLEANING_NO_INTERVENTION_LEFT` (422),
         `CLEANING_CONTRACT_SUSPENDED` (422, mission suspendue pour impayés).
@@ -3124,6 +3201,7 @@ paths:
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3181,22 +3259,26 @@ paths:
       description: |
         UC-CL-09. Espèces ou Mobile Money hors ligne, coché par le superviseur. Jamais au-delà du reste dû.
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
         Réservé aux missions de particuliers : une mission d’entreprise se règle par sa facture (`/api/v1/admin/billing/invoices/{id}/payments`).
 
-        Erreurs : `CLEANING_PAYMENT_INVALID` (400), `CLEANING_PAYMENT_VIA_INVOICE` (422, mission d’entreprise).
+        Idempotent par l’en-tête `Idempotency-Key`, facultatif : un second envoi avec la même clé pour la même mission renvoie la mission sans second paiement.
+
+        Erreurs : `CLEANING_PAYMENT_INVALID` (400, `details.reason` ; au-delà du dû, `details.remainingDue` donne le reste dû et le message le cite en FCFA), `CLEANING_PAYMENT_VIA_INVOICE` (422, mission d’entreprise).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RecordPayment
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
       requestBody:
         required: true
         content:
@@ -3246,13 +3328,14 @@ paths:
       description: |
         UC-CL-05.
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CancelMissionAsSupervisor
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3303,9 +3386,9 @@ paths:
       operationId: startCleaningIntervention
       summary: Démarrer un passage
       description: |
-        UC-CL-10.
+        UC-CL-10. Refusé avant le jour prévu du passage, à l’heure du Bénin (`CLEANING_INTERVENTION_TOO_EARLY`, 422, `details.scheduledDate`) ; le jour même, à toute heure, il est permis. Règle réglable par la configuration du service.
 
-        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/StartIntervention
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -3313,6 +3396,7 @@ paths:
         - cleaning_supervisor
         - cleaning_agent
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3355,7 +3439,7 @@ paths:
       description: |
         UC-CL-10. Codes cochés ; les autres sont décochés.
 
-        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/UpdateChecklist
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -3363,6 +3447,7 @@ paths:
         - cleaning_supervisor
         - cleaning_agent
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3417,7 +3502,7 @@ paths:
       description: |
         UC-CL-10. Le passage est mis en attente.
 
-        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ReportIncident
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -3425,6 +3510,7 @@ paths:
         - cleaning_supervisor
         - cleaning_agent
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3477,7 +3563,7 @@ paths:
       description: |
         UC-CL-10.
 
-        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ResumeIntervention
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -3485,6 +3571,7 @@ paths:
         - cleaning_supervisor
         - cleaning_agent
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3527,7 +3614,7 @@ paths:
       description: |
         UC-CL-10. Liste de contrôle complète exigée ; la mission se termine au dernier passage (`cleaning.mission.completed`).
 
-        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
         Erreurs : `CLEANING_CHECKLIST_INCOMPLETE`, `CLEANING_INVALID_TRANSITION` (422).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CompleteIntervention
@@ -3537,6 +3624,7 @@ paths:
         - cleaning_supervisor
         - cleaning_agent
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3579,12 +3667,13 @@ paths:
       description: |
         UC-CL-11.
 
-        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/GetCatalog
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3619,12 +3708,13 @@ paths:
       description: |
         UC-CL-11. Chaque enregistrement crée une nouvelle version datée de la grille, avec son auteur ; les devis déjà envoyés gardent leur prix. Prix `null` : non fixé.
 
-        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SaveService
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3693,12 +3783,13 @@ paths:
         récurrent, délai de grâce. Un réglage d'impayés absent garde sa valeur en vigueur. Le délai de règlement des
         factures se règle dans la facturation (`/api/v1/admin/billing/settings`).
 
-        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/UpdateSettings
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3755,12 +3846,13 @@ paths:
         Communes où le Nettoyage est ouvert, actives et désactivées (au départ Cotonou, Porto-Novo, Abomey-Calavi). La clé
         d’une zone est la commune normalisée, la même que celle des coefficients de commune de la grille tarifaire.
 
-        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListZones
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3806,7 +3898,7 @@ paths:
       description: |
         Ouvre le Nettoyage dans une commune ; une zone désactivée portant la même clé est réactivée.
 
-        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
         Erreurs : `CLEANING_VALIDATION_FAILED` (400).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SaveZone
@@ -3814,6 +3906,7 @@ paths:
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3860,7 +3953,7 @@ paths:
       description: |
         Les nouvelles demandes de devis y sont refusées (`CLEANING_ZONE_NOT_COVERED`) ; les missions en cours continuent.
 
-        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
         Erreurs : `CLEANING_ZONE_NOT_FOUND` (404).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/DeactivateZone
@@ -3868,6 +3961,7 @@ paths:
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3908,13 +4002,14 @@ paths:
       description: |
         UC-CL-12.
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListAgents
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -3948,12 +4043,13 @@ paths:
       description: |
         UC-CL-12. Le rôle `cleaning_agent` s’attribue dans identity.
 
-        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RegisterAgent
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -4003,12 +4099,13 @@ paths:
       description: |
         UC-CL-12.
 
-        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/DeclareUnavailability
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -4061,13 +4158,14 @@ paths:
       description: |
         UC-CL-12.
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListTeams
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_supervisor
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -4101,12 +4199,13 @@ paths:
       description: |
         UC-CL-12.
 
-        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CreateTeam
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -4157,12 +4256,13 @@ paths:
       description: |
         UC-CL-12.
 
-        Rôles : `cleaning_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/UpdateTeam
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_admin
+        - super_admin
       x-ksp-mfa-max-age: 43200
       security:
         - bearerAuth: []
@@ -4734,6 +4834,23 @@ components:
           - rejected
           - expired
           - cancelled
+    CleaningCommuneFilter:
+      name: commune
+      in: query
+      required: false
+      description: Code de zone (commune normalisée, par exemple `abomey-calavi`, comme `code` des zones desservies).
+      schema:
+        type: string
+        pattern: ^[a-z][a-z0-9-]{1,99}$
+    CleaningCustomerKind:
+      name: customerKind
+      in: query
+      required: false
+      description: Type de client de la demande.
+      schema:
+        enum:
+          - individual
+          - business
     CleaningMissionStatus:
       name: status
       in: query
@@ -4746,6 +4863,14 @@ components:
           - on_hold
           - completed
           - cancelled
+    OptionalIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 'Clé facultative (8 à 100 caractères), ajoutée sans rupture à une route déjà branchée : un second envoi avec la même clé ne crée rien de plus. Sans clé, aucun contrôle de rejeu.'
+      schema:
+        type: string
+        pattern: ^[A-Za-z0-9_-]{8,100}$
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -5681,6 +5806,34 @@ components:
           pattern: '^[a-z]{2}$'
           description: Code de langue, "fr" par défaut.
 
+    FindAccountByPhoneRequest:
+      type: object
+      additionalProperties: false
+      required: [phone]
+      properties:
+        phone:
+          $ref: '#/components/schemas/PhoneE164'
+
+    AdminAccountMatch:
+      type: object
+      additionalProperties: false
+      required: [userId, status, firstName, lastName, phoneMasked]
+      description: Compte trouvé par son numéro (ADR-029) — le minimum pour le reconnaître et le rattacher.
+      properties:
+        userId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        firstName:
+          type: [string, 'null']
+          description: Null tant que le profil n'est pas complété.
+        lastName:
+          type: [string, 'null']
+        phoneMasked:
+          type: string
+          description: Indicatif et deux derniers chiffres, par exemple `+229********45`.
+
     Jwks:
       type: object
       additionalProperties: false
@@ -5976,6 +6129,11 @@ components:
             - string
             - 'null'
           format: date-time
+        agentName:
+          type:
+            - string
+            - 'null'
+          description: Back-office — nom affiché de l'agent de la visite (fiche agent) ; null s'il est inconnu (ADR-029).
     CleaningQuote:
       type: object
       additionalProperties: false
@@ -6161,6 +6319,16 @@ components:
         updatedAt:
           type: string
           format: date-time
+        customerName:
+          type:
+            - string
+            - 'null'
+          description: Back-office — nom affiché du client (prénom et nom du compte, lus dans identity) ; null dans l'espace client, pour un compte sans nom ou si identity est indisponible (ADR-029).
+        organizationName:
+          type:
+            - string
+            - 'null'
+          description: Back-office — raison sociale de l'organisation ; null pour un particulier, dans l'espace client ou si identity est indisponible (ADR-029).
     CleaningQuoteRequestList:
       type: object
       additionalProperties: false
@@ -6328,6 +6496,11 @@ components:
             - 'null'
         recordedBy:
           type: string
+        recordedByName:
+          type:
+            - string
+            - 'null'
+          description: Back-office — nom affiché de la personne qui a enregistré le paiement ; null s'il est inconnu (ADR-029).
         recordedAt:
           type: string
           format: date-time
@@ -6400,6 +6573,27 @@ components:
         customerId:
           type: string
           format: uuid
+        customerKind:
+          enum:
+            - individual
+            - business
+          description: Particulier ou entreprise. Une mission d'entreprise se règle par sa facture mensuelle, jamais par un paiement manuel (`CLEANING_PAYMENT_VIA_INVOICE`).
+        organizationId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Organisation de la mission ; null pour un particulier.
+        customerName:
+          type:
+            - string
+            - 'null'
+          description: Back-office — nom affiché du client ; null dans l'espace client, pour un compte sans nom ou si identity est indisponible (ADR-029).
+        organizationName:
+          type:
+            - string
+            - 'null'
+          description: Back-office — raison sociale de l'organisation ; null pour un particulier ou si identity est indisponible (ADR-029).
         status:
           enum:
             - to_schedule
@@ -6595,6 +6789,11 @@ components:
           type:
             - string
             - 'null'
+        updatedByName:
+          type:
+            - string
+            - 'null'
+          description: Back-office — nom affiché de l'auteur de la version ; null s'il est inconnu (ADR-029).
         updatedAt:
           type:
             - string
@@ -6690,6 +6889,11 @@ components:
           type:
             - string
             - 'null'
+        updatedByName:
+          type:
+            - string
+            - 'null'
+          description: Back-office — nom affiché de l'auteur de la dernière modification ; null s'il est inconnu (ADR-029).
         updatedAt:
           type:
             - string
@@ -7449,6 +7653,11 @@ components:
           type:
             - string
             - 'null'
+        updatedByName:
+          type:
+            - string
+            - 'null'
+          description: Back-office — nom affiché de l'auteur de la dernière modification ; null s'il est inconnu (ADR-029).
         updatedAt:
           type:
             - string
