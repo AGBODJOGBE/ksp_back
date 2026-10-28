@@ -59,6 +59,76 @@ function cancellationText(variables: Readonly<Record<string, string>>): string {
   }
 }
 
+const SUSPENSION_UPDATE_CASE = /^(unpaid_added|organization_added|unpaid_lifted|organization_lifted)$/;
+
+const SUSPENSION_UPDATE_SUBJECTS: Readonly<Record<string, string>> = {
+  unpaid_added: 'Factures impayées : suspension maintenue',
+  organization_added: 'Compte entreprise suspendu : suspension maintenue',
+  unpaid_lifted: 'Règlement reçu : suspension maintenue',
+  organization_lifted: 'Compte entreprise réactivé : suspension maintenue',
+};
+
+/** Ce qui change, et ce qui maintient la suspension de la prestation. */
+function suspensionUpdateText(variables: Readonly<Record<string, string>>): string {
+  const unpaid = variables['unpaid_text'] ?? '';
+  switch (variables['case']) {
+    case 'unpaid_added':
+      return (
+        `Votre contrat de nettoyage compte ${unpaid}, le seuil de suspension est atteint : ` +
+        'même après la réactivation de votre compte entreprise, la prestation restera suspendue ' +
+        "jusqu'à votre règlement."
+      );
+    case 'organization_added':
+      return (
+        'KSP a suspendu votre compte entreprise : même après le règlement de vos factures, ' +
+        "votre prestation de nettoyage restera suspendue jusqu'à sa réactivation."
+      );
+    case 'unpaid_lifted':
+      return (
+        'Merci pour votre règlement. Votre prestation de nettoyage reste toutefois suspendue ' +
+        'tant que votre compte entreprise est suspendu par KSP.'
+      );
+    default:
+      return (
+        'Votre compte entreprise est réactivé, mais la suspension de votre prestation de nettoyage ' +
+        `est maintenue : ${unpaid}. Elle reprendra après votre règlement.`
+      );
+  }
+}
+
+/** Reprise d'une prestation suspendue : motif, passages reprogrammés et passages à replanifier. */
+function resumedText(variables: Readonly<Record<string, string>>, opening: string): string {
+  const rescheduled = variables['rescheduled_count'] ?? '0';
+  const failed = variables['failed_count'] ?? '0';
+  return lines(
+    greeting(variables),
+    opening,
+    ...(rescheduled !== '0'
+      ? [`${counted(rescheduled, 'passage reprogrammé', 'passages reprogrammés')}.`]
+      : []),
+    ...(failed !== '0'
+      ? [
+          `Un superviseur vous contactera pour replanifier ${
+            failed === '1' ? 'le passage restant' : `les ${failed} passages restants`
+          }.`,
+        ]
+      : []),
+    `Suivi : ${variables['link']}`,
+  );
+}
+
+/** Reprise annoncée à l'équipe Nettoyage : motif, puis passages reprogrammés et à replanifier. */
+function teamResumedText(variables: Readonly<Record<string, string>>, reason: string): string {
+  const failed = variables['failed_count'] ?? '0';
+  return (
+    `La mission ${variables['mission_id']} ${reason} : ` +
+    `${counted(variables['rescheduled_count'] ?? '0', 'passage reprogrammé', 'passages reprogrammés')}` +
+    (failed !== '0'
+      ? `, ${counted(failed, 'passage', 'passages')} à replanifier à la main au back-office.`
+      : '.')
+  );
+}
+
 function template(
   code: string,
   kind: EventTemplateDefinition['kind'],
@@ -221,9 +291,39 @@ export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
         greeting(v),
         `Votre prestation de nettoyage est suspendue : ${v['unpaid_text']}, le seuil de suspension est atteint. ` +
           'Les passages à venir sont annulés.',
-        'Dès votre règlement, le service reprendra et vos passages seront reprogrammés.',
+        'Après votre règlement, le service reprendra et vos passages seront reprogrammés, ' +
+          'sauf si une autre cause de suspension reste en cours (nous vous en informerons).',
         `Réglez dans Mon espace KSP : ${v['link']}`,
       ),
+    }),
+  ),
+  // Organisation cliente suspendue par KSP (ADR-030) : rien à régler, le service reprend à la
+  // réactivation du compte entreprise.
+  template(
+    'cleaning.contract_suspended_organization.customer',
+    'important',
+    { first_name: FIRST_NAME, link: LINK },
+    (v) => ({
+      subject: 'Prestation de nettoyage suspendue',
+      text: lines(
+        greeting(v),
+        'Votre prestation de nettoyage est suspendue : KSP a suspendu votre compte entreprise. ' +
+          'Les passages à venir sont annulés.',
+        'Après la réactivation de votre compte entreprise, le service reprendra et vos passages seront ' +
+          'reprogrammés, sauf si une autre cause de suspension reste en cours (nous vous en informerons).',
+        `Suivi : ${v['link']}`,
+      ),
+    }),
+  ),
+  // Une cause s'ajoute à la suspension en cours, ou est levée alors qu'une autre la maintient
+  // (ADR-030). `case` : unpaid_added, organization_added, unpaid_lifted, organization_lifted.
+  template(
+    'cleaning.suspension_updated.customer',
+    'important',
+    { first_name: FIRST_NAME, case: SUSPENSION_UPDATE_CASE, unpaid_text: TEXT, link: LINK },
+    (v) => ({
+      subject: SUSPENSION_UPDATE_SUBJECTS[v['case']] ?? 'Prestation de nettoyage toujours suspendue',
+      text: lines(greeting(v), suspensionUpdateText(v), `Mon espace KSP : ${v['link']}`),
     }),
   ),
   template('cleaning.contract_suspended.agent', 'short', { first_name: FIRST_NAME }, (v) => ({
@@ -240,23 +340,17 @@ export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
     { first_name: FIRST_NAME, rescheduled_count: COUNT_OR_ZERO, failed_count: COUNT_OR_ZERO, link: LINK },
     (v) => ({
       subject: 'Prestation de nettoyage reprise',
-      text: lines(
-        greeting(v),
-        'Merci pour votre règlement : votre prestation de nettoyage reprend.',
-        ...(v['rescheduled_count'] !== '0'
-          ? [`${counted(v['rescheduled_count'], 'passage reprogrammé', 'passages reprogrammés')}.`]
-          : []),
-        ...(v['failed_count'] !== '0'
-          ? [
-              `Un superviseur vous contactera pour replanifier ${
-                v['failed_count'] === '1'
-                  ? 'le passage restant'
-                  : `les ${v['failed_count']} passages restants`
-              }.`,
-            ]
-          : []),
-        `Suivi : ${v['link']}`,
-      ),
+      text: resumedText(v, 'Merci pour votre règlement : votre prestation de nettoyage reprend.'),
+    }),
+  ),
+  // Reprise à la réactivation du compte entreprise par KSP (ADR-030).
+  template(
+    'cleaning.contract_resumed_organization.customer',
+    'short',
+    { first_name: FIRST_NAME, rescheduled_count: COUNT_OR_ZERO, failed_count: COUNT_OR_ZERO, link: LINK },
+    (v) => ({
+      subject: 'Prestation de nettoyage reprise',
+      text: resumedText(v, 'Votre compte entreprise est réactivé : votre prestation de nettoyage reprend.'),
     }),
   ),
   template(
@@ -270,13 +364,23 @@ export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
     },
     (v) => ({
       subject: 'Prestation de nettoyage reprise après règlement',
+      text: lines(greeting(v), teamResumedText(v, 'a repris après règlement des impayés')),
+    }),
+  ),
+  template(
+    'cleaning.contract_resumed_organization.team',
+    'short',
+    {
+      first_name: FIRST_NAME,
+      mission_id: UUID,
+      rescheduled_count: COUNT_OR_ZERO,
+      failed_count: COUNT_OR_ZERO,
+    },
+    (v) => ({
+      subject: 'Prestation de nettoyage reprise après réactivation du compte entreprise',
       text: lines(
         greeting(v),
-        `La mission ${v['mission_id']} a repris après règlement des impayés : ` +
-          `${counted(v['rescheduled_count'], 'passage reprogrammé', 'passages reprogrammés')}` +
-          (v['failed_count'] !== '0'
-            ? `, ${counted(v['failed_count'], 'passage', 'passages')} à replanifier à la main au back-office.`
-            : '.'),
+        teamResumedText(v, 'a repris après la réactivation du compte entreprise par KSP'),
       ),
     }),
   ),

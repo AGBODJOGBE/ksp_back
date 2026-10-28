@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.contract.suspension_updated.v1.schema.json",
+  "title": "cleaning.contract.suspension_updated",
+  "description": "Mission déjà suspendue dont les causes changent sans que la suspension commence ni finisse : une cause s'ajoute (impayés au seuil pendant la suspension de l'organisation, ou l'inverse) ou est levée alors qu'une autre reste active (ADR-030). Le début de la suspension reste cleaning.contract.suspended, la reprise cleaning.contract.resumed. Écouté par notification (client).",
+  "x-event-type": "cleaning.contract.suspension_updated",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "missionId",
+    "customerId",
+    "organizationId",
+    "change",
+    "cause",
+    "causes",
+    "unpaidCount",
+    "updatedAt"
+  ],
+  "properties": {
+    "missionId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": { "type": ["string", "null"], "format": "uuid" },
+    "change": {
+      "enum": ["cause_added", "cause_lifted"],
+      "description": "cause_added : la cause s'ajoute à une suspension en cours ; cause_lifted : la cause est levée, une autre maintient la suspension"
+    },
+    "cause": {
+      "enum": ["unpaid_invoices", "unpaid_interventions", "organization_suspended"],
+      "description": "Cause ajoutée ou levée"
+    },
+    "causes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["unpaid_invoices", "unpaid_interventions", "organization_suspended"] },
+      "description": "Causes actives après le changement, la plus ancienne d'abord : la mission reste suspendue"
+    },
+    "unpaidCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Impayés connus au moment du changement"
+    },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  }
+}

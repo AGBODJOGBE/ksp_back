@@ -105,6 +105,16 @@ export interface CleaningEventPayloads {
     rescheduledCount: number;
     failedCount: number;
   };
+  'cleaning.contract.suspension_updated': {
+    missionId: string;
+    customerId: string;
+    organizationId: string | null;
+    change: CleaningSuspensionChange;
+    cause: CleaningSuspensionCause;
+    causes: CleaningSuspensionCause[];
+    unpaidCount: number;
+    updatedAt: string;
+  };
   'cleaning.rescheduling.failed': {
     missionId: string;
     customerId: string;
@@ -114,7 +124,13 @@ export interface CleaningEventPayloads {
   };
 }
 
-/** Factures d'entreprise impayées, ou passages impayés d'un particulier en récurrent. */
-export type CleaningSuspensionCause = 'unpaid_invoices' | 'unpaid_interventions';
+/**
+ * Factures d'entreprise impayées, passages impayés d'un particulier en récurrent, ou organisation
+ * suspendue par KSP (ADR-030).
+ */
+export type CleaningSuspensionCause = 'unpaid_invoices' | 'unpaid_interventions' | 'organization_suspended';
+
+/** Cause ajoutée à une suspension en cours, ou levée alors qu'une autre reste active (ADR-030). */
+export type CleaningSuspensionChange = 'cause_added' | 'cause_lifted';
 
 export type CleaningEventType = keyof CleaningEventPayloads;

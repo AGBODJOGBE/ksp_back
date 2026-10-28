@@ -441,6 +441,43 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect(accepted.mission.mission.payment).toMatchObject({ depositPercent: 100 });
   });
 
+  it('organisation suspendue par KSP : ni demande ni acceptation en son nom (ADR-030)', async () => {
+    const created = await as(CUSTOMER_ID, () => new RequestQuoteUseCase(world).execute(requestInput()), {
+      activeContext: ORGANIZATION_ID,
+    });
+    await sendQuote(created.id);
+    await world.organizations.record({
+      eventId: '0192f1c4-7a2b-7c3d-8e4f-000000008001',
+      consumer: 'cleaning.identity.organization.suspended',
+      organizationId: ORGANIZATION_ID,
+      suspended: true,
+      at: new Date('2026-10-23T07:00:00Z'),
+    });
+    // Jeton émis avant la suspension, encore valable : la nouvelle demande est refusée.
+    expect(
+      await code(
+        as(CUSTOMER_ID, () => new RequestQuoteUseCase(world).execute(requestInput('k-org')), {
+          activeContext: ORGANIZATION_ID,
+        }),
+      ),
+    ).toBe('CLEANING_ORGANIZATION_SUSPENDED');
+    // Acceptation dans le contexte personnel : c'est la demande qui porte l'organisation.
+    expect(
+      await code(
+        asCustomer(() =>
+          new AcceptQuoteUseCase(world).execute({
+            requestId: created.id,
+            idempotencyKey: 'acc-org',
+            slotStart: SLOT.start,
+          }),
+        ),
+      ),
+    ).toBe('CLEANING_ORGANIZATION_SUSPENDED');
+    expect(world.missions.missions.size).toBe(0);
+    // Le particulier, lui, n'est pas concerné.
+    expect((await request('k-perso')).customerKind).toBe('individual');
+  });
+
   it('devis expiré : refus CLEANING_QUOTE_EXPIRED', async () => {
     const created = await request();
     await sendQuote(created.id);

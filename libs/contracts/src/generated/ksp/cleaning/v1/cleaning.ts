@@ -189,7 +189,7 @@ export interface Intervention {
   afterPhotoFileIds: string[];
   startedAt: string;
   completedAt: string;
-  /** Passage annulé : "suspension" (impayés, reprogrammable au déblocage) ou "manual" ; vide sinon. */
+  /** Passage annulé : "suspension" (reprogrammable au déblocage) ou "manual" ; vide sinon. */
   cancellationCause: string;
 }
 
@@ -213,7 +213,7 @@ export interface Mission {
   cancellationReason: string;
   createdAt: string;
   updatedAt: string;
-  /** Suspension pour impayés en cours, absente sinon (CDC Nettoyage, partie 10). */
+  /** Suspension en cours, absente sinon (CDC Nettoyage, partie 10 ; ADR-030). */
   suspension?:
     | Suspension
     | undefined;
@@ -233,10 +233,19 @@ export interface Mission {
 }
 
 export interface Suspension {
-  /** "unpaid_invoices" (entreprise) ou "unpaid_interventions" (particulier). */
+  /**
+   * Plus ancienne cause encore active : "unpaid_invoices" (entreprise), "unpaid_interventions"
+   * (particulier) ou "organization_suspended" (organisation suspendue par KSP, ADR-030).
+   */
   cause: string;
   since: string;
+  /** Impayés connus à la dernière décision ; 0 possible pour une organisation suspendue. */
   unpaidCount: number;
+  /**
+   * Toutes les causes actives, la plus ancienne d'abord : la mission reprend quand il n'en reste
+   * aucune (ADR-030).
+   */
+  causes: string[];
 }
 
 export interface CatalogOption {

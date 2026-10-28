@@ -37,7 +37,12 @@ export const CleaningErrors = {
   contractSuspended: () =>
     AppError.precondition(
       'CLEANING_CONTRACT_SUSPENDED',
-      'Cette mission est suspendue pour impayés : aucun passage ne peut être planifié avant régularisation.',
+      'Cette mission est suspendue : aucun passage ne peut être planifié avant sa reprise.',
+    ),
+  organizationSuspended: () =>
+    AppError.precondition(
+      'CLEANING_ORGANIZATION_SUSPENDED',
+      'Ce compte entreprise est suspendu par KSP : aucune demande de nettoyage ne peut être faite en son nom.',
     ),
   quoteExpired: () =>
     AppError.precondition('CLEANING_QUOTE_EXPIRED', 'Ce devis a expiré. Demandez-en un nouveau.'),

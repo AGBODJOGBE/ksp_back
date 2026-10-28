@@ -117,6 +117,15 @@ export class PrismaMissionRepository implements MissionRepository {
     return rows.map(toMission);
   }
 
+  async listActiveForOrganization(organizationId: string): Promise<Mission[]> {
+    const rows = await this.prisma.mission.findMany({
+      where: { organizationId, status: { notIn: [...TERMINAL_MISSION_STATUSES] } },
+      include: MISSION_INCLUDE,
+      orderBy: { id: 'asc' },
+    });
+    return rows.map(toMission);
+  }
+
   /** Passages actifs et indisponibilités des agents donnés, hors un passage éventuel. */
   private async busyPeriods(tx: Tx, agentIds: string[], excludedId: string | null): Promise<BusyPeriod[]> {
     const [interventions, unavailabilities] = await Promise.all([

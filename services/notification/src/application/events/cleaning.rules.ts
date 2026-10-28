@@ -16,6 +16,9 @@ import { eventDate as day, eventDateTime as dateTime } from './rule-dates';
  * /mon-espace/nettoyage/missions/<missionId> et /mon-espace/factures.
  */
 
+/** Cause de suspension propre à l'organisation cliente, suspendue par KSP (ADR-030). */
+const ORGANIZATION_SUSPENDED = 'organization_suspended';
+
 function requestLink(context: RuleContext, requestId: string): string {
   return `${context.portalBaseUrl}/mon-espace/nettoyage/demandes/${encodeURIComponent(requestId)}`;
 }
@@ -135,12 +138,19 @@ export const CLEANING_RULES: { readonly [T in CleaningEventType]: EventRule<T> }
   ],
 
   'cleaning.contract.suspended': (event, context) => [
-    customer(
-      event.customerId,
-      'cleaning.contract_suspended.customer',
-      event.cause === 'unpaid_invoices' ? invoicesLink(context) : missionLink(context, event.missionId),
-      { unpaid_text: unpaidText(event.cause, event.unpaidCount) },
-    ),
+    event.cause === ORGANIZATION_SUSPENDED
+      ? customer(
+          event.customerId,
+          'cleaning.contract_suspended_organization.customer',
+          missionLink(context, event.missionId),
+          {},
+        )
+      : customer(
+          event.customerId,
+          'cleaning.contract_suspended.customer',
+          event.cause === 'unpaid_invoices' ? invoicesLink(context) : missionLink(context, event.missionId),
+          { unpaid_text: unpaidText(event.cause, event.unpaidCount) },
+        ),
     ...[...new Set(event.releasedAgentIds)].map((agentId) => ({
       userId: agentId,
       templateCode: 'cleaning.contract_suspended.agent',
@@ -154,14 +164,36 @@ export const CLEANING_RULES: { readonly [T in CleaningEventType]: EventRule<T> }
       rescheduled_count: String(event.rescheduledCount),
       failed_count: String(event.failedCount),
     };
+    // Motif de la reprise : dernière cause levée (règlement des impayés ou réactivation).
+    const variant =
+      event.cause === ORGANIZATION_SUSPENDED ? 'contract_resumed_organization' : 'contract_resumed';
     return [
       customer(
         event.customerId,
-        'cleaning.contract_resumed.customer',
+        `cleaning.${variant}.customer`,
         missionLink(context, event.missionId),
         counts,
       ),
-      ...team(context, 'cleaning.contract_resumed.team', { ...counts, mission_id: event.missionId }),
+      ...team(context, `cleaning.${variant}.team`, { ...counts, mission_id: event.missionId }),
+    ];
+  },
+
+  // Cause ajoutée ou levée, la mission restant suspendue (ADR-030).
+  'cleaning.contract.suspension_updated': (event, context) => {
+    const kind = event.cause === ORGANIZATION_SUSPENDED ? 'organization' : 'unpaid';
+    const unpaidCause = event.causes.find((cause) => cause !== ORGANIZATION_SUSPENDED) ?? 'unpaid_invoices';
+    // Lien vers les factures quand des factures impayées maintiennent ou rejoignent la suspension.
+    const invoicesMatter = event.causes.includes('unpaid_invoices');
+    return [
+      customer(
+        event.customerId,
+        'cleaning.suspension_updated.customer',
+        invoicesMatter ? invoicesLink(context) : missionLink(context, event.missionId),
+        {
+          case: `${kind}_${event.change === 'cause_added' ? 'added' : 'lifted'}`,
+          unpaid_text: unpaidText(unpaidCause, event.unpaidCount),
+        },
+      ),
     ];
   },
 

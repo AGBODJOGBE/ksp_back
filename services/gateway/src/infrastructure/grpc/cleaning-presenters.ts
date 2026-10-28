@@ -188,6 +188,8 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
     suspension: value.suspension
       ? {
           cause: value.suspension.cause,
+          // Service cleaning antérieur à l'ADR-030 : une seule cause, sans la liste.
+          causes: value.suspension.causes.length ? value.suspension.causes : [value.suspension.cause],
           since: value.suspension.since,
           unpaidCount: value.suspension.unpaidCount,
         }

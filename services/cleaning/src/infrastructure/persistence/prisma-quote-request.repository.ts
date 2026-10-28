@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UuidV7Generator } from '../system/system';
 import { cursorFilter, pageArgs, toPage, type Tx, writeChanges } from './changes';
 import { missionCreateColumns } from './mission.mapper';
+import { lockOrganizationStanding } from './prisma-organization-standing.repository';
 import { quoteColumns, REQUEST_INCLUDE, requestColumns, toRequest } from './quote-request.mapper';
 
 const ids = new UuidV7Generator();
@@ -118,6 +119,11 @@ export class PrismaQuoteRequestRepository implements QuoteRequestRepository {
   async accept(request: QuoteRequest, mission: Mission, idempotencyKey: string, changes: Changes) {
     try {
       return await this.prisma.$transaction(async (tx) => {
+        // Même verrou que l'enregistrement de l'état de l'organisation (ADR-030) : une suspension
+        // enregistrée avant est vue ici, une suspension enregistrée après verra cette mission.
+        if (mission.organizationId && (await lockOrganizationStanding(tx, mission.organizationId))) {
+          return { status: 'organization_suspended' as const };
+        }
         if (!(await this.update(tx, request))) return this.acceptanceOutcome(tx, request.id, idempotencyKey);
         await tx.mission.create({ data: missionCreateColumns(mission, idempotencyKey) });
         await writeChanges(tx, changes, () => ids.next());

@@ -463,6 +463,131 @@ describe('NotifyEventUseCase — impayés, suspension et reprise', () => {
     );
   });
 
+  it('suspension de l’organisation par KSP : message sans impayés, lien vers la mission (ADR-030)', async () => {
+    const { useCase, whatsapp, email } = setup([withEmail, contact(AGENT_1), contact(AGENT_2)]);
+    await expect(
+      useCase.execute({
+        ...suspended,
+        payload: { ...(suspended.payload as object), cause: 'organization_suspended', unpaidCount: 0 },
+      }),
+    ).resolves.toMatchObject({ accepted: 4, inApp: 3 });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.contract_suspended_organization.customer',
+      'cleaning.contract_suspended.agent',
+      'cleaning.contract_suspended.agent',
+    ]);
+    const text = email.sent[0]!.content!.text;
+    expect(text).toContain(
+      'Votre prestation de nettoyage est suspendue : KSP a suspendu votre compte entreprise.',
+    );
+    expect(text).not.toContain('impayé');
+    expect(whatsapp.sent[0]!.variables['link']).toBe(
+      `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION_ID}`,
+    );
+  });
+
+  type SuspensionUpdate = KspEventPayloads['cleaning.contract.suspension_updated'];
+  const suspensionUpdated = (
+    payload: Pick<SuspensionUpdate, 'change' | 'cause' | 'causes'> & Partial<SuspensionUpdate>,
+  ) =>
+    event('cleaning.contract.suspension_updated', {
+      missionId: MISSION_ID,
+      customerId: CUSTOMER,
+      organizationId: ORG,
+      unpaidCount: 2,
+      updatedAt: '2026-11-20T08:00:00Z',
+      ...payload,
+    });
+
+  it('réactivation alors que des factures restent impayées : suspension maintenue, lien vers les factures (ADR-030)', async () => {
+    const { useCase, whatsapp, email } = setup([withEmail]);
+    await expect(
+      useCase.execute(
+        suspensionUpdated({
+          change: 'cause_lifted',
+          cause: 'organization_suspended',
+          causes: ['unpaid_invoices'],
+        }),
+      ),
+    ).resolves.toMatchObject({ accepted: 2, inApp: 1 });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.suspension_updated.customer',
+    ]);
+    expect(email.sent[0]!.content!.text).toContain(
+      'Votre compte entreprise est réactivé, mais la suspension de votre prestation de nettoyage est maintenue : 2 factures impayées.',
+    );
+    expect(whatsapp.sent[0]!.variables['link']).toBe('https://ksp.bj/mon-espace/factures');
+  });
+
+  it('règlement alors que l’organisation reste suspendue : pas de reprise annoncée (ADR-030)', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(
+      suspensionUpdated({
+        change: 'cause_lifted',
+        cause: 'unpaid_invoices',
+        causes: ['organization_suspended'],
+        unpaidCount: 1,
+      }),
+    );
+    const text = whatsapp.sent[0]!.content!.text;
+    expect(text).toContain(
+      'Merci pour votre règlement. Votre prestation de nettoyage reste toutefois suspendue',
+    );
+    expect(whatsapp.sent[0]!.variables['link']).toBe(
+      `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION_ID}`,
+    );
+  });
+
+  it('cause ajoutée à une suspension en cours : le client sait ce qui la maintient (ADR-030)', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(
+      suspensionUpdated({
+        change: 'cause_added',
+        cause: 'unpaid_invoices',
+        causes: ['organization_suspended', 'unpaid_invoices'],
+      }),
+    );
+    await useCase.execute({
+      ...suspensionUpdated({
+        change: 'cause_added',
+        cause: 'organization_suspended',
+        causes: ['unpaid_invoices', 'organization_suspended'],
+      }),
+      eventId: '0192f1c4-0000-7000-8000-0000000a0999',
+    });
+    expect(whatsapp.sent.map((message) => message.variables['case'])).toEqual([
+      'unpaid_added',
+      'organization_added',
+    ]);
+    expect(whatsapp.sent[0]!.content!.text).toContain(
+      'compte 2 factures impayées, le seuil de suspension est atteint',
+    );
+    expect(whatsapp.sent[1]!.content!.text).toContain(
+      'KSP a suspendu votre compte entreprise : même après le règlement de vos factures',
+    );
+  });
+
+  it('reprise à la réactivation de l’organisation : ni remerciement ni règlement (ADR-030)', async () => {
+    const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(TEAM_1)], undefined, [TEAM_1]);
+    await useCase.execute({
+      ...resumed,
+      payload: { ...(resumed.payload as object), cause: 'organization_suspended' },
+    });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.contract_resumed_organization.customer',
+      'cleaning.contract_resumed_organization.team',
+    ]);
+    const customerText = whatsapp.sent[0]!.content!.text;
+    expect(customerText).toContain(
+      'Votre compte entreprise est réactivé : votre prestation de nettoyage reprend.',
+    );
+    expect(customerText).toContain('3 passages reprogrammés.');
+    expect(customerText).not.toContain('règlement');
+    expect(whatsapp.sent[1]!.content!.text).toContain(
+      `La mission ${MISSION_ID} a repris après la réactivation du compte entreprise par KSP : 3 passages reprogrammés, 1 passage à replanifier à la main au back-office.`,
+    );
+  });
+
   it('reprise : le client et chaque membre de l’équipe Nettoyage configurée', async () => {
     const { useCase, whatsapp } = setup(
       [contact(CUSTOMER), contact(TEAM_1, { firstName: 'Awa' }), contact(TEAM_2)],

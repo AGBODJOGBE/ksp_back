@@ -44,20 +44,28 @@ export interface Intervention {
   afterPhotoFileIds: string[];
   startedAt: Date | null;
   completedAt: Date | null;
-  /** Passage annulé par une suspension pour impayés (reprogrammable au déblocage) ou à la main. */
+  /** Passage annulé par une suspension (reprogrammable au déblocage) ou à la main. */
   cancellationCause: InterventionCancellationCause | null;
   cancelledAt: Date | null;
 }
 
 export type InterventionCancellationCause = 'suspension' | 'manual';
 
-/** Factures d'entreprise impayées, ou passages impayés d'un particulier en récurrent. */
-export type SuspensionCause = 'unpaid_invoices' | 'unpaid_interventions';
+/**
+ * Factures d'entreprise impayées, passages impayés d'un particulier en récurrent, ou organisation
+ * suspendue par KSP (ADR-030).
+ */
+export type SuspensionCause = 'unpaid_invoices' | 'unpaid_interventions' | 'organization_suspended';
 
-/** Suspension pour impayés en cours (CDC Nettoyage, partie 10). */
+/**
+ * Suspension en cours (CDC Nettoyage, partie 10 ; ADR-030). Les causes se cumulent : la mission
+ * ne reprend que lorsque la dernière est levée.
+ */
 export interface Suspension {
-  cause: SuspensionCause;
+  /** Causes actives, la plus ancienne d'abord ; jamais vide. */
+  causes: SuspensionCause[];
   since: Date;
+  /** Impayés connus à la dernière décision (0 possible pour une organisation suspendue). */
   unpaidCount: number;
 }
 

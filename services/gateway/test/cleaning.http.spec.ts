@@ -1,6 +1,6 @@
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
-import { type CleaningServer, IDS, startCleaningStub } from './support/cleaning-stub';
+import { type CleaningServer, IDS, protoMission, startCleaningStub } from './support/cleaning-stub';
 import {
   type IdentityServer,
   ORIGINS,
@@ -232,9 +232,36 @@ describe('gateway → cleaning', () => {
       .set('Authorization', `Bearer ${customer}`);
     expect(mission.body).toMatchObject({
       daysPerWeek: 2,
-      suspension: { cause: 'unpaid_invoices', since: '2026-12-15T06:00:00.000Z', unpaidCount: 2 },
+      suspension: {
+        cause: 'unpaid_invoices',
+        causes: ['unpaid_invoices', 'organization_suspended'],
+        since: '2026-12-15T06:00:00.000Z',
+        unpaidCount: 2,
+      },
     });
     expect(mission.body.interventions[0].cancellationCause).toBeNull();
+
+    // Service cleaning antérieur à l'ADR-030 : une seule cause, la liste en est déduite.
+    cleaning.stub.on('getMission', async () => ({
+      mission: {
+        ...protoMission,
+        suspension: {
+          cause: 'organization_suspended',
+          since: '2026-12-15T06:00:00.000Z',
+          unpaidCount: 0,
+          causes: [],
+        },
+      },
+    }));
+    const single = await http()
+      .get(`/api/v1/cleaning/missions/${IDS.mission}`)
+      .set('Authorization', `Bearer ${customer}`);
+    expect(single.body.suspension).toEqual({
+      cause: 'organization_suspended',
+      causes: ['organization_suspended'],
+      since: '2026-12-15T06:00:00.000Z',
+      unpaidCount: 0,
+    });
 
     const zone = await http()
       .post('/api/v1/admin/cleaning/zones/abomey-calavi/deactivate')
