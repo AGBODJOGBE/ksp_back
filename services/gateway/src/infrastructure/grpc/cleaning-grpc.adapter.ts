@@ -9,6 +9,7 @@ import {
   type Json,
   type Page,
   type QuoteInput,
+  type QuoteRequestFilters,
   type QuoteRequestInput,
   type ServiceInput,
   type SettingsInput,
@@ -162,9 +163,17 @@ export class CleaningGrpcAdapter implements CleaningApi {
 
   // --- Back-office ------------------------------------------------------------------------------
 
-  async listQuoteRequests(value: Page, status: string | undefined): Promise<Json> {
+  async listQuoteRequests(value: Page, filters: QuoteRequestFilters): Promise<Json> {
     const res = await this.read('listQuoteRequests', (m) =>
-      this.clients.admin.listQuoteRequests({ page: page(value), status: status ?? '' }, m),
+      this.clients.admin.listQuoteRequests(
+        {
+          page: page(value),
+          status: filters.status ?? '',
+          commune: filters.commune ?? '',
+          customerKind: filters.customerKind ?? '',
+        },
+        m,
+      ),
     );
     return list(res.requests.map(presentRequest), res.nextCursor);
   }
@@ -267,10 +276,17 @@ export class CleaningGrpcAdapter implements CleaningApi {
   async recordPayment(
     id: string,
     input: { amount: number; method: string; reference?: string | undefined },
+    idempotencyKey: string | undefined,
   ): Promise<Json> {
     const res = await this.write('recordPayment', (m) =>
       this.clients.admin.recordPayment(
-        { missionId: id, amount: xof(input.amount), method: input.method, reference: input.reference ?? '' },
+        {
+          missionId: id,
+          amount: xof(input.amount),
+          method: input.method,
+          reference: input.reference ?? '',
+          idempotencyKey: idempotencyKey ?? '',
+        },
         m,
       ),
     );
@@ -365,6 +381,7 @@ export class CleaningGrpcAdapter implements CleaningApi {
               checklist: (p.checklist ?? []).map((item) => ({ ...item, done: false })),
               updatedBy: '',
               updatedAt: '',
+              updatedByName: '',
             },
           },
         },
@@ -387,6 +404,7 @@ export class CleaningGrpcAdapter implements CleaningApi {
             individualPaymentGraceHours: input.individualPaymentGraceHours ?? 0,
             updatedBy: '',
             updatedAt: '',
+            updatedByName: '',
           },
         },
         m,

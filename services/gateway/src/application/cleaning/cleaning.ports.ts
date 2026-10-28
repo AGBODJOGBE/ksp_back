@@ -89,6 +89,14 @@ export interface SettingsInput {
   individualPaymentGraceHours?: number | undefined;
 }
 
+/** Filtres facultatifs et cumulables de la liste des demandes du back-office. */
+export interface QuoteRequestFilters {
+  status?: string | undefined;
+  /** Code de zone, par exemple « abomey-calavi ». */
+  commune?: string | undefined;
+  customerKind?: 'individual' | 'business' | undefined;
+}
+
 /** Un appel par méthode du contrat ksp.cleaning.v1 exposée en REST. */
 export interface CleaningApi {
   listServices(): Promise<Json>;
@@ -104,7 +112,7 @@ export interface CleaningApi {
   getMyMission(id: string): Promise<Json>;
   cancelMyMission(id: string, reason: string | undefined): Promise<Json>;
 
-  listQuoteRequests(page: Page, status: string | undefined): Promise<Json>;
+  listQuoteRequests(page: Page, filters: QuoteRequestFilters): Promise<Json>;
   getQuoteRequest(id: string): Promise<Json>;
   rejectQuoteRequest(id: string, reason: string): Promise<Json>;
   scheduleVisit(id: string, input: { scheduledAt: string; agentId: string }): Promise<Json>;
@@ -121,9 +129,11 @@ export interface CleaningApi {
       teamId?: string | undefined;
     },
   ): Promise<Json>;
+  /** Idempotency-Key facultative : vide, aucun contrôle de rejeu. */
   recordPayment(
     id: string,
     input: { amount: number; method: string; reference?: string | undefined },
+    idempotencyKey: string | undefined,
   ): Promise<Json>;
   cancelMission(id: string, reason: string): Promise<Json>;
   startIntervention(id: string): Promise<Json>;

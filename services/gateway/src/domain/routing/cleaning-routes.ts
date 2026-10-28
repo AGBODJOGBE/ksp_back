@@ -5,10 +5,13 @@ const QUOTE = 'ksp.cleaning.v1.QuoteService';
 const MISSION = 'ksp.cleaning.v1.MissionService';
 const ADMIN = 'ksp.cleaning.v1.CleaningAdminService';
 
-/** Rôles du back-office Nettoyage (cahier des charges Nettoyage, partie 5). */
-const SUPERVISION = ['cleaning_supervisor', 'cleaning_admin'] as const;
-const FIELD_WORK = ['cleaning_supervisor', 'cleaning_agent', 'cleaning_admin'] as const;
-const ADMINISTRATION = ['cleaning_admin'] as const;
+/**
+ * Rôles du back-office Nettoyage (cahier des charges Nettoyage, partie 5). `super_admin` a partout
+ * la portée de `cleaning_admin`, comme pour la facturation.
+ */
+const SUPERVISION = ['cleaning_supervisor', 'cleaning_admin', 'super_admin'] as const;
+const FIELD_WORK = ['cleaning_supervisor', 'cleaning_agent', 'cleaning_admin', 'super_admin'] as const;
+const ADMINISTRATION = ['cleaning_admin', 'super_admin'] as const;
 
 /**
  * Double authentification exigée sur le back-office : faite pendant la session en cours, soit au plus
@@ -220,6 +223,8 @@ export const CLEANING_ROUTES = [
     access: { level: 'authenticated', anyRole: SUPERVISION, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
     rateLimit: 'authenticated',
     requiresKnownClient: false,
+    // Ajouté après le branchement du back-office : facultatif, pour ne rien casser.
+    idempotencyKey: 'optional',
   },
   {
     operationId: 'cancelCleaningMission',

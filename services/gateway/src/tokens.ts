@@ -8,3 +8,4 @@ export const CLEANING_API = Symbol('CLEANING_API');
 export const BILLING_GRPC_CLIENT = Symbol('BILLING_GRPC_CLIENT');
 export const BILLING_API = Symbol('BILLING_API');
 export const ORGANIZATIONS_API = Symbol('ORGANIZATIONS_API');
+export const ACCOUNT_ADMIN_API = Symbol('ACCOUNT_ADMIN_API');

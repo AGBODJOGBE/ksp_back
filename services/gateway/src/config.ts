@@ -86,6 +86,7 @@ export const configSchema = z
     RATE_LIMIT_CLEANING_SIMULATION_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.cleaning_simulation.limit),
     RATE_LIMIT_EMAIL_CODE_REQUEST_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.email_code_request.limit),
     RATE_LIMIT_EMAIL_CODE_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.email_code_verify.limit),
+    RATE_LIMIT_ACCOUNT_LOOKUP_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.account_lookup.limit),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV !== 'production') return;
@@ -149,6 +150,10 @@ export function rateLimitsFrom(config: GatewayConfig): RateLimitTable {
     email_code_verify: {
       ...DEFAULT_RATE_LIMITS.email_code_verify,
       limit: config.RATE_LIMIT_EMAIL_CODE_VERIFY_PER_MINUTE,
+    },
+    account_lookup: {
+      ...DEFAULT_RATE_LIMITS.account_lookup,
+      limit: config.RATE_LIMIT_ACCOUNT_LOOKUP_PER_MINUTE,
     },
   };
 }

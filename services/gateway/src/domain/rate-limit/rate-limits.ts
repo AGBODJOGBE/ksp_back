@@ -8,7 +8,8 @@ export type RateLimitCategory =
   | 'refresh'
   | 'cleaning_simulation'
   | 'email_code_request'
-  | 'email_code_verify';
+  | 'email_code_verify'
+  | 'account_lookup';
 
 export interface RateLimitRule {
   limit: number;
@@ -33,6 +34,8 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   // Code de confirmation de l'e-mail du profil : identity limite aussi par adresse et par compte.
   email_code_request: { limit: 3, windowSeconds: 60, key: 'user' },
   email_code_verify: { limit: 10, windowSeconds: 60, key: 'user' },
+  // Recherche de compte par téléphone au back-office (ADR-029) : freine l'énumération des numéros.
+  account_lookup: { limit: 20, windowSeconds: 60, key: 'user' },
 };
 
 /** Clé du compteur : une catégorie ne partage jamais ses compteurs avec une autre. */

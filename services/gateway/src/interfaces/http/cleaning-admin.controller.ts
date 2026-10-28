@@ -1,4 +1,4 @@
-import { Body, Controller, Inject, Param, Query } from '@nestjs/common';
+import { Body, Controller, Headers, Inject, Param, Query } from '@nestjs/common';
 import { type CleaningApi } from '../../application/cleaning/cleaning.ports';
 import { CLEANING_API } from '../../tokens';
 import { idFrom, pageFrom } from './cleaning.controller';
@@ -22,7 +22,9 @@ export class CleaningAdminHttpController {
   @Route('listCleaningQuoteRequests')
   listQuoteRequests(@Query() query: Query) {
     const status = parseParam(cleaningParams.requestStatus, query['status'], 'status');
-    return this.cleaning.listQuoteRequests(pageFrom(query), status);
+    const commune = parseParam(cleaningParams.communeFilter, query['commune'], 'commune');
+    const customerKind = parseParam(cleaningParams.customerKind, query['customerKind'], 'customerKind');
+    return this.cleaning.listQuoteRequests(pageFrom(query), { status, commune, customerKind });
   }
 
   @Route('getCleaningQuoteRequest')
@@ -80,9 +82,15 @@ export class CleaningAdminHttpController {
   }
 
   @Route('recordCleaningPayment')
-  recordPayment(@Param('id') id: unknown, @Body() body: unknown) {
+  recordPayment(@Param('id') id: unknown, @Body() body: unknown, @Headers('idempotency-key') key: unknown) {
     const missionId = idFrom(id);
-    return this.cleaning.recordPayment(missionId, parseBody(requestBodies.recordCleaningPayment, body));
+    // Facultative : les envois sans clé restent acceptés (back-office déjà branché).
+    const idempotencyKey = parseParam(cleaningParams.optionalIdempotencyKey, key, 'Idempotency-Key');
+    return this.cleaning.recordPayment(
+      missionId,
+      parseBody(requestBodies.recordCleaningPayment, body),
+      idempotencyKey,
+    );
   }
 
   @Route('cancelCleaningMission')

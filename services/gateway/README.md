@@ -47,15 +47,16 @@ identity avant la gateway.
 
 ## Routes des comptes entreprise (ADR-027)
 
-| Route                                                                                           | Appel                                                           | Accès                                |
-| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------ |
-| `POST /api/v1/identity/context`                                                                 | `AuthService/SwitchContext`                                     | connecté                             |
-| `GET`, `POST /api/v1/identity/organizations`                                                    | `OrganizationService/ListMyOrganizations`, `CreateOrganization` | connecté                             |
-| `GET /api/v1/identity/organizations/{id}`                                                       | `OrganizationService/GetMyOrganization`                         | connecté                             |
-| `PUT /api/v1/identity/organizations/{id}/billing-email`                                         | `OrganizationService/ChangeOrganizationBillingEmail`            | connecté, 3 par utilisateur          |
-| `POST /api/v1/identity/organizations/{id}/billing-email/verify`                                 | `OrganizationService/ConfirmOrganizationBillingEmail`           | connecté, 10 par utilisateur         |
-| `GET /api/v1/admin/identity/organizations[/{id}]`                                               | `OrganizationAdminService/ListOrganizations`, `GetOrganization` | `super_admin`, `support_agent` + MFA |
-| `POST /api/v1/admin/identity/organizations/{id}/validate`, `/reject`, `/suspend`, `/reactivate` | `OrganizationAdminService/…`                                    | `super_admin` + MFA                  |
+| Route                                                                                           | Appel                                                           | Accès                                                     |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------- |
+| `POST /api/v1/identity/context`                                                                 | `AuthService/SwitchContext`                                     | connecté                                                  |
+| `GET`, `POST /api/v1/identity/organizations`                                                    | `OrganizationService/ListMyOrganizations`, `CreateOrganization` | connecté                                                  |
+| `GET /api/v1/identity/organizations/{id}`                                                       | `OrganizationService/GetMyOrganization`                         | connecté                                                  |
+| `PUT /api/v1/identity/organizations/{id}/billing-email`                                         | `OrganizationService/ChangeOrganizationBillingEmail`            | connecté, 3 par utilisateur                               |
+| `POST /api/v1/identity/organizations/{id}/billing-email/verify`                                 | `OrganizationService/ConfirmOrganizationBillingEmail`           | connecté, 10 par utilisateur                              |
+| `GET /api/v1/admin/identity/organizations[/{id}]`                                               | `OrganizationAdminService/ListOrganizations`, `GetOrganization` | `super_admin`, `support_agent` + MFA                      |
+| `POST /api/v1/admin/identity/organizations/{id}/validate`, `/reject`, `/suspend`, `/reactivate` | `OrganizationAdminService/…`                                    | `super_admin` + MFA                                       |
+| `POST /api/v1/admin/identity/accounts/lookup` (numéro dans le corps, ADR-029)                   | `AccountAdminService/FindAccountByPhone`                        | `cleaning_admin`, `super_admin` + MFA, 20 par utilisateur |
 
 `activeContext` porte aussi `organizationName` (raison sociale de l'organisation active, null pour
 un particulier). Après `POST /api/v1/identity/context`, le front remplace son jeton d'accès par
@@ -67,7 +68,7 @@ celui de la réponse.
 
 - `/api/v1/cleaning/services` et `/api/v1/cleaning/zones` (zones desservies actives) : public ; `/api/v1/cleaning/simulations` (public, 20 par minute et par IP) ;
 - `/api/v1/cleaning/quote-requests…` et `/api/v1/cleaning/missions…` : connecté ; la demande de devis exige un profil complet (vérifié auprès d'identity par la gateway) et, comme l'acceptation, l'en-tête `Idempotency-Key` ;
-- `/api/v1/admin/cleaning/…` : rôles `cleaning_supervisor`, `cleaning_agent` ou `cleaning_admin` selon la route (extension `x-ksp-roles`) et double authentification faite pendant la session (`x-ksp-mfa-max-age`, 12 heures).
+- `/api/v1/admin/cleaning/…` : rôles `cleaning_supervisor`, `cleaning_agent` ou `cleaning_admin` selon la route (extension `x-ksp-roles`), `super_admin` partout avec la portée de `cleaning_admin`, et double authentification faite pendant la session (`x-ksp-mfa-max-age`, 12 heures). Le paiement manuel accepte un en-tête `Idempotency-Key` facultatif (`idempotencyKey: 'optional'` dans le manifeste).
 
 Le détail (corps, réponses, erreurs) est dans le contrat OpenAPI, étiquettes « Nettoyage » et « Nettoyage (back-office) ».
 
