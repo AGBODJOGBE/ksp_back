@@ -2,6 +2,7 @@ import { loadConfig } from '@ksp/platform';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { configSchema } from '../src/config';
+import { IdentityEventsConsumer } from '../src/infrastructure/messaging/identity-events.consumer';
 import { CleaningAdminGrpcController } from '../src/interfaces/grpc/admin.controller';
 import {
   CatalogGrpcController,
@@ -27,6 +28,7 @@ describe('AppModule', () => {
       MissionGrpcController,
       CleaningAdminGrpcController,
       ObligationGrpcController,
+      IdentityEventsConsumer,
     ]) {
       expect(moduleRef.get(controller)).toBeDefined();
     }

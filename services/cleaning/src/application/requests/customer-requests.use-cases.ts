@@ -91,6 +91,10 @@ export class RequestQuoteUseCase {
     const now = this.deps.clock.now();
     const replay = await this.deps.requests.findByIdempotencyKey(customer.userId, key);
     if (replay) return presentRequest(replay, now);
+    // Jeton émis avant la suspension de l'organisation (15 minutes au plus, ADR-027) : refusé ici.
+    if (customer.organizationId && (await this.deps.organizations.isSuspended(customer.organizationId))) {
+      throw CleaningErrors.organizationSuspended();
+    }
 
     const premisesType = oneOf('premisesType', input.premisesType, PREMISES_TYPES);
     const quantity = requirePositiveInt('quantity', input.quantity);
@@ -311,6 +315,9 @@ export class AcceptQuoteUseCase {
       ],
     });
     if (outcome.status === 'conflict') throw CleaningErrors.concurrentUpdate();
+    // L'acceptation se fait au nom du titulaire, quel que soit son contexte actif : c'est la
+    // demande qui porte l'organisation (ADR-030).
+    if (outcome.status === 'organization_suspended') throw CleaningErrors.organizationSuspended();
     return this.result(request.id, outcome.status === 'replayed' ? outcome.missionId : mission.id);
   }
 

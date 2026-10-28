@@ -194,8 +194,11 @@ model Mission {
   depositAmount        Int              @map("deposit_amount")
   cancellationReason   String?          @map("cancellation_reason")
   daysPerWeek          Int?             @map("days_per_week")
-  /// Suspension pour impayés en cours : unpaid_invoices ou unpaid_interventions, null sinon.
+  /// Suspension en cours : plus ancienne cause active (unpaid_invoices, unpaid_interventions ou
+  /// organization_suspended), null sinon.
   suspensionCause      String?          @map("suspension_cause")
+  /// Toutes les causes actives, la plus ancienne d'abord (ADR-030) ; vide sans suspension.
+  suspensionCauses     String[]         @default([]) @map("suspension_causes")
   suspendedSince       DateTime?        @map("suspended_since") @db.Timestamptz(3)
   suspensionUnpaid     Int?             @map("suspension_unpaid_count")
   /// Impayés au dernier avertissement envoyé (0 : aucun).
@@ -208,6 +211,7 @@ model Mission {
 
   @@index([customerId, id])
   @@index([status, id])
+  @@index([organizationId])
   @@map("missions")
 }
 
@@ -227,7 +231,7 @@ model Intervention {
   afterPhotoFileIds  String[]  @default([]) @map("after_photo_file_ids") @db.Uuid
   startedAt          DateTime? @map("started_at") @db.Timestamptz(3)
   completedAt        DateTime? @map("completed_at") @db.Timestamptz(3)
-  /// suspension (impayés, reprogrammable) ou manual ; null si le passage n'est pas annulé.
+  /// suspension (reprogrammable au déblocage) ou manual ; null si le passage n'est pas annulé.
   cancellationCause  String?   @map("cancellation_cause")
   cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(3)
   mission            Mission   @relation(fields: [missionId], references: [id])
@@ -323,6 +327,18 @@ model ContractInvoice {
 
   @@index([missionId, status])
   @@map("contract_invoices")
+}
+
+/// Organisations dont KSP a changé l'état, apprises par les événements d'identity (ADR-030) :
+/// une organisation suspendue suspend ses missions. Absente : jamais suspendue.
+model OrganizationStanding {
+  organizationId String   @id @map("organization_id") @db.Uuid
+  suspended      Boolean
+  /// Date de la dernière décision appliquée (occurredAt) : un événement plus ancien est ignoré.
+  changedAt      DateTime @map("changed_at") @db.Timestamptz(3)
+  updatedAt      DateTime @map("updated_at") @db.Timestamptz(3)
+
+  @@map("organization_standings")
 }
 
 /// Zone desservie : une commune (clé normalisée, la même que les coefficients de commune).

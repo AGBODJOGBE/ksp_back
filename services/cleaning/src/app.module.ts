@@ -12,11 +12,13 @@ import { CLEANING_USE_CASES, createUseCases } from './application/use-cases';
 import { type ServiceConfig } from './config';
 import { IdentityPeopleDirectory } from './infrastructure/identity/identity-people-directory';
 import { BillingEventsConsumer } from './infrastructure/messaging/billing-events.consumer';
+import { IdentityEventsConsumer } from './infrastructure/messaging/identity-events.consumer';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { PrismaAgentRepository } from './infrastructure/persistence/prisma-agent.repository';
 import { PrismaCatalogRepository } from './infrastructure/persistence/prisma-catalog.repository';
 import { PrismaContractInvoiceRepository } from './infrastructure/persistence/prisma-contract-invoice.repository';
 import { PrismaMissionRepository } from './infrastructure/persistence/prisma-mission.repository';
+import { PrismaOrganizationStandingRepository } from './infrastructure/persistence/prisma-organization-standing.repository';
 import { PrismaQuoteRequestRepository } from './infrastructure/persistence/prisma-quote-request.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import {
@@ -59,7 +61,9 @@ export class AppModule {
         PrismaMissionRepository,
         PrismaAgentRepository,
         PrismaContractInvoiceRepository,
+        PrismaOrganizationStandingRepository,
         BillingEventsConsumer,
+        IdentityEventsConsumer,
         PaymentWatchService,
         { provide: PAYMENT_WATCH_INTERVAL_MS, useValue: config.CLEANING_PAYMENT_WATCH_INTERVAL_MS },
         {
@@ -70,6 +74,7 @@ export class AppModule {
             PrismaMissionRepository,
             PrismaAgentRepository,
             PrismaContractInvoiceRepository,
+            PrismaOrganizationStandingRepository,
             IDENTITY_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
           ],
@@ -79,6 +84,7 @@ export class AppModule {
             missions: PrismaMissionRepository,
             agents: PrismaAgentRepository,
             invoices: PrismaContractInvoiceRepository,
+            organizations: PrismaOrganizationStandingRepository,
             grpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
           ) => {
@@ -93,6 +99,7 @@ export class AppModule {
               missions,
               agents,
               invoices,
+              organizations,
               people: new IdentityPeopleDirectory(
                 grpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
                 new GrpcCaller({

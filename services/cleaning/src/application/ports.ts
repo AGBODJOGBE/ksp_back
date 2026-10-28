@@ -86,14 +86,22 @@ export interface QuoteRequestRepository {
   save(request: QuoteRequest, changes: Changes): Promise<boolean>;
   /**
    * Acceptation atomique : demande acceptée et mission créée dans la même transaction.
-   * Idempotent par clé ; une acceptation concurrente renvoie `conflict`.
+   * Idempotent par clé ; une acceptation concurrente renvoie `conflict`. La mission d'une
+   * organisation suspendue n'est pas créée (`organization_suspended`) : l'état de l'organisation
+   * est lu sous le même verrou que son enregistrement (OrganizationStandingRepository.record),
+   * si bien qu'une mission créée est toujours vue par la suspension qui suit.
    */
   accept(
     request: QuoteRequest,
     mission: Mission,
     idempotencyKey: string,
     changes: Changes,
-  ): Promise<{ status: 'created' } | { status: 'replayed'; missionId: string } | { status: 'conflict' }>;
+  ): Promise<
+    | { status: 'created' }
+    | { status: 'replayed'; missionId: string }
+    | { status: 'conflict' }
+    | { status: 'organization_suspended' }
+  >;
 }
 
 export interface MissionFilter {
@@ -132,6 +140,8 @@ export interface MissionRepository {
   ): Promise<boolean>;
   /** Missions de particuliers en récurrent, non terminées : surveillance des passages impayés. */
   listIndividualRecurring(): Promise<Mission[]>;
+  /** Missions non terminées d'une organisation : suspension ou reprise avec elle (ADR-030). */
+  listActiveForOrganization(organizationId: string): Promise<Mission[]>;
 }
 
 export type ContractInvoiceStatus = 'overdue' | 'paid';
@@ -151,6 +161,24 @@ export interface ContractInvoiceRepository {
     at: Date;
   }): Promise<'processed' | 'duplicate'>;
   countOverdue(missionId: string): Promise<number>;
+}
+
+/**
+ * Organisations suspendues par KSP, apprises par les événements d'identity (ADR-030). L'inbox et
+ * l'état sont écrits dans la même transaction ; un événement plus ancien que le dernier appliqué
+ * à l'organisation est sans effet (ordre d'arrivée indifférent) ; à date égale, la suspension
+ * l'emporte.
+ */
+export interface OrganizationStandingRepository {
+  record(input: {
+    eventId: string;
+    consumer: string;
+    organizationId: string;
+    suspended: boolean;
+    /** Date de la décision (occurredAt de l'événement). */
+    at: Date;
+  }): Promise<'processed' | 'duplicate'>;
+  isSuspended(organizationId: string): Promise<boolean>;
 }
 
 export interface AgentRepository {

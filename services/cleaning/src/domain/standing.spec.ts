@@ -4,7 +4,10 @@ import { planRescheduling, targetStart } from './rescheduling';
 import { DEFAULT_SETTINGS, mergeSettings, settingsProblems } from './settings';
 import {
   decideStanding,
+  hasSuspensionCause,
+  ORGANIZATION_CAUSE,
   passagesToReschedule,
+  remainingCauses,
   standingCause,
   suspendMission,
   thresholdsFor,
@@ -74,18 +77,58 @@ describe('règle des impayés (partie 10)', () => {
 
   it('entreprise : avertit à 1 impayée, suspend à 2, débloque sous le seuil', () => {
     const business = { warnAt: 1, suspendAt: 2 };
+    const cause = 'unpaid_invoices' as const;
     const active = { suspension: null, warningLevel: 0 };
-    expect(decideStanding(active, 0, business)).toBe('none');
-    expect(decideStanding(active, 1, business)).toBe('warn');
-    expect(decideStanding({ suspension: null, warningLevel: 1 }, 1, business)).toBe('none');
-    expect(decideStanding(active, 2, business)).toBe('suspend');
+    expect(decideStanding(active, cause, 0, business)).toBe('none');
+    expect(decideStanding(active, cause, 1, business)).toBe('warn');
+    expect(decideStanding({ suspension: null, warningLevel: 1 }, cause, 1, business)).toBe('none');
+    expect(decideStanding(active, cause, 2, business)).toBe('suspend');
     const suspended = {
-      suspension: { cause: 'unpaid_invoices' as const, since: NOW, unpaidCount: 2 },
+      suspension: { causes: [cause], since: NOW, unpaidCount: 2 },
       warningLevel: 2,
     };
-    expect(decideStanding(suspended, 2, business)).toBe('none');
-    expect(decideStanding(suspended, 1, business)).toBe('resume');
-    expect(decideStanding(suspended, 0, business)).toBe('resume');
+    expect(decideStanding(suspended, cause, 2, business)).toBe('none');
+    expect(decideStanding(suspended, cause, 1, business)).toBe('resume');
+    expect(decideStanding(suspended, cause, 0, business)).toBe('resume');
+  });
+
+  it('organisation suspendue : pas d’avertissement, la cause des impayés s’ajoute au seuil', () => {
+    const business = { warnAt: 1, suspendAt: 2 };
+    const byOrganization = {
+      suspension: { causes: [ORGANIZATION_CAUSE], since: NOW, unpaidCount: 0 },
+      warningLevel: 0,
+    };
+    expect(decideStanding(byOrganization, 'unpaid_invoices', 1, business)).toBe('none');
+    expect(decideStanding(byOrganization, 'unpaid_invoices', 2, business)).toBe('suspend');
+    // Sous le seuil, rien à lever : la cause des impayés n'est pas active.
+    expect(decideStanding(byOrganization, 'unpaid_invoices', 0, business)).toBe('none');
+  });
+
+  it('causes cumulées : une seconde cause garde le début et n’est pas une nouvelle suspension', () => {
+    const first = suspendMission(
+      mission({ organizationId: 'o1', interventions: [passage('p1')] }),
+      'unpaid_invoices',
+      2,
+      NOW,
+    );
+    expect(first.started).toBe(true);
+    const later = at('2026-12-05T08:00:00Z');
+    const second = suspendMission(first.mission, ORGANIZATION_CAUSE, 2, later);
+    expect(second).toMatchObject({ started: false, cancelledInterventionIds: [], releasedAgentIds: [] });
+    expect(second.mission.suspension).toEqual({
+      causes: ['unpaid_invoices', ORGANIZATION_CAUSE],
+      since: NOW,
+      unpaidCount: 2,
+    });
+    // Une cause déjà active ne change pas d'ordre.
+    expect(suspendMission(second.mission, 'unpaid_invoices', 3, later).mission.suspension?.causes).toEqual([
+      'unpaid_invoices',
+      ORGANIZATION_CAUSE,
+    ]);
+    expect(hasSuspensionCause(second.mission, ORGANIZATION_CAUSE)).toBe(true);
+    expect(remainingCauses(second.mission.suspension!, 'unpaid_invoices')).toEqual([ORGANIZATION_CAUSE]);
+    expect(remainingCauses(first.mission.suspension!, 'unpaid_invoices')).toEqual([]);
+    expect(passagesToReschedule(second.mission).map((i) => i.id)).toEqual(['p1']);
   });
 
   it('particulier : passages terminés depuis plus du délai de grâce et non couverts par les paiements', () => {
@@ -133,7 +176,12 @@ describe('règle des impayés (partie 10)', () => {
     );
     expect(result.cancelledInterventionIds).toEqual(['p1', 'p3']);
     expect(result.releasedAgentIds).toEqual(['a1', 'a2']);
-    expect(result.mission.suspension).toEqual({ cause: 'unpaid_interventions', since: NOW, unpaidCount: 1 });
+    expect(result.started).toBe(true);
+    expect(result.mission.suspension).toEqual({
+      causes: ['unpaid_interventions'],
+      since: NOW,
+      unpaidCount: 1,
+    });
     expect(result.mission.interventions.map((i) => i.status)).toEqual([
       'cancelled',
       'in_progress',
@@ -156,7 +204,7 @@ describe('règle des impayés (partie 10)', () => {
     });
     const suspended = mission({
       interventions: [old, manual, current],
-      suspension: { cause: 'unpaid_invoices', since: NOW, unpaidCount: 2 },
+      suspension: { causes: ['unpaid_invoices'], since: NOW, unpaidCount: 2 },
     });
     expect(passagesToReschedule(suspended).map((i) => i.id)).toEqual(['current']);
     expect(passagesToReschedule({ ...suspended, suspension: null })).toEqual([]);

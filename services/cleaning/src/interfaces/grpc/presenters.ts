@@ -154,7 +154,8 @@ export function presentMission(
     updatedAt: iso(mission.updatedAt),
     suspension: mission.suspension
       ? {
-          cause: mission.suspension.cause,
+          cause: mission.suspension.causes[0]!,
+          causes: mission.suspension.causes,
           since: iso(mission.suspension.since),
           unpaidCount: mission.suspension.unpaidCount,
         }

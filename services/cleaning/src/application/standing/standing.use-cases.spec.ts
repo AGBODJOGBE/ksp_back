@@ -14,9 +14,11 @@ import {
   testWorld,
   type TestWorld,
 } from '../testing/fakes';
+import { HandleOrganizationEventUseCase, ReconcileOrganizationUseCase } from './organization.use-cases';
 import {
   EvaluateStandingUseCase,
   HandleInvoiceEventUseCase,
+  MissionSuspension,
   WatchIndividualPaymentsUseCase,
 } from './standing.use-cases';
 
@@ -249,6 +251,247 @@ describe('impayés, suspension et reprise (CDC Nettoyage, partie 10)', () => {
     expect(world.recorder.audit.map((entry) => entry.action)).toEqual(['zone.saved', 'zone.deactivated']);
   });
 
+  describe('organisation suspendue par KSP (ADR-030)', () => {
+    let organizationEvent: HandleOrganizationEventUseCase;
+    // Décisions d'identity dans l'ordre chronologique.
+    let decisionAt = Date.parse('2026-10-23T07:00:00Z');
+
+    const organization = (suspended: boolean, options: { eventId?: string; occurredAt?: string } = {}) =>
+      organizationEvent.execute({
+        eventId: options.eventId ?? uuid(8000 + ++eventNumber),
+        eventType: suspended ? 'identity.organization.suspended' : 'identity.organization.reactivated',
+        organizationId: ORGANIZATION_ID,
+        suspended,
+        occurredAt: options.occurredAt ?? new Date((decisionAt += 60_000)).toISOString(),
+      });
+    const count = (type: string) => eventTypes().filter((t) => t === type).length;
+    const payloadOf = (type: string) => world.recorder.events.filter((e) => e.type === type).at(-1)?.payload;
+
+    beforeEach(() => {
+      const suspension = new MissionSuspension(world);
+      const evaluate = new EvaluateStandingUseCase(world, suspension);
+      organizationEvent = new HandleOrganizationEventUseCase(
+        world,
+        new ReconcileOrganizationUseCase(world, suspension, evaluate),
+      );
+      handle = new HandleInvoiceEventUseCase(world, evaluate);
+    });
+
+    it('organisation seule : passages annulés, agents libérés, reprise à la réactivation', async () => {
+      expect(await organization(true)).toEqual({ examined: 1, changed: 1 });
+      expect(payloadOf('cleaning.contract.suspended')).toMatchObject({
+        cause: 'organization_suspended',
+        unpaidCount: 0,
+        threshold: 2,
+        cancelledInterventionIds: [uuid(1), uuid(2)],
+        releasedAgentIds: [AGENT_ID],
+      });
+      expect(stored().suspension?.causes).toEqual(['organization_suspended']);
+      expect(
+        await code(
+          asSupervisor(() =>
+            new ScheduleInterventionUseCase(world).execute({
+              missionId: MISSION_ID,
+              scheduledStart: LATER,
+              durationMinutes: 60,
+              agentIds: [AGENT_ID],
+              teamId: '',
+            }),
+          ),
+        ),
+      ).toBe('CLEANING_CONTRACT_SUSPENDED');
+      // Même événement livré deux fois : aucun nouvel effet.
+      expect(await organization(true, { eventId: uuid(8000 + eventNumber) })).toEqual({
+        examined: 1,
+        changed: 0,
+      });
+      expect(count('cleaning.contract.suspended')).toBe(1);
+
+      expect(await organization(false)).toEqual({ examined: 1, changed: 1 });
+      expect(stored().suspension).toBeNull();
+      expect(payloadOf('cleaning.contract.resumed')).toMatchObject({
+        cause: 'organization_suspended',
+        unpaidCount: 0,
+        rescheduledCount: 2,
+        failedCount: 0,
+      });
+      expect(stored().interventions.filter((i) => i.status === 'planned')).toHaveLength(2);
+    });
+
+    it('impayés puis organisation : le règlement ne reprend pas, la réactivation si', async () => {
+      await invoiceEvent(1, 'overdue');
+      expect(await invoiceEvent(2, 'overdue')).toBe('suspended');
+      expect(await organization(true)).toEqual({ examined: 1, changed: 1 });
+      expect(count('cleaning.contract.suspended')).toBe(1);
+      expect(stored().suspension).toMatchObject({
+        causes: ['unpaid_invoices', 'organization_suspended'],
+        unpaidCount: 2,
+      });
+
+      expect(await invoiceEvent(1, 'paid')).toBe('cause_lifted');
+      expect(stored().suspension?.causes).toEqual(['organization_suspended']);
+      expect(count('cleaning.contract.resumed')).toBe(0);
+
+      expect(await organization(false)).toEqual({ examined: 1, changed: 1 });
+      expect(stored().suspension).toBeNull();
+      expect(payloadOf('cleaning.contract.resumed')).toMatchObject({
+        cause: 'organization_suspended',
+        unpaidCount: 1,
+        rescheduledCount: 2,
+      });
+      // 1 facture encore impayée, déjà annoncée avant la suspension : pas de nouvel avertissement.
+      expect(count('cleaning.contract.suspension_warning')).toBe(1);
+    });
+
+    it('organisation puis impayés : la réactivation ne reprend pas, le règlement si', async () => {
+      await organization(true);
+      // Déjà arrêtée : pas d'avertissement à la première facture impayée.
+      expect(await invoiceEvent(1, 'overdue')).toBe('none');
+      expect(await invoiceEvent(2, 'overdue')).toBe('cause_added');
+      expect(count('cleaning.contract.suspended')).toBe(1);
+      expect(stored().suspension?.causes).toEqual(['organization_suspended', 'unpaid_invoices']);
+
+      expect(await organization(false)).toEqual({ examined: 1, changed: 1 });
+      expect(stored().suspension?.causes).toEqual(['unpaid_invoices']);
+      expect(count('cleaning.contract.resumed')).toBe(0);
+
+      expect(await invoiceEvent(2, 'paid')).toBe('resumed');
+      expect(stored().suspension).toBeNull();
+      expect(payloadOf('cleaning.contract.resumed')).toMatchObject({
+        cause: 'unpaid_invoices',
+        unpaidCount: 1,
+      });
+      expect(stored().interventions.filter((i) => i.status === 'planned')).toHaveLength(2);
+    });
+
+    it('impayés seuls : la réactivation d’une organisation jamais suspendue ne change rien', async () => {
+      await invoiceEvent(1, 'overdue');
+      await invoiceEvent(2, 'overdue');
+      expect(await organization(false)).toEqual({ examined: 1, changed: 0 });
+      expect(stored().suspension?.causes).toEqual(['unpaid_invoices']);
+      expect(await invoiceEvent(2, 'paid')).toBe('resumed');
+    });
+
+    it('facture impayée pendant la suspension, sans avertissement : avertie à la reprise', async () => {
+      await organization(true);
+      expect(await invoiceEvent(1, 'overdue')).toBe('none');
+      await organization(false);
+      expect(stored().suspension).toBeNull();
+      expect(eventTypes().at(-1)).toBe('cleaning.contract.suspension_warning');
+      expect(stored().warningLevel).toBe(1);
+    });
+
+    it('événements dans le désordre : une décision plus ancienne que la dernière est sans effet', async () => {
+      await organization(true, { occurredAt: '2026-10-23T07:30:00Z' });
+      expect(await organization(false, { occurredAt: '2026-10-23T07:10:00Z' })).toEqual({
+        examined: 1,
+        changed: 0,
+      });
+      expect(stored().suspension?.causes).toEqual(['organization_suspended']);
+    });
+
+    it('changements de cause annoncés au client par cleaning.contract.suspension_updated', async () => {
+      await organization(true);
+      await invoiceEvent(1, 'overdue');
+      expect(await invoiceEvent(2, 'overdue')).toBe('cause_added');
+      expect(payloadOf('cleaning.contract.suspension_updated')).toEqual({
+        missionId: MISSION_ID,
+        customerId: CUSTOMER_ID,
+        organizationId: ORGANIZATION_ID,
+        change: 'cause_added',
+        cause: 'unpaid_invoices',
+        causes: ['organization_suspended', 'unpaid_invoices'],
+        unpaidCount: 2,
+        updatedAt: '2026-10-23T08:00:00.000Z',
+      });
+      await organization(false);
+      expect(payloadOf('cleaning.contract.suspension_updated')).toMatchObject({
+        change: 'cause_lifted',
+        cause: 'organization_suspended',
+        causes: ['unpaid_invoices'],
+        unpaidCount: 2,
+      });
+      expect(count('cleaning.contract.suspension_updated')).toBe(2);
+      expect(count('cleaning.contract.suspended')).toBe(1);
+      // Le règlement lève la dernière cause : reprise, pas de changement de cause.
+      await invoiceEvent(1, 'paid');
+      await invoiceEvent(2, 'paid');
+      expect(count('cleaning.contract.suspension_updated')).toBe(2);
+      expect(count('cleaning.contract.resumed')).toBe(1);
+    });
+
+    it('réactivation avec des impayés au seuil non enregistrés : ils prennent le relais, sans reprise', async () => {
+      await organization(true);
+      // Factures passées impayées sans réévaluation de la mission (événements absents ou seuil
+      // abaissé pendant la suspension).
+      for (const invoice of [1, 2]) {
+        world.invoices.invoices.set(uuid(5000 + invoice), { missionId: MISSION_ID, status: 'overdue' });
+      }
+      expect(await organization(false)).toEqual({ examined: 1, changed: 1 });
+      expect(stored().suspension).toMatchObject({ causes: ['unpaid_invoices'], unpaidCount: 2 });
+      expect(count('cleaning.contract.resumed')).toBe(0);
+      expect(count('cleaning.contract.suspended')).toBe(1);
+      expect(payloadOf('cleaning.contract.suspension_updated')).toMatchObject({
+        change: 'cause_lifted',
+        cause: 'organization_suspended',
+        causes: ['unpaid_invoices'],
+      });
+      // Les passages restent annulés jusqu'au règlement.
+      expect(stored().interventions.filter((i) => i.status === 'planned')).toHaveLength(0);
+      expect(await invoiceEvent(2, 'paid')).toBe('resumed');
+    });
+
+    it('réactivation enregistrée pendant l’alignement d’une suspension : l’alignement recommence', async () => {
+      const list = world.missions.listActiveForOrganization.bind(world.missions);
+      let interleaved = false;
+      jest.spyOn(world.missions, 'listActiveForOrganization').mockImplementation(async (organizationId) => {
+        const missions = await list(organizationId);
+        if (!interleaved) {
+          interleaved = true;
+          // Réactivation traitée en parallèle : enregistrée, mais ses missions déjà lues.
+          await world.organizations.record({
+            eventId: uuid(8500),
+            consumer: 'cleaning.identity.organization.reactivated',
+            organizationId: ORGANIZATION_ID,
+            suspended: false,
+            at: new Date('2026-10-23T09:00:00Z'),
+          });
+        }
+        return missions;
+      });
+      expect(await organization(true, { occurredAt: '2026-10-23T08:30:00Z' })).toEqual({
+        examined: 1,
+        changed: 2,
+      });
+      expect(stored().suspension).toBeNull();
+      expect(eventTypes().filter((type) => type.startsWith('cleaning.contract.'))).toEqual([
+        'cleaning.contract.suspended',
+        'cleaning.contract.resumed',
+      ]);
+    });
+
+    it('état qui change sans cesse : CLEANING_CONCURRENT_UPDATE, le message sera retraité', async () => {
+      let flip = false;
+      jest.spyOn(world.organizations, 'isSuspended').mockImplementation(async () => (flip = !flip));
+      const reconcile = new ReconcileOrganizationUseCase(
+        world,
+        new MissionSuspension(world),
+        new EvaluateStandingUseCase(world),
+      );
+      expect(await code(reconcile.execute(ORGANIZATION_ID))).toBe('CLEANING_CONCURRENT_UPDATE');
+    });
+
+    it('missions terminées, d’une autre organisation ou personnelles : intactes', async () => {
+      world.missions.missions.set(MISSION_ID, mission({ status: 'completed' }));
+      const other = uuid(1001);
+      const personal = uuid(1002);
+      world.missions.missions.set(other, mission({ id: other, organizationId: uuid(7777) }));
+      world.missions.missions.set(personal, mission({ id: personal, organizationId: null }));
+      expect(await organization(true)).toEqual({ examined: 0, changed: 0 });
+      expect(eventTypes()).toEqual([]);
+    });
+  });
+
   describe('particulier en récurrent', () => {
     beforeEach(() => {
       world.missions.missions.set(
@@ -270,7 +513,7 @@ describe('impayés, suspension et reprise (CDC Nettoyage, partie 10)', () => {
     it('1 passage impayé après le délai de grâce suspend ; le paiement débloque', async () => {
       const watch = new WatchIndividualPaymentsUseCase(world, new EvaluateStandingUseCase(world));
       expect(await watch.execute()).toEqual({ examined: 1, failed: 0 });
-      expect(stored().suspension?.cause).toBe('unpaid_interventions');
+      expect(stored().suspension?.causes).toEqual(['unpaid_interventions']);
       expect(eventTypes()).toEqual(['cleaning.contract.suspended']);
 
       await asSupervisor(() =>

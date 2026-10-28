@@ -76,7 +76,11 @@ export function toMission(row: MissionWithRelations): Mission {
     suspension:
       row.suspensionCause && row.suspendedSince
         ? {
-            cause: row.suspensionCause as SuspensionCause,
+            // Liste vide ou sans la cause principale : écrite par une version antérieure à
+            // l'ADR-030, qui ne connaissait qu'une cause.
+            causes: (row.suspensionCauses.includes(row.suspensionCause)
+              ? row.suspensionCauses
+              : [row.suspensionCause]) as SuspensionCause[],
             since: row.suspendedSince,
             unpaidCount: row.suspensionUnpaid ?? 0,
           }
@@ -137,10 +141,11 @@ export function interventionColumns(missionId: string, intervention: Interventio
   };
 }
 
-/** Colonnes de la suspension et du dernier avertissement. */
+/** Colonnes de la suspension (plus ancienne cause et liste des causes) et du dernier avertissement. */
 export function suspensionColumns(mission: Pick<Mission, 'suspension' | 'warningLevel'>) {
   return {
-    suspensionCause: mission.suspension?.cause ?? null,
+    suspensionCause: mission.suspension?.causes[0] ?? null,
+    suspensionCauses: mission.suspension?.causes ?? [],
     suspendedSince: mission.suspension?.since ?? null,
     suspensionUnpaid: mission.suspension?.unpaidCount ?? null,
     warningLevel: mission.warningLevel,

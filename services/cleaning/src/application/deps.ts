@@ -6,6 +6,7 @@ import {
   type CatalogRepository,
   type ContractInvoiceRepository,
   type MissionRepository,
+  type OrganizationStandingRepository,
   type PeopleDirectory,
   type QuoteRequestRepository,
 } from './ports';
@@ -18,6 +19,8 @@ export interface CleaningDeps {
   missions: MissionRepository;
   agents: AgentRepository;
   invoices: ContractInvoiceRepository;
+  /** Organisations suspendues par KSP, apprises par les événements d'identity (ADR-030). */
+  organizations: OrganizationStandingRepository;
   /** Noms affichés au back-office, lus dans identity (ADR-029). */
   people: PeopleDirectory;
   /** Contrôles de dates du terrain, réglables par configuration. */

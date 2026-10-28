@@ -27,6 +27,7 @@ import {
   type MissionFilter,
   type MissionRepository,
   type NewPricing,
+  type OrganizationStandingRepository,
   type PeopleDirectory,
   type QuoteRequestFilter,
   type QuoteRequestRepository,
@@ -196,6 +197,40 @@ export class InMemoryMissions implements MissionRepository {
       (m) => m.organizationId === null && m.recurrence !== null && !isTerminalMission(m.status),
     );
   }
+  async listActiveForOrganization(organizationId: string) {
+    return [...this.missions.values()].filter(
+      (m) => m.organizationId === organizationId && !isTerminalMission(m.status),
+    );
+  }
+}
+
+/** État des organisations : inbox par (événement, consommateur), décision la plus récente gardée. */
+export class InMemoryOrganizationStandings implements OrganizationStandingRepository {
+  readonly processed = new Set<string>();
+  readonly standings = new Map<string, { suspended: boolean; changedAt: Date }>();
+
+  async record(input: {
+    eventId: string;
+    consumer: string;
+    organizationId: string;
+    suspended: boolean;
+    at: Date;
+  }) {
+    const key = `${input.eventId}/${input.consumer}`;
+    if (this.processed.has(key)) return 'duplicate' as const;
+    this.processed.add(key);
+    const current = this.standings.get(input.organizationId);
+    const newer = !current || current.changedAt < input.at;
+    // Même date : la suspension l'emporte (ADR-030).
+    const tie = current && current.changedAt.getTime() === input.at.getTime() && input.suspended;
+    if (newer || tie) {
+      this.standings.set(input.organizationId, { suspended: input.suspended, changedAt: input.at });
+    }
+    return 'processed' as const;
+  }
+  async isSuspended(organizationId: string) {
+    return this.standings.get(organizationId)?.suspended ?? false;
+  }
 }
 
 /** Factures de contrat : inbox par (événement, consommateur), une facture payée le reste. */
@@ -232,6 +267,7 @@ export class InMemoryRequests implements QuoteRequestRepository {
   constructor(
     private readonly recorder: Recorder,
     private readonly missions: InMemoryMissions,
+    private readonly organizations: InMemoryOrganizationStandings,
   ) {}
 
   async create(
@@ -284,6 +320,9 @@ export class InMemoryRequests implements QuoteRequestRepository {
     const key = `${request.id}:${idempotencyKey}`;
     const replay = this.acceptances.get(key);
     if (replay) return { status: 'replayed' as const, missionId: replay };
+    if (mission.organizationId && (await this.organizations.isSuspended(mission.organizationId))) {
+      return { status: 'organization_suspended' as const };
+    }
     if (this.requests.get(request.id)?.version !== request.version) return { status: 'conflict' as const };
     this.requests.set(request.id, { ...request, version: request.version + 1 });
     this.missions.missions.set(mission.id, mission);
@@ -360,6 +399,7 @@ export interface TestWorld extends CleaningDeps {
   missions: InMemoryMissions;
   agents: InMemoryAgents;
   invoices: InMemoryContractInvoices;
+  organizations: InMemoryOrganizationStandings;
   people: InMemoryPeople;
   fieldDates: FieldDatePolicy;
 }
@@ -367,15 +407,17 @@ export interface TestWorld extends CleaningDeps {
 export function testWorld(): TestWorld {
   const recorder = new Recorder();
   const missions = new InMemoryMissions(recorder);
+  const organizations = new InMemoryOrganizationStandings();
   return {
     recorder,
     clock: new FixedClock(),
     ids: new SequentialIds(),
     catalog: new InMemoryCatalog(recorder),
-    requests: new InMemoryRequests(recorder, missions),
+    requests: new InMemoryRequests(recorder, missions, organizations),
     missions,
     agents: new InMemoryAgents(recorder),
     invoices: new InMemoryContractInvoices(),
+    organizations,
     people: new InMemoryPeople(),
     fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
   };

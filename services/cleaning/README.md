@@ -77,6 +77,26 @@ PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cl
   `cleaning.contract.resumed`, `cleaning.rescheduling.failed`, plus `cleaning.mission.scheduled`
   pour chaque passage reprogrammé.
 
+## Organisation suspendue par KSP (ADR-030)
+
+- cleaning consomme `identity.organization.suspended` et `identity.organization.reactivated`
+  (inbox, table `organization_standings` ; une décision plus ancienne que la dernière appliquée
+  est sans effet) et aligne les missions non terminées de l'organisation.
+- **Suspension** : cause `organization_suspended`, mêmes effets que les impayés (passages
+  planifiés annulés, agents libérés, planification refusée). **Réactivation** : la cause est
+  levée ; la mission reprend (reprogrammation automatique) s'il ne reste aucune autre cause.
+- **Causes cumulées** (`suspension.causes`, colonne `suspension_causes`) : un règlement ne lève
+  pas la suspension de l'organisation, une réactivation ne lève pas celle des impayés. Seul le
+  début de la suspension publie `cleaning.contract.suspended`, seule la levée de la dernière cause
+  publie `cleaning.contract.resumed` (cause levée en dernier) ; entre les deux, chaque cause
+  ajoutée ou levée publie `cleaning.contract.suspension_updated` (le client est prévenu). Pas
+  d'avertissement d'impayé pendant la suspension ; à la réactivation, des impayés au seuil
+  prennent le relais sans reprise intermédiaire. Deux décisions de même date : la suspension
+  l'emporte.
+- Ni demande de devis dans le contexte d'une organisation suspendue, ni acceptation d'un devis
+  demandé pour elle : `CLEANING_ORGANIZATION_SUSPENDED` (verrou de l'organisation pris par
+  l'acceptation et par l'enregistrement d'une décision).
+
 ## Back-office (ADR-029)
 
 - **Rôles** : `cleaning_supervisor`, `cleaning_agent` (ses passages), `cleaning_admin` ;
