@@ -73,6 +73,31 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
     'failed_count',
     'link',
   ]),
+  // Organisation cliente suspendue puis réactivée par KSP (ADR-030).
+  'cleaning.contract_suspended_organization.customer': spec('ksp_cleaning_contract_suspended_organization', [
+    'link',
+  ]),
+  // Un modèle par cas ; les impayés ne sont cités que lorsqu'ils maintiennent la suspension.
+  'cleaning.suspension_updated.customer': {
+    name: (v) => `ksp_cleaning_suspension_${v['case'] ?? 'unpaid_added'}`,
+    parameters: (v) => [
+      name(v),
+      ...(v['case'] === 'unpaid_added' || v['case'] === 'organization_lifted'
+        ? [v['unpaid_text'] ?? '']
+        : []),
+      v['link'] ?? '',
+    ],
+  },
+  'cleaning.contract_resumed_organization.customer': spec('ksp_cleaning_contract_resumed_organization', [
+    'rescheduled_count',
+    'failed_count',
+    'link',
+  ]),
+  'cleaning.contract_resumed_organization.team': spec('ksp_cleaning_team_contract_resumed_organization', [
+    'mission_id',
+    'rescheduled_count',
+    'failed_count',
+  ]),
   // Comptes entreprise (ADR-027).
   'identity.organization_requested.team': spec('ksp_identity_team_organization_requested', ['legal_name']),
   'identity.organization_validated.customer': spec('ksp_identity_organization_validated', [
