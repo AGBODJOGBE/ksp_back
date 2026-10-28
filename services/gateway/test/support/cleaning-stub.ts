@@ -109,7 +109,12 @@ export const protoMission: cleaningV1.Mission = {
   },
   cancellationReason: '',
   daysPerWeek: 2,
-  suspension: { cause: 'unpaid_invoices', since: '2026-12-15T06:00:00.000Z', unpaidCount: 2 },
+  suspension: {
+    cause: 'unpaid_invoices',
+    since: '2026-12-15T06:00:00.000Z',
+    unpaidCount: 2,
+    causes: ['unpaid_invoices', 'organization_suspended'],
+  },
   createdAt: '2026-10-23T09:00:00.000Z',
   updatedAt: '2026-10-23T09:00:00.000Z',
   customerKind: 'business',

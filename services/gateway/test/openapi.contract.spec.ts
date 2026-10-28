@@ -843,6 +843,22 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       ],
       ['demande avec un profil incomplet', 'requestCleaningQuote', 422, () => call('requestCleaningQuote')],
       [
+        'demande au nom d’une organisation suspendue par KSP',
+        'requestCleaningQuote',
+        422,
+        () => {
+          completeProfile();
+          cleaningFails(
+            'requestQuote',
+            AppError.precondition(
+              'CLEANING_ORGANIZATION_SUSPENDED',
+              'Ce compte entreprise est suspendu par KSP.',
+            ),
+          );
+          return call('requestCleaningQuote');
+        },
+      ],
+      [
         'mes demandes sans jeton',
         'listMyCleaningRequests',
         401,
@@ -866,6 +882,21 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         422,
         () => {
           cleaningFails('acceptQuote', AppError.precondition('CLEANING_QUOTE_EXPIRED', 'Ce devis a expiré.'));
+          return call('acceptCleaningQuote');
+        },
+      ],
+      [
+        'devis d’une organisation suspendue par KSP',
+        'acceptCleaningQuote',
+        422,
+        () => {
+          cleaningFails(
+            'acceptQuote',
+            AppError.precondition(
+              'CLEANING_ORGANIZATION_SUSPENDED',
+              'Ce compte entreprise est suspendu par KSP.',
+            ),
+          );
           return call('acceptCleaningQuote');
         },
       ],
