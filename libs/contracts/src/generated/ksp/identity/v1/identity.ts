@@ -676,6 +676,26 @@ export interface ReactivateOrganizationResponse {
   organization?: Organization | undefined;
 }
 
+export interface FindAccountByPhoneRequest {
+  /** Numéro E.164 (les espaces sont tolérés). */
+  phoneE164: string;
+}
+
+/** Compte trouvé : le minimum pour le reconnaître et le rattacher. */
+export interface AccountMatch {
+  userId: string;
+  status: UserStatus;
+  /** Vides tant que le profil n'est pas complété. */
+  firstName: string;
+  lastName: string;
+  /** Indicatif et deux derniers chiffres, par exemple +229********45. */
+  phoneMasked: string;
+}
+
+export interface FindAccountByPhoneResponse {
+  account?: AccountMatch | undefined;
+}
+
 /** Appelé par tous les services autorisés par la carte des services. */
 
 export interface IdentityServiceClient {
@@ -684,6 +704,8 @@ export interface IdentityServiceClient {
    * métier), qui reçoit le téléphone et l'e-mail. L'e-mail transmis est toujours une adresse
    * vérifiée par code (email_verified). Un compte supprimé est traité comme introuvable ;
    * GetUsersByIds omet les identifiants introuvables (100 au plus par appel).
+   * GetUsersByIds — appelant autorisé aussi : cleaning (noms affichés au back-office, ADR-029),
+   * qui ne reçoit ni le téléphone ni l'e-mail.
    * Erreurs :
    *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
    *   IDENTITY_USER_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)
@@ -698,8 +720,9 @@ export interface IdentityServiceClient {
   /**
    * Fiches d'organisations (comptes entreprise, ADR-027) lues par un autre service, sans les
    * membres ni les décisions du back-office. Appelants autorisés : billing (en-tête des factures,
-   * copié à l'émission) et notification, seul à recevoir l'e-mail de facturation (factures
-   * envoyées à l'entreprise). L'e-mail transmis est toujours vérifié par code ; vide sinon.
+   * copié à l'émission), cleaning (raison sociale affichée au back-office, ADR-029) et
+   * notification, seul à recevoir l'e-mail de facturation (factures envoyées à l'entreprise).
+   * L'e-mail transmis est toujours vérifié par code ; vide sinon.
    * Tous les états sont rendus (status) ; les identifiants introuvables sont omis (100 au plus).
    * Erreurs :
    *   IDENTITY_CALLER_FORBIDDEN            PERMISSION_DENIED  service appelant non autorisé
@@ -735,6 +758,8 @@ export interface IdentityServiceController {
    * métier), qui reçoit le téléphone et l'e-mail. L'e-mail transmis est toujours une adresse
    * vérifiée par code (email_verified). Un compte supprimé est traité comme introuvable ;
    * GetUsersByIds omet les identifiants introuvables (100 au plus par appel).
+   * GetUsersByIds — appelant autorisé aussi : cleaning (noms affichés au back-office, ADR-029),
+   * qui ne reçoit ni le téléphone ni l'e-mail.
    * Erreurs :
    *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
    *   IDENTITY_USER_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)
@@ -755,8 +780,9 @@ export interface IdentityServiceController {
   /**
    * Fiches d'organisations (comptes entreprise, ADR-027) lues par un autre service, sans les
    * membres ni les décisions du back-office. Appelants autorisés : billing (en-tête des factures,
-   * copié à l'émission) et notification, seul à recevoir l'e-mail de facturation (factures
-   * envoyées à l'entreprise). L'e-mail transmis est toujours vérifié par code ; vide sinon.
+   * copié à l'émission), cleaning (raison sociale affichée au back-office, ADR-029) et
+   * notification, seul à recevoir l'e-mail de facturation (factures envoyées à l'entreprise).
+   * L'e-mail transmis est toujours vérifié par code ; vide sinon.
    * Tous les états sont rendus (status) ; les identifiants introuvables sont omis (100 au plus).
    * Erreurs :
    *   IDENTITY_CALLER_FORBIDDEN            PERMISSION_DENIED  service appelant non autorisé
@@ -1553,3 +1579,67 @@ export function OrganizationAdminServiceControllerMethods() {
 }
 
 export const ORGANIZATION_ADMIN_SERVICE_NAME = "OrganizationAdminService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Recherche de compte — back-office (ADR-029), réservé à la gateway. Retrouve le compte KSP
+ * d'un numéro de téléphone, par exemple pour le rattacher comme agent du Nettoyage. Rend
+ * l'identifiant, le nom et le numéro masqué, jamais l'e-mail ni le numéro complet. Rôles :
+ * cleaning_admin, super_admin ; double authentification exigée.
+ *
+ * Erreurs (code AppError → statut gRPC) :
+ *   AUTH_REQUIRED           UNAUTHENTICATED
+ *   AUTH_FORBIDDEN          PERMISSION_DENIED   rôle du back-office manquant
+ *   AUTH_MFA_REQUIRED       PERMISSION_DENIED   double authentification absente
+ *   IDENTITY_PHONE_INVALID  INVALID_ARGUMENT    numéro hors du format E.164
+ *   IDENTITY_USER_NOT_FOUND NOT_FOUND           aucun compte pour ce numéro (un compte supprimé
+ *                                               est traité comme introuvable)
+ * ---------------------------------------------------------------------------
+ */
+
+export interface AccountAdminServiceClient {
+  findAccountByPhone(request: FindAccountByPhoneRequest, metadata?: Metadata): Observable<FindAccountByPhoneResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Recherche de compte — back-office (ADR-029), réservé à la gateway. Retrouve le compte KSP
+ * d'un numéro de téléphone, par exemple pour le rattacher comme agent du Nettoyage. Rend
+ * l'identifiant, le nom et le numéro masqué, jamais l'e-mail ni le numéro complet. Rôles :
+ * cleaning_admin, super_admin ; double authentification exigée.
+ *
+ * Erreurs (code AppError → statut gRPC) :
+ *   AUTH_REQUIRED           UNAUTHENTICATED
+ *   AUTH_FORBIDDEN          PERMISSION_DENIED   rôle du back-office manquant
+ *   AUTH_MFA_REQUIRED       PERMISSION_DENIED   double authentification absente
+ *   IDENTITY_PHONE_INVALID  INVALID_ARGUMENT    numéro hors du format E.164
+ *   IDENTITY_USER_NOT_FOUND NOT_FOUND           aucun compte pour ce numéro (un compte supprimé
+ *                                               est traité comme introuvable)
+ * ---------------------------------------------------------------------------
+ */
+
+export interface AccountAdminServiceController {
+  findAccountByPhone(
+    request: FindAccountByPhoneRequest,
+    metadata?: Metadata,
+  ): Promise<FindAccountByPhoneResponse> | Observable<FindAccountByPhoneResponse> | FindAccountByPhoneResponse;
+}
+
+export function AccountAdminServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["findAccountByPhone"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("AccountAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("AccountAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const ACCOUNT_ADMIN_SERVICE_NAME = "AccountAdminService";

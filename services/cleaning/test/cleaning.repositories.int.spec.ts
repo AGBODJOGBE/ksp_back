@@ -13,6 +13,7 @@ import {
   OTHER_AGENT_ID,
 } from '../src/application/testing/fakes';
 import { createUseCases } from '../src/application/use-cases';
+import { DEFAULT_FIELD_DATE_POLICY } from '../src/domain/schedule';
 import { PrismaAgentRepository } from '../src/infrastructure/persistence/prisma-agent.repository';
 import { PrismaCatalogRepository } from '../src/infrastructure/persistence/prisma-catalog.repository';
 import { PrismaContractInvoiceRepository } from '../src/infrastructure/persistence/prisma-contract-invoice.repository';
@@ -37,6 +38,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
   let prisma: PrismaService;
   let deps: CleaningDeps;
   let useCases: ReturnType<typeof createUseCases>;
+  const clock = new FixedClock();
 
   beforeAll(async () => {
     const admin = new Client({ connectionString: databaseUrl });
@@ -60,7 +62,9 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       missions: new PrismaMissionRepository(prisma),
       agents: new PrismaAgentRepository(prisma),
       invoices: new PrismaContractInvoiceRepository(prisma),
-      clock: new FixedClock(),
+      people: { userNames: async () => new Map(), organizationNames: async () => new Map() },
+      fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
+      clock,
       ids: new UuidV7Generator(),
     };
     useCases = createUseCases(deps);
@@ -147,9 +151,13 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
         agentId: AGENT_ID,
       }),
     );
+    // Le compte rendu ne s'enregistre qu'à partir de l'heure prévue de la visite (contrôle des dates).
+    const scheduledNow = clock.current;
+    clock.current = new Date('2026-10-26T09:30:00Z');
     await asSupervisor(() =>
       useCases.completeVisit.execute({ visitId: visited.visit!.id, report: 'Visite faite.' }),
     );
+    clock.current = scheduledNow;
     await asSupervisor(() =>
       useCases.sendQuote.execute({
         requestId: a.id,

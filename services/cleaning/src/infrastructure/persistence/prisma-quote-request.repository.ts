@@ -81,7 +81,13 @@ export class PrismaQuoteRequestRepository implements QuoteRequestRepository {
 
   async list(filter: QuoteRequestFilter, page: PageRequest): Promise<PageResult<QuoteRequest>> {
     const rows = await this.prisma.quoteRequest.findMany({
-      where: { ...filter, ...cursorFilter(page) },
+      where: {
+        ...(filter.customerId ? { customerId: filter.customerId } : {}),
+        ...(filter.status ? { status: filter.status } : {}),
+        ...(filter.communeCode ? { communeCode: filter.communeCode } : {}),
+        ...(filter.customerKind ? { customerKind: filter.customerKind } : {}),
+        ...cursorFilter(page),
+      },
       include: REQUEST_INCLUDE,
       ...pageArgs(page),
     });

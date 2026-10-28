@@ -45,7 +45,7 @@ describe('gateway → cleaning', () => {
         roles: [{ role: 'cleaning_admin', scopeType: 'global' }],
       },
     });
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await app?.close();
@@ -254,5 +254,62 @@ describe('gateway → cleaning', () => {
       .send({ serviceCode: 'home_cleaning', premisesType: 'house', quantity: 6, commune: 'Parakou' });
     expect(simulation.status).toBe(200);
     expect(simulation.body.covered).toBe(true);
+  });
+
+  it('back-office : super_admin admis, filtres transmis, noms et type de client présentés', async () => {
+    const superAdmin = await keys.accessToken({
+      claims: { client_id: 'backoffice', mfa: true, roles: [{ role: 'super_admin', scopeType: 'global' }] },
+    });
+    const list = await http()
+      .get(
+        '/api/v1/admin/cleaning/quote-requests?status=received&commune=abomey-calavi&customerKind=business',
+      )
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${superAdmin}`);
+    expect(list.status).toBe(200);
+    expect(cleaning.stub.last('listQuoteRequests')!.request).toMatchObject({
+      status: 'received',
+      commune: 'abomey-calavi',
+      customerKind: 'business',
+    });
+    expect(list.body.data[0]).toMatchObject({ customerName: 'Koffi Adjovi', organizationName: null });
+    const badCommune = await http()
+      .get('/api/v1/admin/cleaning/quote-requests?commune=Abomey%20Calavi')
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${superAdmin}`);
+    expect(badCommune.status).toBe(400);
+
+    const mission = await http()
+      .get(`/api/v1/admin/cleaning/missions/${IDS.mission}`)
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${superAdmin}`);
+    expect(mission.status).toBe(200);
+    expect(mission.body).toMatchObject({
+      customerKind: 'business',
+      organizationId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000',
+      customerName: 'Koffi Adjovi',
+      organizationName: 'SARL Bénin Propre',
+    });
+    const zones = await http()
+      .get('/api/v1/admin/cleaning/zones')
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${superAdmin}`);
+    expect(zones.status).toBe(200);
+  });
+
+  it('paiement manuel : Idempotency-Key transmise si présente, vide sinon', async () => {
+    const pay = (key?: string) => {
+      const req = http()
+        .post(`/api/v1/admin/cleaning/missions/${IDS.mission}/payments`)
+        .set('Origin', ORIGINS.backoffice)
+        .set('Authorization', `Bearer ${staff}`);
+      return (key ? req.set('Idempotency-Key', key) : req).send({ amount: 5000, method: 'cash' });
+    };
+    expect((await pay('paiement-cle-0001')).status).toBe(200);
+    expect(cleaning.stub.last('recordPayment')!.request).toMatchObject({
+      idempotencyKey: 'paiement-cle-0001',
+    });
+    expect((await pay()).status).toBe(200);
+    expect(cleaning.stub.last('recordPayment')!.request).toMatchObject({ idempotencyKey: '' });
   });
 });

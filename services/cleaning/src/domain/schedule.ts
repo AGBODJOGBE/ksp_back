@@ -42,3 +42,68 @@ export function conflictingAgents(agentIds: string[], slot: Slot, busy: BusyPeri
   const taken = new Set(busy.filter((period) => overlaps(period.slot, slot)).map((period) => period.agentId));
   return [...new Set(agentIds)].filter((agentId) => taken.has(agentId));
 }
+
+/**
+ * Fuseau des dates du Nettoyage : le Bénin (Africa/Porto-Novo, UTC+1 sans heure d'été). Réglable
+ * par la configuration du service (CLEANING_TIME_ZONE).
+ */
+export const DEFAULT_TIME_ZONE = 'Africa/Porto-Novo';
+
+/** Jour civil d'une date dans le fuseau donné, au format AAAA-MM-JJ (comparable comme une chaîne). */
+export function localDay(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+/**
+ * Contrôles de dates du terrain (proposition du 2026-10-28, à valider). Chaque règle se désactive
+ * par configuration, sans changer le code.
+ */
+export interface FieldDatePolicy {
+  /** Refuser de démarrer un passage avant le jour prévu (dans le fuseau). */
+  blockEarlyInterventionStart: boolean;
+  /** Refuser le compte rendu d'une visite avant l'heure prévue de la visite. */
+  blockEarlyVisitReport: boolean;
+  timeZone: string;
+}
+
+export const DEFAULT_FIELD_DATE_POLICY: FieldDatePolicy = {
+  blockEarlyInterventionStart: true,
+  blockEarlyVisitReport: true,
+  timeZone: DEFAULT_TIME_ZONE,
+};
+
+/** Passage démarré avant son jour prévu : le jour même reste permis, à toute heure. */
+export function isBeforeScheduledDay(now: Date, scheduledStart: Date, timeZone: string): boolean {
+  return localDay(now, timeZone) < localDay(scheduledStart, timeZone);
+}
+
+/** Compte rendu d'une visite avant son heure prévue. */
+export function isBeforeScheduledTime(now: Date, scheduledAt: Date): boolean {
+  return now.getTime() < scheduledAt.getTime();
+}
+
+/** « 5 novembre 2026 » dans le fuseau donné. */
+export function formatDayFr(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('fr-FR', {
+    timeZone,
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
+}
+
+/** « 5 novembre 2026 à 09:30 » dans le fuseau donné. */
+export function formatDateTimeFr(date: Date, timeZone: string): string {
+  const time = new Intl.DateTimeFormat('fr-FR', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(date);
+  return `${formatDayFr(date, timeZone)} à ${time}`;
+}

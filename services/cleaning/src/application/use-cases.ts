@@ -1,3 +1,4 @@
+import { ResolveBackofficeNamesUseCase } from './backoffice/backoffice-names.use-case';
 import {
   GetCatalogUseCase,
   SaveServiceUseCase,
@@ -99,6 +100,7 @@ export function createUseCases(deps: CleaningDeps) {
     listZones: new ListZonesUseCase(deps),
     saveZone: new SaveZoneUseCase(deps),
     deactivateZone: new DeactivateZoneUseCase(deps),
+    resolveNames: new ResolveBackofficeNamesUseCase(deps),
     evaluateStanding,
     handleInvoiceEvent: new HandleInvoiceEventUseCase(deps, evaluateStanding),
     watchIndividualPayments: new WatchIndividualPaymentsUseCase(deps, evaluateStanding),

@@ -6,8 +6,15 @@ import {
   MAX_PROPOSED_SLOTS,
   MIN_PROPOSED_SLOTS,
 } from '../../domain/quote';
-import { canSendQuote, type QuoteRequest, type RequestStatus } from '../../domain/quote-request';
-import { respectsLeadTime } from '../../domain/schedule';
+import {
+  canSendQuote,
+  type CustomerKind,
+  type QuoteRequest,
+  type RequestStatus,
+} from '../../domain/quote-request';
+import { isBeforeScheduledTime, respectsLeadTime } from '../../domain/schedule';
+import { isValidZoneCode, zoneCode } from '../../domain/zone';
+import { type QuoteRequestFilter } from '../ports';
 import { type PriceLine, priceLines, simulate } from '../../domain/simulator';
 import { type CleaningDeps, presentRequest } from '../deps';
 import { requireStaff, SUPERVISION } from '../shared/access';
@@ -41,18 +48,41 @@ async function anyRequest(deps: CleaningDeps, requestId: string): Promise<QuoteR
   return request;
 }
 
-/** UC-CL-06 : liste des demandes (superviseur, admin), filtrable par état. */
+const CUSTOMER_KINDS: readonly CustomerKind[] = ['individual', 'business'];
+
+export interface ListQuoteRequestsInput {
+  page: PageRequest;
+  /** Filtres facultatifs et cumulables ; chaîne vide = sans filtre. */
+  status: string;
+  /** Code de zone (« abomey-calavi ») ; un nom de commune est accepté et normalisé. */
+  commune?: string;
+  customerKind?: string;
+}
+
+/** UC-CL-06 : liste des demandes (superviseur, admin), filtrable par état, zone et type de client. */
 export class ListQuoteRequestsUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
-  async execute(input: { page: PageRequest; status: string }): Promise<PageResult<QuoteRequest>> {
+  async execute(input: ListQuoteRequestsInput): Promise<PageResult<QuoteRequest>> {
     requireStaff(SUPERVISION);
-    if (input.status && !REQUEST_STATUSES.includes(input.status as RequestStatus)) {
-      throw CleaningErrors.invalid('status');
+    const filter: QuoteRequestFilter = {};
+    if (input.status) {
+      if (!REQUEST_STATUSES.includes(input.status as RequestStatus)) throw CleaningErrors.invalid('status');
+      filter.status = input.status as RequestStatus;
     }
-    const status = (input.status || undefined) as RequestStatus | undefined;
+    if (input.commune) {
+      const code = zoneCode(input.commune);
+      if (!isValidZoneCode(code)) throw CleaningErrors.invalid('commune', 'Code de zone invalide.');
+      filter.communeCode = code;
+    }
+    if (input.customerKind) {
+      if (!CUSTOMER_KINDS.includes(input.customerKind as CustomerKind)) {
+        throw CleaningErrors.invalid('customerKind');
+      }
+      filter.customerKind = input.customerKind as CustomerKind;
+    }
     const now = this.deps.clock.now();
-    const result = await this.deps.requests.list(status ? { status } : {}, input.page);
+    const result = await this.deps.requests.list(filter, input.page);
     return { ...result, items: result.items.map((request) => presentRequest(request, now)) };
   }
 }
@@ -163,7 +193,10 @@ export class ScheduleVisitUseCase {
   }
 }
 
-/** UC-CL-07 : compte rendu de la visite technique. */
+/**
+ * UC-CL-07 : compte rendu de la visite technique. Refusé avant l'heure prévue de la visite
+ * (CLEANING_VISIT_TOO_EARLY), sauf si la règle est désactivée par configuration (à valider).
+ */
 export class CompleteVisitUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
@@ -174,6 +207,10 @@ export class CompleteVisitUseCase {
     if (request.visit.status !== 'scheduled')
       throw CleaningErrors.invalidTransition(request.visit.status, 'completed');
     const now = this.deps.clock.now();
+    const { blockEarlyVisitReport, timeZone } = this.deps.fieldDates;
+    if (blockEarlyVisitReport && isBeforeScheduledTime(now, request.visit.scheduledAt)) {
+      throw CleaningErrors.visitTooEarly(request.visit.scheduledAt, timeZone);
+    }
     const report = requiredText('report', input.report, 5000);
     const visit = { ...request.visit, status: 'completed' as const, report, completedAt: now };
     const saved = await saveRequest(

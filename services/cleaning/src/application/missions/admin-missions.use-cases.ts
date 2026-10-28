@@ -11,10 +11,16 @@ import {
   type MissionStatus,
   remainingToSchedule,
 } from '../../domain/mission';
-import { type PaymentMethod, paymentRefusal } from '../../domain/payment';
-import { conflictingAgents, slotFrom } from '../../domain/schedule';
+import {
+  type PaymentMethod,
+  paymentRefusal,
+  type PaymentRecord,
+  paymentWithKey,
+  remainingDue,
+} from '../../domain/payment';
+import { conflictingAgents, isBeforeScheduledDay, slotFrom } from '../../domain/schedule';
 import { type CleaningDeps, missionView, type MissionView } from '../deps';
-import { type OutboxMessage } from '../ports';
+import { type Changes, type OutboxMessage } from '../ports';
 import { FIELD_WORK, requireStaff, seesEverything, type Staff, SUPERVISION } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import {
@@ -246,13 +252,23 @@ abstract class InterventionAction {
   }
 }
 
-/** UC-CL-10 : démarrer un passage. */
+/**
+ * UC-CL-10 : démarrer un passage. Refusé avant le jour prévu, dans le fuseau du service
+ * (CLEANING_INTERVENTION_TOO_EARLY) ; le jour même, à toute heure, il est permis. Règle
+ * désactivable par configuration (à valider).
+ */
 export class StartInterventionUseCase extends InterventionAction {
   execute(interventionId: string): Promise<MissionView> {
+    const { blockEarlyInterventionStart, timeZone } = this.deps.fieldDates;
     return this.apply(
       interventionId,
       'in_progress',
-      (i, now) => ({ ...i, startedAt: i.startedAt ?? now }),
+      (i, now) => {
+        if (blockEarlyInterventionStart && isBeforeScheduledDay(now, i.scheduledStart, timeZone)) {
+          throw CleaningErrors.interventionTooEarly(i.scheduledStart, timeZone);
+        }
+        return { ...i, startedAt: i.startedAt ?? now };
+      },
       'intervention.started',
     );
   }
@@ -311,9 +327,16 @@ export class CompleteInterventionUseCase extends InterventionAction {
   }
 }
 
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,100}$/;
+
 /**
  * Paiement manuel coché par le superviseur : espèces ou Mobile Money hors ligne. Pour un
  * particulier en récurrent, la régularisation peut débloquer la mission (partie 10).
+ *
+ * Idempotent par clé (en-tête Idempotency-Key, facultatif) : un second envoi avec la même clé
+ * pour la même mission renvoie la mission telle quelle, sans second paiement ni nouveau
+ * contrôle du reste dû. Deux envois simultanés : le contrôle de version n'en laisse passer
+ * qu'un, l'autre relit la mission et rejoue.
  */
 export class RecordPaymentUseCase {
   private readonly evaluate: EvaluateStandingUseCase;
@@ -327,46 +350,67 @@ export class RecordPaymentUseCase {
     amount: number;
     method: string;
     reference: string;
+    idempotencyKey?: string;
   }): Promise<MissionView> {
     const staff = requireStaff(SUPERVISION);
+    const key = input.idempotencyKey ?? '';
+    if (key && !IDEMPOTENCY_KEY.test(key)) {
+      throw CleaningErrors.invalid('idempotencyKey', 'Clé d’idempotence invalide (8 à 100 caractères).');
+    }
     const mission = await visibleMission(this.deps, staff, input.missionId);
+    if (key && paymentWithKey(mission.payment, key)) return missionView(this.deps, mission);
     if (mission.status === 'cancelled') throw CleaningErrors.invalidTransition(mission.status, 'paid');
     // Une mission d'entreprise se règle par ses factures mensuelles (service billing).
     if (isBusinessContract(mission)) throw CleaningErrors.paymentViaInvoice();
     const method = input.method as PaymentMethod;
     const refusal = paymentRefusal(mission.payment, input.amount, method, true);
+    if (refusal === 'exceeds_balance')
+      throw CleaningErrors.paymentExceedsBalance(remainingDue(mission.payment));
     if (refusal) throw CleaningErrors.paymentInvalid(refusal);
     const now = this.deps.clock.now();
-    const record = {
+    const record: PaymentRecord = {
       id: this.deps.ids.next(),
       amount: input.amount,
       method,
       reference: optionalText('reference', input.reference, 100),
       recordedBy: staff.userId,
       recordedAt: now,
+      idempotencyKey: key || null,
     };
     const payment = { ...mission.payment, payments: [...mission.payment.payments, record] };
-    const view = await saveMission(
-      this.deps,
-      { ...mission, payment },
-      {
-        events: [],
-        audit: [
-          {
-            actorId: staff.userId,
-            action: 'payment.recorded',
-            entityType: 'mission',
-            entityId: mission.id,
-            at: now,
-            details: { paymentId: record.id, amount: record.amount, method },
-          },
-        ],
-      },
-    );
-    if (!mission.suspension) return view;
-    if ((await this.evaluate.execute(mission.id)) !== 'resumed') return view;
+    const view = await this.save({ ...mission, payment }, key, {
+      events: [],
+      audit: [
+        {
+          actorId: staff.userId,
+          action: 'payment.recorded',
+          entityType: 'mission',
+          entityId: mission.id,
+          at: now,
+          details: { paymentId: record.id, amount: record.amount, method },
+        },
+      ],
+    });
+    if (!view.recorded || !mission.suspension) return view.view;
+    if ((await this.evaluate.execute(mission.id)) !== 'resumed') return view.view;
     const resumed = await this.deps.missions.findById(mission.id);
-    return resumed ? missionView(this.deps, resumed) : view;
+    return resumed ? missionView(this.deps, resumed) : view.view;
+  }
+
+  /** Enregistre ; en cas d'écriture concurrente, un envoi déjà enregistré avec la même clé est rejoué. */
+  private async save(
+    mission: Mission,
+    key: string,
+    changes: Changes,
+  ): Promise<{ view: MissionView; recorded: boolean }> {
+    try {
+      return { view: await saveMission(this.deps, mission, changes), recorded: true };
+    } catch (error) {
+      if (!key) throw error;
+      const current = await this.deps.missions.findById(mission.id);
+      if (!current || !paymentWithKey(current.payment, key)) throw error;
+      return { view: await missionView(this.deps, current), recorded: false };
+    }
   }
 }
 

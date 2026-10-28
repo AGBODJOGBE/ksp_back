@@ -77,6 +77,25 @@ PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cl
   `cleaning.contract.resumed`, `cleaning.rescheduling.failed`, plus `cleaning.mission.scheduled`
   pour chaque passage reprogrammé.
 
+## Back-office (ADR-029)
+
+- **Rôles** : `cleaning_supervisor`, `cleaning_agent` (ses passages), `cleaning_admin` ;
+  `super_admin` a partout la portée de `cleaning_admin`. Double authentification exigée.
+- **Noms affichés** : client, organisation, agent de visite, auteur d'un paiement ou d'un
+  réglage, lus dans identity à chaque réponse (`GetUsersByIds`, `GetOrganizationsByIds`, sans
+  coordonnées). identity indisponible : noms absents, réponse rendue quand même. Variables
+  `IDENTITY_GRPC_URL`, `IDENTITY_TOKEN_URL`, `SERVICE_CLIENT_SECRET` (obligatoires en
+  production) ; entrée `cleaning` (audience `identity`) dans `SERVICE_CLIENTS` d'identity.
+- **Liste des demandes** : filtres cumulables état, zone (`commune`, code de zone, colonne
+  `commune_code`) et type de client (`customerKind`), paginés par curseur.
+- **Paiement manuel** idempotent par `Idempotency-Key` facultative (unicité mission + clé) ;
+  au-delà du dû, le message et `details.remainingDue` donnent le reste dû.
+- **Dates du terrain** (fuseau `CLEANING_TIME_ZONE`, `Africa/Porto-Novo`) : démarrer un passage
+  avant son jour prévu est refusé (`CLEANING_INTERVENTION_TOO_EARLY`,
+  `CLEANING_BLOCK_EARLY_INTERVENTION_START`) ; le compte rendu d'une visite avant son heure
+  prévue aussi (`CLEANING_VISIT_TOO_EARLY`, `CLEANING_BLOCK_EARLY_VISIT_REPORT`). `false`
+  désactive la règle.
+
 ## Organisation
 
 | Dossier              | Contenu                                                                    |

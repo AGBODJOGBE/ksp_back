@@ -33,6 +33,8 @@ export interface PaymentRecord {
   reference: string | null;
   recordedBy: string;
   recordedAt: Date;
+  /** Clé d'idempotence du paiement manuel (Idempotency-Key), null sans clé. */
+  idempotencyKey: string | null;
 }
 
 export interface PaymentState {
@@ -68,6 +70,19 @@ export function paymentStatus(state: PaymentState): PaymentStatus {
     return 'deposit_received';
   }
   return 'due';
+}
+
+/** Reste dû : total moins les paiements enregistrés, jamais négatif. */
+export function remainingDue(state: Pick<PaymentState, 'total' | 'payments'>): number {
+  return Math.max(0, state.total - paidAmount(state));
+}
+
+/** Paiement déjà enregistré avec cette clé d'idempotence, ou null. */
+export function paymentWithKey(
+  state: Pick<PaymentState, 'payments'>,
+  idempotencyKey: string,
+): PaymentRecord | null {
+  return state.payments.find((payment) => payment.idempotencyKey === idempotencyKey) ?? null;
 }
 
 /** Raison du refus d'un paiement, ou null s'il est acceptable (jamais au-delà du reste dû). */

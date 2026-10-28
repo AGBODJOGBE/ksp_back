@@ -14,6 +14,7 @@ import { NestFactory } from '@nestjs/core';
 import { type ClientGrpc, ClientProxyFactory, type MicroserviceOptions } from '@nestjs/microservices';
 import { type Metadata } from '@grpc/grpc-js';
 import { type Observable } from 'rxjs';
+import { newPaymentState } from '../src/domain/payment';
 import { homeCleaning, testWorld, type TestWorld } from '../src/application/testing/fakes';
 import { CLEANING_USE_CASES, createUseCases } from '../src/application/use-cases';
 import { CleaningAdminGrpcController } from '../src/interfaces/grpc/admin.controller';
@@ -193,6 +194,90 @@ describe('cleaning en gRPC', () => {
       obligations.hasPendingObligations({ userId: CUSTOMER, organizationId: '' }, m),
     );
     expect(none).toEqual([]);
+  });
+
+  it('back-office : super_admin, filtres de zone et de type, noms lus dans l’annuaire', async () => {
+    world.people.users.set(CUSTOMER, 'Koffi Adjovi');
+    const superAdmin = { userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0009', roles: ['super_admin'], mfa: true };
+    const list = (commune: string, customerKind: string) =>
+      call(
+        (m) =>
+          admin.listQuoteRequests({ page: { limit: 10, cursor: '' }, status: '', commune, customerKind }, m),
+        superAdmin,
+      );
+    const { requests } = await list('cotonou', 'individual');
+    expect(requests.map((r) => [r.commune, r.customerName, r.organizationName])).toEqual([
+      ['Cotonou', 'Koffi Adjovi', ''],
+    ]);
+    expect((await list('cotonou', 'business')).requests).toEqual([]);
+    expect((await list('porto-novo', '')).requests).toEqual([]);
+  });
+
+  it('back-office : type de client sur la mission, reste dû dans l’erreur de paiement', async () => {
+    const organizationId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000';
+    world.people.organizations.set(organizationId, 'SARL Bénin Propre');
+    const base = {
+      requestId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d2000',
+      quoteId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d3000',
+      customerId: CUSTOMER,
+      status: 'to_schedule' as const,
+      serviceCode: 'home_cleaning',
+      commune: 'Cotonou',
+      address: 'Lot 12',
+      chosenSlot: { start: new Date(SLOT.start), end: new Date(SLOT.end) },
+      recurrence: null,
+      plannedInterventions: 1,
+      interventions: [],
+      payment: newPaymentState({ option: 'full', timing: 'after', method: 'cash' }, 30_000, 30),
+      cancellationReason: null,
+      daysPerWeek: null,
+      suspension: null,
+      warningLevel: 0,
+      createdAt: new Date('2026-12-01T08:00:00Z'),
+      updatedAt: new Date('2026-12-01T08:00:00Z'),
+      version: 0,
+    };
+    const businessId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1b00';
+    const individualId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1a00';
+    world.missions.missions.set(businessId, { ...base, id: businessId, organizationId });
+    world.missions.missions.set(individualId, { ...base, id: individualId, organizationId: null });
+    const supervisor = {
+      userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001',
+      roles: ['cleaning_supervisor'],
+      mfa: true,
+    };
+
+    const { mission } = await call((m) => admin.getMissionDetail({ missionId: businessId }, m), supervisor);
+    expect(mission).toMatchObject({
+      customerKind: 'business',
+      organizationId,
+      customerName: 'Koffi Adjovi',
+      organizationName: 'SARL Bénin Propre',
+    });
+
+    const pay = (amount: number, idempotencyKey: string) =>
+      call(
+        (m) =>
+          admin.recordPayment(
+            {
+              missionId: individualId,
+              amount: { amount, currency: 'XOF' },
+              method: 'cash',
+              reference: '',
+              idempotencyKey,
+            },
+            m,
+          ),
+        supervisor,
+      );
+    const first = await pay(10_000, 'grpc-paiement-1');
+    expect(first.mission?.customerKind).toBe('individual');
+    expect((await pay(10_000, 'grpc-paiement-1')).mission?.payment?.payments).toHaveLength(1);
+    const refused = await pay(25_000, 'grpc-paiement-2').catch((error: AppError) => error);
+    expect(refused).toMatchObject({
+      code: 'CLEANING_PAYMENT_INVALID',
+      details: { reason: 'exceeds_balance', remainingDue: { amount: 20_000, currency: 'XOF' } },
+    });
   });
 
   it('traduit les erreurs : non connecté, introuvable, droits du back-office', async () => {

@@ -113,6 +113,7 @@ export function presentRequest(value: cleaningV1.QuoteRequest | undefined) {
           agentId: visit.agentId,
           report: orNull(visit.report),
           completedAt: orNull(visit.completedAt),
+          agentName: orNull(visit.agentName),
         }
       : null,
     quote: value.quote ? presentQuote(value.quote) : null,
@@ -120,6 +121,9 @@ export function presentRequest(value: cleaningV1.QuoteRequest | undefined) {
     closingReason: orNull(value.closingReason),
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+    // Back-office (ADR-029) : null dans l'espace client, pour un compte sans nom, ou identity indisponible.
+    customerName: orNull(value.customerName),
+    organizationName: orNull(value.organizationName),
   };
 }
 
@@ -131,6 +135,11 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
     requestId: value.requestId,
     quoteId: value.quoteId,
     customerId: value.customerId,
+    // Particulier ou entreprise : une mission d'entreprise se règle par sa facture (pas de paiement manuel).
+    customerKind: value.customerKind === 'business' ? 'business' : 'individual',
+    organizationId: orNull(value.organizationId),
+    customerName: orNull(value.customerName),
+    organizationName: orNull(value.organizationName),
     status: value.status,
     serviceCode: value.serviceCode,
     commune: value.commune,
@@ -170,6 +179,7 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
         method: record.method,
         reference: orNull(record.reference),
         recordedBy: record.recordedBy,
+        recordedByName: orNull(record.recordedByName),
         recordedAt: record.recordedAt,
       })),
     },
@@ -213,6 +223,7 @@ export function presentDefinition(value: cleaningV1.ServiceDefinition | undefine
       },
       checklist: (pricing?.checklist ?? []).map((item) => ({ code: item.code, label: item.label })),
       updatedBy: orNull(pricing?.updatedBy),
+      updatedByName: orNull(pricing?.updatedByName),
       updatedAt: orNull(pricing?.updatedAt),
     },
   };
@@ -232,6 +243,7 @@ export function presentSettings(value: cleaningV1.Settings | undefined) {
     individualSuspensionUnpaidInterventions: value.individualSuspensionUnpaidInterventions,
     individualPaymentGraceHours: value.individualPaymentGraceHours,
     updatedBy: orNull(value.updatedBy),
+    updatedByName: orNull(value.updatedByName),
     updatedAt: orNull(value.updatedAt),
   };
 }
@@ -271,6 +283,7 @@ export function presentZone(value: cleaningV1.Zone | undefined) {
     commune: value.commune,
     active: value.active,
     updatedBy: orNull(value.updatedBy),
+    updatedByName: orNull(value.updatedByName),
     updatedAt: orNull(value.updatedAt),
   };
 }

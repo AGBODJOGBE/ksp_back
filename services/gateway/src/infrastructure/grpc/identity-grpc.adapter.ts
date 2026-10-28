@@ -46,7 +46,7 @@ const LOGOUT_SCOPE: Record<LogoutScope, identityV1.LogoutScope> = {
   all_devices: identityV1.LogoutScope.LOGOUT_SCOPE_ALL_DEVICES,
 };
 
-const USER_STATUS: Partial<Record<identityV1.UserStatus, UserStatus>> = {
+export const USER_STATUS: Partial<Record<identityV1.UserStatus, UserStatus>> = {
   [identityV1.UserStatus.USER_STATUS_PENDING_VERIFICATION]: 'pending_verification',
   [identityV1.UserStatus.USER_STATUS_ACTIVE]: 'active',
   [identityV1.UserStatus.USER_STATUS_LOCKED]: 'locked',

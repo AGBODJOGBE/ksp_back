@@ -21,6 +21,11 @@ export const organizationBodies = {
   suspendOrganization: reason,
 };
 
+/** Recherche de compte au back-office (ADR-029) : numéro E.164 dans le corps. */
+export const accountBodies = {
+  findAccountByPhone: z.strictObject({ phone: z.string().regex(/^\+[1-9][0-9]{6,14}$/) }),
+};
+
 export const organizationParams = {
   status: z.enum(['pending_review', 'active', 'rejected', 'suspended']).optional(),
 };

@@ -2,7 +2,7 @@ import { type CleaningEventPayloads, type CleaningEventType } from '@ksp/contrac
 import { type Agent, type Team, type Unavailability } from '../domain/agent';
 import { type PricingRule, type ServiceDefinition } from '../domain/catalog';
 import { type Intervention, type Mission, type MissionStatus } from '../domain/mission';
-import { type QuoteRequest, type RequestStatus } from '../domain/quote-request';
+import { type CustomerKind, type QuoteRequest, type RequestStatus } from '../domain/quote-request';
 import { type BusyPeriod } from '../domain/schedule';
 import { type CleaningSettings } from '../domain/settings';
 import { type Zone } from '../domain/zone';
@@ -58,9 +58,13 @@ export interface CatalogRepository {
 
 export type CreateResult<T> = { created: true; value: T } | { created: false; value: T };
 
+/** Filtres cumulables de la liste des demandes. */
 export interface QuoteRequestFilter {
   customerId?: string;
   status?: RequestStatus;
+  /** Code de zone : commune normalisée (zoneCode), comparée à celle enregistrée avec la demande. */
+  communeCode?: string;
+  customerKind?: CustomerKind;
 }
 
 export interface QuoteRequestRepository {
@@ -170,4 +174,15 @@ export interface OnlinePaymentRecorder {
     providerReference: string;
     at: Date;
   }): Promise<void>;
+}
+
+/**
+ * Noms affichés au back-office (ADR-029), lus dans identity au moment de la réponse : prénom et
+ * nom d'un compte, raison sociale d'une organisation. Lecture au mieux : un identifiant inconnu
+ * est absent, et une panne d'identity rend des noms absents au lieu d'une erreur (la liste du
+ * back-office reste utilisable). Aucun nom n'est enregistré dans cleaning.
+ */
+export interface PeopleDirectory {
+  userNames(userIds: readonly string[]): Promise<Map<string, string>>;
+  organizationNames(organizationIds: readonly string[]): Promise<Map<string, string>>;
 }

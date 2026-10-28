@@ -154,6 +154,16 @@ export const cleaningParams = {
     .enum(['to_schedule', 'scheduled', 'in_progress', 'on_hold', 'completed', 'cancelled'])
     .optional(),
   idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
+  optionalIdempotencyKey: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{8,100}$/)
+    .optional(),
+  /** Filtre de la liste des demandes : code de zone (commune normalisée), comme ServedZone.code. */
+  communeFilter: z
+    .string()
+    .regex(/^[a-z][a-z0-9-]{1,99}$/)
+    .optional(),
+  customerKind: z.enum(['individual', 'business']).optional(),
 };
 
 /** Paramètre invalide : 400 GATEWAY_VALIDATION_FAILED, sans reprendre la valeur envoyée. */

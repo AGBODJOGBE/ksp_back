@@ -2,6 +2,7 @@ import { loadConfig } from '@ksp/platform';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { configSchema } from '../src/config';
+import { AccountAdminGrpcController } from '../src/interfaces/grpc/account-admin.controller';
 import { AccountGrpcController } from '../src/interfaces/grpc/account.controller';
 import { AuthGrpcController } from '../src/interfaces/grpc/auth.controller';
 import { IdentityGrpcController } from '../src/interfaces/grpc/identity.controller';
@@ -23,6 +24,7 @@ describe('AppModule', () => {
     expect(moduleRef.get(IdentityGrpcController)).toBeDefined();
     expect(moduleRef.get(AuthGrpcController)).toBeDefined();
     expect(moduleRef.get(AccountGrpcController)).toBeDefined();
+    expect(moduleRef.get(AccountAdminGrpcController)).toBeDefined();
     expect(moduleRef.get(JwksHttpController).jwks().keys).toHaveLength(1);
     expect(moduleRef.get(OAuthTokenHttpController)).toBeDefined();
     await moduleRef.close();

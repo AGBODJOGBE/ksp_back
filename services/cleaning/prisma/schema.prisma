@@ -73,20 +73,20 @@ model PricingRule {
 
 /// Réglages de la partie 4 du cahier des charges (une seule ligne, id = 1).
 model CleaningSettings {
-  id                         Int       @id @default(1)
-  quoteValidityDays          Int       @default(15) @map("quote_validity_days")
-  minimumLeadHours           Int       @default(48) @map("minimum_lead_hours")
-  freeCancellationHours      Int       @default(24) @map("free_cancellation_hours")
-  visitThresholdSquareMeters Int       @default(300) @map("visit_threshold_square_meters")
-  maxOpenRequests            Int       @default(5) @map("max_open_requests")
-  depositPercent             Int       @default(30) @map("deposit_percent")
+  id                                      Int       @id @default(1)
+  quoteValidityDays                       Int       @default(15) @map("quote_validity_days")
+  minimumLeadHours                        Int       @default(48) @map("minimum_lead_hours")
+  freeCancellationHours                   Int       @default(24) @map("free_cancellation_hours")
+  visitThresholdSquareMeters              Int       @default(300) @map("visit_threshold_square_meters")
+  maxOpenRequests                         Int       @default(5) @map("max_open_requests")
+  depositPercent                          Int       @default(30) @map("deposit_percent")
   /// Règles d'impayés (partie 10 du cahier des charges).
   businessWarningUnpaidInvoices           Int       @default(1) @map("business_warning_unpaid_invoices")
   businessSuspensionUnpaidInvoices        Int       @default(2) @map("business_suspension_unpaid_invoices")
   individualSuspensionUnpaidInterventions Int       @default(1) @map("individual_suspension_unpaid_interventions")
   individualPaymentGraceHours             Int       @default(24) @map("individual_payment_grace_hours")
-  updatedBy                  String?   @map("updated_by")
-  updatedAt                  DateTime? @map("updated_at") @db.Timestamptz(3)
+  updatedBy                               String?   @map("updated_by")
+  updatedAt                               DateTime? @map("updated_at") @db.Timestamptz(3)
 
   @@map("cleaning_settings")
 }
@@ -104,6 +104,8 @@ model QuoteRequest {
   quantity            Int
   options             String[]
   commune             String
+  /// Code de zone de la commune saisie (minuscules, sans accents, tirets) : filtre du back-office.
+  communeCode         String     @map("commune_code")
   /// Adresse d'intervention : jamais dans les journaux ni dans les événements.
   address             String
   preferredSlots      Json       @map("preferred_slots")
@@ -128,6 +130,7 @@ model QuoteRequest {
   @@unique([customerId, idempotencyKey])
   @@index([customerId, id])
   @@index([status, id])
+  @@index([communeCode, id])
   @@map("quote_requests")
 }
 
@@ -236,15 +239,18 @@ model Intervention {
 
 /// Paiement enregistré : coché par le superviseur (espèces, Mobile Money hors ligne) ou, plus tard, en ligne.
 model MissionPayment {
-  id         String   @id @db.Uuid
-  missionId  String   @map("mission_id") @db.Uuid
-  amount     Int
-  method     String
-  reference  String?
-  recordedBy String   @map("recorded_by")
-  recordedAt DateTime @map("recorded_at") @db.Timestamptz(3)
-  mission    Mission  @relation(fields: [missionId], references: [id])
+  id             String   @id @db.Uuid
+  missionId      String   @map("mission_id") @db.Uuid
+  amount         Int
+  method         String
+  reference      String?
+  recordedBy     String   @map("recorded_by")
+  recordedAt     DateTime @map("recorded_at") @db.Timestamptz(3)
+  /// Clé d'idempotence du paiement manuel (en-tête Idempotency-Key), null sans clé.
+  idempotencyKey String?  @map("idempotency_key")
+  mission        Mission  @relation(fields: [missionId], references: [id])
 
+  @@unique([missionId, idempotencyKey])
   @@index([missionId])
   @@map("mission_payments")
 }

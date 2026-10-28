@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { DEFAULT_RATE_LIMITS } from '../src/domain/rate-limit/rate-limits';
 import { ROUTE_MANIFEST, type RouteDefinition } from '../src/domain/routing/route-manifest';
 import { RESERVED_PREFIXES } from '../src/domain/routing/manifest-rules';
+import { AccountAdminHttpController } from '../src/interfaces/http/account-admin.controller';
 import { BillingHttpController } from '../src/interfaces/http/billing.controller';
 import { CleaningAdminHttpController } from '../src/interfaces/http/cleaning-admin.controller';
 import { CleaningHttpController } from '../src/interfaces/http/cleaning.controller';
@@ -131,7 +132,9 @@ describe('contrat OpenAPI : manifeste de routage', () => {
         mfaMaxAge: op['x-ksp-mfa-max-age'] ?? null,
         idempotencyKey: (op.parameters ?? []).some((p) => p.$ref?.endsWith('/IdempotencyKey'))
           ? 'required'
-          : null,
+          : (op.parameters ?? []).some((p) => p.$ref?.endsWith('/OptionalIdempotencyKey'))
+            ? 'optional'
+            : null,
       }))
       .sort((a, b) => a.operationId.localeCompare(b.operationId));
     const fromManifest = (ROUTE_MANIFEST as readonly RouteDefinition[])
@@ -171,6 +174,7 @@ describe('contrat OpenAPI : manifeste de routage', () => {
       JwksHttpController,
       OrganizationHttpController,
       OrganizationAdminHttpController,
+      AccountAdminHttpController,
       CleaningHttpController,
       CleaningAdminHttpController,
       BillingHttpController,
@@ -291,7 +295,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       });
     staffToken = await staff(true);
     staffWithoutMfa = await staff(false);
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await app?.close();
@@ -794,6 +798,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           path.includes('/cleaning') ||
           path.includes('/billing') ||
           path.includes('/organizations') ||
+          path.includes('/accounts') ||
           path === '/api/v1/identity/context',
       )
       .map(
@@ -997,6 +1002,77 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         },
       ],
       ['refus sans motif', 'rejectOrganization', 400, () => call('rejectOrganization', { body: {} })],
+      [
+        'recherche de compte : numéro hors E.164',
+        'findAccountByPhone',
+        400,
+        () => call('findAccountByPhone', { body: { phone: '0197000045' } }),
+      ],
+      [
+        'recherche de compte : aucun compte pour ce numéro',
+        'findAccountByPhone',
+        404,
+        () => {
+          identity.stub.on('findAccountByPhone', () =>
+            Promise.reject(AppError.notFound('IDENTITY_USER_NOT_FOUND', 'Aucun compte KSP pour ce numéro.')),
+          );
+          return call('findAccountByPhone');
+        },
+      ],
+      [
+        'recherche de compte pour un client',
+        'findAccountByPhone',
+        403,
+        () => call('findAccountByPhone', { auth: 'customer' }),
+      ],
+      [
+        'paiement manuel avec Idempotency-Key (facultative)',
+        'recordCleaningPayment',
+        200,
+        () => call('recordCleaningPayment', { key: true }),
+      ],
+      [
+        'paiement manuel : Idempotency-Key mal formée',
+        'recordCleaningPayment',
+        400,
+        () => call('recordCleaningPayment').set('Idempotency-Key', 'court'),
+      ],
+      [
+        'paiement au-delà du dû : reste dû dans les détails',
+        'recordCleaningPayment',
+        400,
+        () => {
+          cleaningFails(
+            'recordPayment',
+            AppError.invalid('CLEANING_PAYMENT_INVALID', 'Ce paiement dépasse le reste dû : 12 500 FCFA.', {
+              reason: 'exceeds_balance',
+              remainingDue: { amount: 12500, currency: 'XOF' },
+            }),
+          );
+          return call('recordCleaningPayment');
+        },
+      ],
+      [
+        'demandes du back-office : type de client inconnu',
+        'listCleaningQuoteRequests',
+        400,
+        () => call('listCleaningQuoteRequests').query({ customerKind: 'company' }),
+      ],
+      [
+        'passage démarré avant le jour prévu',
+        'startCleaningIntervention',
+        422,
+        () => {
+          cleaningFails(
+            'startIntervention',
+            AppError.precondition('CLEANING_INTERVENTION_TOO_EARLY', 'Trop tôt.', {
+              scheduledDate: '2026-11-05',
+              timeZone: 'Africa/Porto-Novo',
+            }),
+          );
+          return call('startCleaningIntervention');
+        },
+      ],
       [
         'comptes entreprise du back-office pour un client',
         'listOrganizations',

@@ -6,6 +6,7 @@ import {
 } from '../../../prisma/generated';
 import { type PremisesType } from '../../domain/catalog';
 import { type Quote } from '../../domain/quote';
+import { zoneCode } from '../../domain/zone';
 import {
   type CustomerKind,
   type QuoteRequest,
@@ -104,6 +105,8 @@ export function requestColumns(request: QuoteRequest) {
     quantity: request.quantity,
     options: request.options,
     commune: request.commune,
+    // Code de zone de la commune saisie : filtre du back-office.
+    communeCode: zoneCode(request.commune),
     address: request.address,
     preferredSlots: slotsToJson(request.preferredSlots),
     comment: request.comment,

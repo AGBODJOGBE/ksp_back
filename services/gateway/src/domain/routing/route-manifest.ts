@@ -1,4 +1,5 @@
 import { type RateLimitCategory } from '../rate-limit/rate-limits';
+import { ACCOUNT_ROUTES } from './account-routes';
 import { BILLING_ROUTES } from './billing-routes';
 import { CLEANING_ROUTES } from './cleaning-routes';
 import { ORGANIZATION_ROUTES } from './organization-routes';
@@ -28,8 +29,11 @@ export interface RouteDefinition {
   rateLimit: RateLimitCategory;
   /** Route d'authentification : le type de client (web, mobile, back-office) doit être reconnu. */
   requiresKnownClient: boolean;
-  /** Écriture sensible : en-tête Idempotency-Key obligatoire, transmis au service. */
-  idempotencyKey?: 'required';
+  /**
+   * En-tête Idempotency-Key transmis au service : obligatoire (écriture sensible), ou facultatif
+   * quand la route existait déjà sans lui (ajout sans rupture pour les fronts branchés).
+   */
+  idempotencyKey?: 'required' | 'optional';
 }
 
 const IDENTITY_AUTH = 'ksp.identity.v1.AuthService';
@@ -154,6 +158,7 @@ export const ROUTE_MANIFEST = [
     requiresKnownClient: false,
   },
   ...ORGANIZATION_ROUTES,
+  ...ACCOUNT_ROUTES,
   ...CLEANING_ROUTES,
   ...BILLING_ROUTES,
 ] as const satisfies readonly RouteDefinition[];

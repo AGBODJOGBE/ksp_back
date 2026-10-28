@@ -18,6 +18,7 @@ import {
   asAgent,
   asCustomer,
   asSupervisor,
+  asSuperAdmin,
   CUSTOMER_ID,
   homeCleaning,
   OTHER_AGENT_ID,
@@ -153,6 +154,7 @@ describe('missions et passages (UC-CL-09, 10)', () => {
     );
     expect(listed.items).toEqual([]);
 
+    world.clock.current = new Date('2026-10-30T07:30:00Z');
     expect((await asAgent(() => new StartInterventionUseCase(world).execute(id))).mission.status).toBe(
       'in_progress',
     );
@@ -179,6 +181,7 @@ describe('missions et passages (UC-CL-09, 10)', () => {
         asAgent(() => new ReportIncidentUseCase(world).execute({ interventionId: id, note: 'Coupure' })),
       ),
     ).toBe('CLEANING_INVALID_TRANSITION');
+    world.clock.current = new Date('2026-10-30T07:30:00Z');
     await asAgent(() => new StartInterventionUseCase(world).execute(id));
     const held = await asAgent(() =>
       new ReportIncidentUseCase(world).execute({ interventionId: id, note: 'Coupure d’eau' }),
@@ -212,6 +215,144 @@ describe('missions et passages (UC-CL-09, 10)', () => {
         ),
       ),
     ).toBe('AUTH_FORBIDDEN');
+  });
+
+  it('démarrage refusé avant le jour prévu, à l’heure du Bénin ; permis le jour même (règle réglable)', async () => {
+    await schedule('2026-10-30T08:00:00Z', [AGENT_ID]);
+    const id = interventionOf();
+    const start = () => asAgent(() => new StartInterventionUseCase(world).execute(id));
+    // 29 octobre 22:30 UTC = 29 octobre 23:30 au Bénin : encore la veille.
+    world.clock.current = new Date('2026-10-29T22:30:00Z');
+    const error = await start().catch((e: AppError) => e);
+    expect(error).toMatchObject({
+      code: 'CLEANING_INTERVENTION_TOO_EARLY',
+      message: 'Ce passage est prévu le 30 octobre 2026 : il ne peut pas être démarré avant ce jour.',
+      details: { scheduledDate: '2026-10-30', timeZone: 'Africa/Porto-Novo' },
+    });
+    // 29 octobre 23:30 UTC = 30 octobre 00:30 au Bénin : le jour prévu, avant l'heure du créneau.
+    world.clock.current = new Date('2026-10-29T23:30:00Z');
+    expect((await start()).mission.status).toBe('in_progress');
+  });
+
+  it('démarrage anticipé permis quand la règle est désactivée par configuration', async () => {
+    world.fieldDates.blockEarlyInterventionStart = false;
+    await schedule('2026-10-30T08:00:00Z', [AGENT_ID]);
+    world.clock.current = new Date('2026-10-28T08:00:00Z');
+    expect(
+      (await asAgent(() => new StartInterventionUseCase(world).execute(interventionOf()))).mission.status,
+    ).toBe('in_progress');
+  });
+
+  it('paiement au-delà du dû : le reste dû figure dans le message et les détails', async () => {
+    const pay = (amount: number) =>
+      asSupervisor(() =>
+        new RecordPaymentUseCase(world).execute({
+          missionId: MISSION_ID,
+          amount,
+          method: 'cash',
+          reference: '',
+        }),
+      );
+    await pay(37_500);
+    const error = await pay(20_000).catch((e: AppError) => e);
+    expect(error).toMatchObject({
+      code: 'CLEANING_PAYMENT_INVALID',
+      message: 'Ce paiement dépasse le reste dû : 12 500 FCFA.',
+      details: { reason: 'exceeds_balance', remainingDue: { amount: 12_500, currency: 'XOF' } },
+    });
+    await pay(12_500);
+    expect(await pay(1).catch((e: AppError) => e)).toMatchObject({
+      message: 'Cette mission est déjà entièrement payée : aucun paiement de plus ne peut être enregistré.',
+      details: { remainingDue: { amount: 0, currency: 'XOF' } },
+    });
+  });
+
+  it('paiement manuel idempotent : même clé, un seul paiement ; clé invalide refusée', async () => {
+    const pay = (idempotencyKey: string, amount = 15_000) =>
+      asSupervisor(() =>
+        new RecordPaymentUseCase(world).execute({
+          missionId: MISSION_ID,
+          amount,
+          method: 'cash',
+          reference: 'R1',
+          idempotencyKey,
+        }),
+      );
+    const first = await pay('paiement-0001');
+    const replay = await pay('paiement-0001');
+    expect(replay.mission.payment.payments).toHaveLength(1);
+    expect(replay.mission.payment.payments).toEqual(first.mission.payment.payments);
+    expect(world.missions.missions.get(MISSION_ID)!.payment.payments).toHaveLength(1);
+    expect(world.recorder.audit.filter((entry) => entry.action === 'payment.recorded')).toHaveLength(1);
+    // Un rejeu est rendu même si le montant renvoyé dépasserait maintenant le reste dû.
+    await pay('paiement-0002', 35_000);
+    expect((await pay('paiement-0002', 35_000)).mission.payment.payments).toHaveLength(2);
+    expect(await code(pay('court'))).toBe('CLEANING_VALIDATION_FAILED');
+  });
+
+  it('paiement idempotent : envoi concurrent rejoué après l’écriture de l’autre', async () => {
+    const payment = (idempotencyKey: string) =>
+      asSupervisor(() =>
+        new RecordPaymentUseCase(world).execute({
+          missionId: MISSION_ID,
+          amount: 15_000,
+          method: 'cash',
+          reference: '',
+          idempotencyKey,
+        }),
+      );
+    // Le premier envoi lit la mission, puis le second s'enregistre avant lui (même version lue).
+    const stale = world.missions.missions.get(MISSION_ID)!;
+    const findById = world.missions.findById.bind(world.missions);
+    let calls = 0;
+    world.missions.findById = async (id: string) => {
+      calls += 1;
+      return calls === 1 ? stale : findById(id);
+    };
+    await world.missions.save(
+      {
+        ...stale,
+        payment: {
+          ...stale.payment,
+          payments: [
+            {
+              id: 'p-concurrent',
+              amount: 15_000,
+              method: 'cash',
+              reference: null,
+              recordedBy: 'sup',
+              recordedAt: new Date('2026-10-23T08:00:00Z'),
+              idempotencyKey: 'paiement-0003',
+            },
+          ],
+        },
+      },
+      { events: [], audit: [] },
+    );
+    const view = await payment('paiement-0003');
+    expect(view.mission.payment.payments.map((p) => p.id)).toEqual(['p-concurrent']);
+    expect(world.missions.missions.get(MISSION_ID)!.payment.payments).toHaveLength(1);
+  });
+
+  it('super_admin : voit et pilote les missions comme cleaning_admin', async () => {
+    await schedule('2026-10-30T08:00:00Z', [AGENT_ID]);
+    const listed = await asSuperAdmin(() =>
+      new ListMissionsUseCase(world).execute({ page: { limit: 20, cursor: null }, status: '' }),
+    );
+    expect(listed.items.map((view) => view.mission.id)).toEqual([MISSION_ID]);
+    world.clock.current = new Date('2026-10-30T07:00:00Z');
+    expect(
+      (await asSuperAdmin(() => new StartInterventionUseCase(world).execute(interventionOf()))).mission
+        .status,
+    ).toBe('in_progress');
+    expect(
+      await code(
+        asSuperAdmin(
+          () => new ListMissionsUseCase(world).execute({ page: { limit: 20, cursor: null }, status: '' }),
+          false,
+        ),
+      ),
+    ).toBe('AUTH_MFA_REQUIRED');
   });
 
   it('annulation par le client : sans frais avant 24 h, refusée après ; 404 pour un autre client', async () => {

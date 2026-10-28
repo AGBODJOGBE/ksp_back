@@ -65,6 +65,8 @@ export const protoRequest: cleaningV1.QuoteRequest = {
   closingReason: '',
   createdAt: '2026-10-22T10:00:00.000Z',
   updatedAt: '2026-10-23T08:00:00.000Z',
+  customerName: 'Koffi Adjovi',
+  organizationName: '',
 };
 
 export const protoMission: cleaningV1.Mission = {
@@ -110,6 +112,10 @@ export const protoMission: cleaningV1.Mission = {
   suspension: { cause: 'unpaid_invoices', since: '2026-12-15T06:00:00.000Z', unpaidCount: 2 },
   createdAt: '2026-10-23T09:00:00.000Z',
   updatedAt: '2026-10-23T09:00:00.000Z',
+  customerKind: 'business',
+  organizationId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000',
+  customerName: 'Koffi Adjovi',
+  organizationName: 'SARL Bénin Propre',
 };
 
 const definition: cleaningV1.ServiceDefinition = {
@@ -127,6 +133,7 @@ const definition: cleaningV1.ServiceDefinition = {
     checklist: [],
     updatedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001',
     updatedAt: '2026-10-23T08:00:00.000Z',
+    updatedByName: 'Afi Superviseure',
   },
 };
 const settings: cleaningV1.Settings = {
@@ -142,6 +149,7 @@ const settings: cleaningV1.Settings = {
   individualPaymentGraceHours: 24,
   updatedBy: '',
   updatedAt: '',
+  updatedByName: '',
 };
 const zone: cleaningV1.Zone = {
   code: 'abomey-calavi',
@@ -149,6 +157,7 @@ const zone: cleaningV1.Zone = {
   active: true,
   updatedBy: '',
   updatedAt: '',
+  updatedByName: '',
 };
 const agent: cleaningV1.Agent = {
   agentId: IDS.agent,

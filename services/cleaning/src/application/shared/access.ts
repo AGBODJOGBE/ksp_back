@@ -5,11 +5,15 @@ import { type CustomerKind } from '../../domain/quote-request';
  * Contrôles d'accès du service. La gateway filtre déjà selon son manifeste, mais le service
  * revérifie toujours (cahier des charges Gateway, UC-GW-03) : client propriétaire, agent
  * affecté, rôles du back-office avec double authentification.
+ *
+ * `super_admin` (direction KSP) a partout la portée de `cleaning_admin`, comme pour la
+ * facturation : il voit et pilote tout le Nettoyage.
  */
 export const ROLES = {
   supervisor: 'cleaning_supervisor',
   agent: 'cleaning_agent',
   admin: 'cleaning_admin',
+  superAdmin: 'super_admin',
 } as const;
 
 /**
@@ -36,6 +40,7 @@ export type BackofficeRole = (typeof ROLES)[keyof typeof ROLES];
 export interface Staff {
   userId: string;
   isSupervisor: boolean;
+  /** cleaning_admin ou super_admin : même portée. */
   isAdmin: boolean;
   isAgent: boolean;
 }
@@ -50,14 +55,14 @@ export function requireStaff(allowed: readonly BackofficeRole[], nowMs?: number)
   return {
     userId: user.userId,
     isSupervisor: hasRole(user, ROLES.supervisor),
-    isAdmin: hasRole(user, ROLES.admin),
+    isAdmin: hasRole(user, ROLES.admin) || hasRole(user, ROLES.superAdmin),
     isAgent: hasRole(user, ROLES.agent),
   };
 }
 
-export const SUPERVISION = [ROLES.supervisor, ROLES.admin] as const;
-export const FIELD_WORK = [ROLES.supervisor, ROLES.admin, ROLES.agent] as const;
-export const ADMINISTRATION = [ROLES.admin] as const;
+export const SUPERVISION = [ROLES.supervisor, ROLES.admin, ROLES.superAdmin] as const;
+export const FIELD_WORK = [ROLES.supervisor, ROLES.admin, ROLES.agent, ROLES.superAdmin] as const;
+export const ADMINISTRATION = [ROLES.admin, ROLES.superAdmin] as const;
 
 /** Superviseur ou admin : tout le périmètre ; agent seul : ses passages uniquement. */
 export function seesEverything(staff: Staff): boolean {

@@ -15,6 +15,7 @@ import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { type Clock, type RateLimiter } from './application/access/access.ports';
 import { type BillingApi } from './application/billing/billing.ports';
 import { type CleaningApi } from './application/cleaning/cleaning.ports';
+import { type AccountAdminApi } from './application/identity/account-admin.ports';
 import { type OrganizationsApi } from './application/identity/organizations.ports';
 import { RequestCleaningQuoteUseCase } from './application/cleaning/request-cleaning-quote.use-case';
 import { AuthorizeRequestUseCase } from './application/access/authorize-request.use-case';
@@ -33,6 +34,7 @@ import {
 } from './application/identity/identity.use-cases';
 import { GetPublicKeysUseCase } from './application/keys/public-keys';
 import { clientOriginsFrom, DEV_IDENTITY_JWKS_URL, type GatewayConfig, rateLimitsFrom } from './config';
+import { AccountAdminGrpcAdapter } from './infrastructure/grpc/account-admin-grpc.adapter';
 import { BillingGrpcAdapter } from './infrastructure/grpc/billing-grpc.adapter';
 import { CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
 import { IdentityGrpcAdapter } from './infrastructure/grpc/identity-grpc.adapter';
@@ -42,6 +44,7 @@ import { KeysReadiness } from './infrastructure/keys/keys-readiness';
 import { type JwksSource, SigningKeysCache } from './infrastructure/keys/signing-keys-cache';
 import { InMemoryRateLimiter } from './infrastructure/rate-limit/in-memory-rate-limiter';
 import { SystemClock } from './infrastructure/system/system-clock';
+import { AccountAdminHttpController } from './interfaces/http/account-admin.controller';
 import { BillingHttpController } from './interfaces/http/billing.controller';
 import { CleaningAdminHttpController } from './interfaces/http/cleaning-admin.controller';
 import { CleaningHttpController } from './interfaces/http/cleaning.controller';
@@ -52,6 +55,7 @@ import { OrganizationHttpController } from './interfaces/http/organizations.cont
 import { RefreshCookies } from './interfaces/http/refresh-cookie';
 import { RouteGuard } from './interfaces/http/route.guard';
 import {
+  ACCOUNT_ADMIN_API,
   BILLING_API,
   BILLING_GRPC_CLIENT,
   CLEANING_API,
@@ -89,6 +93,7 @@ export class AppModule {
         JwksHttpController,
         OrganizationHttpController,
         OrganizationAdminHttpController,
+        AccountAdminHttpController,
         CleaningHttpController,
         CleaningAdminHttpController,
         BillingHttpController,
@@ -163,6 +168,20 @@ export class AppModule {
               },
               // Appelant propre aux comptes entreprise : une panne ou un coupe-circuit ouvert ici ne
               // bloque pas la connexion ni le renouvellement des sessions (UC-GW-07).
+              new GrpcCaller({
+                target: 'identity',
+                defaultDeadlineMs: config.GRPC_DEADLINE_MS,
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        {
+          provide: ACCOUNT_ADMIN_API,
+          inject: [IDENTITY_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
+          useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): AccountAdminApi =>
+            new AccountAdminGrpcAdapter(
+              grpc.getService<identityV1.AccountAdminServiceClient>(identityV1.ACCOUNT_ADMIN_SERVICE_NAME),
+              // Appelant propre au back-office des comptes : sa panne ne bloque pas la connexion (UC-GW-07).
               new GrpcCaller({
                 target: 'identity',
                 defaultDeadlineMs: config.GRPC_DEADLINE_MS,

@@ -114,7 +114,9 @@ type AuthMethod = keyof identityV1.AuthServiceController;
 type AccountMethod = keyof identityV1.AccountServiceController;
 type OrganizationMethod = keyof identityV1.OrganizationServiceController;
 type OrganizationAdminMethod = keyof identityV1.OrganizationAdminServiceController;
-export type StubMethod = AuthMethod | AccountMethod | OrganizationMethod | OrganizationAdminMethod;
+type AccountAdminMethod = keyof identityV1.AccountAdminServiceController;
+export type StubMethod =
+  AuthMethod | AccountMethod | OrganizationMethod | OrganizationAdminMethod | AccountAdminMethod;
 
 export interface RecordedCall {
   method: StubMethod;
@@ -209,6 +211,15 @@ export class IdentityStub {
     }),
     confirmOrganizationBillingEmail: () => ({ membership: protoMembership }),
     listOrganizations: () => ({ organizations: [protoOrganization], nextCursor: ORGANIZATION_ID }),
+    findAccountByPhone: () => ({
+      account: {
+        userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002',
+        status: identityV1.UserStatus.USER_STATUS_ACTIVE,
+        firstName: 'Awa',
+        lastName: '',
+        phoneMasked: '+229********45',
+      },
+    }),
     getOrganization: () => ({
       organization: protoOrganization,
       members: [
@@ -344,6 +355,15 @@ class StubOrganizationAdminController implements identityV1.OrganizationAdminSer
 }
 
 @Controller()
+@identityV1.AccountAdminServiceControllerMethods()
+class StubAccountAdminController implements identityV1.AccountAdminServiceController {
+  constructor(@Inject(STUB) private readonly stub: IdentityStub) {}
+  findAccountByPhone(request: identityV1.FindAccountByPhoneRequest) {
+    return this.stub.handle('findAccountByPhone', { ...request });
+  }
+}
+
+@Controller()
 @identityV1.AccountServiceControllerMethods()
 class StubAccountController implements identityV1.AccountServiceController {
   constructor(@Inject(STUB) private readonly stub: IdentityStub) {}
@@ -458,6 +478,7 @@ export async function startIdentityStub(keys: TestKeys): Promise<IdentityServer>
       StubAccountController,
       StubOrganizationController,
       StubOrganizationAdminController,
+      StubAccountAdminController,
     ],
     providers: [{ provide: STUB, useValue: stub }],
   })

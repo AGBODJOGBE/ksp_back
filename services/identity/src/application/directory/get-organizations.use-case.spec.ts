@@ -75,12 +75,19 @@ describe('GetOrganizationsUseCase', () => {
 
   it('refuse un service non autorisé, sans lire la base', async () => {
     const { organizations, lookups } = useCase();
-    for (const caller of ['gateway', 'cleaning', 'constructor']) {
+    for (const caller of ['gateway', 'recovery', 'constructor']) {
       await expect(organizations.many(caller, [ORG_1])).rejects.toMatchObject({
         code: 'IDENTITY_CALLER_FORBIDDEN',
       });
     }
     expect(lookups).toEqual([]);
+  });
+
+  it('rend la raison sociale à cleaning, sans l’e-mail de facturation (ADR-029)', async () => {
+    const { organizations } = useCase();
+    await expect(organizations.many('cleaning', [ORG_1])).resolves.toMatchObject([
+      { id: ORG_1, legalName: expect.any(String), billingEmail: null },
+    ]);
   });
 
   it('accepte un appel sans jeton de service vérifié (développement)', async () => {

@@ -6,6 +6,7 @@ import {
   asAgent,
   asCustomer,
   asSupervisor,
+  asSuperAdmin,
   CUSTOMER_ID,
   homeCleaning,
   ORGANIZATION_ID,
@@ -155,9 +156,13 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
         agentId: AGENT_ID,
       }),
     );
+    // Le compte rendu suit la visite : l'horloge avance le temps de la visite, puis revient.
+    const before = world.clock.current;
+    world.clock.current = new Date('2026-10-26T11:00:00Z');
     await asSupervisor(() =>
       new CompleteVisitUseCase(world).execute({ visitId: visited.visit!.id, report: 'Visite faite.' }),
     );
+    world.clock.current = before;
   };
   const sendQuote = async (requestId: string, options: { visit?: boolean } = {}) => {
     const current = world.requests.requests.get(requestId);
@@ -222,12 +227,14 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
       }),
     );
     expect(visited.status).toBe('visit_scheduled');
+    world.clock.current = new Date('2026-10-26T11:00:00Z');
     await asSupervisor(() =>
       new CompleteVisitUseCase(world).execute({
         visitId: visited.visit!.id,
         report: 'Deux étages, accès facile.',
       }),
     );
+    world.clock.current = new Date('2026-10-23T08:00:00Z');
     expect((await sendQuote(created.id)).status).toBe('quote_sent');
     expect(world.recorder.events.map((e) => e.type)).toEqual([
       'cleaning.quote.requested',
@@ -380,9 +387,11 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
         agentId: AGENT_ID,
       }),
     );
+    world.clock.current = new Date('2026-10-26T11:00:00Z');
     await asSupervisor(() =>
       new CompleteVisitUseCase(world).execute({ visitId: visited.visit!.id, report: 'RAS' }),
     );
+    world.clock.current = new Date('2026-10-23T08:00:00Z');
     await sendQuote(created.id);
     const accepted = await as(
       CUSTOMER_ID,
@@ -523,5 +532,89 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     );
     expect(await code(asAgent(list))).toBe('AUTH_FORBIDDEN');
     expect(await code(asSupervisor(list))).toBe('ok');
+  });
+
+  it('super_admin : même portée que cleaning_admin, double authentification exigée', async () => {
+    const list = () =>
+      new ListQuoteRequestsUseCase(world).execute({ page: { limit: 20, cursor: null }, status: '' });
+    expect(await code(asSuperAdmin(list))).toBe('ok');
+    expect(await code(asSuperAdmin(list, false))).toBe('AUTH_MFA_REQUIRED');
+  });
+
+  it('liste du back-office : filtres zone et type de client, cumulables avec l’état, paginés', async () => {
+    const individual = await request('ind-1');
+    await asCustomer(() =>
+      new RequestQuoteUseCase(world).execute({ ...requestInput('ind-2'), commune: 'Cotonou' }),
+    );
+    const business = await as(
+      OTHER_CUSTOMER_ID,
+      () => new RequestQuoteUseCase(world).execute({ ...requestInput('biz-1'), commune: 'Abomey Calavi' }),
+      { activeContext: ORGANIZATION_ID },
+    );
+    const list = (filters: { status?: string; commune?: string; customerKind?: string }, limit = 20) =>
+      asSupervisor(() =>
+        new ListQuoteRequestsUseCase(world).execute({
+          page: { limit, cursor: null },
+          status: filters.status ?? '',
+          commune: filters.commune ?? '',
+          customerKind: filters.customerKind ?? '',
+        }),
+      );
+    const ids = async (filters: Parameters<typeof list>[0]) => (await list(filters)).items.map((r) => r.id);
+
+    expect((await ids({ commune: 'abomey-calavi' })).sort()).toEqual([individual.id, business.id].sort());
+    expect(await ids({ commune: 'abomey-calavi', customerKind: 'business' })).toEqual([business.id]);
+    expect(await ids({ commune: 'abomey-calavi', customerKind: 'individual', status: 'received' })).toEqual([
+      individual.id,
+    ]);
+    expect(await ids({ commune: 'abomey-calavi', status: 'quote_sent' })).toEqual([]);
+    expect(await ids({ commune: 'porto-novo' })).toEqual([]);
+    const firstPage = await list({ commune: 'abomey-calavi' }, 1);
+    expect(firstPage.items).toHaveLength(1);
+    expect(firstPage.nextCursor).not.toBeNull();
+
+    expect(await code(list({ customerKind: 'company' }))).toBe('CLEANING_VALIDATION_FAILED');
+    expect(await code(list({ commune: '--' }))).toBe('CLEANING_VALIDATION_FAILED');
+  });
+
+  it('compte rendu de visite refusé avant l’heure prévue (règle réglable)', async () => {
+    const created = await request();
+    const visited = await asSupervisor(() =>
+      new ScheduleVisitUseCase(world).execute({
+        requestId: created.id,
+        scheduledAt: '2026-10-26T09:00:00Z',
+        agentId: AGENT_ID,
+      }),
+    );
+    const complete = () =>
+      asSupervisor(() =>
+        new CompleteVisitUseCase(world).execute({ visitId: visited.visit!.id, report: 'Visite faite.' }),
+      );
+    world.clock.current = new Date('2026-10-26T08:59:00Z');
+    const error = await complete().catch((e: AppError) => e);
+    expect(error).toMatchObject({
+      code: 'CLEANING_VISIT_TOO_EARLY',
+      message:
+        'La visite est prévue le 26 octobre 2026 à 10:00 : son compte rendu ne peut pas être enregistré avant cette heure.',
+      details: { scheduledAt: '2026-10-26T09:00:00.000Z', timeZone: 'Africa/Porto-Novo' },
+    });
+    world.fieldDates.blockEarlyVisitReport = false;
+    expect((await complete()).visit?.status).toBe('completed');
+  });
+
+  it('compte rendu à l’heure prévue de la visite : accepté', async () => {
+    const created = await request();
+    const visited = await asSupervisor(() =>
+      new ScheduleVisitUseCase(world).execute({
+        requestId: created.id,
+        scheduledAt: '2026-10-26T09:00:00Z',
+        agentId: AGENT_ID,
+      }),
+    );
+    world.clock.current = new Date('2026-10-26T09:00:00Z');
+    const done = await asSupervisor(() =>
+      new CompleteVisitUseCase(world).execute({ visitId: visited.visit!.id, report: 'Visite faite.' }),
+    );
+    expect(done.visit?.status).toBe('completed');
   });
 });
