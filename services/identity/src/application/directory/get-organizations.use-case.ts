@@ -10,11 +10,14 @@ export interface OrganizationDirectory {
 /**
  * Services autorisés à lire les fiches d'organisation, et s'ils reçoivent l'e-mail de facturation.
  * Carte des services : billing copie l'en-tête des factures (raison sociale, adresse, IFU, RCCM) ;
- * notification envoie les factures à l'e-mail de facturation. Tout autre appelant est refusé
+ * notification envoie les factures à l'e-mail de facturation ; cleaning affiche la raison sociale au
+ * back-office, sans l'e-mail. Tout autre appelant est refusé
  * jusqu'à son ajout ici.
  */
 export const ORGANIZATION_DIRECTORY_CALLERS: Readonly<Record<string, { billingEmail: boolean }>> = {
   billing: { billingEmail: false },
+  // Raison sociale affichée au back-office du Nettoyage (ADR-029).
+  cleaning: { billingEmail: false },
   notification: { billingEmail: true },
 };
 

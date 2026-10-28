@@ -58,11 +58,18 @@ describe('GetUsersUseCase', () => {
 
   it('refuse un service non autorisé, sans lire la base', async () => {
     const { users, lookups } = useCase();
-    await expect(users.many('cleaning', [ID_1])).rejects.toMatchObject({ code: 'IDENTITY_CALLER_FORBIDDEN' });
+    await expect(users.many('recovery', [ID_1])).rejects.toMatchObject({ code: 'IDENTITY_CALLER_FORBIDDEN' });
     await expect(users.many('constructor', [ID_1])).rejects.toMatchObject({
       code: 'IDENTITY_CALLER_FORBIDDEN',
     });
     expect(lookups).toEqual([]);
+  });
+
+  it('rend le nom à cleaning, sans téléphone ni e-mail (ADR-029)', async () => {
+    const { users } = useCase();
+    const [found] = await users.many('cleaning', [ID_1]);
+    expect(found).toMatchObject({ id: ID_1, firstName: 'Koffi', lastName: 'Adjovi' });
+    expect(found).toMatchObject({ phoneE164: null, email: null, emailVerifiedAt: null });
   });
 
   it('accepte un appel sans jeton de service vérifié (développement)', async () => {

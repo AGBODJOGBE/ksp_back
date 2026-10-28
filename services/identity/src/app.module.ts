@@ -1,3 +1,4 @@
+import { FindAccountByPhoneUseCase } from './application/account-admin/find-account-by-phone.use-case';
 import { notificationV1 } from '@ksp/contracts';
 import { GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
@@ -60,6 +61,7 @@ import { NotificationOtpSender } from './infrastructure/otp/notification-otp-sen
 import { PrismaOtpChallengeRepository } from './infrastructure/otp/prisma-otp-challenge.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { ConfigServiceClientRegistry } from './infrastructure/service-token/config-service-client-registry';
+import { AccountAdminGrpcController } from './interfaces/grpc/account-admin.controller';
 import { LocalServiceTokenProvider } from './infrastructure/service-token/local-service-token-provider';
 import {
   CryptoRefreshTokenGenerator,
@@ -103,6 +105,7 @@ export class AppModule {
         AccountGrpcController,
         OrganizationGrpcController,
         OrganizationAdminGrpcController,
+        AccountAdminGrpcController,
         JwksHttpController,
         OAuthTokenHttpController,
       ],
@@ -376,6 +379,11 @@ export class AppModule {
             pendingEmails: PendingEmails,
             contexts: ActiveContexts,
           ) => new GetMeUseCase(accounts, pendingEmails, contexts),
+        },
+        {
+          provide: FindAccountByPhoneUseCase,
+          inject: [PrismaLoginRepository],
+          useFactory: (accounts: PrismaLoginRepository) => new FindAccountByPhoneUseCase(accounts),
         },
         {
           provide: GetUsersUseCase,

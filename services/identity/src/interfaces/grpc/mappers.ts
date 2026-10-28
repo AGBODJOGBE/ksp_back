@@ -9,7 +9,7 @@ import {
   type OrgRole,
 } from '../../domain/organization/organization';
 
-const STATUS: Record<UserStatusName, identityV1.UserStatus> = {
+export const USER_STATUS: Record<UserStatusName, identityV1.UserStatus> = {
   pending_verification: identityV1.UserStatus.USER_STATUS_PENDING_VERIFICATION,
   active: identityV1.UserStatus.USER_STATUS_ACTIVE,
   locked: identityV1.UserStatus.USER_STATUS_LOCKED,
@@ -22,7 +22,7 @@ const STATUS: Record<UserStatusName, identityV1.UserStatus> = {
 export function toUserMessage(account: Account): identityV1.User {
   return {
     id: account.id,
-    status: STATUS[account.status],
+    status: USER_STATUS[account.status],
     firstName: account.firstName ?? '',
     lastName: account.lastName ?? '',
     phoneE164: account.phoneE164 ?? '',
