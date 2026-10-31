@@ -117,6 +117,16 @@ export interface MissionRepository {
   /** Enregistre la mission et ses passages si sa version n'a pas changé ; sinon false. */
   save(mission: Mission, changes: Changes): Promise<boolean>;
   /**
+   * Effet d'un événement reçu : inbox (événement, consommateur) et mission enregistrés dans la même
+   * transaction. Événement déjà traité : `duplicate`, rien n'est écrit ; version changée depuis la
+   * lecture : `conflict`, rien n'est écrit (le message est retraité).
+   */
+  saveFromEvent(
+    mission: Mission,
+    changes: Changes,
+    inbox: { eventId: string; consumer: string },
+  ): Promise<'saved' | 'duplicate' | 'conflict'>;
+  /**
    * Planifie un passage sans double réservation : verrouille les agents, lit leurs périodes
    * occupées (passages actifs et indisponibilités), demande au domaine les conflits ; s'il n'y
    * en a aucun, enregistre la mission. Renvoie les agents en conflit (vide si enregistré).
@@ -189,19 +199,6 @@ export interface AgentRepository {
   listTeams(): Promise<Team[]>;
   findTeam(teamId: string): Promise<Team | null>;
   saveTeam(team: Team, changes: Changes): Promise<void>;
-}
-
-/**
- * Paiement en ligne par Mobile Money (FedaPay), branché plus tard par le service payment : il
- * enregistrera l'encaissement à réception de payment.intent.succeeded. Aucun adaptateur au lot 2.
- */
-export interface OnlinePaymentRecorder {
-  recordOnlinePayment(input: {
-    missionId: string;
-    amount: number;
-    providerReference: string;
-    at: Date;
-  }): Promise<void>;
 }
 
 /**

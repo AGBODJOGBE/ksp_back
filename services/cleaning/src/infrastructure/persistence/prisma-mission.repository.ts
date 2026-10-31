@@ -17,6 +17,9 @@ import { interventionColumns, MISSION_INCLUDE, suspensionColumns, toMission } fr
 
 const ids = new UuidV7Generator();
 
+/** Annule la transaction d'un événement quand la mission a changé depuis sa lecture. */
+class ConcurrentMissionUpdate extends Error {}
+
 @Injectable()
 export class PrismaMissionRepository implements MissionRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -55,6 +58,31 @@ export class PrismaMissionRepository implements MissionRepository {
       await writeChanges(tx, changes, () => ids.next());
       return true;
     });
+  }
+
+  async saveFromEvent(
+    mission: Mission,
+    changes: Changes,
+    inbox: { eventId: string; consumer: string },
+  ): Promise<'saved' | 'duplicate' | 'conflict'> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const inserted = await tx.$executeRawUnsafe(
+          'INSERT INTO processed_events (event_id, consumer, processed_at) VALUES ($1::uuid, $2, now()) ' +
+            'ON CONFLICT DO NOTHING',
+          inbox.eventId,
+          inbox.consumer,
+        );
+        if (inserted === 0) return 'duplicate' as const;
+        // Version changée : annule aussi la marque de l'inbox (le message sera retraité).
+        if (!(await this.update(tx, mission))) throw new ConcurrentMissionUpdate();
+        await writeChanges(tx, changes, () => ids.next());
+        return 'saved' as const;
+      });
+    } catch (error) {
+      if (error instanceof ConcurrentMissionUpdate) return 'conflict';
+      throw error;
+    }
   }
 
   async scheduleIntervention(

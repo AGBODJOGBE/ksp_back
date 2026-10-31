@@ -13,6 +13,8 @@ export const BillingErrors = {
       "Cette action n'est pas possible dans l'état actuel de la facture.",
       { from, to },
     ),
+  callerForbidden: () =>
+    AppError.forbidden('BILLING_CALLER_FORBIDDEN', "Ce service n'est pas autorisé à appeler cette méthode."),
   concurrentUpdate: () =>
     AppError.conflict(
       'BILLING_CONCURRENT_UPDATE',

@@ -14,6 +14,7 @@ import { IdentityPeopleDirectory } from './infrastructure/identity/identity-peop
 import { BillingEventsConsumer } from './infrastructure/messaging/billing-events.consumer';
 import { IdentityEventsConsumer } from './infrastructure/messaging/identity-events.consumer';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
+import { PaymentEventsConsumer } from './infrastructure/messaging/payment-events.consumer';
 import { PrismaAgentRepository } from './infrastructure/persistence/prisma-agent.repository';
 import { PrismaCatalogRepository } from './infrastructure/persistence/prisma-catalog.repository';
 import { PrismaContractInvoiceRepository } from './infrastructure/persistence/prisma-contract-invoice.repository';
@@ -30,6 +31,7 @@ import { CleaningAdminGrpcController } from './interfaces/grpc/admin.controller'
 import {
   CatalogGrpcController,
   MissionGrpcController,
+  MissionPaymentDueGrpcController,
   ObligationGrpcController,
   QuoteGrpcController,
 } from './interfaces/grpc/customer.controllers';
@@ -52,6 +54,7 @@ export class AppModule {
         MissionGrpcController,
         CleaningAdminGrpcController,
         ObligationGrpcController,
+        MissionPaymentDueGrpcController,
       ],
       providers: [
         PrismaService,
@@ -64,6 +67,7 @@ export class AppModule {
         PrismaOrganizationStandingRepository,
         BillingEventsConsumer,
         IdentityEventsConsumer,
+        PaymentEventsConsumer,
         PaymentWatchService,
         { provide: PAYMENT_WATCH_INTERVAL_MS, useValue: config.CLEANING_PAYMENT_WATCH_INTERVAL_MS },
         {

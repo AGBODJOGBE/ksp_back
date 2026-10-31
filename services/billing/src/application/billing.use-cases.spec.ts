@@ -1,4 +1,4 @@
-import { type AppError } from '@ksp/platform';
+import { type AppError, runWithContext } from '@ksp/platform';
 import { type BillingEventPayloads } from '@ksp/contracts';
 import {
   as,
@@ -284,5 +284,75 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     world.clock.current = new Date('2026-12-06T00:00:00Z');
     await useCases.issueDueInvoices.execute();
     expect(payload('billing.invoice.issued').dueAt).toBe('2026-12-21T00:00:00.000Z');
+  });
+});
+
+describe('paiement en ligne d’une facture (ADR-031)', () => {
+  let world: TestWorld;
+  let useCases: ReturnType<typeof createUseCases>;
+  const PAYMENT_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001';
+
+  beforeEach(async () => {
+    world = testWorld();
+    useCases = createUseCases(world);
+    await useCases.registerContract.execute(booking(ORGANIZATION_ID));
+    world.clock.current = new Date('2026-12-01T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+  });
+
+  const invoice = () => [...world.invoices.invoices.values()][0]!;
+  const succeeded = (overrides: Partial<Parameters<typeof useCases.recordOnlinePayment.execute>[0]> = {}) =>
+    useCases.recordOnlinePayment.execute({
+      eventId: event(70),
+      eventType: 'payment.intent.succeeded',
+      paymentId: PAYMENT_ID,
+      subjectType: 'billing_invoice',
+      invoiceId: invoice().id,
+      amount: 100_000,
+      providerReference: 'trx_Ab12',
+      succeededAt: '2026-12-05T10:00:00.000Z',
+      ...overrides,
+    });
+
+  it('reste dû lu par payment seulement', async () => {
+    const asService = (service: string) =>
+      runWithContext({ correlationId: 'c-test', callerService: service }, () =>
+        useCases.getInvoiceAmountDue.execute(invoice().id),
+      );
+    expect(await asService('payment')).toMatchObject({ paid: 0, balance: 100_000 });
+    expect(await code(asService('gateway'))).toBe('BILLING_CALLER_FORBIDDEN');
+  });
+
+  it('payment.intent.succeeded : facture payée (billing.invoice.paid), idempotent', async () => {
+    expect(await succeeded()).toEqual({ outcome: 'recorded', excess: 0 });
+    expect((await succeeded()).outcome).toBe('duplicate');
+    expect((await succeeded({ eventId: event(71) })).outcome).toBe('duplicate');
+    expect(invoice()).toMatchObject({ status: 'paid', paidAt: new Date('2026-12-05T10:00:00.000Z') });
+    expect(invoice().payments).toEqual([
+      expect.objectContaining({ id: PAYMENT_ID, method: 'mobile_money_online', recordedBy: 'system' }),
+    ]);
+    expect(world.recorder.events.filter((e) => e.type === 'billing.invoice.paid')).toHaveLength(1);
+  });
+
+  it('facture déjà payée : paiement tardif enregistré, état et événements inchangés', async () => {
+    await succeeded();
+    const paid = world.recorder.events.length;
+    // Facture déjà payée : tout le paiement tardif est en trop (signalé, à rembourser).
+    expect(
+      await succeeded({ eventId: event(72), paymentId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5002' }),
+    ).toEqual({ outcome: 'recorded', excess: 100_000 });
+    expect(invoice().status).toBe('paid');
+    expect(invoice().payments).toHaveLength(2);
+    expect(world.recorder.events).toHaveLength(paid);
+  });
+
+  it('mission (cleaning) ou facture inconnue : ignoré', async () => {
+    expect((await succeeded({ subjectType: 'cleaning_mission' })).outcome).toBe('ignored');
+    expect((await succeeded({ invoiceId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9999' })).outcome).toBe('ignored');
+  });
+
+  it('au-delà du reste dû : excédent calculé', async () => {
+    expect(await succeeded({ amount: 120_000 })).toEqual({ outcome: 'recorded', excess: 20_000 });
+    expect(invoice().status).toBe('paid');
   });
 });

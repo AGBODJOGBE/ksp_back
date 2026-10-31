@@ -69,3 +69,30 @@ export class BillingAdminGrpcController implements billingV1.BillingAdminService
     return { settings: presentSettings(saved) };
   }
 }
+
+/**
+ * InvoicePaymentDueService : reste dû d'une facture, réservé au service payment (ADR-031). Le
+ * contrôle de l'appelant est fait par le cas d'usage.
+ */
+@Controller()
+@billingV1.InvoicePaymentDueServiceControllerMethods()
+export class InvoicePaymentDueGrpcController implements billingV1.InvoicePaymentDueServiceController {
+  constructor(@Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases) {}
+
+  async getInvoiceAmountDue(
+    request: billingV1.GetInvoiceAmountDueRequest,
+  ): Promise<billingV1.GetInvoiceAmountDueResponse> {
+    const due = await this.useCases.getInvoiceAmountDue.execute(request.invoiceId);
+    const xof = (amount: number) => ({ amount, currency: 'XOF' });
+    return {
+      invoiceId: due.invoice.id,
+      number: due.invoice.number,
+      customerId: due.invoice.customerId,
+      organizationId: due.invoice.organizationId ?? '',
+      status: due.invoice.status,
+      total: xof(due.invoice.total),
+      paid: xof(due.paid),
+      balance: xof(due.balance),
+    };
+  }
+}

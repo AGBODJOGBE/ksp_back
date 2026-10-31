@@ -131,6 +131,19 @@ export class InMemoryInvoices implements InvoiceRepository {
     this.recorder.record(events(this.countOverdue(invoice.contractId)));
     return true;
   }
+  readonly processed = new Set<string>();
+  async recordOnlinePayment(
+    invoice: Invoice,
+    payment: InvoicePayment,
+    inbox: { eventId: string; consumer: string },
+    events: (overdueCount: number) => OutboxMessage[],
+  ) {
+    const key = `${inbox.eventId}:${inbox.consumer}`;
+    if (this.processed.has(key)) return 'duplicate' as const;
+    if (!(await this.recordPayment(invoice, payment, events))) return 'conflict' as const;
+    this.processed.add(key);
+    return 'saved' as const;
+  }
   private countOverdue(contractId: string) {
     return [...this.invoices.values()].filter((i) => i.contractId === contractId && i.status === 'overdue')
       .length;

@@ -8,7 +8,11 @@ import { type BillingSource, type ContractPeriod } from './contract';
 export type InvoiceStatus = 'pending_payment' | 'overdue' | 'paid' | 'cancelled';
 export const INVOICE_STATUSES: readonly InvoiceStatus[] = ['pending_payment', 'overdue', 'paid', 'cancelled'];
 
-export type PaymentMethod = 'cash' | 'bank_transfer' | 'mobile_money_offline';
+/**
+ * Moyens de paiement : ceux du back-office (MANUAL_PAYMENT_METHODS), et `mobile_money_online`,
+ * paiement en ligne confirmé par le prestataire et enregistré par le système (ADR-031).
+ */
+export type PaymentMethod = 'cash' | 'bank_transfer' | 'mobile_money_offline' | 'mobile_money_online';
 export const MANUAL_PAYMENT_METHODS: readonly PaymentMethod[] = [
   'cash',
   'bank_transfer',
@@ -116,6 +120,18 @@ export function paymentRefusal(
   if (!MANUAL_PAYMENT_METHODS.includes(method as PaymentMethod)) return 'method_not_allowed';
   if (amount > balance(invoice)) return 'exceeds_balance';
   return null;
+}
+
+/**
+ * Facture après un paiement en ligne (ADR-031). L'argent reçu est toujours enregistré : sur une
+ * facture déjà payée ou annulée (paiement tardif), il s'ajoute sans changer son état (excédent à
+ * rembourser, différé) ; sinon, la facture devient payée quand le total est atteint.
+ */
+export function withOnlinePayment(invoice: Invoice, payment: InvoicePayment): Invoice {
+  if (invoice.status === 'paid' || invoice.status === 'cancelled') {
+    return { ...invoice, payments: [...invoice.payments, payment] };
+  }
+  return withPayment(invoice, payment);
 }
 
 /** Facture après un paiement : payée quand le total est atteint. */

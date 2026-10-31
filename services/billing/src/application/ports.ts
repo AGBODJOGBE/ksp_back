@@ -88,6 +88,17 @@ export interface InvoiceRepository {
     payment: InvoicePayment,
     events: (overdueCount: number) => OutboxMessage[],
   ): Promise<boolean>;
+  /**
+   * Paiement en ligne reçu par événement (payment.intent.succeeded, ADR-031) : inbox (événement,
+   * consommateur), paiement, état de la facture et événements dans la même transaction. Événement
+   * déjà traité : `duplicate`, rien n'est écrit ; version changée : `conflict`, rien n'est écrit.
+   */
+  recordOnlinePayment(
+    invoice: Invoice,
+    payment: InvoicePayment,
+    inbox: { eventId: string; consumer: string },
+    events: (overdueCount: number) => OutboxMessage[],
+  ): Promise<'saved' | 'duplicate' | 'conflict'>;
 }
 
 /** Fiche d'une organisation lue dans identity, à copier dans l'en-tête de la facture. */

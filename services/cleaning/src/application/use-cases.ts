@@ -25,6 +25,7 @@ import {
 } from './missions/customer-missions.use-cases';
 import { DeactivateZoneUseCase, ListZonesUseCase, SaveZoneUseCase } from './catalog/zones.use-cases';
 import { HasPendingObligationsUseCase } from './obligations/has-pending-obligations.use-case';
+import { GetMissionAmountDueUseCase, RecordOnlinePaymentUseCase } from './payments/online-payments.use-cases';
 import {
   HandleOrganizationEventUseCase,
   ReconcileOrganizationUseCase,
@@ -113,6 +114,8 @@ export function createUseCases(deps: CleaningDeps) {
     watchIndividualPayments: new WatchIndividualPaymentsUseCase(deps, evaluateStanding),
     reconcileOrganization,
     handleOrganizationEvent: new HandleOrganizationEventUseCase(deps, reconcileOrganization),
+    getMissionAmountDue: new GetMissionAmountDueUseCase(deps),
+    recordOnlinePayment: new RecordOnlinePaymentUseCase(deps, evaluateStanding),
   };
 }
 
