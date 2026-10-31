@@ -9,3 +9,7 @@ export const BILLING_GRPC_CLIENT = Symbol('BILLING_GRPC_CLIENT');
 export const BILLING_API = Symbol('BILLING_API');
 export const ORGANIZATIONS_API = Symbol('ORGANIZATIONS_API');
 export const ACCOUNT_ADMIN_API = Symbol('ACCOUNT_ADMIN_API');
+export const PAYMENT_GRPC_CLIENT = Symbol('PAYMENT_GRPC_CLIENT');
+export const PAYMENT_API = Symbol('PAYMENT_API');
+/** Route de simulation des paiements ouverte (hors production, ADR-031). */
+export const PAYMENT_SIMULATION_ROUTE = Symbol('PAYMENT_SIMULATION_ROUTE');

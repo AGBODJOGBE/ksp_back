@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { billingBodies } from './billing-schemas';
 import { cleaningBodies } from './cleaning-schemas';
 import { accountBodies, organizationBodies } from './organization-schemas';
+import { paymentBodies } from './payment-schemas';
 
 /**
  * Corps des requêtes, repris des schémas du contrat OpenAPI (components/schemas) : tout champ
@@ -46,6 +47,7 @@ export const requestBodies = {
   ...accountBodies,
   ...cleaningBodies,
   ...billingBodies,
+  ...paymentBodies,
 };
 
 /** Champ refusé et raison, sans reprendre la valeur envoyée (elle peut être un code ou un jeton). */
