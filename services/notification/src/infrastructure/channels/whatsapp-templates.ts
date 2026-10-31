@@ -154,4 +154,12 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
       v['link'] ?? '',
     ],
   },
+  // Reçu d'un paiement en ligne (ADR-031).
+  'payment.receipt.customer': spec('ksp_payment_receipt', [
+    'amount',
+    'object',
+    'paid_on',
+    'reference',
+    'link',
+  ]),
 };

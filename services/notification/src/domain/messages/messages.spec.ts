@@ -5,6 +5,7 @@ import { BILLING_TEMPLATES } from './billing.messages';
 import { CLEANING_TEMPLATES, paymentNote, unpaidText } from './cleaning.messages';
 import { formatDate, formatDateTime, formatDuration, formatXof } from './format';
 import { ORGANIZATION_TEMPLATES } from './organization.messages';
+import { PAYMENT_TEMPLATES } from './payment.messages';
 
 const NBSP = '\u00a0';
 
@@ -259,5 +260,44 @@ describe('Comptes entreprise (ADR-027)', () => {
     expect(message.subject).not.toContain('482913');
     expect(message.text).toContain('adresse de facturation de SARL Bénin Propre');
     expect(message.text).toContain('482913');
+  });
+});
+
+describe('reçu de paiement en ligne (ADR-031)', () => {
+  const NBSP = '\u00a0';
+  const variables = {
+    first_name: 'Koffi',
+    organization_name: '',
+    amount: `15${NBSP}000${NBSP}FCFA`,
+    object: "l'acompte de votre prestation de nettoyage",
+    paid_on: '2 novembre 2026',
+    reference: 'trx_Ab12',
+    link: 'https://ksp.bj/mon-espace/nettoyage/missions/m-1',
+  };
+
+  it('au catalogue, document, par WhatsApp et e-mail', () => {
+    const template = PAYMENT_TEMPLATES[0]!;
+    expect(findTemplate('payment.receipt.customer')).toBe(template);
+    expect(template).toMatchObject({ kind: 'document', secret: false, channels: ['whatsapp', 'email'] });
+  });
+
+  it('montant, objet, date, référence et lien ; raison sociale dans l’objet seulement', () => {
+    const template = findTemplate('payment.receipt.customer')!;
+    expect(invalidVariables(template, variables)).toEqual([]);
+    const message = template.render!(variables);
+    expect(message.subject).toBe(`Reçu de paiement — 15${NBSP}000${NBSP}FCFA`);
+    expect(message.text).toBe(
+      [
+        'Bonjour Koffi,',
+        `Nous avons bien reçu votre paiement Mobile Money de 15${NBSP}000${NBSP}FCFA pour ` +
+          "l'acompte de votre prestation de nettoyage, le 2 novembre 2026.",
+        'Référence de la transaction : trx_Ab12.',
+        'Détail dans Mon espace KSP : https://ksp.bj/mon-espace/nettoyage/missions/m-1',
+      ].join('\n'),
+    );
+    expect(template.render!({ ...variables, organization_name: 'SARL Bénin Propre' }).subject).toBe(
+      `Reçu de paiement — 15${NBSP}000${NBSP}FCFA — SARL Bénin Propre`,
+    );
+    expect(invalidVariables(template, { ...variables, reference: 'a b' })).toEqual(['reference']);
   });
 });

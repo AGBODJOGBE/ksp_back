@@ -957,3 +957,74 @@ describe('NotifyEventUseCase — comptes entreprise (ADR-027)', () => {
     expect(inbox.processed.size).toBe(1);
   });
 });
+
+describe('NotifyEventUseCase — paiement en ligne (ADR-031)', () => {
+  const PAYMENT = '0192f1c4-0000-7000-8000-0000000p5001';
+  const ref = {
+    paymentId: PAYMENT,
+    subjectType: 'cleaning_mission' as const,
+    subjectId: MISSION,
+    part: 'deposit' as const,
+    subjectReference: null,
+    customerId: CUSTOMER,
+    organizationId: null,
+    amount: { amount: 15000, currency: 'XOF' as const },
+    provider: 'fedapay' as const,
+    method: 'mobile_money_online' as const,
+    providerReference: 'trx_Ab12',
+    succeededAt: '2026-11-02T09:15:00.000Z',
+  };
+
+  it('acompte payé : reçu au payeur, lien vers la mission', async () => {
+    const { useCase, whatsapp, inbox } = setup();
+    await expect(useCase.execute(event('payment.intent.succeeded', ref))).resolves.toMatchObject({
+      accepted: 1,
+      inApp: 1,
+    });
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'payment.receipt.customer',
+      variables: {
+        amount: `15${NBSP}000${NBSP}FCFA`,
+        object: "l'acompte de votre prestation de nettoyage",
+        paid_on: '2 novembre 2026',
+        reference: 'trx_Ab12',
+        link: `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION}`,
+      },
+    });
+    expect(inbox.inApp[0]).toMatchObject({ userId: CUSTOMER, templateCode: 'payment.receipt.customer' });
+  });
+
+  it('facture d’organisation : numéro de facture, e-mail de facturation de l’organisation', async () => {
+    const ORG = '0192f1c4-0000-7000-8000-0000000b0001';
+    const INVOICE = '0192f1c4-0000-7000-8000-0000000f1001';
+    const { useCase, email, whatsapp } = setup(
+      [contact(CUSTOMER)],
+      undefined,
+      [],
+      [],
+      [{ organizationId: ORG, legalName: 'SARL Bénin Propre', billingEmail: 'compta@beninpropre.bj' }],
+    );
+    await useCase.execute(
+      event('payment.intent.succeeded', {
+        ...ref,
+        subjectType: 'billing_invoice',
+        subjectId: INVOICE,
+        part: null,
+        subjectReference: 'FAC-2026-000042',
+        organizationId: ORG,
+        amount: { amount: 150000, currency: 'XOF' },
+      }),
+    );
+    expect(whatsapp.sent).toHaveLength(0);
+    expect(email.sent[0]).toMatchObject({
+      email: 'compta@beninpropre.bj',
+      variables: {
+        object: 'la facture FAC-2026-000042',
+        link: `https://ksp.bj/mon-espace/factures/${INVOICE}`,
+      },
+    });
+    expect(email.sent[0]!.content!.subject).toBe(
+      `Reçu de paiement — 150${NBSP}000${NBSP}FCFA — SARL Bénin Propre`,
+    );
+  });
+});
