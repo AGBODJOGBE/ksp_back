@@ -1,0 +1,92 @@
+// Base de données du service payment. Aucun autre service n'y accède (règle d'or n° 1).
+
+generator client {
+  provider = "prisma-client-js"
+  // Client propre à ce service : plusieurs services cohabitent dans le dépôt.
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Événements à publier (pattern outbox, règle d'or n° 4). Écrits dans la même transaction que la donnée métier.
+model OutboxEvent {
+  id          String    @id @db.Uuid
+  eventType   String    @map("event_type")
+  payload     Json
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(3)
+  attempts    Int       @default(0)
+
+  @@map("outbox")
+}
+
+/// Événements déjà traités par ce service (inbox) : un événement reçu deux fois n'a qu'un effet.
+model ProcessedEvent {
+  eventId     String   @map("event_id") @db.Uuid
+  consumer    String
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@id([eventId, consumer])
+  @@map("processed_events")
+}
+
+/// Paiement en ligne par Mobile Money (ADR-031). Montant en entiers de FCFA (XOF), lu dans cleaning
+/// ou billing à la création ; statut confirmé par le prestataire seulement.
+model PaymentIntent {
+  id                    String    @id @db.Uuid
+  /// cleaning_mission ou billing_invoice.
+  subjectType           String    @map("subject_type")
+  subjectId             String    @map("subject_id") @db.Uuid
+  /// Mission : deposit ou balance ; null pour une facture.
+  part                  String?
+  /// Numéro de la facture ; null pour une mission.
+  subjectReference      String?   @map("subject_reference")
+  amount                Int
+  currency              String    @default("XOF")
+  /// Payeur : compte connecté qui a créé le paiement.
+  customerId            String    @map("customer_id") @db.Uuid
+  organizationId        String?   @map("organization_id") @db.Uuid
+  /// pending, succeeded, failed, expired ou cancelled.
+  status                String
+  /// fedapay ou simulated.
+  provider              String
+  providerTransactionId String?   @map("provider_transaction_id")
+  providerReference     String?   @map("provider_reference")
+  checkoutUrl           String?   @map("checkout_url")
+  idempotencyKey        String    @map("idempotency_key")
+  failureReason         String?   @map("failure_reason")
+  createdAt             DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime  @map("updated_at") @db.Timestamptz(3)
+  expiresAt             DateTime  @map("expires_at") @db.Timestamptz(3)
+  completedAt           DateTime? @map("completed_at") @db.Timestamptz(3)
+  lastCheckedAt         DateTime? @map("last_checked_at") @db.Timestamptz(3)
+  version               Int       @default(0)
+
+  @@unique([customerId, idempotencyKey])
+  @@unique([provider, providerTransactionId])
+  @@index([customerId, id])
+  @@index([organizationId, id])
+  @@index([subjectId, status])
+  @@index([status, lastCheckedAt])
+  @@map("payment_intents")
+}
+
+/// Journal des notifications reçues du prestataire : jamais leur corps (données du payeur).
+model ProviderNotification {
+  id                    String   @id @db.Uuid
+  provider              String
+  eventName             String   @map("event_name")
+  providerEventId       String?  @map("provider_event_id")
+  providerTransactionId String?  @map("provider_transaction_id")
+  paymentId             String?  @map("payment_id") @db.Uuid
+  /// applied, no_change, unknown_transaction, amount_mismatch ou ignored.
+  outcome               String
+  receivedAt            DateTime @map("received_at") @db.Timestamptz(3)
+
+  @@index([paymentId])
+  @@index([receivedAt])
+  @@map("provider_notifications")
+}

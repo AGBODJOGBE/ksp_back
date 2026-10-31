@@ -14,3 +14,6 @@ CREATE DATABASE cleaning OWNER cleaning;
 
 CREATE USER billing WITH PASSWORD 'billing' CREATEDB;
 CREATE DATABASE billing OWNER billing;
+
+CREATE USER payment WITH PASSWORD 'payment' CREATEDB;
+CREATE DATABASE payment OWNER payment;
