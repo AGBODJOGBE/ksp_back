@@ -3,6 +3,7 @@ import { ACCOUNT_ROUTES } from './account-routes';
 import { BILLING_ROUTES } from './billing-routes';
 import { CLEANING_ROUTES } from './cleaning-routes';
 import { ORGANIZATION_ROUTES } from './organization-routes';
+import { PAYMENT_ROUTES } from './payment-routes';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -161,6 +162,7 @@ export const ROUTE_MANIFEST = [
   ...ACCOUNT_ROUTES,
   ...CLEANING_ROUTES,
   ...BILLING_ROUTES,
+  ...PAYMENT_ROUTES,
 ] as const satisfies readonly RouteDefinition[];
 
 export type OperationId = (typeof ROUTE_MANIFEST)[number]['operationId'];

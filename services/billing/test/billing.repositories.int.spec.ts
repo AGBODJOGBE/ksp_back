@@ -159,5 +159,27 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
     const { rows } = await pool.query("SELECT payload FROM outbox WHERE event_type = 'billing.invoice.paid'");
     expect(rows[0].payload.payload).toMatchObject({ invoiceId: paid.id, overdueCount: 1 });
     expect((await deps.invoices.findById(paid.id))!.payments).toHaveLength(1);
+
+    // Paiement en ligne de la seconde facture (ADR-031) : inbox, paiement, état et événement dans
+    // la même transaction ; le même événement reçu deux fois n'a qu'un effet.
+    const online = {
+      eventId: '0192f1c4-0000-7000-8000-0000000000e1',
+      eventType: 'payment.intent.succeeded',
+      paymentId: '0192f1c4-0000-7000-8000-0000000000e2',
+      subjectType: 'billing_invoice',
+      invoiceId: page.items[1]!.id,
+      amount: page.items[1]!.total,
+      providerReference: 'trx_1',
+      succeededAt: '2027-01-16T09:00:00.000Z',
+    };
+    expect((await useCases.recordOnlinePayment.execute(online)).outcome).toBe('recorded');
+    expect((await useCases.recordOnlinePayment.execute(online)).outcome).toBe('duplicate');
+    const settled = (await deps.invoices.findById(page.items[1]!.id))!;
+    expect(settled).toMatchObject({ status: 'paid' });
+    expect(settled.payments.map((payment) => payment.method)).toEqual(['mobile_money_online']);
+    const paidEvents = await pool.query(
+      "SELECT payload FROM outbox WHERE event_type = 'billing.invoice.paid'",
+    );
+    expect(paidEvents.rows).toHaveLength(2);
   });
 });

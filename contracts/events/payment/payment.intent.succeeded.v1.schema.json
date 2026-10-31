@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/payment/payment.intent.succeeded.v1.schema.json",
+  "title": "payment.intent.succeeded",
+  "description": "Paiement en ligne réussi, confirmé par le prestataire (notification signée puis relecture de la transaction chez lui), jamais par le navigateur (ADR-031). Publié une seule fois par paiement. Écouté par cleaning (paiement enregistré sur la mission), billing (paiement enregistré sur la facture) et notification (reçu au payeur). Identifiants et montants seulement.",
+  "x-event-type": "payment.intent.succeeded",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "paymentId",
+    "subjectType",
+    "subjectId",
+    "part",
+    "subjectReference",
+    "customerId",
+    "organizationId",
+    "amount",
+    "method",
+    "provider",
+    "providerReference",
+    "succeededAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "integer", "minimum": 1 },
+        "currency": { "const": "XOF" }
+      }
+    }
+  },
+  "properties": {
+    "paymentId": { "type": "string", "format": "uuid" },
+    "subjectType": {
+      "enum": ["cleaning_mission", "billing_invoice"],
+      "description": "cleaning_mission : acompte ou solde d'une mission ; billing_invoice : facture mensuelle"
+    },
+    "subjectId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Mission (cleaning) ou facture (billing)"
+    },
+    "part": {
+      "enum": ["deposit", "balance", null],
+      "description": "Mission : acompte ou reste dû ; null pour une facture"
+    },
+    "subjectReference": {
+      "type": ["string", "null"],
+      "pattern": "^FAC-[0-9]{4}-[0-9]{6}$",
+      "description": "Numéro de la facture ; null pour une mission"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Payeur : compte qui a créé le paiement"
+    },
+    "organizationId": { "type": ["string", "null"], "format": "uuid" },
+    "amount": { "$ref": "#/$defs/money" },
+    "method": { "const": "mobile_money_online" },
+    "provider": { "enum": ["fedapay", "simulated"] },
+    "providerReference": {
+      "type": ["string", "null"],
+      "maxLength": 100,
+      "description": "Référence de la transaction chez le prestataire (aucune donnée personnelle)"
+    },
+    "succeededAt": { "type": "string", "format": "date-time" }
+  }
+}

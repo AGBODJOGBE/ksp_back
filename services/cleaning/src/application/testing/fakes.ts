@@ -156,6 +156,14 @@ export class InMemoryMissions implements MissionRepository {
     this.recorder.record(changes);
     return true;
   }
+  readonly processed = new Set<string>();
+  async saveFromEvent(mission: Mission, changes: Changes, inbox: { eventId: string; consumer: string }) {
+    const key = `${inbox.eventId}:${inbox.consumer}`;
+    if (this.processed.has(key)) return 'duplicate' as const;
+    if (!(await this.save(mission, changes))) return 'conflict' as const;
+    this.processed.add(key);
+    return 'saved' as const;
+  }
   /** Périodes occupées : passages actifs (hors un passage éventuel) et indisponibilités. */
   busyPeriods(excludedId: string | null): BusyPeriod[] {
     const busy: BusyPeriod[] = [...this.unavailabilities];

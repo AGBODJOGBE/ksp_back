@@ -3,7 +3,8 @@ import { isWholeAmount, percentOf } from './money';
 /**
  * Paiement d'une mission (décision du 2026-10-21) : le client choisit acompte (30 % réglable)
  * ou totalité, avant ou après la mission, en espèces ou par Mobile Money. Le superviseur coche
- * les paiements manuels ; un paiement en ligne sera enregistré par le système (service payment).
+ * les paiements manuels ; un paiement en ligne est enregistré par le système, à réception de
+ * payment.intent.succeeded (service payment, ADR-031).
  */
 export type PaymentOption = 'deposit' | 'full';
 export type PaymentTiming = 'before' | 'after';
@@ -75,6 +76,20 @@ export function paymentStatus(state: PaymentState): PaymentStatus {
 /** Reste dû : total moins les paiements enregistrés, jamais négatif. */
 export function remainingDue(state: Pick<PaymentState, 'total' | 'payments'>): number {
   return Math.max(0, state.total - paidAmount(state));
+}
+
+/**
+ * Acompte encore dû : acompte attendu moins les paiements reçus. 0 pour un plan « totalité » (le
+ * client paie alors le reste dû) ou un acompte déjà reçu.
+ */
+export function depositDue(state: PaymentState): number {
+  if (state.plan.option !== 'deposit') return 0;
+  return Math.max(0, Math.min(state.depositAmount, state.total) - paidAmount(state));
+}
+
+/** Clé d'idempotence d'un paiement en ligne : celle du paiement du service payment (ADR-031). */
+export function onlinePaymentKey(paymentId: string): string {
+  return `online-${paymentId}`;
 }
 
 /** Paiement déjà enregistré avec cette clé d'idempotence, ou null. */

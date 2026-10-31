@@ -6,6 +6,7 @@ import { type BillingEventPayloads, type BillingEventType } from './billing.even
 import { type CleaningEventPayloads, type CleaningEventType } from './cleaning.events';
 import { type IdentityEventPayloads, type IdentityEventType } from './identity.events';
 import { type NotificationEventPayloads, type NotificationEventType } from './notification.events';
+import { type PaymentEventPayloads, type PaymentEventType } from './payment.events';
 
 const EVENTS_ROOT = resolve(__dirname, '..', '..', '..', '..', 'contracts', 'events');
 
@@ -355,6 +356,71 @@ describe('Contrats des événements billing', () => {
       const validate = ajv.compile(schemas.get(type)!);
       expect(validate({ ...payload, address: 'Rue 12, Cotonou' })).toBe(false);
       expect(validate({ ...payload, total: { amount: 10.5, currency: 'XOF' } })).toBe(false);
+    }
+  });
+});
+
+const missionPayment = {
+  paymentId: uuid,
+  subjectType: 'cleaning_mission' as const,
+  subjectId: uuid,
+  part: 'deposit' as const,
+  subjectReference: null,
+  customerId: uuid,
+  organizationId: null,
+  amount: { amount: 15000, currency: 'XOF' as const },
+  provider: 'fedapay' as const,
+};
+
+const paymentExamples: { [K in PaymentEventType]: PaymentEventPayloads[K] } = {
+  'payment.intent.succeeded': {
+    ...missionPayment,
+    method: 'mobile_money_online',
+    providerReference: 'trx_Ab12Cd34',
+    succeededAt: '2026-11-02T09:15:00Z',
+  },
+  'payment.intent.failed': { ...missionPayment, status: 'cancelled', failedAt: '2026-11-02T09:20:00Z' },
+};
+
+describe('Contrats des événements payment', () => {
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  addFormats(ajv);
+  ajv.addKeyword('x-event-type').addKeyword('x-event-version');
+  const schemas = loadSchemas('payment');
+
+  it('chaque type TypeScript a un schéma, et inversement', () => {
+    expect([...schemas.keys()].sort()).toEqual(Object.keys(paymentExamples).sort());
+  });
+
+  it.each(Object.entries(paymentExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
+    const validate = ajv.compile(schemas.get(type)!);
+    expect(validate(payload)).toBe(true);
+  });
+
+  it('une facture porte son numéro, une mission sa part (acompte ou solde)', () => {
+    const validate = ajv.compile(schemas.get('payment.intent.succeeded')!);
+    const succeeded = paymentExamples['payment.intent.succeeded'];
+    expect(
+      validate({
+        ...succeeded,
+        subjectType: 'billing_invoice',
+        part: null,
+        subjectReference: 'FAC-2026-000042',
+        organizationId: uuid,
+      }),
+    ).toBe(true);
+    expect(validate({ ...succeeded, subjectReference: 'facture 42' })).toBe(false);
+    expect(validate({ ...succeeded, part: 'all' })).toBe(false);
+  });
+
+  it('aucune donnée personnelle (téléphone, nom), montants entiers et positifs en XOF', () => {
+    for (const [type, payload] of Object.entries(paymentExamples)) {
+      const validate = ajv.compile(schemas.get(type)!);
+      expect(validate({ ...payload, phone: '+2290197000045' })).toBe(false);
+      expect(validate({ ...payload, customerName: 'Koffi' })).toBe(false);
+      expect(validate({ ...payload, amount: { amount: 10.5, currency: 'XOF' } })).toBe(false);
+      expect(validate({ ...payload, amount: { amount: 0, currency: 'XOF' } })).toBe(false);
+      expect(validate({ ...payload, amount: { amount: 100, currency: 'EUR' } })).toBe(false);
     }
   });
 });

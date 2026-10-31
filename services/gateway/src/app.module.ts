@@ -1,4 +1,4 @@
-import { billingV1, cleaningV1, identityV1 } from '@ksp/contracts';
+import { billingV1, cleaningV1, identityV1, paymentV1 } from '@ksp/contracts';
 import {
   AccessTokenVerifier,
   createLoggerModule,
@@ -17,6 +17,7 @@ import { type BillingApi } from './application/billing/billing.ports';
 import { type CleaningApi } from './application/cleaning/cleaning.ports';
 import { type AccountAdminApi } from './application/identity/account-admin.ports';
 import { type OrganizationsApi } from './application/identity/organizations.ports';
+import { type PaymentApi } from './application/payment/payment.ports';
 import { RequestCleaningQuoteUseCase } from './application/cleaning/request-cleaning-quote.use-case';
 import { AuthorizeRequestUseCase } from './application/access/authorize-request.use-case';
 import {
@@ -39,6 +40,7 @@ import { BillingGrpcAdapter } from './infrastructure/grpc/billing-grpc.adapter';
 import { CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
 import { IdentityGrpcAdapter } from './infrastructure/grpc/identity-grpc.adapter';
 import { OrganizationsGrpcAdapter } from './infrastructure/grpc/organizations-grpc.adapter';
+import { PaymentGrpcAdapter } from './infrastructure/grpc/payment-grpc.adapter';
 import { HttpJwksSource } from './infrastructure/keys/http-jwks.source';
 import { KeysReadiness } from './infrastructure/keys/keys-readiness';
 import { type JwksSource, SigningKeysCache } from './infrastructure/keys/signing-keys-cache';
@@ -52,6 +54,7 @@ import { IdentityHttpController } from './interfaces/http/identity.controller';
 import { JwksHttpController } from './interfaces/http/jwks.controller';
 import { OrganizationAdminHttpController } from './interfaces/http/organizations-admin.controller';
 import { OrganizationHttpController } from './interfaces/http/organizations.controller';
+import { PaymentHttpController } from './interfaces/http/payment.controller';
 import { RefreshCookies } from './interfaces/http/refresh-cookie';
 import { RouteGuard } from './interfaces/http/route.guard';
 import {
@@ -64,6 +67,9 @@ import {
   IDENTITY_GRPC_CLIENT,
   JWKS_SOURCE,
   ORGANIZATIONS_API,
+  PAYMENT_API,
+  PAYMENT_GRPC_CLIENT,
+  PAYMENT_SIMULATION_ROUTE,
   RATE_LIMITER,
 } from './tokens';
 
@@ -85,6 +91,7 @@ export class AppModule {
           grpcClientOptions(IDENTITY_GRPC_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
           grpcClientOptions(CLEANING_GRPC_CLIENT, 'cleaning', config.CLEANING_GRPC_URL),
           grpcClientOptions(BILLING_GRPC_CLIENT, 'billing', config.BILLING_GRPC_URL),
+          grpcClientOptions(PAYMENT_GRPC_CLIENT, 'payment', config.PAYMENT_GRPC_URL),
         ]),
       ],
       controllers: [
@@ -97,6 +104,7 @@ export class AppModule {
         CleaningHttpController,
         CleaningAdminHttpController,
         BillingHttpController,
+        PaymentHttpController,
       ],
       providers: [
         ReadinessRegistry,
@@ -229,6 +237,30 @@ export class AppModule {
               }),
             ),
         },
+        {
+          provide: PAYMENT_API,
+          inject: [PAYMENT_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
+          useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): PaymentApi =>
+            new PaymentGrpcAdapter(
+              {
+                payments: grpc.getService<paymentV1.PaymentServiceClient>(paymentV1.PAYMENT_SERVICE_NAME),
+                webhooks: grpc.getService<paymentV1.PaymentWebhookServiceClient>(
+                  paymentV1.PAYMENT_WEBHOOK_SERVICE_NAME,
+                ),
+                admin: grpc.getService<paymentV1.PaymentAdminServiceClient>(
+                  paymentV1.PAYMENT_ADMIN_SERVICE_NAME,
+                ),
+              },
+              // Coupe-circuit propre à payment : une panne n'affecte pas les autres routes (UC-GW-07).
+              new GrpcCaller({
+                target: 'payment',
+                defaultDeadlineMs: config.GRPC_DEADLINE_MS,
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        // Simulation des paiements : jamais en production (ADR-031).
+        { provide: PAYMENT_SIMULATION_ROUTE, useValue: config.NODE_ENV !== 'production' },
         {
           provide: RequestCleaningQuoteUseCase,
           inject: [IdentityGrpcAdapter, CLEANING_API],

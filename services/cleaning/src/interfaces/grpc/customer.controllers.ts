@@ -121,3 +121,30 @@ export class ObligationGrpcController implements commonV1.ObligationServiceContr
     return { hasPending: obligations.length > 0, obligations };
   }
 }
+
+/**
+ * MissionPaymentDueService : montant dû d'une mission, réservé au service payment (ADR-031). Le
+ * contrôle de l'appelant est fait par le cas d'usage.
+ */
+@Controller()
+@cleaningV1.MissionPaymentDueServiceControllerMethods()
+export class MissionPaymentDueGrpcController implements cleaningV1.MissionPaymentDueServiceController {
+  constructor(@Inject(CLEANING_USE_CASES) private readonly useCases: CleaningUseCases) {}
+
+  async getMissionAmountDue(
+    request: cleaningV1.GetMissionAmountDueRequest,
+  ): Promise<cleaningV1.GetMissionAmountDueResponse> {
+    const due = await this.useCases.getMissionAmountDue.execute(request.missionId);
+    return {
+      missionId: due.mission.id,
+      customerId: due.mission.customerId,
+      organizationId: due.mission.organizationId ?? '',
+      status: due.mission.status,
+      plan: { ...due.mission.payment.plan },
+      total: money(due.mission.payment.total),
+      paid: money(due.paid),
+      depositDue: money(due.depositDue),
+      remainingDue: money(due.remainingDue),
+    };
+  }
+}

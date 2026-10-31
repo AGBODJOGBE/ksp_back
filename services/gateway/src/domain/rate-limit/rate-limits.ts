@@ -9,7 +9,9 @@ export type RateLimitCategory =
   | 'cleaning_simulation'
   | 'email_code_request'
   | 'email_code_verify'
-  | 'account_lookup';
+  | 'account_lookup'
+  | 'payment_create'
+  | 'payment_webhook';
 
 export interface RateLimitRule {
   limit: number;
@@ -36,6 +38,10 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   email_code_verify: { limit: 10, windowSeconds: 60, key: 'user' },
   // Recherche de compte par téléphone au back-office (ADR-029) : freine l'énumération des numéros.
   account_lookup: { limit: 20, windowSeconds: 60, key: 'user' },
+  // Création d'un paiement en ligne (ADR-031) : chaque création peut appeler le prestataire.
+  payment_create: { limit: 10, windowSeconds: 60, key: 'user' },
+  // Notifications du prestataire de paiement (route publique, signature vérifiée par payment).
+  payment_webhook: { limit: 120, windowSeconds: 60, key: 'ip' },
 };
 
 /** Clé du compteur : une catégorie ne partage jamais ses compteurs avec une autre. */

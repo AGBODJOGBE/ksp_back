@@ -27,6 +27,7 @@ import "ksp/common/v1/money.proto";
 //                                                     exceeds_balance
 //   BILLING_INVALID_TRANSITION    FAILED_PRECONDITION facture déjà payée ou annulée
 //   BILLING_CONCURRENT_UPDATE     ALREADY_EXISTS      facture modifiée en même temps par un autre appel
+//   BILLING_CALLER_FORBIDDEN      PERMISSION_DENIED   GetInvoiceAmountDue appelé par un autre service que payment
 //   AUTH_REQUIRED                 UNAUTHENTICATED
 //   AUTH_FORBIDDEN                PERMISSION_DENIED   rôle du back-office manquant
 //   AUTH_MFA_REQUIRED             PERMISSION_DENIED   double authentification absente
@@ -50,6 +51,15 @@ service BillingAdminService {
   rpc UpdateBillingSettings(UpdateBillingSettingsRequest) returns (UpdateBillingSettingsResponse);
 }
 
+// Reste dû d'une facture — réservé au service payment (ADR-031). payment ne recalcule rien : il lit
+// ici le reste dû, puis vérifie lui-même que le payeur est le client ou un membre de l'organisation
+// facturée. Appel d'un autre service : BILLING_CALLER_FORBIDDEN. Facture inconnue :
+// BILLING_INVOICE_NOT_FOUND. Le paiement en ligne réussi arrive ensuite par l'événement
+// payment.intent.succeeded (inbox) : la facture passe « payée » au total (billing.invoice.paid).
+service InvoicePaymentDueService {
+  rpc GetInvoiceAmountDue(GetInvoiceAmountDueRequest) returns (GetInvoiceAmountDueResponse);
+}
+
 message Page {
   // 20 par défaut, 100 au plus.
   int32 limit = 1;
@@ -66,7 +76,9 @@ message InvoiceLine {
 message InvoicePayment {
   string id = 1;
   ksp.common.v1.Money amount = 2;
-  // "cash", "bank_transfer" ou "mobile_money_offline".
+  // "cash", "bank_transfer" ou "mobile_money_offline" (enregistrés au back-office), ou
+  // "mobile_money_online" (paiement en ligne confirmé par le prestataire, ADR-031 ; recorded_by
+  // vaut alors "system").
   string method = 3;
   string reference = 4;
   string recorded_by = 5;
@@ -190,4 +202,23 @@ message UpdateBillingSettingsRequest {
 
 message UpdateBillingSettingsResponse {
   BillingSettings settings = 1;
+}
+
+// Reste dû d'une facture (InvoicePaymentDueService, ADR-031).
+message GetInvoiceAmountDueRequest {
+  string invoice_id = 1;
+}
+
+message GetInvoiceAmountDueResponse {
+  string invoice_id = 1;
+  // FAC-<année>-<numéro sur 6 chiffres>.
+  string number = 2;
+  string customer_id = 3;
+  // Organisation facturée, vide pour un particulier.
+  string organization_id = 4;
+  // "pending_payment", "overdue", "paid" ou "cancelled".
+  string status = 5;
+  ksp.common.v1.Money total = 6;
+  ksp.common.v1.Money paid = 7;
+  ksp.common.v1.Money balance = 8;
 }

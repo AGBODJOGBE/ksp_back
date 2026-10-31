@@ -19,11 +19,13 @@ import { IdentityHttpController } from '../src/interfaces/http/identity.controll
 import { JwksHttpController } from '../src/interfaces/http/jwks.controller';
 import { OrganizationAdminHttpController } from '../src/interfaces/http/organizations-admin.controller';
 import { OrganizationHttpController } from '../src/interfaces/http/organizations.controller';
+import { PaymentHttpController } from '../src/interfaces/http/payment.controller';
 import { expressPath } from '../src/interfaces/http/route.decorator';
 import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
 import { requestBodies } from '../src/interfaces/http/schemas';
 import { type BillingServer, startBillingStub } from './support/billing-stub';
 import { type CleaningServer, startCleaningStub } from './support/cleaning-stub';
+import { type PaymentServer, startPaymentStub } from './support/payment-stub';
 import {
   type IdentityServer,
   ORIGINS,
@@ -52,6 +54,7 @@ interface Operation extends Json {
   'x-ksp-rate-limit': string;
   'x-ksp-roles'?: string[];
   'x-ksp-mfa-max-age'?: number;
+  'x-ksp-raw-body'?: boolean;
   parameters?: { $ref?: string }[];
 }
 
@@ -178,6 +181,7 @@ describe('contrat OpenAPI : manifeste de routage', () => {
       CleaningHttpController,
       CleaningAdminHttpController,
       BillingHttpController,
+      PaymentHttpController,
     ]) {
       expect(Reflect.getMetadata(PATH_METADATA, controller)).toBe('/');
       for (const handler of handlers(controller)) {
@@ -217,7 +221,8 @@ describe('contrat OpenAPI : corps des requêtes', () => {
   it('chaque opération avec un corps a son schéma de validation, et seulement elles', () => {
     expect(bodies.map((b) => b.operationId).sort()).toEqual(
       operations
-        .filter(({ op }) => op.requestBody)
+        // Corps brut (notification signée d'un prestataire) : transmis tel quel, sans schéma ici.
+        .filter(({ op }) => op.requestBody && !op['x-ksp-raw-body'])
         .map(({ op }) => op.operationId)
         .sort(),
     );
@@ -264,6 +269,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   let identity: IdentityServer;
   let cleaning: CleaningServer;
   let billing: BillingServer;
+  let payment: PaymentServer;
   let app: NestExpressApplication;
   let token: string;
   let staffToken: string;
@@ -275,7 +281,9 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     identity = await startIdentityStub(keys);
     cleaning = await startCleaningStub(keys);
     billing = await startBillingStub(keys);
+    payment = await startPaymentStub(keys);
     app = await startGateway({
+      paymentUrl: payment.url,
       identityUrl: identity.url,
       cleaningUrl: cleaning.url,
       billingUrl: billing.url,
@@ -302,12 +310,14 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     await identity?.close();
     await cleaning?.close();
     await billing?.close();
+    await payment?.close();
   });
 
   beforeEach(() => {
     identity.stub.reset();
     cleaning.stub.reset();
     billing.stub.reset();
+    payment.stub.reset();
   });
 
   const http = () => request(app.getHttpServer());
@@ -797,6 +807,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         ({ path }) =>
           path.includes('/cleaning') ||
           path.includes('/billing') ||
+          (path.includes('/payment') && !path.includes('/webhooks/')) ||
           path.includes('/organizations') ||
           path.includes('/accounts') ||
           path === '/api/v1/identity/context',
@@ -814,6 +825,68 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           ] as (typeof scenarios)[number],
       );
     const errors: typeof scenarios = [
+      [
+        'succès receiveFedapayWebhook',
+        'receiveFedapayWebhook',
+        200,
+        () =>
+          from(http().post('/api/v1/payment/webhooks/fedapay'), 'none')
+            .set('X-FEDAPAY-SIGNATURE', 't=1761900000,s=abc')
+            .set('Content-Type', 'application/json')
+            .send('{"name":"transaction.approved","entity":{"id":104571}}'),
+      ],
+      [
+        'notification FedaPay : signature refusée',
+        'receiveFedapayWebhook',
+        400,
+        () => {
+          payment.stub.on('receiveProviderNotification', () =>
+            Promise.reject(AppError.invalid('PAYMENT_WEBHOOK_SIGNATURE_INVALID', 'Signature fausse.')),
+          );
+          return from(http().post('/api/v1/payment/webhooks/fedapay'), 'none')
+            .set('X-FEDAPAY-SIGNATURE', 't=1,s=00')
+            .send({ name: 'x' });
+        },
+      ],
+      [
+        'paiement : rien à payer',
+        'createPayment',
+        422,
+        () => {
+          payment.stub.on('createPayment', () =>
+            Promise.reject(AppError.precondition('PAYMENT_NOTHING_DUE', 'Rien à payer.')),
+          );
+          return call('createPayment');
+        },
+      ],
+      [
+        'paiement : clé réutilisée pour un autre objet',
+        'createPayment',
+        409,
+        () => {
+          payment.stub.on('createPayment', () =>
+            Promise.reject(AppError.conflict('PAYMENT_IDEMPOTENCY_KEY_REUSED', 'Clé déjà utilisée.')),
+          );
+          return call('createPayment');
+        },
+      ],
+      [
+        'paiement hors périmètre',
+        'getMyPayment',
+        404,
+        () => {
+          payment.stub.on('getMyPayment', () =>
+            Promise.reject(AppError.notFound('PAYMENT_NOT_FOUND', 'Introuvable.')),
+          );
+          return call('getMyPayment');
+        },
+      ],
+      [
+        'paiements (back-office) sans double authentification',
+        'listPayments',
+        403,
+        () => call('listPayments', { auth: 'staff_no_mfa' }),
+      ],
       [
         'simulateur : champ inconnu',
         'simulateCleaning',

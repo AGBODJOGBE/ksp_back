@@ -1,5 +1,6 @@
 import { type ChannelName } from './channel';
 import { BILLING_TEMPLATES } from './messages/billing.messages';
+import { PAYMENT_TEMPLATES } from './messages/payment.messages';
 import { CLEANING_TEMPLATES } from './messages/cleaning.messages';
 import { IDENTITY_DIRECT_TEMPLATES } from './messages/identity.messages';
 import { ORGANIZATION_TEMPLATES } from './messages/organization.messages';
@@ -65,6 +66,7 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
   ...Object.fromEntries(CLEANING_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(BILLING_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(ORGANIZATION_TEMPLATES.map((template) => [template.code, template])),
+  ...Object.fromEntries(PAYMENT_TEMPLATES.map((template) => [template.code, template])),
 };
 
 export function findTemplate(code: string): TemplateDefinition | null {

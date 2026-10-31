@@ -46,7 +46,12 @@ export class ResolveBackofficeNamesUseCase {
   forMissions(missions: readonly Mission[]): Promise<NameBook> {
     return this.execute({
       customerIds: missions.map((mission) => mission.customerId),
-      staffIds: missions.flatMap((mission) => mission.payment.payments.map((record) => record.recordedBy)),
+      // Paiement en ligne : enregistré par le système (« system »), pas par un membre de l'équipe.
+      staffIds: missions.flatMap((mission) =>
+        mission.payment.payments
+          .filter((record) => record.method !== 'mobile_money_online')
+          .map((record) => record.recordedBy),
+      ),
       organizationIds: missions.map((mission) => mission.organizationId),
     });
   }

@@ -19,6 +19,9 @@ import {
   writeEvents,
 } from './mappers';
 
+/** Annule la transaction d'un événement quand la facture a changé depuis sa lecture. */
+class ConcurrentInvoiceUpdate extends Error {}
+
 @Injectable()
 export class PrismaInvoiceRepository implements InvoiceRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -112,6 +115,37 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
       await writeEvents(tx, events(await this.countOverdue(tx, invoice.contractId)));
       return true;
     });
+  }
+
+  async recordOnlinePayment(
+    invoice: Invoice,
+    payment: InvoicePayment,
+    inbox: { eventId: string; consumer: string },
+    events: (overdueCount: number) => OutboxMessage[],
+  ): Promise<'saved' | 'duplicate' | 'conflict'> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const inserted = await tx.$executeRawUnsafe(
+          'INSERT INTO processed_events (event_id, consumer, processed_at) VALUES ($1::uuid, $2, now()) ' +
+            'ON CONFLICT DO NOTHING',
+          inbox.eventId,
+          inbox.consumer,
+        );
+        if (inserted === 0) return 'duplicate' as const;
+        const { count } = await tx.invoice.updateMany({
+          where: { id: invoice.id, version: invoice.version },
+          data: { status: invoice.status, paidAt: invoice.paidAt, version: { increment: 1 } },
+        });
+        // Version changée : annule aussi la marque de l'inbox (le message sera retraité).
+        if (count === 0) throw new ConcurrentInvoiceUpdate();
+        await tx.invoicePayment.create({ data: { ...payment, invoiceId: invoice.id } });
+        await writeEvents(tx, events(await this.countOverdue(tx, invoice.contractId)));
+        return 'saved' as const;
+      });
+    } catch (error) {
+      if (error instanceof ConcurrentInvoiceUpdate) return 'conflict';
+      throw error;
+    }
   }
 
   recordPayment(

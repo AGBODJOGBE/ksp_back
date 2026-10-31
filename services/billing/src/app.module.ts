@@ -13,6 +13,7 @@ import { type ServiceConfig } from './config';
 import { IdentityOrganizationDirectory } from './infrastructure/identity/identity-organization-directory';
 import { CleaningEventsConsumer } from './infrastructure/messaging/cleaning-events.consumer';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
+import { PaymentEventsConsumer } from './infrastructure/messaging/payment-events.consumer';
 import { PrismaContractRepository } from './infrastructure/persistence/prisma-contract.repository';
 import { PrismaInvoiceRepository } from './infrastructure/persistence/prisma-invoice.repository';
 import { PrismaSettingsRepository } from './infrastructure/persistence/prisma-settings.repository';
@@ -22,7 +23,11 @@ import {
   BillingSchedulerService,
 } from './infrastructure/scheduling/billing-scheduler.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
-import { BillingAdminGrpcController, BillingGrpcController } from './interfaces/grpc/billing.controller';
+import {
+  BillingAdminGrpcController,
+  BillingGrpcController,
+  InvoicePaymentDueGrpcController,
+} from './interfaces/grpc/billing.controller';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 
@@ -36,7 +41,7 @@ export class AppModule {
         PlatformModule.forRoot(config),
         ClientsModule.register([grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL)]),
       ],
-      controllers: [BillingGrpcController, BillingAdminGrpcController],
+      controllers: [BillingGrpcController, BillingAdminGrpcController, InvoicePaymentDueGrpcController],
       providers: [
         PrismaService,
         OutboxRelayService,
@@ -44,6 +49,7 @@ export class AppModule {
         PrismaInvoiceRepository,
         PrismaSettingsRepository,
         CleaningEventsConsumer,
+        PaymentEventsConsumer,
         BillingSchedulerService,
         { provide: BILLING_SCHEDULER_INTERVAL_MS, useValue: config.BILLING_SCHEDULER_INTERVAL_MS },
         {

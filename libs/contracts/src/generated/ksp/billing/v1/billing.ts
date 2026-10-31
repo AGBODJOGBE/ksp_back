@@ -28,7 +28,11 @@ export interface InvoicePayment {
   amount?:
     | Money
     | undefined;
-  /** "cash", "bank_transfer" ou "mobile_money_offline". */
+  /**
+   * "cash", "bank_transfer" ou "mobile_money_offline" (enregistrés au back-office), ou
+   * "mobile_money_online" (paiement en ligne confirmé par le prestataire, ADR-031 ; recorded_by
+   * vaut alors "system").
+   */
   method: string;
   reference: string;
   recordedBy: string;
@@ -163,6 +167,25 @@ export interface UpdateBillingSettingsRequest {
 
 export interface UpdateBillingSettingsResponse {
   settings?: BillingSettings | undefined;
+}
+
+/** Reste dû d'une facture (InvoicePaymentDueService, ADR-031). */
+export interface GetInvoiceAmountDueRequest {
+  invoiceId: string;
+}
+
+export interface GetInvoiceAmountDueResponse {
+  invoiceId: string;
+  /** FAC-<année>-<numéro sur 6 chiffres>. */
+  number: string;
+  customerId: string;
+  /** Organisation facturée, vide pour un particulier. */
+  organizationId: string;
+  /** "pending_payment", "overdue", "paid" ou "cancelled". */
+  status: string;
+  total?: Money | undefined;
+  paid?: Money | undefined;
+  balance?: Money | undefined;
 }
 
 /**
@@ -301,3 +324,52 @@ export function BillingAdminServiceControllerMethods() {
 }
 
 export const BILLING_ADMIN_SERVICE_NAME = "BillingAdminService";
+
+/**
+ * Reste dû d'une facture — réservé au service payment (ADR-031). payment ne recalcule rien : il lit
+ * ici le reste dû, puis vérifie lui-même que le payeur est le client ou un membre de l'organisation
+ * facturée. Appel d'un autre service : BILLING_CALLER_FORBIDDEN. Facture inconnue :
+ * BILLING_INVOICE_NOT_FOUND. Le paiement en ligne réussi arrive ensuite par l'événement
+ * payment.intent.succeeded (inbox) : la facture passe « payée » au total (billing.invoice.paid).
+ */
+
+export interface InvoicePaymentDueServiceClient {
+  getInvoiceAmountDue(
+    request: GetInvoiceAmountDueRequest,
+    metadata?: Metadata,
+  ): Observable<GetInvoiceAmountDueResponse>;
+}
+
+/**
+ * Reste dû d'une facture — réservé au service payment (ADR-031). payment ne recalcule rien : il lit
+ * ici le reste dû, puis vérifie lui-même que le payeur est le client ou un membre de l'organisation
+ * facturée. Appel d'un autre service : BILLING_CALLER_FORBIDDEN. Facture inconnue :
+ * BILLING_INVOICE_NOT_FOUND. Le paiement en ligne réussi arrive ensuite par l'événement
+ * payment.intent.succeeded (inbox) : la facture passe « payée » au total (billing.invoice.paid).
+ */
+
+export interface InvoicePaymentDueServiceController {
+  getInvoiceAmountDue(
+    request: GetInvoiceAmountDueRequest,
+    metadata?: Metadata,
+  ): Promise<GetInvoiceAmountDueResponse> | Observable<GetInvoiceAmountDueResponse> | GetInvoiceAmountDueResponse;
+}
+
+export function InvoicePaymentDueServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["getInvoiceAmountDue"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("InvoicePaymentDueService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("InvoicePaymentDueService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const INVOICE_PAYMENT_DUE_SERVICE_NAME = "InvoicePaymentDueService";

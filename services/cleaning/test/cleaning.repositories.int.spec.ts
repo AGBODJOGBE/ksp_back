@@ -207,6 +207,22 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       useCases.recordPayment.execute({ missionId, amount: 6000, method: 'cash', reference: 'reçu 12' }),
     );
     expect((await deps.missions.findById(missionId))!.payment.payments).toHaveLength(1);
+    // Paiement en ligne (ADR-031) : inbox et paiement dans la même transaction, doublon sans effet.
+    const online = {
+      eventId: '0192f1c4-0000-7000-8000-0000000000e1',
+      eventType: 'payment.intent.succeeded',
+      paymentId: '0192f1c4-0000-7000-8000-0000000000e2',
+      subjectType: 'cleaning_mission',
+      missionId,
+      amount: 14000,
+      providerReference: 'trx_1',
+      succeededAt: new Date().toISOString(),
+    };
+    expect(await useCases.recordOnlinePayment.execute(online)).toBe('recorded');
+    expect(await useCases.recordOnlinePayment.execute(online)).toBe('duplicate');
+    expect(
+      (await deps.missions.findById(missionId))!.payment.payments.map((payment) => payment.method),
+    ).toEqual(['cash', 'mobile_money_online']);
     expect(await deps.missions.pendingForCustomer(CUSTOMER_ID)).toEqual([
       { id: missionId, status: 'scheduled' },
     ]);

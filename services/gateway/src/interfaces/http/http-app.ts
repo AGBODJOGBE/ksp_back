@@ -1,7 +1,9 @@
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import { clientOriginsFrom, type GatewayConfig, trustProxyFrom } from '../../config';
 import { GatewayExceptionFilter } from './error-response';
+import { PAYMENT_WEBHOOK_PREFIX } from '../../domain/routing/payment-routes';
 import { type GatewayRequest, type GatewayResponse, type Next } from './http-types';
+import { rawBody } from './raw-body';
 import { CORRELATION_HEADER, correlationMiddleware } from './request-context';
 
 /**
@@ -20,7 +22,8 @@ function securityHeaders(_request: GatewayRequest, response: GatewayResponse, ne
 
 /**
  * Chaîne HTTP de la gateway, commune au démarrage et aux tests (l'application doit être créée
- * avec bodyParser: false) : corrélation, en-têtes de sécurité, CORS, corps JSON de 1 Mo au plus,
+ * avec bodyParser: false) : corrélation, en-têtes de sécurité, CORS, corps JSON de 1 Mo au plus
+ * (corps brut de 64 Ko pour les notifications des prestataires de paiement),
  * format d'erreur unique.
  */
 export function configureHttpApp(app: NestExpressApplication, config: GatewayConfig): void {
@@ -41,6 +44,8 @@ export function configureHttpApp(app: NestExpressApplication, config: GatewayCon
     maxAge: 600,
   });
 
+  // Notifications des prestataires : corps brut (signature sur les octets exacts), avant l'analyse JSON.
+  app.use(PAYMENT_WEBHOOK_PREFIX, rawBody());
   app.useBodyParser('json', { limit: config.MAX_BODY_BYTES });
   app.useGlobalFilters(new GatewayExceptionFilter());
 }

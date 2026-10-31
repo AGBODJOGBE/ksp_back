@@ -51,6 +51,8 @@ export const configSchema = z
     CLEANING_GRPC_URL: z.string().min(1).default('localhost:50053'),
     /** Adresse gRPC de billing (lot 2, facturation minimale). */
     BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
+    /** Adresse gRPC de payment (paiement en ligne, ADR-031). */
+    PAYMENT_GRPC_URL: z.string().min(1).default('localhost:50055'),
     JWKS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(600),
     JWKS_RELOAD_COOLDOWN_SECONDS: z.coerce.number().int().nonnegative().default(30),
 
@@ -87,6 +89,8 @@ export const configSchema = z
     RATE_LIMIT_EMAIL_CODE_REQUEST_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.email_code_request.limit),
     RATE_LIMIT_EMAIL_CODE_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.email_code_verify.limit),
     RATE_LIMIT_ACCOUNT_LOOKUP_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.account_lookup.limit),
+    RATE_LIMIT_PAYMENT_CREATE_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.payment_create.limit),
+    RATE_LIMIT_PAYMENT_WEBHOOK_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.payment_webhook.limit),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV !== 'production') return;
@@ -154,6 +158,14 @@ export function rateLimitsFrom(config: GatewayConfig): RateLimitTable {
     account_lookup: {
       ...DEFAULT_RATE_LIMITS.account_lookup,
       limit: config.RATE_LIMIT_ACCOUNT_LOOKUP_PER_MINUTE,
+    },
+    payment_create: {
+      ...DEFAULT_RATE_LIMITS.payment_create,
+      limit: config.RATE_LIMIT_PAYMENT_CREATE_PER_MINUTE,
+    },
+    payment_webhook: {
+      ...DEFAULT_RATE_LIMITS.payment_webhook,
+      limit: config.RATE_LIMIT_PAYMENT_WEBHOOK_PER_MINUTE,
     },
   };
 }

@@ -34,6 +34,8 @@ info:
     - `x-ksp-mfa-max-age` : double authentification faite depuis au plus ce nombre de secondes ;
       obligatoire sur toute route `/api/v1/admin/`.
     - En-tête `Idempotency-Key` obligatoire sur les écritures sensibles (paramètre `IdempotencyKey`).
+    - `x-ksp-raw-body` : corps transmis au service octet pour octet, sans validation par la gateway
+      (notification signée d'un prestataire : la signature porte sur le corps exact, ADR-031).
 
 servers:
   - url: https://api.ksp.bj
@@ -61,6 +63,10 @@ tags:
     description: Factures mensuelles des contrats d'entreprise, dans l'espace du client (CDC Nettoyage, partie 10)
   - name: Facturation (back-office)
     description: Factures, paiements manuels et réglages de la facturation
+  - name: Paiement
+    description: Paiement en ligne par Mobile Money (FedaPay) d'un acompte, d'un solde de mission ou d'une facture (ADR-031)
+  - name: Paiement (back-office)
+    description: Suivi des paiements en ligne
 
 # Valeurs proposées par le cahier des charges Gateway (partie 4), réglables par configuration.
 x-ksp-rate-limits:
@@ -112,6 +118,16 @@ x-ksp-rate-limits:
     per: minute
     key: user
     description: Recherche de compte par téléphone au back-office (ADR-029) ; freine l'énumération des numéros.
+  payment_create:
+    limit: 10
+    per: minute
+    key: user
+    description: Création d'un paiement en ligne (ADR-031) ; chaque création peut appeler le prestataire.
+  payment_webhook:
+    limit: 120
+    per: minute
+    key: ip
+    description: Notifications du prestataire de paiement (route publique, signature vérifiée par payment).
 
 # Préfixes réservés, sans route pour l'instant.
 x-ksp-reserved-prefixes:
@@ -4711,6 +4727,383 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/payment/payments:
+    post:
+      tags:
+        - Paiement
+      operationId: createPayment
+      summary: Payer en ligne par Mobile Money
+      description: |
+        Crée un paiement par Mobile Money (MTN, Moov) via FedaPay et renvoie la page de paiement du prestataire
+        (`checkoutUrl`), où le client saisit son numéro et valide sur son téléphone (ADR-031).
+
+        - **Acompte ou solde d'une mission** du Nettoyage (`subjectType` = `cleaning_mission`, `part` = `deposit`
+          ou `balance`) : mission du client connecté, d'un particulier ; une mission d'entreprise se règle par sa
+          facture (`PAYMENT_VIA_INVOICE`).
+        - **Facture mensuelle** (`subjectType` = `billing_invoice`, sans `part`) : facture de l'organisation
+          active (contexte entreprise) ou du client lui-même (contexte personnel).
+
+        Le montant n'est jamais envoyé par le client : payment le lit dans cleaning (acompte encore dû, reste
+        dû) ou dans billing (reste dû de la facture). Le paiement n'est confirmé que par le prestataire
+        (notification signée), jamais par le retour du navigateur : au retour sur le portail, suivre
+        `GET /api/v1/payment/payments/{id}`.
+
+        Idempotent : un second envoi avec la même clé renvoie le même paiement ; un paiement encore en attente
+        pour le même objet et le même montant est réutilisé. Prestataire injoignable : 503, réessayer avec la
+        même clé.
+
+        Erreurs : `PAYMENT_VALIDATION_FAILED` (400), `PAYMENT_SUBJECT_NOT_FOUND` (404),
+        `PAYMENT_IDEMPOTENCY_KEY_REUSED` (409, clé déjà utilisée pour un autre objet), `PAYMENT_NOTHING_DUE`,
+        `PAYMENT_SUBJECT_NOT_PAYABLE`, `PAYMENT_VIA_INVOICE` (422), `PAYMENT_PROVIDER_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.payment.v1.PaymentService/CreatePayment
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: payment_create
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentRequest'
+            example:
+              subjectType: cleaning_mission
+              subjectId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000
+              part: deposit
+      responses:
+        '200':
+          description: Paiement créé (ou déjà créé avec cette clé)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+              example:
+                id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001
+                status: pending
+                subject:
+                  type: cleaning_mission
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000
+                  part: deposit
+                  reference: null
+                amount:
+                  amount: 15000
+                  currency: XOF
+                customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                organizationId: null
+                method: mobile_money_online
+                provider: fedapay
+                providerReference: null
+                checkoutUrl: https://process.fedapay.com/eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9
+                failureReason: null
+                createdAt: 2026-11-02T09:00:00Z
+                updatedAt: 2026-11-02T09:00:01Z
+                expiresAt: 2026-11-02T09:30:00Z
+                completedAt: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    get:
+      tags:
+        - Paiement
+      operationId: listMyPayments
+      summary: Mes paiements en ligne
+      description: |
+        Paiements de l'organisation active (contexte entreprise) ou faits par le client hors organisation
+        (contexte personnel), les plus récents d'abord.
+      x-ksp-grpc: ksp.payment.v1.PaymentService/ListMyPayments
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/PaymentStatus'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/payment/payments/{id}:
+    get:
+      tags:
+        - Paiement
+      operationId: getMyPayment
+      summary: Statut d’un paiement
+      description: |
+        À consulter au retour de la page de paiement : le statut affiché est celui qu'a confirmé le
+        prestataire. Un paiement encore en attente est vérifié auprès du prestataire au passage (au plus une
+        fois toutes les quelques secondes) ; le portail peut interroger cette route jusqu'à un statut final
+        (`succeeded`, `failed`, `expired`, `cancelled`).
+
+        Visible par son payeur, et par les membres de l'organisation payeuse dans son contexte. Hors périmètre :
+        404, sans révéler l'existence du paiement.
+
+        Erreurs : `PAYMENT_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.payment.v1.PaymentService/GetMyPayment
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/payment/payments/{id}/simulate:
+    post:
+      tags:
+        - Paiement
+      operationId: simulatePayment
+      summary: Simuler l’issue d’un paiement (développement)
+      description: |
+        **Développement seulement.** Avec le prestataire simulé (`PAYMENT_PROVIDER=simulated`), joue le rôle de
+        la page de paiement : la transaction est réglée (`succeeded`) ou refusée (`failed`) chez le prestataire
+        simulé, puis payment la confirme par le même chemin qu'une notification du prestataire (événements
+        compris). Refusé en production et avec FedaPay : 404 `PAYMENT_SIMULATION_DISABLED`.
+
+        Erreurs : `PAYMENT_VALIDATION_FAILED` (400), `PAYMENT_NOT_FOUND`, `PAYMENT_SIMULATION_DISABLED` (404).
+      x-ksp-grpc: ksp.payment.v1.PaymentService/SimulatePayment
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SimulatePaymentRequest'
+            example:
+              outcome: succeeded
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/payment/webhooks/fedapay:
+    post:
+      tags:
+        - Paiement
+      operationId: receiveFedapayWebhook
+      summary: Notification de FedaPay (webhook)
+      description: |
+        Route publique appelée par FedaPay, sans jeton : la confiance vient de la **signature** de l'en-tête
+        `X-FEDAPAY-SIGNATURE` (`t=<horodatage>,s=<HMAC-SHA256 hexadécimal de "<horodatage>.<corps>">`, clé :
+        secret du webhook), vérifiée par payment sur le corps reçu octet pour octet, avec une tolérance de
+        5 minutes sur l'horodatage. Le contenu de la notification n'est pas cru tel quel : payment relit la
+        transaction chez FedaPay avant de changer le statut du paiement (ADR-031).
+
+        Le corps (événement FedaPay, par exemple `transaction.approved`) est transmis sans être interprété par la
+        gateway ; il n'est ni journalisé ni conservé (il contient des données personnelles du payeur).
+        Transaction inconnue : 200, sans effet (FedaPay ne réessaie pas). Limite d'appels par adresse IP.
+
+        Erreurs : `PAYMENT_WEBHOOK_SIGNATURE_INVALID` (400), `GATEWAY_RATE_LIMITED` (429).
+      x-ksp-grpc: ksp.payment.v1.PaymentWebhookService/ReceiveProviderNotification
+      x-ksp-access: public
+      x-ksp-rate-limit: payment_webhook
+      x-ksp-raw-body: true
+      parameters:
+        - name: X-FEDAPAY-SIGNATURE
+          in: header
+          required: true
+          description: Signature de FedaPay, `t=<horodatage>,s=<signature>`.
+          schema:
+            type: string
+            maxLength: 1000
+      requestBody:
+        required: true
+        description: Événement FedaPay, transmis tel quel (64 Ko au plus).
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              name: transaction.approved
+              entity:
+                id: 104571
+                status: approved
+      responses:
+        '200':
+          description: Notification reçue
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentWebhookAck'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/payment/payments:
+    get:
+      tags:
+        - Paiement (back-office)
+      operationId: listPayments
+      summary: Paiements en ligne (back-office)
+      description: |
+        Tous les paiements en ligne, les plus récents d'abord, filtrables par statut, type d'objet, objet (mission
+        ou facture), payeur ou organisation.
+
+        Rôles : `finance_officer`, `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.payment.v1.PaymentAdminService/ListPayments
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/PaymentStatus'
+        - name: subjectType
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PaymentSubjectType'
+        - name: subjectId
+          in: query
+          required: false
+          description: Mission ou facture payée.
+          schema:
+            type: string
+            format: uuid
+        - name: customerId
+          in: query
+          required: false
+          description: Payeur.
+          schema:
+            type: string
+            format: uuid
+        - name: organizationId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 components:
   securitySchemes:
     bearerAuth:
@@ -4760,6 +5153,20 @@ components:
       schema:
         type: string
         format: uuid
+    PaymentId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant du paiement (UUID).
+      schema:
+        type: string
+        format: uuid
+    PaymentStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/PaymentStatus'
     InvoiceStatus:
       name: status
       in: query
@@ -7457,7 +7864,7 @@ components:
         amount:
           $ref: '#/components/schemas/Money'
         method:
-          $ref: '#/components/schemas/InvoicePaymentMethod'
+          $ref: '#/components/schemas/InvoiceRecordedPaymentMethod'
         reference:
           type:
             - string
@@ -7467,6 +7874,192 @@ components:
         recordedAt:
           type: string
           format: date-time
+    InvoiceRecordedPaymentMethod:
+      description: |
+        Moyen d'un paiement enregistré sur une facture : ceux du back-office (`InvoicePaymentMethod`), ou
+        `mobile_money_online` (paiement en ligne confirmé par le prestataire, `recordedBy` = `system`, ADR-031).
+      enum:
+        - cash
+        - bank_transfer
+        - mobile_money_offline
+        - mobile_money_online
+    PaymentStatus:
+      description: |
+        `pending` : en attente de la confirmation du prestataire ; `succeeded` : réglé ; `failed` : refusé ;
+        `cancelled` : abandonné sur la page de paiement, ou remplacé par un nouveau paiement du même objet ;
+        `expired` : resté en attente au-delà de son délai ; `amount_mismatch` : le prestataire a approuvé un
+        autre montant ou une autre devise — rien n'est enregistré sur la mission ou la facture, la finance tranche
+        (ADR-031). Une réussite confirmée plus tard (24 heures au plus) fait passer un paiement `failed`,
+        `cancelled` ou `expired` à `succeeded`.
+      enum:
+        - pending
+        - succeeded
+        - failed
+        - expired
+        - cancelled
+        - amount_mismatch
+    PaymentSubjectType:
+      enum:
+        - cleaning_mission
+        - billing_invoice
+    PaymentSubject:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+        - part
+        - reference
+      properties:
+        type:
+          $ref: '#/components/schemas/PaymentSubjectType'
+        id:
+          type: string
+          format: uuid
+          description: Mission (Nettoyage) ou facture.
+        part:
+          description: Mission seulement — `deposit` (acompte) ou `balance` (reste dû) ; null pour une facture.
+          enum:
+            - deposit
+            - balance
+            - null
+        reference:
+          type:
+            - string
+            - 'null'
+          description: Numéro de la facture ; null pour une mission.
+    Payment:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - subject
+        - amount
+        - customerId
+        - organizationId
+        - method
+        - provider
+        - providerReference
+        - checkoutUrl
+        - failureReason
+        - createdAt
+        - updatedAt
+        - expiresAt
+        - completedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/PaymentStatus'
+        subject:
+          $ref: '#/components/schemas/PaymentSubject'
+        amount:
+          $ref: '#/components/schemas/Money'
+        customerId:
+          type: string
+          format: uuid
+          description: Payeur (compte qui a créé le paiement).
+        organizationId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Organisation payeuse (facture d'entreprise), null sinon.
+        method:
+          const: mobile_money_online
+        provider:
+          enum:
+            - fedapay
+            - simulated
+          description: '`simulated` : prestataire simulé du développement local.'
+        providerReference:
+          type:
+            - string
+            - 'null'
+          description: Référence de la transaction chez le prestataire, à citer au support.
+        checkoutUrl:
+          type:
+            - string
+            - 'null'
+          format: uri
+          description: |
+            Page de paiement du prestataire, où envoyer le client tant que le paiement est `pending` ; null si elle
+            n'a pas encore pu être obtenue (renvoyer la création avec la même clé).
+        failureReason:
+          description: Raison d'un paiement non abouti, null sinon.
+          enum:
+            - declined
+            - cancelled
+            - expired
+            - null
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          description: Au-delà, un paiement encore en attente devient `expired`.
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    PaymentList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Payment'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    CreatePaymentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - subjectType
+        - subjectId
+      properties:
+        subjectType:
+          $ref: '#/components/schemas/PaymentSubjectType'
+        subjectId:
+          type: string
+          format: uuid
+          description: Mission (`cleaning_mission`) ou facture (`billing_invoice`).
+        part:
+          description: Obligatoire pour une mission (`deposit` ou `balance`) ; absent pour une facture.
+          enum:
+            - deposit
+            - balance
+    SimulatePaymentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+      properties:
+        outcome:
+          enum:
+            - succeeded
+            - failed
+    PaymentWebhookAck:
+      type: object
+      additionalProperties: false
+      required:
+        - received
+      properties:
+        received:
+          const: true
     InvoicePaymentMethod:
       enum:
         - cash

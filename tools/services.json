@@ -23,5 +23,10 @@
     "grpcPort": 50054,
     "httpPort": 3104,
     "database": true
+  },
+  "payment": {
+    "grpcPort": 50055,
+    "httpPort": 3105,
+    "database": true
   }
 }
