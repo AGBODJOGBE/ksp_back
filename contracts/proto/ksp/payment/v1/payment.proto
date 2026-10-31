@@ -1,0 +1,192 @@
+syntax = "proto3";
+
+package ksp.payment.v1;
+
+import "ksp/common/v1/money.proto";
+
+// Contrats du service payment : paiement en ligne par Mobile Money (MTN, Moov) via FedaPay
+// (ADR-031). Il sert :
+// - au particulier, pour l'acompte ou le solde d'une mission du Nettoyage (montant dû lu dans
+//   cleaning) ;
+// - à l'entreprise (ou au particulier), pour le reste dû d'une facture mensuelle (lu dans billing).
+//
+// - PaymentService : espace client (créer un paiement, le suivre, mes paiements) et, en
+//   développement seulement, la confirmation simulée.
+// - PaymentWebhookService : notifications du prestataire, relayées par la gateway (route publique,
+//   signature vérifiée par payment).
+// - PaymentAdminService : back-office (liste et filtres).
+//
+// Règles :
+// - le montant dû vient toujours de cleaning ou de billing, jamais du client ;
+// - un paiement n'est confirmé que par le prestataire (notification signée puis relecture de la
+//   transaction chez lui), jamais par le navigateur ;
+// - la création est idempotente par (payeur, clé d'idempotence).
+//
+// L'utilisateur connecté n'est jamais dans les messages : la gateway le transmet dans les
+// métadonnées gRPC (x-user-id, x-active-context, x-user-roles, x-user-mfa…). Le service
+// revérifie toujours ses droits.
+//
+// Conventions : dates ISO 8601 en UTC (chaîne vide = absente) ; montants ksp.common.v1.Money,
+// entiers en XOF ; valeurs énumérées en snake_case, identiques à l'API REST.
+//
+// Erreurs (code AppError → statut gRPC) :
+//   PAYMENT_NOT_FOUND                   NOT_FOUND           paiement inconnu ou hors du périmètre de l'appelant
+//   PAYMENT_SUBJECT_NOT_FOUND           NOT_FOUND           mission ou facture inconnue, ou hors du périmètre
+//   PAYMENT_SIMULATION_DISABLED         NOT_FOUND           simulation indisponible (production, ou prestataire réel)
+//   PAYMENT_VALIDATION_FAILED           INVALID_ARGUMENT    details.field
+//   PAYMENT_WEBHOOK_SIGNATURE_INVALID   INVALID_ARGUMENT    signature absente, fausse ou trop ancienne
+//   PAYMENT_NOTHING_DUE                 FAILED_PRECONDITION rien à payer pour cet objet (déjà réglé)
+//   PAYMENT_SUBJECT_NOT_PAYABLE         FAILED_PRECONDITION mission annulée, facture annulée
+//   PAYMENT_VIA_INVOICE                 FAILED_PRECONDITION mission d'entreprise : réglée par sa facture
+//   PAYMENT_IDEMPOTENCY_KEY_REUSED      ALREADY_EXISTS      clé déjà utilisée pour un autre objet
+//   PAYMENT_CONCURRENT_UPDATE           ALREADY_EXISTS      paiement modifié en même temps par un autre appel
+//   PAYMENT_PROVIDER_UNAVAILABLE        UNAVAILABLE         prestataire injoignable : réessayer avec la même clé
+//   PAYMENT_CALLER_FORBIDDEN            PERMISSION_DENIED   méthode réservée à un autre service
+//   AUTH_REQUIRED                       UNAUTHENTICATED
+//   AUTH_FORBIDDEN                      PERMISSION_DENIED   rôle du back-office manquant
+//   AUTH_MFA_REQUIRED                   PERMISSION_DENIED   double authentification absente
+
+// Espace client : paiements du client connecté (contexte personnel) ou de son organisation active.
+service PaymentService {
+  // Crée l'intention de paiement (ou renvoie celle de la même clé) et le lien de paiement.
+  rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
+  // Statut d'un paiement ; s'il est en attente, payment interroge le prestataire au passage.
+  rpc GetMyPayment(GetMyPaymentRequest) returns (GetMyPaymentResponse);
+  rpc ListMyPayments(ListMyPaymentsRequest) returns (ListMyPaymentsResponse);
+  // Développement seulement (prestataire simulé, hors production) : règle ou fait échouer la
+  // transaction chez le prestataire simulé, puis la confirme comme une notification.
+  rpc SimulatePayment(SimulatePaymentRequest) returns (SimulatePaymentResponse);
+}
+
+// Notifications du prestataire, réservées à la gateway (jeton de service).
+service PaymentWebhookService {
+  rpc ReceiveProviderNotification(ReceiveProviderNotificationRequest) returns (ReceiveProviderNotificationResponse);
+}
+
+// Back-office : finance_officer, cleaning_admin, super_admin, avec double authentification.
+service PaymentAdminService {
+  rpc ListPayments(ListPaymentsRequest) returns (ListPaymentsResponse);
+}
+
+message Page {
+  // 20 par défaut, 100 au plus.
+  int32 limit = 1;
+  string cursor = 2;
+}
+
+// Objet payé.
+message PaymentSubject {
+  // "cleaning_mission" ou "billing_invoice".
+  string type = 1;
+  // Mission (cleaning) ou facture (billing).
+  string id = 2;
+  // Mission seulement : "deposit" (acompte) ou "balance" (reste dû) ; vide pour une facture.
+  string part = 3;
+  // Référence lisible : numéro de la facture ; vide pour une mission.
+  string reference = 4;
+}
+
+message Payment {
+  string id = 1;
+  // "pending", "succeeded", "failed", "expired", "cancelled" ou "amount_mismatch" (montant ou devise
+  // approuvés différents : rien n'est enregistré chez cleaning ni billing, la finance tranche).
+  string status = 2;
+  PaymentSubject subject = 3;
+  // Montant dû au moment de la création, lu dans cleaning ou billing.
+  ksp.common.v1.Money amount = 4;
+  // Payeur : le compte connecté qui a créé le paiement.
+  string customer_id = 5;
+  // Organisation payeuse (facture d'entreprise), vide sinon.
+  string organization_id = 6;
+  // "mobile_money_online".
+  string method = 7;
+  // "fedapay" ou "simulated" (développement).
+  string provider = 8;
+  // Référence de la transaction chez le prestataire, vide tant qu'elle n'existe pas.
+  string provider_reference = 9;
+  // Page de paiement du prestataire, vide si elle n'a pas encore pu être obtenue.
+  string checkout_url = 10;
+  // Échec : "declined", "cancelled", "expired" ; vide sinon.
+  string failure_reason = 11;
+  string created_at = 12;
+  string updated_at = 13;
+  // Au-delà, un paiement encore en attente est déclaré expiré.
+  string expires_at = 14;
+  // Date de la réussite ou de l'échec, vide en attente.
+  string completed_at = 15;
+}
+
+message CreatePaymentRequest {
+  // "cleaning_mission" ou "billing_invoice".
+  string subject_type = 1;
+  string subject_id = 2;
+  // Mission : "deposit" ou "balance" (obligatoire) ; facture : vide.
+  string part = 3;
+  // En-tête Idempotency-Key (8 à 100 caractères : lettres, chiffres, "_" et "-"), obligatoire.
+  string idempotency_key = 4;
+}
+
+message CreatePaymentResponse {
+  Payment payment = 1;
+  // false : paiement déjà créé avec cette clé, ou paiement en attente réutilisé pour le même objet.
+  bool created = 2;
+}
+
+message GetMyPaymentRequest {
+  string payment_id = 1;
+}
+
+message GetMyPaymentResponse {
+  Payment payment = 1;
+}
+
+message ListMyPaymentsRequest {
+  Page page = 1;
+  // Filtre facultatif : "pending", "succeeded", "failed", "expired", "cancelled" ou "amount_mismatch".
+  string status = 2;
+}
+
+message ListMyPaymentsResponse {
+  repeated Payment payments = 1;
+  string next_cursor = 2;
+}
+
+message SimulatePaymentRequest {
+  string payment_id = 1;
+  // "succeeded" ou "failed".
+  string outcome = 2;
+}
+
+message SimulatePaymentResponse {
+  Payment payment = 1;
+}
+
+message ReceiveProviderNotificationRequest {
+  // "fedapay".
+  string provider = 1;
+  // Corps reçu, octet pour octet : la signature porte sur lui.
+  bytes payload = 2;
+  // En-tête de signature du prestataire (X-FEDAPAY-SIGNATURE).
+  string signature = 3;
+}
+
+message ReceiveProviderNotificationResponse {
+  // "applied", "no_change", "unknown_transaction", "amount_mismatch", "transaction_mismatch" (transaction
+  // relue qui n'est pas celle du paiement) ou "ignored".
+  string outcome = 1;
+}
+
+message ListPaymentsRequest {
+  Page page = 1;
+  // Filtres facultatifs.
+  string status = 2;
+  string subject_type = 3;
+  string subject_id = 4;
+  string customer_id = 5;
+  string organization_id = 6;
+}
+
+message ListPaymentsResponse {
+  repeated Payment payments = 1;
+  string next_cursor = 2;
+}

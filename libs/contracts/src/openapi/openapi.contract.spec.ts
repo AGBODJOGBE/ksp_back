@@ -21,6 +21,7 @@ interface Operation extends Json {
   'x-ksp-rate-limit'?: string;
   'x-ksp-roles'?: string[];
   'x-ksp-mfa-max-age'?: number;
+  'x-ksp-raw-body'?: boolean;
 }
 
 interface MediaType {
@@ -139,7 +140,17 @@ describe('contrat OpenAPI de la gateway', () => {
     }
   });
 
-  it.each(operations.filter(({ op }) => op.requestBody))(
+  // Corps brut (x-ksp-raw-body : notification signée d'un prestataire) : transmis tel quel, la
+  // signature porte sur lui ; seule cette exception est admise, et seulement sur une route publique.
+  it.each(operations.filter(({ op }) => op['x-ksp-raw-body']))(
+    '$method $path : corps brut seulement sur une route publique, avec sa limite propre',
+    ({ op }) => {
+      expect(op['x-ksp-access']).toBe('public');
+      expect(op['x-ksp-rate-limit']).not.toBe('public');
+    },
+  );
+
+  it.each(operations.filter(({ op }) => op.requestBody && !op['x-ksp-raw-body']))(
     '$method $path refuse les champs inconnus',
     ({ op }) => {
       const schema = resolveRef(op.requestBody?.content?.['application/json']?.schema as Json);

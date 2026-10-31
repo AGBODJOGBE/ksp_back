@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/payment/payment.intent.failed.v1.schema.json",
+  "title": "payment.intent.failed",
+  "description": "Paiement en ligne non abouti : refusé par le prestataire (failed), abandonné par le client sur la page de paiement (cancelled) ou resté en attente au-delà de son délai (expired). Rien n'est dû en retour : le montant reste à payer sur la mission ou la facture (ADR-031). Aucun consommateur au lancement. Identifiants et montants seulement.",
+  "x-event-type": "payment.intent.failed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "paymentId",
+    "subjectType",
+    "subjectId",
+    "part",
+    "subjectReference",
+    "customerId",
+    "organizationId",
+    "amount",
+    "provider",
+    "status",
+    "failedAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "integer", "minimum": 1 },
+        "currency": { "const": "XOF" }
+      }
+    }
+  },
+  "properties": {
+    "paymentId": { "type": "string", "format": "uuid" },
+    "subjectType": { "enum": ["cleaning_mission", "billing_invoice"] },
+    "subjectId": { "type": "string", "format": "uuid" },
+    "part": { "enum": ["deposit", "balance", null] },
+    "subjectReference": { "type": ["string", "null"], "pattern": "^FAC-[0-9]{4}-[0-9]{6}$" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": { "type": ["string", "null"], "format": "uuid" },
+    "amount": { "$ref": "#/$defs/money" },
+    "provider": { "enum": ["fedapay", "simulated"] },
+    "status": { "enum": ["failed", "cancelled", "expired"] },
+    "failedAt": { "type": "string", "format": "date-time" }
+  }
+}

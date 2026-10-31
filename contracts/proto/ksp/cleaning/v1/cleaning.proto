@@ -161,6 +161,16 @@ service CleaningAdminService {
   rpc UpdateTeam(UpdateTeamRequest) returns (UpdateTeamResponse);
 }
 
+// ---------------------------------------------------------------------------
+// Montant dû d'une mission — réservé au service payment (ADR-031).
+// ---------------------------------------------------------------------------
+// payment ne recalcule rien : il lit ici l'acompte encore dû et le reste dû, puis vérifie
+// lui-même que le payeur est le client de la mission. Appel d'un autre service :
+// CLEANING_CALLER_FORBIDDEN. Mission inconnue : CLEANING_MISSION_NOT_FOUND.
+service MissionPaymentDueService {
+  rpc GetMissionAmountDue(GetMissionAmountDueRequest) returns (GetMissionAmountDueResponse);
+}
+
 // ===========================================================================
 // Messages communs
 // ===========================================================================
@@ -200,7 +210,7 @@ message PaymentPlan {
   // "before" ou "after" la mission.
   string timing = 2;
   // "cash", "mobile_money_offline" (coché par le superviseur) ou "mobile_money_online"
-  // (encaissé par le service payment, branché plus tard).
+  // (encaissé par le service payment, ADR-031 ; le client peut aussi payer en ligne un autre plan).
   string method = 3;
 }
 
@@ -931,4 +941,30 @@ message UpdateTeamRequest {
 
 message UpdateTeamResponse {
   Team team = 1;
+}
+
+// ===========================================================================
+// Montant dû d'une mission (MissionPaymentDueService, ADR-031)
+// ===========================================================================
+
+message GetMissionAmountDueRequest {
+  string mission_id = 1;
+}
+
+message GetMissionAmountDueResponse {
+  string mission_id = 1;
+  string customer_id = 2;
+  // Vide pour un particulier ; une mission d'entreprise se règle par sa facture (billing).
+  string organization_id = 3;
+  // Statut de la mission ("to_schedule", …, "completed" ou "cancelled").
+  string status = 4;
+  // Plan de paiement choisi à l'acceptation du devis.
+  PaymentPlan plan = 5;
+  ksp.common.v1.Money total = 6;
+  ksp.common.v1.Money paid = 7;
+  // Acompte encore dû : acompte attendu moins les paiements reçus ; 0 pour un plan « totalité »
+  // ou un acompte déjà reçu.
+  ksp.common.v1.Money deposit_due = 8;
+  // Reste dû : total moins les paiements reçus.
+  ksp.common.v1.Money remaining_due = 9;
 }

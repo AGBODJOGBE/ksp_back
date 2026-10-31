@@ -48,7 +48,7 @@ export interface PaymentPlan {
   timing: string;
   /**
    * "cash", "mobile_money_offline" (coché par le superviseur) ou "mobile_money_online"
-   * (encaissé par le service payment, branché plus tard).
+   * (encaissé par le service payment, ADR-031 ; le client peut aussi payer en ligne un autre plan).
    */
   method: string;
 }
@@ -798,6 +798,34 @@ export interface UpdateTeamResponse {
   team?: Team | undefined;
 }
 
+export interface GetMissionAmountDueRequest {
+  missionId: string;
+}
+
+export interface GetMissionAmountDueResponse {
+  missionId: string;
+  customerId: string;
+  /** Vide pour un particulier ; une mission d'entreprise se règle par sa facture (billing). */
+  organizationId: string;
+  /** Statut de la mission ("to_schedule", …, "completed" ou "cancelled"). */
+  status: string;
+  /** Plan de paiement choisi à l'acceptation du devis. */
+  plan?: PaymentPlan | undefined;
+  total?: Money | undefined;
+  paid?:
+    | Money
+    | undefined;
+  /**
+   * Acompte encore dû : acompte attendu moins les paiements reçus ; 0 pour un plan « totalité »
+   * ou un acompte déjà reçu.
+   */
+  depositDue?:
+    | Money
+    | undefined;
+  /** Reste dû : total moins les paiements reçus. */
+  remainingDue?: Money | undefined;
+}
+
 /**
  * ---------------------------------------------------------------------------
  * Catalogue et simulateur — public (UC-CL-01).
@@ -1382,3 +1410,54 @@ export function CleaningAdminServiceControllerMethods() {
 }
 
 export const CLEANING_ADMIN_SERVICE_NAME = "CleaningAdminService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Montant dû d'une mission — réservé au service payment (ADR-031).
+ * ---------------------------------------------------------------------------
+ * payment ne recalcule rien : il lit ici l'acompte encore dû et le reste dû, puis vérifie
+ * lui-même que le payeur est le client de la mission. Appel d'un autre service :
+ * CLEANING_CALLER_FORBIDDEN. Mission inconnue : CLEANING_MISSION_NOT_FOUND.
+ */
+
+export interface MissionPaymentDueServiceClient {
+  getMissionAmountDue(
+    request: GetMissionAmountDueRequest,
+    metadata?: Metadata,
+  ): Observable<GetMissionAmountDueResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Montant dû d'une mission — réservé au service payment (ADR-031).
+ * ---------------------------------------------------------------------------
+ * payment ne recalcule rien : il lit ici l'acompte encore dû et le reste dû, puis vérifie
+ * lui-même que le payeur est le client de la mission. Appel d'un autre service :
+ * CLEANING_CALLER_FORBIDDEN. Mission inconnue : CLEANING_MISSION_NOT_FOUND.
+ */
+
+export interface MissionPaymentDueServiceController {
+  getMissionAmountDue(
+    request: GetMissionAmountDueRequest,
+    metadata?: Metadata,
+  ): Promise<GetMissionAmountDueResponse> | Observable<GetMissionAmountDueResponse> | GetMissionAmountDueResponse;
+}
+
+export function MissionPaymentDueServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["getMissionAmountDue"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("MissionPaymentDueService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("MissionPaymentDueService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const MISSION_PAYMENT_DUE_SERVICE_NAME = "MissionPaymentDueService";
