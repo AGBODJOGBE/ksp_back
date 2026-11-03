@@ -1,6 +1,7 @@
 import { type CleaningEventPayloads, type EventEnvelope } from '@ksp/contracts';
 import { applyResumption, applySuspension, type BillingContract } from '../domain/contract';
 import { type BillingDeps } from './ports';
+import { BillingErrors } from './shared/errors';
 
 /** Préfixe des consommateurs de billing dans l'inbox : un par type d'événement. */
 const consumer = (eventType: string) => `billing.${eventType}`;
@@ -9,6 +10,25 @@ type Envelope<K extends keyof CleaningEventPayloads> = Pick<
   EventEnvelope<K, CleaningEventPayloads[K]>,
   'eventId' | 'type' | 'occurredAt' | 'payload'
 >;
+
+/**
+ * Contrat à modifier par un événement de cleaning. Les événements n'arrivent pas forcément dans
+ * l'ordre (ADR-032) : une annulation, une suspension ou une reprise peut précéder la confirmation
+ * d'une mission d'organisation. Le contrat n'existe alors pas encore : l'erreur levée annule la
+ * transaction (l'événement n'est pas marqué traité) et le message repasse par la file de reprise,
+ * jusqu'à ce que la confirmation soit enregistrée. Une mission de particulier n'a jamais de contrat
+ * (`organizationId` null) ; un événement sans organisation connue (`undefined`, publié avant
+ * l'ADR-032) est ignoré comme avant.
+ */
+function existing(
+  current: BillingContract | null,
+  missionId: string,
+  organizationId: string | null | undefined,
+): BillingContract | null {
+  if (current) return current;
+  if (typeof organizationId === 'string') throw BillingErrors.contractNotYetRegistered(missionId);
+  return null;
+}
 
 /**
  * cleaning.booking.confirmed : un contrat d'entreprise (mission d'une organisation) devient
@@ -52,12 +72,13 @@ export class TerminateContractUseCase {
   constructor(private readonly deps: BillingDeps) {}
 
   async execute(event: Envelope<'cleaning.request.cancelled'>): Promise<void> {
-    const { missionId } = event.payload;
+    const { missionId, organizationId } = event.payload;
     if (!missionId) return;
     const at = new Date(event.occurredAt);
-    await this.deps.contracts.apply(event.eventId, consumer(event.type), missionId, (current) =>
-      current && !current.terminatedAt ? { ...current, terminatedAt: at } : null,
-    );
+    await this.deps.contracts.apply(event.eventId, consumer(event.type), missionId, (current) => {
+      const contract = existing(current, missionId, organizationId);
+      return contract && !contract.terminatedAt ? { ...contract, terminatedAt: at } : null;
+    });
   }
 }
 
@@ -71,7 +92,10 @@ export class SuspendContractUseCase {
       event.eventId,
       consumer(event.type),
       event.payload.missionId,
-      (current) => (current ? applySuspension(current, at) : null),
+      (current) => {
+        const contract = existing(current, event.payload.missionId, event.payload.organizationId);
+        return contract ? applySuspension(contract, at) : null;
+      },
     );
   }
 }
@@ -86,7 +110,10 @@ export class ResumeContractUseCase {
       event.eventId,
       consumer(event.type),
       event.payload.missionId,
-      (current) => (current ? applyResumption(current, at) : null),
+      (current) => {
+        const contract = existing(current, event.payload.missionId, event.payload.organizationId);
+        return contract ? applyResumption(contract, at) : null;
+      },
     );
   }
 }

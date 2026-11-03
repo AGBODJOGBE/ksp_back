@@ -16,6 +16,11 @@
       "description": "Mission annulée, null si seule la demande l'est"
     },
     "customerId": { "type": "string", "format": "uuid" },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente, null pour un particulier (ajouté par l'ADR-032, toujours renseigné par cleaning ; absent des événements antérieurs). billing attend la confirmation d'une mission d'organisation avant d'appliquer son annulation"
+    },
     "cancelledBy": { "enum": ["customer", "supervisor"] },
     "outcome": {
       "enum": ["cancelled", "rejected", "declined"],

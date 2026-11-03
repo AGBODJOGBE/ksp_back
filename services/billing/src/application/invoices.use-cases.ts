@@ -23,9 +23,14 @@ import {
   requireStaff,
 } from './shared/access';
 import { BillingErrors } from './shared/errors';
-import { oneOf, optionalDay, optionalText, optionalUuid, requireUuid } from './shared/validation';
-
-const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,100}$/;
+import {
+  IDEMPOTENCY_KEY,
+  oneOf,
+  optionalDay,
+  optionalText,
+  optionalUuid,
+  requireUuid,
+} from './shared/validation';
 
 function statusFilter(status: string): InvoiceStatus | undefined {
   return status ? oneOf('status', status, INVOICE_STATUSES) : undefined;

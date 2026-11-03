@@ -93,7 +93,7 @@ export class InMemoryPayments implements PaymentRepository {
       );
     return row ? { ...row } : null;
   }
-  async listSucceededIds(input: { subjectType: string; subjectId: string }) {
+  async listSucceeded(input: { subjectType: string; subjectId: string }) {
     return [...this.rows.values()]
       .filter(
         (r) =>
@@ -101,7 +101,7 @@ export class InMemoryPayments implements PaymentRepository {
           r.subject.id === input.subjectId &&
           r.status === 'succeeded',
       )
-      .map((r) => r.id);
+      .map((r) => ({ id: r.id, succeededAt: r.completedAt ?? r.updatedAt }));
   }
   async save(intent: PaymentIntent, events: OutboxMessage[]) {
     const current = this.rows.get(intent.id);
@@ -261,11 +261,15 @@ export class FakeProvider implements PaymentProvider {
 export class RecordingAlerts implements PaymentAlerts {
   readonly amountMismatches: Parameters<PaymentAlerts['amountMismatch']>[0][] = [];
   readonly transactionMismatches: Parameters<PaymentAlerts['transactionMismatch']>[0][] = [];
+  readonly unrecordedPayments: Parameters<PaymentAlerts['unrecordedPayment']>[0][] = [];
   amountMismatch(input: Parameters<PaymentAlerts['amountMismatch']>[0]): void {
     this.amountMismatches.push(input);
   }
   transactionMismatch(input: Parameters<PaymentAlerts['transactionMismatch']>[0]): void {
     this.transactionMismatches.push(input);
+  }
+  unrecordedPayment(input: Parameters<PaymentAlerts['unrecordedPayment']>[0]): void {
+    this.unrecordedPayments.push(input);
   }
 }
 
@@ -284,6 +288,7 @@ export function makeDeps(overrides: Partial<PaymentDeps> = {}) {
       simulationEnabled: false,
       lateSuccessWindowHours: 24,
       lateSuccessRecheckMinutes: 15,
+      unrecordedGraceMinutes: 15,
     },
     clock: new FixedClock(),
     ids: new SequenceIds(),

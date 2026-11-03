@@ -1,4 +1,4 @@
-import { invoiceAmount, missionAmount, unrecordedSuccess } from './amount-due';
+import { invoiceAmount, missionAmount, unrecordedSuccesses } from './amount-due';
 import {
   applyProviderStatus,
   expire,
@@ -81,10 +81,16 @@ describe('montant dû', () => {
   const payer = { userId: USER, organizationId: null };
 
   it('paiement réussi pas encore enregistré par le service de l’objet', () => {
-    expect(unrecordedSuccess([], [])).toBe(false);
-    expect(unrecordedSuccess(['p1'], ['p1'])).toBe(false);
-    expect(unrecordedSuccess(['p1', 'p2'], ['p1'])).toBe(true);
-    expect(unrecordedSuccess(['p1'], [])).toBe(true);
+    const at = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000);
+    const p1 = { id: 'p1', succeededAt: at(0) };
+    const p2 = { id: 'p2', succeededAt: at(5) };
+    const p3 = { id: 'p3', succeededAt: at(-3) };
+    expect(unrecordedSuccesses([], [])).toBeNull();
+    expect(unrecordedSuccesses([p1], ['p1'])).toBeNull();
+    expect(unrecordedSuccesses([p1, p2], ['p1'])).toEqual({ paymentIds: ['p2'], since: at(5) });
+    expect(unrecordedSuccesses([p1], [])).toEqual({ paymentIds: ['p1'], since: at(0) });
+    // La plus ancienne réussite non enregistrée compte.
+    expect(unrecordedSuccesses([p1, p2, p3], ['p1'])).toEqual({ paymentIds: ['p2', 'p3'], since: at(-3) });
   });
 
   it('mission : acompte ou reste dû, lus tels quels', () => {

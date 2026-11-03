@@ -385,6 +385,109 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
   });
 });
 
+describe('événements de cleaning arrivés avant la confirmation (ADR-032)', () => {
+  let world: TestWorld;
+  let useCases: ReturnType<typeof createUseCases>;
+
+  beforeEach(() => {
+    world = testWorld();
+    useCases = createUseCases(world);
+  });
+
+  const cancellation = (
+    organizationId: string | null | undefined,
+    missionId: string | null = MISSION_ID,
+  ) => ({
+    eventId: event(5),
+    type: 'cleaning.request.cancelled' as const,
+    occurredAt: '2026-11-20T00:00:00Z',
+    payload: {
+      requestId: event(50),
+      missionId,
+      customerId: CUSTOMER_ID,
+      cancelledBy: 'customer' as const,
+      outcome: 'cancelled' as const,
+      ...(organizationId === undefined ? {} : { organizationId }),
+    },
+  });
+  const suspension = (organizationId: string | null) => ({
+    eventId: event(3),
+    type: 'cleaning.contract.suspended' as const,
+    occurredAt: '2026-11-10T00:00:00Z',
+    payload: {
+      missionId: MISSION_ID,
+      customerId: CUSTOMER_ID,
+      organizationId,
+      cause: 'unpaid_invoices' as const,
+      unpaidCount: 2,
+      threshold: 2,
+      cancelledInterventionIds: [],
+      releasedAgentIds: [],
+      suspendedAt: '2026-11-10T00:00:00Z',
+    },
+  });
+  const resumption = (organizationId: string | null) => ({
+    eventId: event(4),
+    type: 'cleaning.contract.resumed' as const,
+    occurredAt: '2026-11-15T00:00:00Z',
+    payload: {
+      missionId: MISSION_ID,
+      customerId: CUSTOMER_ID,
+      organizationId,
+      cause: 'unpaid_invoices' as const,
+      unpaidCount: 1,
+      resumedAt: '2026-11-15T00:00:00Z',
+      rescheduledCount: 0,
+      failedCount: 0,
+    },
+  });
+
+  it('annulation avant la confirmation : erreur réessayable, non marquée traitée, appliquée ensuite', async () => {
+    expect(await code(useCases.terminateContract.execute(cancellation(ORGANIZATION_ID)))).toBe(
+      'BILLING_CONTRACT_NOT_YET_REGISTERED',
+    );
+    // L'événement n'est pas enregistré dans l'inbox : la file de reprise le représentera.
+    expect(world.contracts.processed.size).toBe(0);
+    await useCases.registerContract.execute(booking(ORGANIZATION_ID));
+    await useCases.terminateContract.execute(cancellation(ORGANIZATION_ID));
+    expect(world.contracts.contracts.get(MISSION_ID)?.terminatedAt).toEqual(new Date('2026-11-20T00:00:00Z'));
+    // Le contrat annulé n'est plus facturé au-delà du jour de l'annulation.
+    world.clock.current = new Date('2027-03-01T00:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    expect([...world.invoices.invoices.values()].map((i) => i.periodIndex)).toEqual([1]);
+  });
+
+  it('suspension et reprise avant la confirmation : réessayées, puis appliquées', async () => {
+    expect(await code(useCases.suspendContract.execute(suspension(ORGANIZATION_ID)))).toBe(
+      'BILLING_CONTRACT_NOT_YET_REGISTERED',
+    );
+    expect(await code(useCases.resumeContract.execute(resumption(ORGANIZATION_ID)))).toBe(
+      'BILLING_CONTRACT_NOT_YET_REGISTERED',
+    );
+    expect(world.contracts.processed.size).toBe(0);
+    await useCases.registerContract.execute(booking(ORGANIZATION_ID));
+    await useCases.resumeContract.execute(resumption(ORGANIZATION_ID));
+    await useCases.suspendContract.execute(suspension(ORGANIZATION_ID));
+    expect(world.contracts.contracts.get(MISSION_ID)).toMatchObject({
+      suspendedSince: null,
+      suspensions: [{ from: new Date('2026-11-10T00:00:00Z'), to: new Date('2026-11-15T00:00:00Z') }],
+    });
+  });
+
+  it('particulier, demande sans mission, ou événement sans organisation (antérieur) : rien à attendre', async () => {
+    await expect(useCases.terminateContract.execute(cancellation(null))).resolves.toBeUndefined();
+    await expect(
+      useCases.terminateContract.execute({ ...cancellation(ORGANIZATION_ID, null), eventId: event(6) }),
+    ).resolves.toBeUndefined();
+    await expect(
+      useCases.terminateContract.execute({ ...cancellation(undefined), eventId: event(7) }),
+    ).resolves.toBeUndefined();
+    await expect(useCases.suspendContract.execute(suspension(null))).resolves.toBeUndefined();
+    await expect(useCases.resumeContract.execute(resumption(null))).resolves.toBeUndefined();
+    expect(world.contracts.contracts.size).toBe(0);
+  });
+});
+
 describe('paiement en ligne d’une facture (ADR-031)', () => {
   let world: TestWorld;
   let useCases: ReturnType<typeof createUseCases>;

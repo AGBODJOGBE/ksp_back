@@ -22,9 +22,11 @@ model OutboxEvent {
   attempts      Int       @default(0)
   /// Prochaine tentative après un échec (délai croissant, ADR-032).
   nextAttemptAt DateTime? @map("next_attempt_at") @db.Timestamptz(3)
-  /// Mis de côté au-delà de la limite de tentatives : rejouable (ADR-032).
+  /// Mis de côté après 24 h d'échecs : rejouable par pnpm outbox:replay (ADR-032).
   parkedAt      DateTime? @map("parked_at") @db.Timestamptz(3)
   lastError     String?   @map("last_error")
+  /// Premier échec de publication : mise de côté après 24 h d'échecs (ADR-032).
+  firstFailedAt DateTime? @map("first_failed_at") @db.Timestamptz(3)
 
   @@map("outbox")
 }

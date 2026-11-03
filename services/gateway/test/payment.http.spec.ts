@@ -138,6 +138,18 @@ describe('gateway → payment', () => {
       .send({ subjectType: 'billing_invoice', subjectId: MISSION_ID });
     expect(received.status).toBe(409);
     expect(received.body.error.code).toBe('PAYMENT_ALREADY_RECEIVED');
+    // Toujours pas enregistré après le délai : 409 aussi, avec le code qui oriente vers le support.
+    payment.stub.on('createPayment', () =>
+      Promise.reject(AppError.conflict('PAYMENT_RECONCILIATION_PENDING', 'Contactez le support.')),
+    );
+    const pending = await web(http().post('/api/v1/payment/payments'))
+      .set('Idempotency-Key', 'pay-key-0004')
+      .send({ subjectType: 'billing_invoice', subjectId: MISSION_ID });
+    expect(pending.status).toBe(409);
+    expect(pending.body.error).toMatchObject({
+      code: 'PAYMENT_RECONCILIATION_PENDING',
+      message: 'Contactez le support.',
+    });
   });
 
   it('notification FedaPay : publique, corps exact et signature transmis, aucune interprétation', async () => {

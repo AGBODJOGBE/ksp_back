@@ -1,4 +1,4 @@
-import { type DueRefusal, invoiceAmount, missionAmount, unrecordedSuccess } from '../domain/amount-due';
+import { type DueRefusal, invoiceAmount, missionAmount, unrecordedSuccesses } from '../domain/amount-due';
 import {
   MISSION_PARTS,
   type MissionPart,
@@ -49,8 +49,10 @@ async function visiblePayment(deps: PaymentDeps, paymentId: string): Promise<Pay
  * idempotence par (payeur, clé), réutilisation d'un paiement encore en attente pour le même objet
  * et le même montant, puis page de paiement chez le prestataire.
  *
- * Refus (409 PAYMENT_ALREADY_RECEIVED, ADR-032) tant qu'un paiement réussi de l'objet n'est pas
- * encore enregistré par cleaning ou billing : le montant dû lu ne le déduit pas encore.
+ * Refus (409, ADR-032) tant qu'un paiement réussi de l'objet n'est pas encore enregistré par
+ * cleaning ou billing : le montant dû lu ne le déduit pas encore. PAYMENT_ALREADY_RECEIVED
+ * (« réessayez ») pendant `unrecordedGraceMinutes` après la réussite, puis
+ * PAYMENT_RECONCILIATION_PENDING (support) avec une alerte : jamais de second paiement.
  */
 export class CreatePaymentUseCase {
   private readonly sync: PaymentSync;
@@ -82,15 +84,18 @@ export class CreatePaymentUseCase {
       return { payment: await this.withCheckout(replay), created: false };
     }
 
-    const { amount, subject, organizationId, recordedPaymentIds } = await this.amountDue(
-      type,
-      subjectId,
-      part,
-      payer,
-    );
-    const succeeded = await this.deps.payments.listSucceededIds({ subjectType: type, subjectId });
-    if (unrecordedSuccess(succeeded, recordedPaymentIds)) throw PaymentErrors.alreadyReceived();
+    const [{ amount, subject, organizationId, recordedPaymentIds }, succeeded] = await Promise.all([
+      this.amountDue(type, subjectId, part, payer),
+      this.deps.payments.listSucceeded({ subjectType: type, subjectId }),
+    ]);
     const now = this.deps.clock.now();
+    const unrecorded = unrecordedSuccesses(succeeded, recordedPaymentIds);
+    if (unrecorded) {
+      const graceMs = this.deps.settings.unrecordedGraceMinutes * MINUTE_MS;
+      if (now.getTime() - unrecorded.since.getTime() < graceMs) throw PaymentErrors.alreadyReceived();
+      this.deps.alerts.unrecordedPayment({ subjectType: type, subjectId, ...unrecorded });
+      throw PaymentErrors.reconciliationPending();
+    }
     const open = await this.deps.payments.findOpen({
       customerId: payer.userId,
       subjectType: type,

@@ -229,10 +229,10 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
     for (const { intent } of [ok, other]) {
       expect(await payments.save({ ...intent, status: 'succeeded', completedAt: new Date() }, [])).toBe(true);
     }
-    expect((await payments.listSucceededIds({ subjectType: 'cleaning_mission', subjectId })).sort()).toEqual(
-      [ok.intent.id, other.intent.id].sort(),
-    );
-    expect(await payments.listSucceededIds({ subjectType: 'billing_invoice', subjectId })).toEqual([]);
+    const succeeded = await payments.listSucceeded({ subjectType: 'cleaning_mission', subjectId });
+    expect(succeeded.map((payment) => payment.id).sort()).toEqual([ok.intent.id, other.intent.id].sort());
+    expect(succeeded.every((payment) => payment.succeededAt instanceof Date)).toBe(true);
+    expect(await payments.listSucceeded({ subjectType: 'billing_invoice', subjectId })).toEqual([]);
   });
 
   it('montant nul refusé par la base', async () => {

@@ -41,6 +41,8 @@ import "ksp/common/v1/money.proto";
 //   PAYMENT_IDEMPOTENCY_KEY_REUSED      ALREADY_EXISTS      clé déjà utilisée pour un autre objet
 //   PAYMENT_ALREADY_RECEIVED            ALREADY_EXISTS      paiement réussi pas encore enregistré par cleaning
 //                                                           ou billing : réessayer plus tard (ADR-032)
+//   PAYMENT_RECONCILIATION_PENDING      ALREADY_EXISTS      le même, toujours pas enregistré 15 min (réglable)
+//                                                           après sa réussite : contacter le support (ADR-032)
 //   PAYMENT_CONCURRENT_UPDATE           ALREADY_EXISTS      paiement modifié en même temps par un autre appel
 //   PAYMENT_PROVIDER_UNAVAILABLE        UNAVAILABLE         prestataire injoignable : réessayer avec la même clé
 //   PAYMENT_CALLER_FORBIDDEN            PERMISSION_DENIED   méthode réservée à un autre service

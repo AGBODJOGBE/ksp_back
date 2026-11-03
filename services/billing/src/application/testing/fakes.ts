@@ -54,8 +54,9 @@ export class InMemoryContracts implements ContractRepository {
   ) {
     const key = `${eventId}/${consumer}`;
     if (this.processed.has(key)) return 'duplicate' as const;
-    this.processed.add(key);
+    // Comme la transaction SQL : une erreur levée par `change` n'enregistre pas l'événement (inbox).
     const next = change(this.contracts.get(contractId) ?? null);
+    this.processed.add(key);
     if (next) this.contracts.set(contractId, next);
     return 'processed' as const;
   }

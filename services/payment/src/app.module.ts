@@ -130,6 +130,7 @@ export class AppModule {
                 simulationEnabled: simulationEnabled(config),
                 lateSuccessWindowHours: config.PAYMENT_LATE_SUCCESS_WINDOW_HOURS,
                 lateSuccessRecheckMinutes: config.PAYMENT_LATE_SUCCESS_RECHECK_MINUTES,
+                unrecordedGraceMinutes: config.PAYMENT_UNRECORDED_GRACE_MINUTES,
               },
               clock: new SystemClock(),
               ids: new UuidV7Generator(),

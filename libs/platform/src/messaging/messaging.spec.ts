@@ -35,6 +35,7 @@ class InMemoryOutbox implements OutboxStore {
       id: env.eventId,
       envelope: env,
       attempts: 0,
+      firstFailedAt: null,
       published: false,
       parked: false,
       nextAttemptAt: 0,
@@ -53,12 +54,13 @@ class InMemoryOutbox implements OutboxStore {
       .slice(0, limit);
     if (batch.length === 0) return 0;
     const { published, failed } = await publish(
-      batch.map(({ id, envelope, attempts }) => ({ id, envelope, attempts })),
+      batch.map(({ id, envelope, attempts, firstFailedAt }) => ({ id, envelope, attempts, firstFailedAt })),
     );
     for (const row of this.rows) if (published.includes(row.id)) row.published = true;
     for (const failure of failed) {
       const row = this.row(failure.id);
       row.attempts += 1;
+      row.firstFailedAt ??= new Date(this.now);
       row.lastError = failure.error;
       if (failure.retryInMs === null) row.parked = true;
       else row.nextAttemptAt = this.now + failure.retryInMs;
@@ -112,7 +114,7 @@ describe('OutboxRelay', () => {
     const events = [envelope(1), envelope(2), envelope(3)];
     events.forEach((e) => outbox.add(e));
     publisher.failOn = events[0]!.eventId;
-    const relay = new OutboxRelay(outbox, publisher);
+    const relay = new OutboxRelay(outbox, publisher, { now: () => outbox.now });
     await expect(relay.runOnce()).resolves.toBe(2);
     expect(publisher.published).toEqual([events[1]!.eventId, events[2]!.eventId]);
     expect(outbox.row(events[0]!.eventId)).toMatchObject({
@@ -136,7 +138,7 @@ describe('OutboxRelay', () => {
     const events = [envelope(1), envelope(2), envelope(3)];
     events.forEach((e) => outbox.add(e));
     publisher.failing.add(events[0]!.eventId).add(events[1]!.eventId);
-    const relay = new OutboxRelay(outbox, publisher);
+    const relay = new OutboxRelay(outbox, publisher, { now: () => outbox.now });
     // Deux échecs de suite : passage interrompu, seul le premier est compté.
     await expect(relay.runOnce()).resolves.toBe(0);
     expect(outbox.row(events[0]!.eventId).attempts).toBe(1);
@@ -168,7 +170,7 @@ describe('OutboxRelay', () => {
     const event = envelope(1);
     outbox.add(event);
     publisher.failOn = event.eventId;
-    const relay = new OutboxRelay(outbox, publisher);
+    const relay = new OutboxRelay(outbox, publisher, { now: () => outbox.now });
     const delays: number[] = [];
     for (let i = 0; i < 4; i += 1) {
       outbox.now = outbox.row(event.eventId).nextAttemptAt;
@@ -179,28 +181,137 @@ describe('OutboxRelay', () => {
     expect(delays).toEqual([1000, 2000, 4000, 8000]);
   });
 
-  it('au-delà de la limite, l’événement est mis de côté (alerte) et n’est plus repris', async () => {
+  it('après 24 h d’échecs depuis le premier, l’événement est mis de côté (alerte) et n’est plus repris', async () => {
     const outbox = new InMemoryOutbox();
     const publisher = new RecordingPublisher();
     const event = envelope(1);
     outbox.add(event);
     publisher.failOn = event.eventId;
-    const relay = new OutboxRelay(outbox, publisher, { maxAttempts: 3, retryBaseDelayMs: 1 });
+    const relay = new OutboxRelay(outbox, publisher, { now: () => outbox.now });
     const alerts = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const warnings = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const DAY_MS = 24 * 3_600_000;
     try {
-      for (let i = 0; i < 3; i += 1) {
-        outbox.now += 1000;
+      // Échecs répétés pendant presque 24 h (délai plafonné à 5 min) : toujours repris.
+      let attempts = 0;
+      while (outbox.now < DAY_MS - 10 * 60_000) {
+        outbox.now = Math.max(outbox.now, outbox.row(event.eventId).nextAttemptAt);
         await relay.runOnce();
+        attempts += 1;
       }
-      expect(outbox.row(event.eventId)).toMatchObject({ attempts: 3, parked: true, published: false });
-      expect(alerts).toHaveBeenCalledWith(expect.stringContaining('mis de côté après 3 tentatives'));
+      expect(outbox.row(event.eventId)).toMatchObject({
+        attempts,
+        parked: false,
+        firstFailedAt: new Date(0),
+      });
+      expect(attempts).toBeGreaterThan(25);
+      expect(alerts).not.toHaveBeenCalled();
+      // 24 h après le premier échec : mis de côté.
+      outbox.now = DAY_MS;
+      await relay.runOnce();
+      expect(outbox.row(event.eventId)).toMatchObject({ parked: true, published: false });
+      expect(alerts).toHaveBeenCalledWith(expect.stringContaining('ALERTE outbox'));
+      expect(alerts).toHaveBeenCalledWith(expect.stringContaining('mis de côté après'));
       // Mis de côté : plus repris, même la cause corrigée, tant qu'il n'est pas rejoué.
       publisher.failOn = undefined;
       outbox.now += 3_600_000;
       await expect(relay.runOnce()).resolves.toBe(0);
     } finally {
       alerts.mockRestore();
+      warnings.mockRestore();
     }
+  });
+
+  it('durée de mise de côté réglable', async () => {
+    const outbox = new InMemoryOutbox();
+    const publisher = new RecordingPublisher();
+    const event = envelope(1);
+    outbox.add(event);
+    publisher.failOn = event.eventId;
+    const relay = new OutboxRelay(outbox, publisher, {
+      now: () => outbox.now,
+      parkAfterMs: 5_000,
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 1,
+    });
+    const alerts = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      await relay.runOnce();
+      outbox.now = 4_999;
+      await relay.runOnce();
+      expect(outbox.row(event.eventId).parked).toBe(false);
+      outbox.now = 5_000;
+      await relay.runOnce();
+      expect(outbox.row(event.eventId)).toMatchObject({ attempts: 3, parked: true });
+    } finally {
+      alerts.mockRestore();
+    }
+  });
+
+  it('un rejet sans valeur (undefined) est compté comme un échec, sans faire échouer le passage', async () => {
+    const outbox = new InMemoryOutbox();
+    const events = [envelope(1), envelope(2), envelope(3)];
+    events.forEach((e) => outbox.add(e));
+    const published: string[] = [];
+    const publisher: EventPublisher = {
+      publish: (env) => {
+        if (env.eventId === events[0]!.eventId) return Promise.reject(undefined);
+        published.push(env.eventId);
+        return Promise.resolve();
+      },
+    };
+    await expect(new OutboxRelay(outbox, publisher).runOnce()).resolves.toBe(2);
+    expect(outbox.row(events[0]!.eventId)).toMatchObject({ attempts: 1, lastError: 'undefined' });
+    expect(published).toEqual([events[1]!.eventId, events[2]!.eventId]);
+  });
+
+  it('publication trop lente : échec au bout du délai, les suivants partent', async () => {
+    const outbox = new InMemoryOutbox();
+    const events = [envelope(1), envelope(2)];
+    events.forEach((e) => outbox.add(e));
+    const published: string[] = [];
+    const publisher: EventPublisher = {
+      publish: (env) => {
+        // Confirmation du broker qui n'arrive jamais pour le premier événement.
+        if (env.eventId === events[0]!.eventId) return new Promise<void>(() => undefined);
+        published.push(env.eventId);
+        return Promise.resolve();
+      },
+    };
+    const relay = new OutboxRelay(outbox, publisher, { publishTimeoutMs: 20 });
+    await expect(relay.runOnce()).resolves.toBe(1);
+    expect(published).toEqual([events[1]!.eventId]);
+    expect(outbox.row(events[0]!.eventId)).toMatchObject({
+      attempts: 1,
+      published: false,
+      lastError: 'délai de publication dépassé (20 ms)',
+    });
+  });
+
+  it('budget de temps du passage atteint : arrêt, ce qui est fait est validé, le reste attend', async () => {
+    const outbox = new InMemoryOutbox();
+    const events = [envelope(1), envelope(2), envelope(3), envelope(4)];
+    events.forEach((e) => outbox.add(e));
+    let clock = 0;
+    const published: string[] = [];
+    // Chaque publication « dure » 4 s sur l'horloge du relais.
+    const publisher: EventPublisher = {
+      publish: async (env) => {
+        clock += 4_000;
+        published.push(env.eventId);
+      },
+    };
+    const relay = new OutboxRelay(outbox, publisher, {
+      now: () => clock,
+      passBudgetMs: 10_000,
+      publishTimeoutMs: 2_000,
+    });
+    // Écoulé + délai d'une publication : 2 s, 6 s, 10 s (≤ 10 s, publiées), puis 14 s : arrêt.
+    await expect(relay.runOnce()).resolves.toBe(3);
+    expect(outbox.rows.map((row) => row.published)).toEqual([true, true, true, false]);
+    expect(outbox.row(events[3]!.eventId).attempts).toBe(0);
+    await expect(relay.runOnce()).resolves.toBe(1);
+    expect(published).toEqual(events.map((e) => e.eventId));
   });
 
   it('tourne en tâche de fond et s’arrête proprement', async () => {
@@ -248,14 +359,24 @@ describe('stores SQL', () => {
     const { client, calls } = fakeSqlClient({
       query: [
         [
-          { id: env1.eventId, payload: env1, attempts: 0 },
-          { id: env2.eventId, payload: JSON.stringify(env2), attempts: 2 },
-          { id: env3.eventId, payload: env3, attempts: 24 },
+          { id: env1.eventId, payload: env1, attempts: 0, first_failed_at: null },
+          {
+            id: env2.eventId,
+            payload: JSON.stringify(env2),
+            attempts: 2,
+            first_failed_at: new Date('2026-11-01T10:00:00Z'),
+          },
+          { id: env3.eventId, payload: env3, attempts: 300, first_failed_at: '2026-10-31T10:00:00Z' },
         ],
       ],
     });
     const count = await new SqlOutboxStore(client).withUnpublishedBatch(10, async (records) => {
       expect(records.map((r) => r.envelope.eventId)).toEqual([env1.eventId, env2.eventId, env3.eventId]);
+      expect(records.map((r) => r.firstFailedAt)).toEqual([
+        null,
+        new Date('2026-11-01T10:00:00Z'),
+        new Date('2026-10-31T10:00:00Z'),
+      ]);
       return {
         published: [env1.eventId],
         failed: [
@@ -269,14 +390,17 @@ describe('stores SQL', () => {
     expect(calls[0]!.sql).toContain('parked_at IS NULL');
     expect(calls[0]!.sql).toContain('next_attempt_at <= now()');
     expect(calls[1]).toEqual({ sql: expect.stringContaining('SET published_at'), values: [[env1.eventId]] });
+    // Échecs enregistrés en une seule requête ; -1 : mis de côté.
+    expect(calls).toHaveLength(3);
     expect(calls[2]).toEqual({
-      sql: expect.stringContaining('next_attempt_at = now() +'),
-      values: [env2.eventId, 4000, 'read ECONNRESET'],
+      sql: expect.stringContaining('unnest('),
+      values: [
+        [env2.eventId, env3.eventId],
+        [4000, -1],
+        ['read ECONNRESET', 'read ECONNRESET'],
+      ],
     });
-    expect(calls[3]).toEqual({
-      sql: expect.stringContaining('parked_at = now()'),
-      values: [env3.eventId, 'read ECONNRESET'],
-    });
+    expect(calls[2]!.sql).toContain('first_failed_at = COALESCE(o.first_failed_at, now())');
   });
 
   it('rejoue les événements mis de côté', async () => {
@@ -284,6 +408,7 @@ describe('stores SQL', () => {
     await expect(new SqlOutboxStore(client).replayParked()).resolves.toBe(2);
     await expect(new SqlOutboxStore(client).replayParked(['evt-1'])).resolves.toBe(1);
     expect(calls[0]!.sql).toContain('SET parked_at = NULL, attempts = 0');
+    expect(calls[0]!.sql).toContain('first_failed_at = NULL');
     expect(calls[0]!.values).toEqual([]);
     expect(calls[1]!.values).toEqual([['evt-1']]);
   });

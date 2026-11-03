@@ -34,6 +34,13 @@ Avec FedaPay : `PAYMENT_PROVIDER=fedapay`, `FEDAPAY_ENVIRONMENT=sandbox`, `FEDAP
 4. `payment.intent.succeeded` (outbox) : cleaning ou billing enregistre le paiement ; notification
    envoie le reçu.
 
+Tant que cleaning ou billing n'a pas enregistré un paiement réussi, un nouveau paiement du même objet
+est refusé (409, ADR-032) : `PAYMENT_ALREADY_RECEIVED` (« réessayez ») pendant
+`PAYMENT_UNRECORDED_GRACE_MINUTES` (15 par défaut) après la réussite, puis
+`PAYMENT_RECONCILIATION_PENDING` (contacter le support) avec une ligne `ALERTE paiement` dans le
+journal. Cause habituelle : événement retenu dans l'outbox de payment ; s'il est mis de côté, le
+rejouer avec `pnpm outbox:replay payment`.
+
 ## Organisation
 
 | Dossier              | Contenu                                                         |

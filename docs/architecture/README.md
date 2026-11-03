@@ -63,7 +63,9 @@ await prisma.$transaction(async (tx) => {
 });
 ```
 
-Le relais (`OutboxRelayService`, présent dans chaque service généré) publie ensuite les événements dans l'ordre. Si RabbitMQ est indisponible, ils restent dans la table `outbox` et partent au retour du broker. Plusieurs instances du service peuvent tourner : `FOR UPDATE SKIP LOCKED` garantit qu'un événement n'est pris que par un relais.
+Le relais (`OutboxRelayService`, présent dans chaque service généré) publie ensuite les événements, lus dans l'ordre d'écriture mais **sans garantie d'ordre** à l'arrivée (ADR-032) : un événement en échec est réessayé plus tard (délai croissant plafonné à 5 minutes) sans bloquer les suivants. Si RabbitMQ est indisponible, ils restent dans la table `outbox` et partent au retour du broker. Après 24 heures d'échecs depuis le premier, un événement est mis de côté (alerte `ALERTE outbox` dans le journal) ; une fois la cause corrigée, `pnpm outbox:replay <service> [ids…]` le remet en publication. Plusieurs instances du service peuvent tourner : `FOR UPDATE SKIP LOCKED` garantit qu'un événement n'est pris que par un relais.
+
+Un consommateur ne doit donc pas supposer qu'un événement arrive après celui qui le précède chez le producteur : s'il lui manque un préalable (par exemple le contrat qu'une annulation modifie), il lève une erreur pour que le message repasse par la file `.retry` sans être marqué traité (voir billing, ADR-032).
 
 ## Consommer un événement
 

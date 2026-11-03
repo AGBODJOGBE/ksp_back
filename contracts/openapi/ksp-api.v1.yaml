@@ -4796,11 +4796,14 @@ paths:
         n'est pas encore déduit du montant dû : tant qu'il en existe un pour l'objet (mission, toutes parts
         confondues, ou facture), la création est refusée (`PAYMENT_ALREADY_RECEIVED`, 409) pour ne pas faire payer
         deux fois. Le portail affiche « paiement reçu, en cours d'enregistrement » et relit la mission ou la
-        facture un peu plus tard (ADR-032).
+        facture un peu plus tard (ADR-032). Si l'enregistrement tarde au-delà de 15 minutes (réglable) après la
+        réussite du paiement, le refus devient `PAYMENT_RECONCILIATION_PENDING` (409) : ne pas proposer de payer
+        à nouveau, inviter le client à contacter le support ; l'équipe KSP est alertée.
 
         Erreurs : `PAYMENT_VALIDATION_FAILED` (400), `PAYMENT_SUBJECT_NOT_FOUND` (404),
         `PAYMENT_IDEMPOTENCY_KEY_REUSED` (409, clé déjà utilisée pour un autre objet), `PAYMENT_ALREADY_RECEIVED`
-        (409, paiement réussi pas encore enregistré : réessayer plus tard), `PAYMENT_NOTHING_DUE`,
+        (409, paiement réussi pas encore enregistré : réessayer plus tard), `PAYMENT_RECONCILIATION_PENDING`
+        (409, toujours pas enregistré après 15 minutes : contacter le support), `PAYMENT_NOTHING_DUE`,
         `PAYMENT_SUBJECT_NOT_PAYABLE`, `PAYMENT_VIA_INVOICE` (422), `PAYMENT_PROVIDER_UNAVAILABLE` (503).
       x-ksp-grpc: ksp.payment.v1.PaymentService/CreatePayment
       x-ksp-access: authenticated

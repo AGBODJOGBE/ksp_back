@@ -575,8 +575,8 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect(
       world.recorder.events.filter((e) => e.type === 'cleaning.request.cancelled').map((e) => e.payload),
     ).toEqual([
-      expect.objectContaining({ outcome: 'declined', cancelledBy: 'customer' }),
-      expect.objectContaining({ outcome: 'rejected', cancelledBy: 'supervisor' }),
+      expect.objectContaining({ outcome: 'declined', cancelledBy: 'customer', organizationId: null }),
+      expect.objectContaining({ outcome: 'rejected', cancelledBy: 'supervisor', organizationId: null }),
     ]);
   });
 

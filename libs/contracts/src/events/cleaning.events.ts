@@ -74,6 +74,11 @@ export interface CleaningEventPayloads {
     requestId: string;
     missionId: string | null;
     customerId: string;
+    /**
+     * Organisation cliente, null pour un particulier (ADR-032). Toujours renseigné par cleaning ;
+     * absent des événements publiés avant son ajout.
+     */
+    organizationId?: string | null;
     cancelledBy: 'customer' | 'supervisor';
     outcome: 'cancelled' | 'rejected' | 'declined';
   };

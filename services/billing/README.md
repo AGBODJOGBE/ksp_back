@@ -9,7 +9,10 @@ partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/bill
 - **Contrats appris par événements** (une base par service) : `cleaning.booking.confirmed` d'une
   organisation crée le contrat (montant, durée, début `startsAt`) ; `cleaning.request.cancelled`
   y met fin ; `cleaning.contract.suspended` / `resumed` mettent la facturation en pause. Aucun
-  appel vers cleaning : la facturation fonctionne même quand cleaning est arrêté.
+  appel vers cleaning : la facturation fonctionne même quand cleaning est arrêté. Les événements
+  peuvent arriver dans le désordre (ADR-032) : une annulation, suspension ou reprise d'une mission
+  d'organisation reçue avant sa confirmation n'est pas marquée traitée et repasse par la file
+  `.retry` jusqu'à ce que le contrat existe.
 - **Une facture par mois civil** (heure du Bénin, UTC+1), émise à la fin du mois : le 1er du
   mois suivant à 00:00, heure du Bénin (au premier passage de la tâche planifiée).
 - **Prorata des jours** : montant mensuel (`total / durée`) × jours facturables / jours du mois,

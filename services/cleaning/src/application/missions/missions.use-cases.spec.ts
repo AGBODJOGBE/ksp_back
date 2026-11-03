@@ -372,7 +372,8 @@ describe('missions et passages (UC-CL-09, 10)', () => {
     expect(view.mission.status).toBe('cancelled');
     expect(world.recorder.events.at(-1)).toMatchObject({
       type: 'cleaning.request.cancelled',
-      payload: { missionId: MISSION_ID },
+      // Particulier : organisation null (billing n'attend pas de contrat, ADR-032).
+      payload: { missionId: MISSION_ID, organizationId: null },
     });
   });
 

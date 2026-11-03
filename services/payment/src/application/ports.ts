@@ -1,5 +1,5 @@
 import { type PaymentEventPayloads, type PaymentEventType } from '@ksp/contracts';
-import { type InvoiceDue, type MissionDue } from '../domain/amount-due';
+import { type InvoiceDue, type MissionDue, type SucceededPayment } from '../domain/amount-due';
 import {
   type PaymentIntent,
   type PaymentStatus,
@@ -61,8 +61,11 @@ export interface PaymentRepository {
     part: string | null;
     now: Date;
   }): Promise<PaymentIntent | null>;
-  /** Identifiants des paiements réussis (`succeeded`) d'un objet, quel que soit le payeur ou la part. */
-  listSucceededIds(input: { subjectType: SubjectType; subjectId: string }): Promise<string[]>;
+  /**
+   * Paiements réussis (`succeeded`) d'un objet, quel que soit le payeur ou la part, avec l'instant de
+   * leur réussite.
+   */
+  listSucceeded(input: { subjectType: SubjectType; subjectId: string }): Promise<SucceededPayment[]>;
   /**
    * Enregistre le paiement si sa version n'a pas changé depuis la lecture, avec ses événements
    * (outbox) dans la même transaction ; sinon false.
@@ -188,6 +191,12 @@ export interface PaymentSettings {
   recheckAfterSeconds: number;
   /** Simulation autorisée : prestataire simulé, hors production. */
   simulationEnabled: boolean;
+  /**
+   * Durée, depuis sa réussite, pendant laquelle un paiement pas encore enregistré par cleaning ou
+   * billing fait refuser un nouveau paiement avec PAYMENT_ALREADY_RECEIVED (« réessayez ») ; au-delà,
+   * PAYMENT_RECONCILIATION_PENDING (contacter le support) et alerte (ADR-032). En minutes.
+   */
+  unrecordedGraceMinutes: number;
   /** Durée pendant laquelle un paiement non abouti est encore relu (réussite tardive), en heures. */
   lateSuccessWindowHours: number;
   /** Intervalle entre deux relectures d'un paiement non abouti (réussite tardive), en minutes. */
@@ -211,6 +220,16 @@ export interface PaymentAlerts {
     expectedTransactionId: string | null;
     receivedTransactionId: string;
     receivedPaymentId: string | null;
+  }): void;
+  /**
+   * Paiement réussi toujours pas enregistré par cleaning ou billing au-delà du délai normal : un
+   * nouveau paiement de l'objet est refusé jusqu'au rapprochement (ADR-032).
+   */
+  unrecordedPayment(input: {
+    subjectType: string;
+    subjectId: string;
+    paymentIds: string[];
+    since: Date;
   }): void;
 }
 

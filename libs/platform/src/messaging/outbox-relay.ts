@@ -11,14 +11,29 @@ export interface OutboxRelayOptions {
   retryBaseDelayMs?: number;
   /** Délai maximal entre deux tentatives d'un même événement. */
   retryMaxDelayMs?: number;
-  /** Tentatives au-delà desquelles un événement est mis de côté (rejouable). */
-  maxAttempts?: number;
+  /**
+   * Durée d'échecs, mesurée depuis le premier échec de l'événement, au-delà de laquelle il est mis
+   * de côté (alerte, rejouable par `pnpm outbox:replay`).
+   */
+  parkAfterMs?: number;
+  /** Délai maximal d'une publication (confirmation du broker comprise) ; au-delà, c'est un échec. */
+  publishTimeoutMs?: number;
+  /**
+   * Durée maximale d'un passage : aucune publication n'est lancée si elle risque de le dépasser
+   * (temps écoulé + `publishTimeoutMs`), et ce qui est fait est validé. À garder sous le délai de la
+   * transaction du store (30 s pour `SqlOutboxStore`).
+   */
+  passBudgetMs?: number;
+  /** Horloge, en millisecondes (tests). */
+  now?: () => number;
 }
 
 export const OUTBOX_RETRY_DEFAULTS = {
   retryBaseDelayMs: 1_000,
   retryMaxDelayMs: 5 * 60_000,
-  maxAttempts: 25,
+  parkAfterMs: 24 * 3_600_000,
+  publishTimeoutMs: 5_000,
+  passBudgetMs: 20_000,
 } as const;
 
 /** Délai avant la tentative suivante, après `attempts` échecs (1 s, 2 s, 4 s… plafonné). */
@@ -31,6 +46,11 @@ export function outboxRetryDelayMs(
   return Math.min(max, base * 2 ** Math.min(Math.max(attempts - 1, 0), 30));
 }
 
+/** Message d'une erreur quelconque, y compris un rejet sans valeur (undefined, null). */
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Longueur maximale du message d'erreur conservé dans l'outbox. */
 const ERROR_MAX_LENGTH = 500;
 
@@ -38,6 +58,8 @@ interface PassResult {
   published: number;
   /** Deux échecs de suite : le broker est probablement indisponible, le passage s'est arrêté. */
   interrupted: boolean;
+  /** Budget de temps atteint : des événements du lot restent à publier tout de suite. */
+  truncated: boolean;
 }
 
 /**
@@ -47,9 +69,11 @@ interface PassResult {
  * Plusieurs instances peuvent tourner en parallèle : chaque lot est verrouillé.
  *
  * Un événement en échec ne bloque pas les suivants : il est réessayé plus tard, avec un délai qui
- * double à chaque échec, puis mis de côté (alerte, rejouable) au-delà de `maxAttempts`. Deux échecs
- * de suite arrêtent le passage (broker probablement indisponible) : le second n'est pas compté à
- * son événement, et le relais attend avant de reprendre.
+ * double à chaque échec (plafonné), puis mis de côté (alerte, rejouable) après `parkAfterMs`
+ * d'échecs depuis le premier. Deux échecs de suite arrêtent le passage (broker probablement
+ * indisponible) : le second n'est pas compté à son événement, et le relais attend avant de reprendre.
+ * Chaque publication a un délai maximal, et un passage s'arrête avant de dépasser son budget de
+ * temps : la transaction du lot n'expire jamais (sinon tout serait annulé et republié).
  */
 export class OutboxRelay {
   private readonly logger = new Logger(OutboxRelay.name);
@@ -80,21 +104,34 @@ export class OutboxRelay {
     await this.loop;
   }
 
+  private now(): number {
+    return this.options.now ? this.options.now() : Date.now();
+  }
+
   private async pass(): Promise<PassResult> {
     let interrupted = false;
+    let truncated = false;
+    const budget = this.options.passBudgetMs ?? OUTBOX_RETRY_DEFAULTS.passBudgetMs;
+    const timeout = this.options.publishTimeoutMs ?? OUTBOX_RETRY_DEFAULTS.publishTimeoutMs;
     const published = await this.store.withUnpublishedBatch(
       this.options.batchSize ?? 100,
       async (records: OutboxRecord[]) => {
+        const startedAt = this.now();
         const done: string[] = [];
         const failed: OutboxFailure[] = [];
         let previousFailed = false;
         for (const record of records) {
+          // Une publication de plus risquerait de dépasser le budget : le reste attend le passage suivant.
+          if (this.now() - startedAt + timeout > budget) {
+            truncated = true;
+            break;
+          }
           try {
-            await this.publisher.publish(record.envelope);
+            await this.publishWithTimeout(record, timeout);
             done.push(record.id);
             previousFailed = false;
           } catch (error) {
-            const message = ((error as Error).message ?? String(error)).slice(0, ERROR_MAX_LENGTH);
+            const message = errorMessage(error).slice(0, ERROR_MAX_LENGTH);
             if (previousFailed) {
               // Deux échecs de suite : le broker est probablement indisponible. Ce second échec n'est
               // pas imputé à son événement ; le premier l'est (sinon deux événements en échec
@@ -112,23 +149,49 @@ export class OutboxRelay {
         return { published: done, failed };
       },
     );
-    return { published, interrupted };
+    return { published, interrupted, truncated };
+  }
+
+  /**
+   * Publication bornée dans le temps. Au-delà du délai, l'événement est compté en échec ; s'il
+   * atteint finalement le broker, il sera publié une seconde fois (livraison « au moins une fois »,
+   * les consommateurs sont idempotents).
+   */
+  private async publishWithTimeout(record: OutboxRecord, timeoutMs: number): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const publishing = Promise.resolve().then(() => this.publisher.publish(record.envelope));
+    // Un rejet survenu après le délai ne doit pas devenir un rejet non géré.
+    publishing.catch(() => undefined);
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`délai de publication dépassé (${timeoutMs} ms)`)),
+        timeoutMs,
+      );
+    });
+    try {
+      await Promise.race([publishing, expired]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private failure(record: OutboxRecord, error: string): OutboxFailure {
     const attempts = record.attempts + 1;
-    const maxAttempts = this.options.maxAttempts ?? OUTBOX_RETRY_DEFAULTS.maxAttempts;
-    if (attempts >= maxAttempts) {
-      // Alerte : l'événement ne sera plus publié sans intervention (SqlOutboxStore.replayParked).
+    const now = this.now();
+    const failingForMs = record.firstFailedAt ? now - record.firstFailedAt.getTime() : 0;
+    const parkAfterMs = this.options.parkAfterMs ?? OUTBOX_RETRY_DEFAULTS.parkAfterMs;
+    if (failingForMs >= parkAfterMs) {
+      // Alerte : l'événement ne sera plus publié sans intervention (pnpm outbox:replay).
       this.logger.error(
-        `ALERTE outbox : ${record.envelope.type} (${record.id}) mis de côté après ${attempts} tentatives ; ` +
-          `à rejouer une fois la cause corrigée. Dernière erreur : ${error}`,
+        `ALERTE outbox : ${record.envelope.type} (${record.id}) mis de côté après ${attempts} tentatives ` +
+          `en échec depuis ${Math.round(failingForMs / 60_000)} min ; à rejouer une fois la cause corrigée ` +
+          `(pnpm outbox:replay). Dernière erreur : ${error}`,
       );
       return { id: record.id, error, retryInMs: null };
     }
     const retryInMs = outboxRetryDelayMs(attempts, this.options);
     this.logger.warn(
-      `Publication de ${record.envelope.type} (${record.id}) en échec (tentative ${attempts}/${maxAttempts}), ` +
+      `Publication de ${record.envelope.type} (${record.id}) en échec (tentative ${attempts}), ` +
         `nouvel essai dans ${Math.round(retryInMs / 1000)} s : ${error}`,
     );
     return { id: record.id, error, retryInMs };
@@ -139,18 +202,18 @@ export class OutboxRelay {
     while (this.running) {
       let delay = this.options.idleDelayMs ?? 500;
       try {
-        const { published, interrupted } = await this.pass();
+        const { published, interrupted, truncated } = await this.pass();
         if (interrupted) {
           backoff = this.nextBackoff(backoff);
           delay = backoff;
         } else {
           backoff = 0;
-          if (published > 0) delay = 0;
+          if (published > 0 || truncated) delay = 0;
         }
       } catch (error) {
         backoff = this.nextBackoff(backoff);
         delay = backoff;
-        this.logger.error(`Relais outbox en échec : ${(error as Error).message}`);
+        this.logger.error(`Relais outbox en échec : ${errorMessage(error)}`);
       }
       if (delay > 0 && this.running) {
         await new Promise<void>((resolve) => {

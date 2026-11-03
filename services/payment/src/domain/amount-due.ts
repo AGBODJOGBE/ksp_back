@@ -28,14 +28,32 @@ export interface InvoiceDue {
   recordedPaymentIds: string[];
 }
 
+/** Paiement réussi d'un objet, et l'instant de sa réussite. */
+export interface SucceededPayment {
+  id: string;
+  succeededAt: Date;
+}
+
+/** Paiements réussis pas encore enregistrés, et la plus ancienne de leurs réussites. */
+export interface UnrecordedSuccesses {
+  paymentIds: string[];
+  since: Date;
+}
+
 /**
- * Paiement réussi que le service de l'objet n'a pas encore enregistré (événement en route, relais en
- * retard) : son montant n'est pas encore déduit du montant dû. Tant qu'il en existe un, un nouveau
- * paiement ferait payer deux fois (ADR-032).
+ * Paiements réussis que le service de l'objet n'a pas encore enregistrés (événement en route, relais
+ * en retard) : leur montant n'est pas encore déduit du montant dû. Tant qu'il en existe un, un
+ * nouveau paiement ferait payer deux fois (ADR-032). null s'il n'y en a aucun.
  */
-export function unrecordedSuccess(succeededIds: readonly string[], recordedIds: readonly string[]): boolean {
+export function unrecordedSuccesses(
+  succeeded: readonly SucceededPayment[],
+  recordedIds: readonly string[],
+): UnrecordedSuccesses | null {
   const recorded = new Set(recordedIds);
-  return succeededIds.some((id) => !recorded.has(id));
+  const pending = succeeded.filter((payment) => !recorded.has(payment.id));
+  if (pending.length === 0) return null;
+  const since = Math.min(...pending.map((payment) => payment.succeededAt.getTime()));
+  return { paymentIds: pending.map((payment) => payment.id), since: new Date(since) };
 }
 
 /** Périmètre du payeur : son organisation active, sinon lui-même (contexte personnel). */

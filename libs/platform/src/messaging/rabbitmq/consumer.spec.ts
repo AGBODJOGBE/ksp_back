@@ -71,6 +71,25 @@ describe('handleDelivery', () => {
     expect(channel.ack).toHaveBeenCalledTimes(1);
   });
 
+  it('un rejet sans valeur (undefined) part aussi en file de reprise', async () => {
+    const channel = fakeChannel();
+    const result = await handleDelivery(
+      channel,
+      queues,
+      message(JSON.stringify(env)),
+      () => Promise.reject(undefined),
+      5,
+      silentLogger,
+    );
+    expect(result).toBe('retried');
+    expect(channel.sendToQueue).toHaveBeenCalledWith(
+      queues.retry,
+      expect.any(Buffer),
+      expect.objectContaining({ headers: expect.objectContaining({ 'x-last-error': 'undefined' }) }),
+    );
+    expect(channel.ack).toHaveBeenCalledTimes(1);
+  });
+
   it('envoie en file d’erreurs après le nombre maximum de tentatives', async () => {
     const channel = fakeChannel();
     const result = await handleDelivery(

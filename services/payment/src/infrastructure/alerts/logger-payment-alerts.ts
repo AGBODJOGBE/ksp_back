@@ -34,4 +34,17 @@ export class LoggerPaymentAlerts implements PaymentAlerts {
         `(payment_id ${input.receivedPaymentId ?? 'absent'}) ; ignorée`,
     );
   }
+
+  unrecordedPayment(input: {
+    subjectType: string;
+    subjectId: string;
+    paymentIds: string[];
+    since: Date;
+  }): void {
+    this.logger.error(
+      `ALERTE paiement : paiement(s) réussi(s) ${input.paymentIds.join(', ')} non enregistré(s) pour ` +
+        `${input.subjectType} ${input.subjectId} depuis ${input.since.toISOString()} ; nouveau paiement ` +
+        'refusé (PAYMENT_RECONCILIATION_PENDING), à rapprocher (outbox de payment, consommateurs de cleaning ou billing)',
+    );
+  }
 }

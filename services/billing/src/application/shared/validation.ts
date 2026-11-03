@@ -2,6 +2,8 @@ import { type PageRequest } from '../ports';
 import { BillingErrors } from './errors';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Clé d'idempotence : 8 à 100 caractères, lettres, chiffres, « _ » et « - » (contrat OpenAPI). */
+export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,100}$/;
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 100;

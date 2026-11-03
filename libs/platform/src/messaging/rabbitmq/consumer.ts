@@ -2,6 +2,7 @@ import { type EventEnvelope, type KspEventPayloads, type KspEventType } from '@k
 import { Logger } from '@nestjs/common';
 import { type Channel, type ConsumeMessage } from 'amqplib';
 import { runWithContext } from '../../context/request-context';
+import { errorMessage } from '../outbox-relay';
 import { type RabbitMqConnection } from './connection';
 import { assertConsumerTopology, type ConsumerQueues, consumerQueues } from './topology';
 
@@ -42,7 +43,7 @@ export async function handleDelivery(
     envelope = JSON.parse(message.content.toString('utf8')) as EventEnvelope;
     if (!envelope?.eventId || !envelope?.type) throw new Error('enveloppe incomplète');
   } catch (error) {
-    logger.error(`Message illisible dans ${queues.main} : ${(error as Error).message}`);
+    logger.error(`Message illisible dans ${queues.main} : ${errorMessage(error)}`);
     channel.sendToQueue(queues.dlq, message.content, {
       ...message.properties,
       headers: { ...headers, 'x-failure-reason': 'invalid_envelope' },
@@ -58,7 +59,8 @@ export async function handleDelivery(
     channel.ack(message);
     return 'acked';
   } catch (error) {
-    const reason = (error as Error).message ?? String(error);
+    // Un rejet sans valeur (undefined, null) ne doit pas faire échouer le traitement de l'échec.
+    const reason = errorMessage(error);
     if (attempts < maxRetries) {
       logger.warn(
         `${envelope.type} (${envelope.eventId}) en échec, tentative ${attempts + 1}/${maxRetries} : ${reason}`,

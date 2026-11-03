@@ -255,6 +255,57 @@ describe('paiement en ligne (cas d’usage)', () => {
       expect(balance).toMatchObject({ created: true, payment: { amount: 35000 } });
     });
 
+    it('toujours pas enregistré après 15 min : autre refus (support) et alerte, jamais de second paiement', async () => {
+      const first = await createMission('deposit', 'pay-key-0001');
+      provider().set('1001', { status: 'approved' });
+      await notify('1001');
+      const succeededAt = clock().now();
+      // Juste avant 15 min : « réessayez dans quelques instants », sans alerte.
+      clock().advance(15 * 60_000 - 1);
+      expect((await rejection(createMission('deposit', 'pay-key-0002'))).code).toBe(
+        'PAYMENT_ALREADY_RECEIVED',
+      );
+      expect(alerts().unrecordedPayments).toEqual([]);
+      // 15 min après la réussite : le client est orienté vers le support, l'équipe est alertée.
+      clock().advance(1);
+      const late = await rejection(createMission('balance', 'pay-key-0003'));
+      expect(late.code).toBe('PAYMENT_RECONCILIATION_PENDING');
+      expect(late.message).toContain('contactez le support');
+      expect(alerts().unrecordedPayments).toEqual([
+        {
+          subjectType: 'cleaning_mission',
+          subjectId: MISSION_ID,
+          paymentIds: [first.payment.id],
+          since: succeededAt,
+        },
+      ]);
+      // Des heures plus tard, toujours refusé : une seule page de paiement a été ouverte.
+      clock().advance(6 * 3_600_000);
+      expect((await rejection(createMission('deposit', 'pay-key-0004'))).code).toBe(
+        'PAYMENT_RECONCILIATION_PENDING',
+      );
+      expect(provider().checkouts).toHaveLength(1);
+      // Enregistré enfin : le paiement suivant est permis.
+      dues().missions.set(
+        MISSION_ID,
+        missionDue({ depositDue: 0, remainingDue: 35000, recordedPaymentIds: [first.payment.id] }),
+      );
+      expect((await createMission('balance', 'pay-key-0005')).created).toBe(true);
+    });
+
+    it('délai avant l’orientation vers le support réglable', async () => {
+      deps = makeDeps({ settings: { ...makeDeps().settings, unrecordedGraceMinutes: 2 } });
+      useCases = createUseCases(deps);
+      dues().missions.set(MISSION_ID, missionDue());
+      await createMission('deposit', 'pay-key-0001');
+      provider().set('1001', { status: 'approved' });
+      await notify('1001');
+      clock().advance(2 * 60_000);
+      expect((await rejection(createMission('deposit', 'pay-key-0002'))).code).toBe(
+        'PAYMENT_RECONCILIATION_PENDING',
+      );
+    });
+
     it('facture : même refus tant que billing n’a pas enregistré le paiement réussi', async () => {
       const pay = (key: string) =>
         asCustomer(
