@@ -299,6 +299,15 @@ export const CLEANING_ROUTES = [
     requiresKnownClient: false,
   },
   {
+    operationId: 'previewCleaningService',
+    method: 'POST',
+    path: '/api/v1/admin/cleaning/catalog/services/{code}/preview',
+    grpc: `${ADMIN}/PreviewService`,
+    access: { level: 'authenticated', anyRole: ADMINISTRATION, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
     operationId: 'updateCleaningSettings',
     method: 'PUT',
     path: '/api/v1/admin/cleaning/catalog/settings',

@@ -118,21 +118,66 @@ describe('cleaning en gRPC', () => {
     );
   const asCustomer = { userId: CUSTOMER, roles: ['customer'] };
 
-  it('catalogue et simulateur publics, montants en entiers XOF', async () => {
+  /** Réponses au formulaire du nettoyage à domicile (ADR-033). */
+  const ANSWERS: cleaningV1.AnswerSet = {
+    values: {
+      housing_type: { choiceValue: 'apartment' },
+      rooms: { numberValue: 6 },
+      bathrooms: { numberValue: 1 },
+      condition: { choiceValue: 'normal' },
+      pets: { booleanValue: false },
+    },
+  };
+  const WINDOWS = [{ code: 'windows', answers: { values: { window_count: { numberValue: 8 } } } }];
+
+  it('catalogue public : formulaire sans prix, anciens champs remplis', async () => {
     const { services } = await call((m) => catalog.listServices({}, m));
     expect(services[0]).toMatchObject({
       code: 'home_cleaning',
+      unit: 'room',
       priced: true,
       minimumPrice: { amount: 15000, currency: 'XOF' },
+      options: [
+        { code: 'windows', label: 'Vitres' },
+        { code: 'sofa', label: 'Canapé' },
+        { code: 'appliances', label: 'Électroménager', price: { amount: 5000, currency: 'XOF' } },
+      ],
     });
+    const form = services[0]!.form!;
+    expect(form.fields.map((field) => [field.code, field.type, field.unitLabel])).toEqual([
+      ['housing_type', 'choice', ''],
+      ['rooms', 'number', 'pièces'],
+      ['bathrooms', 'number', 'salles de bain'],
+      ['condition', 'choice', ''],
+      ['pets', 'boolean', ''],
+    ]);
+    expect(form.fields[1]).toEqual({
+      code: 'rooms',
+      label: 'Nombre de pièces',
+      type: 'number',
+      required: true,
+      helpText: '',
+      unitLabel: 'pièces',
+      min: 1,
+      max: 50,
+      choices: [],
+    });
+    expect(form.options[0]!.fields[0]!.code).toBe('window_count');
+    expect(form.frequencies.map((frequency) => frequency.code)).toEqual(['once', 'weekly', 'monthly']);
+    // Aucun montant dans le formulaire public.
+    expect(JSON.stringify(form)).not.toMatch(/amount|supplement|coefficient|price/i);
+  });
 
+  it('simulateur : nouveau format, détail du calcul ; ancien format toléré', async () => {
     const simulation = await call((m) =>
       catalog.simulate(
         {
           serviceCode: 'home_cleaning',
-          premisesType: 'house',
-          quantity: 6,
-          options: ['windows'],
+          premisesType: '',
+          quantity: 0,
+          options: [],
+          answers: ANSWERS,
+          optionSelections: WINDOWS,
           commune: 'Abomey-Calavi',
           frequency: 'once',
         },
@@ -142,10 +187,42 @@ describe('cleaning en gRPC', () => {
     expect(simulation).toMatchObject({
       covered: true,
       priced: true,
-      estimate: { low: { amount: 33500, currency: 'XOF' }, high: { amount: 43000, currency: 'XOF' } },
-      computedPrice: { amount: 37400, currency: 'XOF' },
-      communeCoefficientBp: 11000,
+      reason: '',
+      estimate: { low: { amount: 32000, currency: 'XOF' }, high: { amount: 41000, currency: 'XOF' } },
+      computedPrice: { amount: 35700, currency: 'XOF' },
+      communeCoefficientBp: 10500,
+      recommendedTeamSize: 2,
     });
+    expect(simulation.breakdown).toHaveLength(3);
+    expect(simulation.calculation).toMatchObject({
+      pricingVersion: 3,
+      priced: true,
+      baseAmount: { amount: 34000, currency: 'XOF' },
+      subtotal: { amount: 35700, currency: 'XOF' },
+    });
+    expect(simulation.calculation!.lines[2]).toMatchObject({
+      kind: 'unit_price',
+      optionCode: 'windows',
+      fieldCode: 'window_count',
+      choiceCode: '',
+      quantity: 8,
+    });
+
+    const legacy = await call((m) =>
+      catalog.simulate(
+        {
+          serviceCode: 'home_cleaning',
+          premisesType: 'house',
+          quantity: 6,
+          options: ['windows'],
+          optionSelections: [],
+          commune: 'Abomey-Calavi',
+          frequency: 'once',
+        },
+        m,
+      ),
+    );
+    expect(legacy).toMatchObject({ priced: false, reason: 'answers_incomplete', breakdown: [] });
   });
 
   it('zones desservies publiques : actives seulement, code et nom, sans utilisateur', async () => {
@@ -169,9 +246,12 @@ describe('cleaning en gRPC', () => {
           {
             idempotencyKey: 'grpc-1',
             serviceCode: 'home_cleaning',
-            premisesType: 'house',
-            quantity: 6,
+            premisesType: '',
+            quantity: 0,
             options: [],
+            answers: ANSWERS,
+            optionSelections: WINDOWS,
+            frequency: 'once',
             commune: 'Cotonou',
             address: 'Lot 12',
             preferredSlots: [SLOT],
@@ -190,6 +270,16 @@ describe('cleaning en gRPC', () => {
       missionId: '',
     });
     expect(request?.preferredSlots).toEqual([SLOT]);
+    expect(request).toMatchObject({
+      answers: ANSWERS,
+      optionSelections: WINDOWS,
+      frequency: 'once',
+      pricingVersion: 3,
+      premisesType: 'other',
+      quantity: 6,
+      options: ['windows'],
+      calculation: { priced: true, computedPrice: { amount: 34000, currency: 'XOF' } },
+    });
     const { obligations: none } = await call((m) =>
       obligations.hasPendingObligations({ userId: CUSTOMER, organizationId: '' }, m),
     );
@@ -309,6 +399,71 @@ describe('cleaning en gRPC', () => {
       roles: ['cleaning_admin'],
       mfa: true,
     });
-    expect(services[0]?.pricing?.unitPrice).toEqual({ amount: 5000, currency: 'XOF' });
+    expect(services[0]?.pricing?.unitPrice).toEqual({ amount: 4500, currency: 'XOF' });
+  });
+
+  it('back-office : définition complète enregistrée telle quelle, essai d’une grille', async () => {
+    const adminUser = { userId: CUSTOMER, roles: ['cleaning_admin'], mfa: true };
+    const { services } = await call((m) => admin.getCatalog({}, m), adminUser);
+    const current = services.find((service) => service.code === 'home_cleaning')!;
+    expect(current.fields[3]!.choices[1]).toEqual({
+      code: 'dirty',
+      label: 'Sale',
+      // Prix non fixé : message absent (null une fois décodé).
+      supplement: null,
+      coefficientBp: 12000,
+      active: true,
+    });
+    expect(current.pricing!.teamSize).toEqual({
+      fieldCode: 'rooms',
+      unitsPerAgent: 3,
+      minAgents: 1,
+      maxAgents: 6,
+    });
+
+    const { service: saved } = await call(
+      (m) => admin.saveService({ service: { ...current, code: 'home_cleaning_copy' } }, m),
+      adminUser,
+    );
+    expect(saved!.fields).toEqual(current.fields);
+    expect(saved!.options).toEqual(current.options);
+    expect(saved!.pricing).toMatchObject({
+      version: 1,
+      frequencies: current.pricing!.frequencies,
+      minimumPrice: { amount: 15000, currency: 'XOF' },
+    });
+
+    const preview = await call(
+      (m) =>
+        admin.previewService(
+          {
+            serviceCode: 'garden_maintenance',
+            definition: { ...current, fields: current.fields.map((field) => ({ ...field })) },
+            answers: ANSWERS,
+            optionSelections: [],
+            commune: 'Cotonou',
+            frequency: 'weekly',
+            requestedTeamSize: 0,
+          },
+          m,
+        ),
+      adminUser,
+    );
+    // (27 000 + 3 000) × 0,9 ; définition essayée : pas de version.
+    expect(preview).toMatchObject({
+      serviceCode: 'garden_maintenance',
+      covered: true,
+      calculation: { pricingVersion: 0, priced: true, computedPrice: { amount: 27000, currency: 'XOF' } },
+    });
+    expect(world.catalog.services.has('garden_maintenance')).toBe(false);
+
+    const refused = await call(
+      (m) => admin.saveService({ service: { ...current, code: 'legacy_body', fields: [], options: [] } }, m),
+      adminUser,
+    ).then(
+      () => null,
+      (error: AppError) => [error.code, error.details],
+    );
+    expect(refused).toEqual(['CLEANING_VALIDATION_FAILED', { field: 'fields', reason: 'required' }]);
   });
 });

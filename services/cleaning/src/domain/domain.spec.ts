@@ -1,10 +1,4 @@
-import {
-  DEFAULT_TEAM_SIZE,
-  normalizeCommune,
-  pricingProblems,
-  recommendedTeamSize,
-  type ServiceDefinition,
-} from './catalog';
+import { normalizeCommune } from './catalog';
 import {
   canTransitionIntervention,
   deriveMissionStatus,
@@ -29,37 +23,10 @@ import { canSendQuote, canTransitionRequest, effectiveRequestStatus } from './qu
 import { isValidRecurrence, plannedInterventions } from './recurrence';
 import { conflictingAgents, isFreeCancellation, overlaps, respectsLeadTime, slotFrom } from './schedule';
 import { INITIAL_ZONES, isCovered, isValidZoneCode, zoneCode } from './zone';
-import { DEFAULT_SETTINGS, settingsProblems } from './settings';
-import { priceRange, simulate, unknownOptions } from './simulator';
+import { DEFAULT_SETTINGS, mergeSettings, settingsProblems } from './settings';
 
 const NOW = new Date('2026-10-23T08:00:00Z');
 const at = (iso: string) => new Date(iso);
-
-function service(pricing: Partial<ServiceDefinition['pricing']> = {}): ServiceDefinition {
-  return {
-    code: 'home_cleaning',
-    name: 'Nettoyage à domicile',
-    description: '',
-    unit: 'room',
-    active: true,
-    pricing: {
-      version: 1,
-      unitPrice: 5000,
-      minimumPrice: 15000,
-      options: [
-        { code: 'windows', label: 'Vitres', price: 4000 },
-        { code: 'weekend', label: 'Week-end', price: null },
-      ],
-      communeCoefficients: { 'abomey-calavi': 11000 },
-      defaultCoefficientBp: 10000,
-      teamSize: { unitsPerAgent: 3, minAgents: 1, maxAgents: 6 },
-      checklist: [],
-      updatedBy: 'admin',
-      updatedAt: NOW,
-      ...pricing,
-    },
-  };
-}
 
 describe('montants', () => {
   it('arrondit au multiple de 500 le plus proche', () => {
@@ -74,94 +41,22 @@ describe('montants', () => {
   });
 });
 
-describe('simulateur', () => {
-  it('quantité × prix unitaire + options, multiplié par le coefficient de la commune', () => {
-    const result = simulate(service(), { quantity: 6, options: ['windows'], commune: 'Abomey-Calavi' });
-    expect(result).toMatchObject({
-      priced: true,
-      computedPrice: 37_400,
-      coefficientBp: 11_000,
-      minimumApplied: false,
-      breakdown: [
-        { label: 'Nettoyage à domicile', quantity: 6, unitPrice: 5000, amount: 30_000 },
-        { label: 'Vitres', quantity: 1, unitPrice: 4000, amount: 4000 },
-      ],
-    });
-  });
-
-  it('fourchette −10 % / +15 % arrondie à 500 FCFA', () => {
-    expect(priceRange(37_400)).toEqual({ low: 33_500, high: 43_000 });
-    const result = simulate(service(), { quantity: 6, options: ['windows'], commune: 'Abomey-Calavi' });
-    expect(result).toMatchObject({ low: 33_500, high: 43_000 });
-  });
-
-  it('applique le minimum de commande', () => {
-    const result = simulate(service(), { quantity: 1, options: [], commune: 'Cotonou' });
-    expect(result).toMatchObject({ priced: true, computedPrice: 15_000, minimumApplied: true });
-  });
-
-  it('commune inconnue : coefficient par défaut', () => {
-    const result = simulate(service(), { quantity: 4, options: [], commune: 'Ouidah' });
-    expect(result).toMatchObject({ computedPrice: 20_000, coefficientBp: 10_000 });
-  });
-
-  it('prestation sans prix : réponse propre, sans montant', () => {
-    expect(simulate(service({ unitPrice: null }), { quantity: 4, options: [], commune: 'Cotonou' })).toEqual({
-      priced: false,
-      reason: 'price_not_set',
-      recommendedTeamSize: 2,
-    });
-  });
-
-  it('option choisie sans prix : pas de montant', () => {
-    expect(simulate(service(), { quantity: 4, options: ['weekend'], commune: 'Cotonou' })).toMatchObject({
-      priced: false,
-      reason: 'option_price_not_set',
-    });
-  });
-
-  it('repère les options inconnues de la grille', () => {
-    expect(unknownOptions(service(), ['windows', 'pool'])).toEqual(['pool']);
-  });
-
+describe('communes', () => {
   it('normalise le nom des communes', () => {
     expect(normalizeCommune('  Abomey Calavi ')).toBe('abomey-calavi');
     expect(normalizeCommune('Sèmè-Podji')).toBe('seme-podji');
   });
 });
 
-describe('taille d’équipe', () => {
-  const rule = { unitsPerAgent: 3, minAgents: 1, maxAgents: 6 };
-
-  it('dépend du nombre de pièces, dans les bornes', () => {
-    expect(recommendedTeamSize(rule, 1)).toBe(1);
-    expect(recommendedTeamSize(rule, 7)).toBe(3);
-    expect(recommendedTeamSize(rule, 100)).toBe(6);
-  });
-
-  it('suit la demande du client quand il la précise', () => {
-    expect(recommendedTeamSize(rule, 7, 5)).toBe(5);
-    expect(recommendedTeamSize(rule, 7, 50)).toBe(6);
-  });
-});
-
-describe('grille et réglages', () => {
-  it('refuse les montants non entiers, coefficients et équipes incohérents', () => {
-    const { pricing } = service();
-    expect(pricingProblems(pricing)).toEqual([]);
-    expect(
-      pricingProblems({
-        ...pricing,
-        unitPrice: 12.5,
-        defaultCoefficientBp: 0,
-        teamSize: { ...DEFAULT_TEAM_SIZE, minAgents: 5, maxAgents: 2 },
-      }),
-    ).toEqual(['unitPrice', 'defaultCoefficientBp', 'teamSize']);
-  });
-
+describe('réglages', () => {
   it('valide les réglages de la partie 4', () => {
     expect(settingsProblems(DEFAULT_SETTINGS)).toEqual([]);
     expect(settingsProblems({ ...DEFAULT_SETTINGS, depositPercent: 120 })).toEqual(['depositPercent']);
+  });
+
+  it('ignore le seuil de visite à l’écriture (déprécié, ADR-033)', () => {
+    const merged = mergeSettings(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, visitThresholdSquareMeters: 0 });
+    expect(merged.visitThresholdSquareMeters).toBe(DEFAULT_SETTINGS.visitThresholdSquareMeters);
   });
 });
 

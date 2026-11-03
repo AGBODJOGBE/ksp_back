@@ -23,28 +23,168 @@ const optionalReason = z.strictObject({ reason: text(500, 0).optional() });
 const requiredReason = z.strictObject({ reason: text(500) });
 const team = z.strictObject({ name: text(100), memberIds: z.array(uuid).max(50) });
 
+// --- Formulaire paramétrable (ADR-033) -----------------------------------------------------------
+
+const PREMISES_TYPES = ['apartment', 'house', 'office', 'shop', 'warehouse', 'other'] as const;
+const LEGACY_FREQUENCIES = ['once', 'weekly', 'monthly'] as const;
+const nullableCoefficient = int(1, 100_000).nullable();
+
+/** Réponses : code de champ → entier, code de valeur ou booléen ; 50 au plus. */
+const answers = z
+  .record(code, z.union([int(0, 1_000_000), code, z.boolean()]))
+  .refine((value) => Object.keys(value).length <= 50, { message: '50 réponses au plus' });
+const optionSelection = z.strictObject({ code, answers: answers.optional() });
+
+/**
+ * Deux formats (ADR-033), distingués par la présence de `answers` : nouveau (options en objets),
+ * ou ancien déprécié (type de local et quantité obligatoires, options en codes, fréquence parmi
+ * once, weekly, monthly). Les deux ne se mélangent pas.
+ */
+const formAnswers = {
+  answers: answers.optional(),
+  options: z
+    .array(z.union([optionSelection, code]))
+    .max(20)
+    .optional(),
+  frequency: code.optional(),
+  premisesType: z.enum(PREMISES_TYPES).optional(),
+  quantity: int(1, 1_000_000).optional(),
+};
+type FormAnswers = {
+  answers?: unknown;
+  options?: (string | object)[] | undefined;
+  frequency?: string | undefined;
+  premisesType?: string | undefined;
+  quantity?: number | undefined;
+};
+function oneFormat(value: FormAnswers, ctx: z.RefinementCtx) {
+  const issue = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
+  const options = value.options ?? [];
+  if (value.answers !== undefined) {
+    if (value.premisesType !== undefined) issue('premisesType', 'Ancien format : à ne pas mêler à answers.');
+    if (value.quantity !== undefined) issue('quantity', 'Ancien format : à ne pas mêler à answers.');
+    if (options.some((option) => typeof option === 'string'))
+      issue('options', 'Options attendues en objets.');
+    return;
+  }
+  if (value.premisesType === undefined) issue('premisesType', 'Obligatoire sans answers.');
+  if (value.quantity === undefined) issue('quantity', 'Obligatoire sans answers.');
+  if (options.some((option) => typeof option !== 'string')) issue('options', 'Options attendues en codes.');
+  if (value.frequency !== undefined && !(LEGACY_FREQUENCIES as readonly string[]).includes(value.frequency)) {
+    issue('frequency', 'Ancien format : once, weekly ou monthly.');
+  }
+}
+
+const FIELD_PROPERTIES = {
+  number: ['unitLabel', 'min', 'max', 'pricePerUnit'],
+  choice: ['choices'],
+  boolean: ['supplementIfYes', 'coefficientBpIfYes'],
+} as const;
+const fieldInput = z
+  .strictObject({
+    code,
+    label: text(100),
+    type: z.enum(['number', 'choice', 'boolean']),
+    required: z.boolean(),
+    helpText: z.string().max(300).nullable().optional(),
+    active: z.boolean(),
+    unitLabel: text(30).optional(),
+    min: int(0, 1_000_000).optional(),
+    max: int(0, 1_000_000).optional(),
+    pricePerUnit: nullableAmount.optional(),
+    choices: z
+      .array(
+        z.strictObject({
+          code,
+          label: text(100),
+          supplement: nullableAmount,
+          coefficientBp: nullableCoefficient.optional(),
+          active: z.boolean(),
+        }),
+      )
+      .min(1)
+      .max(20)
+      .optional(),
+    supplementIfYes: nullableAmount.optional(),
+    coefficientBpIfYes: nullableCoefficient.optional(),
+  })
+  .superRefine((field, ctx) => {
+    // Propriétés obligatoires du type, propriétés des autres types refusées (contrat OpenAPI).
+    const required =
+      field.type === 'number' ? FIELD_PROPERTIES.number : field.type === 'choice' ? ['choices'] : [];
+    for (const key of required) {
+      if (field[key as keyof typeof field] === undefined)
+        ctx.addIssue({ code: 'custom', path: [key], message: 'Obligatoire pour ce type.' });
+    }
+    for (const [type, keys] of Object.entries(FIELD_PROPERTIES)) {
+      if (type === field.type) continue;
+      for (const key of keys) {
+        if (field[key as keyof typeof field] !== undefined)
+          ctx.addIssue({ code: 'custom', path: [key], message: 'Propriété d’un autre type.' });
+      }
+    }
+  });
+const serviceDefinition = z.strictObject({
+  name: text(100),
+  description: text(1000, 0).optional(),
+  active: z.boolean(),
+  fields: z.array(fieldInput).min(1).max(30),
+  options: z
+    .array(
+      z.strictObject({
+        code,
+        label: text(100),
+        description: z.string().max(500).nullable().optional(),
+        active: z.boolean(),
+        flatPrice: nullableAmount,
+        fields: z.array(fieldInput).max(10).optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
+  pricing: z.strictObject({
+    minimumPrice: nullableAmount,
+    communeCoefficients: z
+      .array(z.strictObject({ commune: text(100), coefficientBp: int(1, 100_000) }))
+      .optional(),
+    defaultCoefficientBp: int(1, 100_000).optional(),
+    frequencies: z
+      .array(z.strictObject({ code, label: text(100), coefficientBp: int(1, 100_000), active: z.boolean() }))
+      .max(10)
+      .optional(),
+    teamSize: z
+      .strictObject({
+        unitsPerAgent: int(1, 1_000_000),
+        minAgents: int(1, 50),
+        maxAgents: int(1, 50),
+        fieldCode: code.nullable().optional(),
+      })
+      .optional(),
+    checklist: z.array(z.strictObject({ code, label: text(200) })).optional(),
+  }),
+});
+
 export const cleaningBodies = {
-  simulateCleaning: z.strictObject({
-    serviceCode: code,
-    premisesType: z.enum(['apartment', 'house', 'office', 'shop', 'warehouse', 'other']),
-    quantity: int(1, 1_000_000),
-    options: z.array(code).max(20).optional(),
-    commune: text(100),
-    frequency: z.enum(['once', 'weekly', 'monthly']).optional(),
-  }),
-  requestCleaningQuote: z.strictObject({
-    serviceCode: code,
-    premisesType: z.enum(['apartment', 'house', 'office', 'shop', 'warehouse', 'other']),
-    quantity: int(1, 1_000_000),
-    options: z.array(code).max(20).optional(),
-    commune: text(100),
-    address: text(500),
-    preferredSlots: z.array(slot).min(1).max(3),
-    comment: text(2000, 0).optional(),
-    recurrence: recurrence.optional(),
-    requestedTeamSize: int(1, 50).optional(),
-    daysPerWeek: int(1, 7).optional(),
-  }),
+  simulateCleaning: z
+    .strictObject({
+      serviceCode: code,
+      ...formAnswers,
+      commune: text(100),
+    })
+    .superRefine(oneFormat),
+  requestCleaningQuote: z
+    .strictObject({
+      serviceCode: code,
+      ...formAnswers,
+      commune: text(100),
+      address: text(500),
+      preferredSlots: z.array(slot).min(1).max(3),
+      comment: text(2000, 0).optional(),
+      recurrence: recurrence.optional(),
+      requestedTeamSize: int(1, 50).optional(),
+      daysPerWeek: int(1, 7).optional(),
+    })
+    .superRefine(oneFormat),
   acceptCleaningQuote: z.strictObject({
     slotStart: dateTime,
     // Facultatif : une entreprise règle par sa facture mensuelle ; cleaning l'exige d'un particulier.
@@ -87,30 +227,21 @@ export const cleaningBodies = {
   cancelCleaningMission: requiredReason,
   updateCleaningChecklist: z.strictObject({ doneCodes: z.array(code).max(100) }),
   reportCleaningIncident: z.strictObject({ note: text(2000) }),
-  saveCleaningService: z.strictObject({
-    name: text(100),
-    description: text(1000, 0).optional(),
-    unit: z.enum(['square_meter', 'room', 'septic_tank', 'cubic_meter']),
-    active: z.boolean(),
-    pricing: z.strictObject({
-      unitPrice: nullableAmount,
-      minimumPrice: nullableAmount,
-      options: z.array(z.strictObject({ code, label: text(100), price: nullableAmount })).optional(),
-      communeCoefficients: z
-        .array(z.strictObject({ commune: text(100), coefficientBp: int(1, 100_000) }))
-        .optional(),
-      defaultCoefficientBp: int(1, 100_000).optional(),
-      teamSize: z
-        .strictObject({ unitsPerAgent: int(1, 1_000_000), minAgents: int(1, 50), maxAgents: int(1, 50) })
-        .optional(),
-      checklist: z.array(z.strictObject({ code, label: text(200) })).optional(),
-    }),
+  saveCleaningService: serviceDefinition,
+  previewCleaningService: z.strictObject({
+    definition: serviceDefinition.optional(),
+    answers,
+    options: z.array(optionSelection).max(20).optional(),
+    commune: text(100),
+    frequency: code.optional(),
+    requestedTeamSize: int(1, 50).optional(),
   }),
   updateCleaningSettings: z.strictObject({
     quoteValidityDays: int(1, 90),
     minimumLeadHours: int(0, 720),
     freeCancellationHours: int(0, 720),
-    visitThresholdSquareMeters: int(1, 100_000),
+    // Déprécié, ignoré par cleaning (ADR-033).
+    visitThresholdSquareMeters: int(1, 100_000).optional(),
     maxOpenRequests: int(1, 100),
     depositPercent: int(0, 100),
     businessWarningUnpaidInvoices: int(1, 24).optional(),

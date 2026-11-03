@@ -1685,7 +1685,9 @@ paths:
       operationId: listCleaningServices
       summary: Prestations de nettoyage
       description: |
-        UC-CL-01. Prestations actives, options et minimum de commande quand ils sont fixés.
+        UC-CL-01. Prestations actives et leur formulaire (`form` : champs, options et leurs champs, fréquences), sans
+        aucun prix, supplément ni coefficient (ADR-033) : seule la simulation donne des montants. `unit`, `options` et
+        `minimumPrice` sont dépréciés (ancien formulaire).
       x-ksp-grpc: ksp.cleaning.v1.CatalogService/ListServices
       x-ksp-access: public
       x-ksp-rate-limit: public
@@ -1699,6 +1701,72 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CleaningServiceList'
+              example:
+                data:
+                  - code: garden_maintenance
+                    name: Entretien de jardin
+                    description: Tonte, désherbage et entretien des espaces verts.
+                    unit: square_meter
+                    options:
+                      - code: hedge_trimming
+                        label: Taille de haies
+                        price: null
+                      - code: green_waste_removal
+                        label: Évacuation des déchets verts
+                        price: null
+                    priced: false
+                    minimumPrice: null
+                    form:
+                      fields:
+                        - code: surface
+                          label: Superficie
+                          type: number
+                          required: true
+                          helpText: null
+                          unitLabel: m²
+                          min: 1
+                          max: 100000
+                          choices: []
+                        - code: condition
+                          label: État de la pelouse ou du jardin
+                          type: choice
+                          required: true
+                          helpText: null
+                          unitLabel: null
+                          min: null
+                          max: null
+                          choices:
+                            - code: maintained
+                              label: Entretenu
+                            - code: overgrown
+                              label: Envahi
+                            - code: very_overgrown
+                              label: Très envahi
+                      options:
+                        - code: hedge_trimming
+                          label: Taille de haies
+                          description: null
+                          fields:
+                            - code: hedge_length
+                              label: Longueur de haies
+                              type: number
+                              required: true
+                              helpText: null
+                              unitLabel: mètres linéaires
+                              min: 1
+                              max: 2000
+                              choices: []
+                        - code: green_waste_removal
+                          label: Évacuation des déchets verts
+                          description: null
+                          fields: []
+                      frequencies:
+                        - code: once
+                          label: Une fois
+                        - code: weekly
+                          label: Chaque semaine
+                        - code: monthly
+                          label: Chaque mois
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -1754,9 +1822,13 @@ paths:
       operationId: simulateCleaning
       summary: Simuler un prix
       description: |
-        UC-CL-01. Fourchette indicative (−10 % / +15 % arrondie à 500 FCFA) et détail du calcul, sans compte ni donnée personnelle ; rien n’est enregistré. Une prestation sans prix répond `priced: false`, sans erreur.
+        UC-CL-01. Fourchette indicative (−10 % / +15 % arrondie à 500 FCFA) et détail du calcul, sans compte ni donnée personnelle ; rien n’est enregistré. Une prestation sans prix répond `priced: false`, sans erreur, avec sa raison.
 
-        Erreurs : `GATEWAY_VALIDATION_FAILED` et `CLEANING_VALIDATION_FAILED` (400), `CLEANING_SERVICE_NOT_FOUND` (404).
+        Calcul d’un passage (ADR-033) : prix = max(minimum, (Σ nombre × prix par unité + Σ suppléments des valeurs choisies et des réponses oui + Σ options [(forfait + leurs champs) × coefficients de leurs champs]) × Π coefficients des valeurs choisies et des réponses oui de la prestation × coefficient de la commune × coefficient de la fréquence). Les coefficients des champs d’une option ne s’appliquent qu’à cette option.
+
+        Corps au nouveau format (`answers`, `options` en objets, `frequency`) ou à l’ancien format déprécié (`premisesType`, `quantity`, `options` en codes) : voir `SimulateCleaningRequest`.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` et `CLEANING_VALIDATION_FAILED` (400, `details.field` et `details.reason` pour une réponse refusée), `CLEANING_SERVICE_NOT_FOUND` (404).
       x-ksp-grpc: ksp.cleaning.v1.CatalogService/Simulate
       x-ksp-access: public
       x-ksp-rate-limit: cleaning_simulation
@@ -1768,10 +1840,16 @@ paths:
               $ref: '#/components/schemas/SimulateCleaningRequest'
             example:
               serviceCode: home_cleaning
-              premisesType: house
-              quantity: 6
+              answers:
+                housing_type: villa
+                rooms: 6
+                bathrooms: 1
+                condition: normal
+                pets: false
               options:
-                - windows
+                - code: windows
+                  answers:
+                    window_count: 8
               commune: Abomey-Calavi
               frequency: once
       responses:
@@ -1791,36 +1869,124 @@ paths:
                     priced: true
                     estimate:
                       low:
-                        amount: 33500
+                        amount: 32000
                         currency: XOF
                       high:
-                        amount: 43000
+                        amount: 41000
                         currency: XOF
                     computedPrice:
-                      amount: 37400
+                      amount: 35700
                       currency: XOF
                     breakdown:
-                      - label: Nettoyage à domicile
+                      - label: Nombre de pièces
                         quantity: 6
                         unitPrice:
-                          amount: 5000
+                          amount: 4500
                           currency: XOF
                         amount:
-                          amount: 30000
+                          amount: 27000
                           currency: XOF
-                      - label: Vitres
+                      - label: Nombre de salles de bain
                         quantity: 1
                         unitPrice:
-                          amount: 4000
+                          amount: 3000
+                          currency: XOF
+                        amount:
+                          amount: 3000
+                          currency: XOF
+                      - label: Vitres — nombre de fenêtres
+                        quantity: 8
+                        unitPrice:
+                          amount: 500
                           currency: XOF
                         amount:
                           amount: 4000
                           currency: XOF
                     minimumApplied: false
-                    communeCoefficientBp: 11000
+                    communeCoefficientBp: 10500
                     recommendedTeamSize: 2
                     notice: 'Estimation non contractuelle : le prix définitif figure dans le devis établi par KSP.'
                     covered: true
+                    reason: null
+                    calculation:
+                      pricingVersion: 3
+                      priced: true
+                      reason: null
+                      missingPrices: []
+                      lines:
+                        - kind: unit_price
+                          optionCode: null
+                          fieldCode: rooms
+                          choiceCode: null
+                          label: Nombre de pièces
+                          quantity: 6
+                          unitLabel: pièces
+                          unitPrice:
+                            amount: 4500
+                            currency: XOF
+                          amount:
+                            amount: 27000
+                            currency: XOF
+                        - kind: unit_price
+                          optionCode: null
+                          fieldCode: bathrooms
+                          choiceCode: null
+                          label: Nombre de salles de bain
+                          quantity: 1
+                          unitLabel: salles de bain
+                          unitPrice:
+                            amount: 3000
+                            currency: XOF
+                          amount:
+                            amount: 3000
+                            currency: XOF
+                        - kind: unit_price
+                          optionCode: windows
+                          fieldCode: window_count
+                          choiceCode: null
+                          label: Vitres — nombre de fenêtres
+                          quantity: 8
+                          unitLabel: fenêtres
+                          unitPrice:
+                            amount: 500
+                            currency: XOF
+                          amount:
+                            amount: 4000
+                            currency: XOF
+                      baseAmount:
+                        amount: 34000
+                        currency: XOF
+                      coefficients:
+                        - source: commune
+                          optionCode: null
+                          fieldCode: null
+                          code: abomey-calavi
+                          label: Abomey-Calavi
+                          coefficientBp: 10500
+                        - source: frequency
+                          optionCode: null
+                          fieldCode: null
+                          code: once
+                          label: Une fois
+                          coefficientBp: 10000
+                      subtotal:
+                        amount: 35700
+                        currency: XOF
+                      minimumPrice:
+                        amount: 15000
+                        currency: XOF
+                      minimumApplied: false
+                      computedPrice:
+                        amount: 35700
+                        currency: XOF
+                      estimate:
+                        low:
+                          amount: 32000
+                          currency: XOF
+                        high:
+                          amount: 41000
+                          currency: XOF
+                      recommendedTeamSize: 2
                 sansPrix:
                   value:
                     serviceCode: pest_control
@@ -1833,6 +1999,27 @@ paths:
                     recommendedTeamSize: 1
                     notice: "Le prix de cette prestation n'est pas encore publié : demandez un devis, KSP vous répondra."
                     covered: true
+                    reason: price_not_set
+                    calculation:
+                      pricingVersion: 1
+                      priced: false
+                      reason: price_not_set
+                      missingPrices:
+                        - optionCode: null
+                          fieldCode: surface
+                          choiceCode: null
+                        - optionCode: null
+                          fieldCode: pest
+                          choiceCode: cockroaches
+                      lines: []
+                      baseAmount: null
+                      coefficients: []
+                      subtotal: null
+                      minimumPrice: null
+                      minimumApplied: false
+                      computedPrice: null
+                      estimate: null
+                      recommendedTeamSize: 1
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -1856,7 +2043,9 @@ paths:
       description: |
         UC-CL-02. Profil complet exigé : la gateway le vérifie auprès d’identity avant l’appel. Idempotent par `Idempotency-Key`. Le type de client (particulier ou entreprise) vient du contexte actif.
 
-        Erreurs : `CLEANING_VALIDATION_FAILED`, `CLEANING_SLOT_INVALID` (400), `CLEANING_SERVICE_NOT_FOUND` (404), `IDENTITY_PROFILE_INCOMPLETE`, `CLEANING_LEAD_TIME_TOO_SHORT`, `CLEANING_TOO_MANY_OPEN_REQUESTS`,
+        Corps au nouveau format (`answers`, `options` en objets, `frequency`) ou à l’ancien format déprécié : voir `RequestCleaningQuoteRequest` (ADR-033). La demande garde les réponses, la version de la grille et le détail du calcul (`answers`, `selectedOptions`, `frequency`, `pricingVersion`, `calculation`).
+
+        Erreurs : `CLEANING_VALIDATION_FAILED` (`details.field`, `details.reason`), `CLEANING_SLOT_INVALID` (400), `CLEANING_SERVICE_NOT_FOUND` (404), `IDENTITY_PROFILE_INCOMPLETE`, `CLEANING_LEAD_TIME_TOO_SHORT`, `CLEANING_TOO_MANY_OPEN_REQUESTS`,
         `CLEANING_ZONE_NOT_COVERED` (422, commune hors des zones desservies, `details.commune`),
         `CLEANING_ORGANIZATION_SUSPENDED` (422, contexte actif sur une organisation suspendue par KSP, ADR-030).
       x-ksp-grpc: ksp.cleaning.v1.QuoteService/RequestQuote
@@ -1874,10 +2063,17 @@ paths:
               $ref: '#/components/schemas/RequestCleaningQuoteRequest'
             example:
               serviceCode: home_cleaning
-              premisesType: house
-              quantity: 6
+              answers:
+                housing_type: villa
+                rooms: 6
+                bathrooms: 1
+                condition: normal
+                pets: false
               options:
-                - windows
+                - code: windows
+                  answers:
+                    window_count: 8
+              frequency: once
               commune: Abomey-Calavi
               address: Lot 12, quartier Zogbadjè, Abomey-Calavi
               preferredSlots:
@@ -1915,6 +2111,97 @@ paths:
                 requestedTeamSize: null
                 daysPerWeek: null
                 recommendedTeamSize: 2
+                answers:
+                  housing_type: villa
+                  rooms: 6
+                  bathrooms: 1
+                  condition: normal
+                  pets: false
+                selectedOptions:
+                  - code: windows
+                    answers:
+                      window_count: 8
+                frequency: once
+                pricingVersion: 3
+                calculation:
+                  pricingVersion: 3
+                  priced: true
+                  reason: null
+                  missingPrices: []
+                  lines:
+                    - kind: unit_price
+                      optionCode: null
+                      fieldCode: rooms
+                      choiceCode: null
+                      label: Nombre de pièces
+                      quantity: 6
+                      unitLabel: pièces
+                      unitPrice:
+                        amount: 4500
+                        currency: XOF
+                      amount:
+                        amount: 27000
+                        currency: XOF
+                    - kind: unit_price
+                      optionCode: null
+                      fieldCode: bathrooms
+                      choiceCode: null
+                      label: Nombre de salles de bain
+                      quantity: 1
+                      unitLabel: salles de bain
+                      unitPrice:
+                        amount: 3000
+                        currency: XOF
+                      amount:
+                        amount: 3000
+                        currency: XOF
+                    - kind: unit_price
+                      optionCode: windows
+                      fieldCode: window_count
+                      choiceCode: null
+                      label: Vitres — nombre de fenêtres
+                      quantity: 8
+                      unitLabel: fenêtres
+                      unitPrice:
+                        amount: 500
+                        currency: XOF
+                      amount:
+                        amount: 4000
+                        currency: XOF
+                  baseAmount:
+                    amount: 34000
+                    currency: XOF
+                  coefficients:
+                    - source: commune
+                      optionCode: null
+                      fieldCode: null
+                      code: abomey-calavi
+                      label: Abomey-Calavi
+                      coefficientBp: 10500
+                    - source: frequency
+                      optionCode: null
+                      fieldCode: null
+                      code: once
+                      label: Une fois
+                      coefficientBp: 10000
+                  subtotal:
+                    amount: 35700
+                    currency: XOF
+                  minimumPrice:
+                    amount: 15000
+                    currency: XOF
+                  minimumApplied: false
+                  computedPrice:
+                    amount: 35700
+                    currency: XOF
+                  estimate:
+                    low:
+                      amount: 32000
+                      currency: XOF
+                    high:
+                      amount: 41000
+                      currency: XOF
+                  recommendedTeamSize: 2
                 estimate:
                   low:
                     amount: 32000
@@ -1993,6 +2280,97 @@ paths:
                     requestedTeamSize: null
                     daysPerWeek: null
                     recommendedTeamSize: 2
+                    answers:
+                      housing_type: villa
+                      rooms: 6
+                      bathrooms: 1
+                      condition: normal
+                      pets: false
+                    selectedOptions:
+                      - code: windows
+                        answers:
+                          window_count: 8
+                    frequency: once
+                    pricingVersion: 3
+                    calculation:
+                      pricingVersion: 3
+                      priced: true
+                      reason: null
+                      missingPrices: []
+                      lines:
+                        - kind: unit_price
+                          optionCode: null
+                          fieldCode: rooms
+                          choiceCode: null
+                          label: Nombre de pièces
+                          quantity: 6
+                          unitLabel: pièces
+                          unitPrice:
+                            amount: 4500
+                            currency: XOF
+                          amount:
+                            amount: 27000
+                            currency: XOF
+                        - kind: unit_price
+                          optionCode: null
+                          fieldCode: bathrooms
+                          choiceCode: null
+                          label: Nombre de salles de bain
+                          quantity: 1
+                          unitLabel: salles de bain
+                          unitPrice:
+                            amount: 3000
+                            currency: XOF
+                          amount:
+                            amount: 3000
+                            currency: XOF
+                        - kind: unit_price
+                          optionCode: windows
+                          fieldCode: window_count
+                          choiceCode: null
+                          label: Vitres — nombre de fenêtres
+                          quantity: 8
+                          unitLabel: fenêtres
+                          unitPrice:
+                            amount: 500
+                            currency: XOF
+                          amount:
+                            amount: 4000
+                            currency: XOF
+                      baseAmount:
+                        amount: 34000
+                        currency: XOF
+                      coefficients:
+                        - source: commune
+                          optionCode: null
+                          fieldCode: null
+                          code: abomey-calavi
+                          label: Abomey-Calavi
+                          coefficientBp: 10500
+                        - source: frequency
+                          optionCode: null
+                          fieldCode: null
+                          code: once
+                          label: Une fois
+                          coefficientBp: 10000
+                      subtotal:
+                        amount: 35700
+                        currency: XOF
+                      minimumPrice:
+                        amount: 15000
+                        currency: XOF
+                      minimumApplied: false
+                      computedPrice:
+                        amount: 35700
+                        currency: XOF
+                      estimate:
+                        low:
+                          amount: 32000
+                          currency: XOF
+                        high:
+                          amount: 41000
+                          currency: XOF
+                      recommendedTeamSize: 2
                     estimate:
                       low:
                         amount: 32000
@@ -2112,6 +2490,97 @@ paths:
                 requestedTeamSize: null
                 daysPerWeek: null
                 recommendedTeamSize: 2
+                answers:
+                  housing_type: villa
+                  rooms: 6
+                  bathrooms: 1
+                  condition: normal
+                  pets: false
+                selectedOptions:
+                  - code: windows
+                    answers:
+                      window_count: 8
+                frequency: once
+                pricingVersion: 3
+                calculation:
+                  pricingVersion: 3
+                  priced: true
+                  reason: null
+                  missingPrices: []
+                  lines:
+                    - kind: unit_price
+                      optionCode: null
+                      fieldCode: rooms
+                      choiceCode: null
+                      label: Nombre de pièces
+                      quantity: 6
+                      unitLabel: pièces
+                      unitPrice:
+                        amount: 4500
+                        currency: XOF
+                      amount:
+                        amount: 27000
+                        currency: XOF
+                    - kind: unit_price
+                      optionCode: null
+                      fieldCode: bathrooms
+                      choiceCode: null
+                      label: Nombre de salles de bain
+                      quantity: 1
+                      unitLabel: salles de bain
+                      unitPrice:
+                        amount: 3000
+                        currency: XOF
+                      amount:
+                        amount: 3000
+                        currency: XOF
+                    - kind: unit_price
+                      optionCode: windows
+                      fieldCode: window_count
+                      choiceCode: null
+                      label: Vitres — nombre de fenêtres
+                      quantity: 8
+                      unitLabel: fenêtres
+                      unitPrice:
+                        amount: 500
+                        currency: XOF
+                      amount:
+                        amount: 4000
+                        currency: XOF
+                  baseAmount:
+                    amount: 34000
+                    currency: XOF
+                  coefficients:
+                    - source: commune
+                      optionCode: null
+                      fieldCode: null
+                      code: abomey-calavi
+                      label: Abomey-Calavi
+                      coefficientBp: 10500
+                    - source: frequency
+                      optionCode: null
+                      fieldCode: null
+                      code: once
+                      label: Une fois
+                      coefficientBp: 10000
+                  subtotal:
+                    amount: 35700
+                    currency: XOF
+                  minimumPrice:
+                    amount: 15000
+                    currency: XOF
+                  minimumApplied: false
+                  computedPrice:
+                    amount: 35700
+                    currency: XOF
+                  estimate:
+                    low:
+                      amount: 32000
+                      currency: XOF
+                    high:
+                      amount: 41000
+                      currency: XOF
+                  recommendedTeamSize: 2
                 estimate:
                   low:
                     amount: 32000
@@ -2249,6 +2718,97 @@ paths:
                   requestedTeamSize: null
                   daysPerWeek: null
                   recommendedTeamSize: 2
+                  answers:
+                    housing_type: villa
+                    rooms: 6
+                    bathrooms: 1
+                    condition: normal
+                    pets: false
+                  selectedOptions:
+                    - code: windows
+                      answers:
+                        window_count: 8
+                  frequency: once
+                  pricingVersion: 3
+                  calculation:
+                    pricingVersion: 3
+                    priced: true
+                    reason: null
+                    missingPrices: []
+                    lines:
+                      - kind: unit_price
+                        optionCode: null
+                        fieldCode: rooms
+                        choiceCode: null
+                        label: Nombre de pièces
+                        quantity: 6
+                        unitLabel: pièces
+                        unitPrice:
+                          amount: 4500
+                          currency: XOF
+                        amount:
+                          amount: 27000
+                          currency: XOF
+                      - kind: unit_price
+                        optionCode: null
+                        fieldCode: bathrooms
+                        choiceCode: null
+                        label: Nombre de salles de bain
+                        quantity: 1
+                        unitLabel: salles de bain
+                        unitPrice:
+                          amount: 3000
+                          currency: XOF
+                        amount:
+                          amount: 3000
+                          currency: XOF
+                      - kind: unit_price
+                        optionCode: windows
+                        fieldCode: window_count
+                        choiceCode: null
+                        label: Vitres — nombre de fenêtres
+                        quantity: 8
+                        unitLabel: fenêtres
+                        unitPrice:
+                          amount: 500
+                          currency: XOF
+                        amount:
+                          amount: 4000
+                          currency: XOF
+                    baseAmount:
+                      amount: 34000
+                      currency: XOF
+                    coefficients:
+                      - source: commune
+                        optionCode: null
+                        fieldCode: null
+                        code: abomey-calavi
+                        label: Abomey-Calavi
+                        coefficientBp: 10500
+                      - source: frequency
+                        optionCode: null
+                        fieldCode: null
+                        code: once
+                        label: Une fois
+                        coefficientBp: 10000
+                    subtotal:
+                      amount: 35700
+                      currency: XOF
+                    minimumPrice:
+                      amount: 15000
+                      currency: XOF
+                    minimumApplied: false
+                    computedPrice:
+                      amount: 35700
+                      currency: XOF
+                    estimate:
+                      low:
+                        amount: 32000
+                        currency: XOF
+                      high:
+                        amount: 41000
+                        currency: XOF
+                    recommendedTeamSize: 2
                   estimate:
                     low:
                       amount: 32000
@@ -3055,7 +3615,7 @@ paths:
       operationId: sendCleaningQuote
       summary: Établir et envoyer le devis
       description: |
-        UC-CL-08. Lignes préremplies depuis la grille en vigueur (ajustement de commune et minimum de commande compris), modifiables ; 1 à 3 créneaux ; prix figé à l’envoi.
+        UC-CL-08. Sans `lines`, lignes préremplies depuis le détail du calcul de la demande (ADR-033) : ses lignes, une ligne d’ajustement pour les coefficients et, s’il s’applique, une ligne pour le minimum de commande ; calcul sans prix : nouveau calcul avec la grille en vigueur et les réponses enregistrées. Lignes modifiables ; 1 à 3 créneaux ; prix figé à l’envoi.
 
         Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
@@ -3695,7 +4255,9 @@ paths:
       operationId: getCleaningCatalog
       summary: Catalogue, grille et réglages
       description: |
-        UC-CL-11.
+        UC-CL-11. Définition complète de chaque prestation, active ou non (ADR-033) : champs, options et leurs champs,
+        avec tous les prix, suppléments et coefficients ; grille en vigueur (minimum, coefficients par commune,
+        fréquences, taille d’équipe, liste de contrôle) et sa version.
 
         Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/GetCatalog
@@ -3734,9 +4296,17 @@ paths:
       tags:
         - Nettoyage (back-office)
       operationId: saveCleaningService
-      summary: Créer ou modifier une prestation et sa grille
+      summary: Créer ou remplacer une prestation complète
       description: |
-        UC-CL-11. Chaque enregistrement crée une nouvelle version datée de la grille, avec son auteur ; les devis déjà envoyés gardent leur prix. Prix `null` : non fixé.
+        UC-CL-11. Crée ou remplace la prestation complète — champs du formulaire, options et leurs champs, grille
+        (minimum, coefficients par commune, fréquences, taille d’équipe, liste de contrôle) — en une nouvelle version
+        datée, avec son auteur (ADR-033). Les demandes et les devis déjà enregistrés gardent leur version et leur prix.
+        Montants en entiers de FCFA ; `null` : non fixé (le simulateur répond alors `priced: false`).
+
+        Contrôles (`CLEANING_VALIDATION_FAILED`, `details.field`) : codes uniques (champs de la prestation, champs de
+        chaque option, valeurs, options, fréquences), au moins un champ actif, `min` ≤ `max`, champ de la taille
+        d’équipe (`pricing.teamSize.fieldCode`) existant et de type `number`. L’ancien corps (`unit`, `pricing.unitPrice`,
+        `pricing.options`) est refusé (400) depuis l’ADR-033.
 
         Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SaveService
@@ -3757,24 +4327,83 @@ paths:
             schema:
               $ref: '#/components/schemas/SaveCleaningServiceRequest'
             example:
-              name: Nettoyage à domicile
-              description: Ménage complet du logement.
-              unit: room
+              name: Entretien de jardin
+              description: Tonte, désherbage et entretien des espaces verts.
               active: true
+              fields:
+                - code: surface
+                  label: Superficie
+                  type: number
+                  required: true
+                  active: true
+                  unitLabel: m²
+                  min: 1
+                  max: 100000
+                  pricePerUnit: 150
+                - code: condition
+                  label: État de la pelouse ou du jardin
+                  type: choice
+                  required: true
+                  active: true
+                  choices:
+                    - code: maintained
+                      label: Entretenu
+                      supplement: 0
+                      active: true
+                    - code: overgrown
+                      label: Envahi
+                      supplement: null
+                      coefficientBp: 13000
+                      active: true
+                    - code: very_overgrown
+                      label: Très envahi
+                      supplement: null
+                      coefficientBp: 16000
+                      active: true
+              options:
+                - code: hedge_trimming
+                  label: Taille de haies
+                  active: true
+                  flatPrice: null
+                  fields:
+                    - code: hedge_length
+                      label: Longueur de haies
+                      type: number
+                      required: true
+                      active: true
+                      unitLabel: mètres linéaires
+                      min: 1
+                      max: 2000
+                      pricePerUnit: 500
+                - code: green_waste_removal
+                  label: Évacuation des déchets verts
+                  active: true
+                  flatPrice: 10000
               pricing:
-                unitPrice: null
-                minimumPrice: null
-                options:
-                  - code: windows
-                    label: Vitres
-                    price: null
+                minimumPrice: 15000
                 communeCoefficients:
-                  - commune: Abomey-Calavi
-                    coefficientBp: 10500
+                  - commune: Cotonou
+                    coefficientBp: 10000
+                defaultCoefficientBp: 10000
+                frequencies:
+                  - code: once
+                    label: Une fois
+                    coefficientBp: 10000
+                    active: true
+                  - code: weekly
+                    label: Chaque semaine
+                    coefficientBp: 8500
+                    active: true
+                  - code: monthly
+                    label: Chaque mois
+                    coefficientBp: 9000
+                    active: true
                 teamSize:
-                  unitsPerAgent: 3
+                  fieldCode: surface
+                  unitsPerAgent: 300
                   minAgents: 1
                   maxAgents: 6
+                checklist: []
       responses:
         '200':
           description: Succès
@@ -3801,6 +4430,226 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/catalog/services/{code}/preview:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: previewCleaningService
+      summary: Essayer une grille avant de l’enregistrer
+      description: |
+        UC-CL-11 (ADR-033). Calcule le prix d’un passage avec une définition envoyée dans le corps (`definition`, au
+        nouveau format, non enregistrée) ou, sans `definition`, avec la version en vigueur de la prestation (même
+        inactive), et des réponses validées comme celles d’un client. Rien n’est enregistré ; `missingPrices` liste les
+        prix encore à fixer.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` et `CLEANING_VALIDATION_FAILED` (400, `details.field` préfixé par
+        `definition.` pour la définition, `answers.` ou `options[i].` pour les réponses), `CLEANING_SERVICE_NOT_FOUND`
+        (404, sans `definition` pour une prestation inconnue).
+
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/PreviewService
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningServiceCode'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewCleaningServiceRequest'
+            example:
+              definition:
+                name: Entretien de jardin
+                active: true
+                fields:
+                  - code: surface
+                    label: Superficie
+                    type: number
+                    required: true
+                    active: true
+                    unitLabel: m²
+                    min: 1
+                    max: 100000
+                    pricePerUnit: 150
+                  - code: condition
+                    label: État de la pelouse ou du jardin
+                    type: choice
+                    required: true
+                    active: true
+                    choices:
+                      - code: maintained
+                        label: Entretenu
+                        supplement: 0
+                        active: true
+                      - code: overgrown
+                        label: Envahi
+                        supplement: null
+                        coefficientBp: 13000
+                        active: true
+                options:
+                  - code: hedge_trimming
+                    label: Taille de haies
+                    active: true
+                    flatPrice: null
+                    fields:
+                      - code: hedge_length
+                        label: Longueur de haies
+                        type: number
+                        required: true
+                        active: true
+                        unitLabel: mètres linéaires
+                        min: 1
+                        max: 2000
+                        pricePerUnit: 500
+                  - code: green_waste_removal
+                    label: Évacuation des déchets verts
+                    active: true
+                    flatPrice: 10000
+                pricing:
+                  minimumPrice: 15000
+                  frequencies:
+                    - code: monthly
+                      label: Chaque mois
+                      coefficientBp: 9000
+                      active: true
+                  teamSize:
+                    fieldCode: surface
+                    unitsPerAgent: 300
+                    minAgents: 1
+                    maxAgents: 6
+              answers:
+                surface: 400
+                condition: overgrown
+              options:
+                - code: hedge_trimming
+                  answers:
+                    hedge_length: 20
+                - code: green_waste_removal
+              commune: Cotonou
+              frequency: monthly
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningServicePreview'
+              example:
+                serviceCode: garden_maintenance
+                covered: true
+                calculation:
+                  pricingVersion: null
+                  priced: true
+                  reason: null
+                  missingPrices: []
+                  lines:
+                    - kind: unit_price
+                      optionCode: null
+                      fieldCode: surface
+                      choiceCode: null
+                      label: Superficie
+                      quantity: 400
+                      unitLabel: m²
+                      unitPrice:
+                        amount: 150
+                        currency: XOF
+                      amount:
+                        amount: 60000
+                        currency: XOF
+                    - kind: unit_price
+                      optionCode: hedge_trimming
+                      fieldCode: hedge_length
+                      choiceCode: null
+                      label: Taille de haies — longueur de haies
+                      quantity: 20
+                      unitLabel: mètres linéaires
+                      unitPrice:
+                        amount: 500
+                        currency: XOF
+                      amount:
+                        amount: 10000
+                        currency: XOF
+                    - kind: flat_price
+                      optionCode: green_waste_removal
+                      fieldCode: null
+                      choiceCode: null
+                      label: Évacuation des déchets verts
+                      quantity: 1
+                      unitLabel: null
+                      unitPrice:
+                        amount: 10000
+                        currency: XOF
+                      amount:
+                        amount: 10000
+                        currency: XOF
+                  baseAmount:
+                    amount: 80000
+                    currency: XOF
+                  coefficients:
+                    - source: choice
+                      optionCode: null
+                      fieldCode: condition
+                      code: overgrown
+                      label: 'État de la pelouse ou du jardin : envahi'
+                      coefficientBp: 13000
+                    - source: commune
+                      optionCode: null
+                      fieldCode: null
+                      code: cotonou
+                      label: Cotonou
+                      coefficientBp: 10000
+                    - source: frequency
+                      optionCode: null
+                      fieldCode: null
+                      code: monthly
+                      label: Chaque mois
+                      coefficientBp: 9000
+                  subtotal:
+                    amount: 93600
+                    currency: XOF
+                  minimumPrice:
+                    amount: 15000
+                    currency: XOF
+                  minimumApplied: false
+                  computedPrice:
+                    amount: 93600
+                    currency: XOF
+                  estimate:
+                    low:
+                      amount: 84000
+                      currency: XOF
+                    high:
+                      amount: 107500
+                      currency: XOF
+                  recommendedTeamSize: 2
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/admin/cleaning/catalog/settings:
     put:
       tags:
@@ -3808,10 +4657,12 @@ paths:
       operationId: updateCleaningSettings
       summary: Réglages du Nettoyage
       description: |
-        UC-CL-11. Validité des devis, délais, seuil de visite, demandes ouvertes, acompte, et règles d'impayés
+        UC-CL-11. Validité des devis, délais, demandes ouvertes, acompte, et règles d'impayés
         (CDC Nettoyage, partie 10) : avertissement et suspension des entreprises, suspension des particuliers en
         récurrent, délai de grâce. Un réglage d'impayés absent garde sa valeur en vigueur. Le délai de règlement des
-        factures se règle dans la facturation (`/api/v1/admin/billing/settings`).
+        factures se règle dans la facturation (`/api/v1/admin/billing/settings`). `visitThresholdSquareMeters` est
+        déprécié et ignoré (visite des lieux obligatoire pour toute demande, ADR-033) : facultatif, la valeur enregistrée
+        ne change pas.
 
         Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/UpdateSettings
@@ -6441,6 +7292,7 @@ components:
         - options
         - priced
         - minimumPrice
+        - form
       properties:
         code:
           type: string
@@ -6451,17 +7303,25 @@ components:
           type: string
         unit:
           $ref: '#/components/schemas/CleaningUnit'
+          deprecated: true
+          description: Déprécié (ADR-033) — unité de l’ancien formulaire ; les unités sont désormais celles des champs (`form.fields[].unitLabel`).
         options:
           type: array
+          deprecated: true
+          description: Déprécié (ADR-033) — options actives avec leur forfait ; lire `form.options`.
           items:
             $ref: '#/components/schemas/CleaningOption'
         priced:
           type: boolean
-          description: Faux tant que le prix n’est pas fixé par l’équipe Nettoyage.
+          description: Vrai si toute réponse au formulaire (hors options) peut être chiffrée ; faux tant qu’un prix nécessaire n’est pas fixé par l’équipe Nettoyage.
         minimumPrice:
+          deprecated: true
+          description: Déprécié (ADR-033) — le formulaire public ne montre plus de prix.
           oneOf:
             - $ref: '#/components/schemas/Money'
             - type: 'null'
+        form:
+          $ref: '#/components/schemas/CleaningServiceForm'
     CleaningServiceList:
       type: object
       additionalProperties: false
@@ -6472,40 +7332,432 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CleaningServiceOffer'
-    SimulateCleaningRequest:
+    CleaningFormChoice:
       type: object
       additionalProperties: false
       required:
+        - code
+        - label
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+    CleaningFormField:
+      type: object
+      additionalProperties: false
+      description: Champ actif du formulaire public (ADR-033) — jamais de prix, de supplément ni de coefficient.
+      required:
+        - code
+        - label
+        - type
+        - required
+        - helpText
+        - unitLabel
+        - min
+        - max
+        - choices
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+        type:
+          $ref: '#/components/schemas/CleaningFieldType'
+        required:
+          type: boolean
+        helpText:
+          type:
+            - string
+            - 'null'
+        unitLabel:
+          type:
+            - string
+            - 'null'
+          description: '`number` seulement (« m² », « m³ », « pièces », « mètres linéaires »…) ; null sinon.'
+        min:
+          type:
+            - integer
+            - 'null'
+          description: '`number` seulement : borne entière incluse ; null sinon.'
+        max:
+          type:
+            - integer
+            - 'null'
+          description: '`number` seulement : borne entière incluse ; null sinon.'
+        choices:
+          type: array
+          description: '`choice` seulement : valeurs actives, dans l’ordre d’affichage ; vide sinon.'
+          items:
+            $ref: '#/components/schemas/CleaningFormChoice'
+    CleaningFormOption:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - description
+        - fields
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningFormField'
+    CleaningFormFrequency:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+    CleaningServiceForm:
+      type: object
+      additionalProperties: false
+      description: |
+        Formulaire public d’une prestation (ADR-033) : éléments actifs seulement, dans l’ordre d’affichage, sans aucun
+        montant. Seule la simulation donne des montants.
+      required:
+        - fields
+        - options
+        - frequencies
+      properties:
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningFormField'
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningFormOption'
+        frequencies:
+          type: array
+          description: Fréquences actives ; si la liste n’est pas vide, `frequency` est obligatoire dans une simulation ou une demande au nouveau format.
+          items:
+            $ref: '#/components/schemas/CleaningFormFrequency'
+    CleaningFieldType:
+      type: string
+      enum:
+        - number
+        - choice
+        - boolean
+    CleaningAnswerValue:
+      description: Réponse à un champ — nombre entier (`number`), code d’une valeur (`choice`) ou oui/non (`boolean`).
+      oneOf:
+        - type: integer
+          minimum: 0
+          maximum: 1000000
+        - type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        - type: boolean
+    CleaningAnswers:
+      type: object
+      description: |
+        Réponses au formulaire, par code de champ (ADR-033). Validées strictement contre la définition de la prestation :
+        champ inconnu ou inactif, champ obligatoire sans réponse, type incorrect, nombre hors bornes, valeur inconnue ou
+        inactive → `CLEANING_VALIDATION_FAILED` (400), `details.field` (par exemple `answers.surface` ou
+        `options[0].answers.hedge_length`) et `details.reason`.
+      maxProperties: 50
+      propertyNames:
+        pattern: ^[a-z][a-z0-9_]{1,49}$
+      additionalProperties:
+        $ref: '#/components/schemas/CleaningAnswerValue'
+    CleaningOptionSelection:
+      type: object
+      additionalProperties: false
+      description: Option choisie, avec les réponses à ses propres champs (`answers` absent = `{}` ; toujours présent dans les réponses).
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        answers:
+          $ref: '#/components/schemas/CleaningAnswers'
+    SimulateCleaningRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Deux formats (ADR-033), distingués par la présence de `answers` :
+        - **nouveau** : `answers` (obligatoire, même `{}`), `options` en objets `{ code, answers }`, `frequency` (code d’une
+          fréquence active de la prestation, obligatoire si elle en a) ;
+        - **ancien, déprécié** (toléré jusqu’à la migration du portail) : `premisesType`, `quantity`, `options` en codes,
+          `frequency` parmi `once`, `weekly`, `monthly`. Converti vers le nouveau : `quantity` devient la réponse au champ
+          de la taille d’équipe, `premisesType` celle d’un champ `premises_type` s’il existe ; une réponse obligatoire
+          manquante donne `priced: false` (`answers_incomplete`), jamais une erreur.
+
+        Les deux formats ne se mélangent pas.
+      required:
         - serviceCode
-        - premisesType
-        - quantity
         - commune
       properties:
         serviceCode:
           type: string
           pattern: ^[a-z][a-z0-9_]{1,49}$
-        premisesType:
-          $ref: '#/components/schemas/CleaningPremisesType'
-        quantity:
-          type: integer
-          minimum: 1
-          maximum: 1000000
+        answers:
+          $ref: '#/components/schemas/CleaningAnswers'
         options:
           type: array
           maxItems: 20
+          description: 'Nouveau format : objets `{ code, answers }`. Ancien format (déprécié) : codes.'
           items:
-            type: string
-            pattern: ^[a-z][a-z0-9_]{1,49}$
+            oneOf:
+              - $ref: '#/components/schemas/CleaningOptionSelection'
+              - type: string
+                pattern: ^[a-z][a-z0-9_]{1,49}$
         commune:
           type: string
           minLength: 1
           maxLength: 100
         frequency:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+          description: |
+            Nouveau format : code d’une fréquence active de la prestation (coefficient sur le prix d’un passage).
+            Ancien format : `once`, `weekly` ou `monthly`, appliqué si la prestation a une fréquence de même code, sans
+            effet sinon.
+        premisesType:
+          $ref: '#/components/schemas/CleaningPremisesType'
+          deprecated: true
+          description: Ancien format (déprécié).
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          deprecated: true
+          description: Ancien format (déprécié) — réponse au champ de la taille d’équipe de la prestation.
+      if:
+        required:
+          - answers
+      then:
+        properties:
+          premisesType: false
+          quantity: false
+          options:
+            items:
+              $ref: '#/components/schemas/CleaningOptionSelection'
+      else:
+        required:
+          - premisesType
+          - quantity
+        properties:
+          options:
+            items:
+              type: string
+          frequency:
+            enum:
+              - once
+              - weekly
+              - monthly
+    CleaningPricingReason:
+      type:
+        - string
+        - 'null'
+      enum:
+        - price_not_set
+        - option_price_not_set
+        - answers_incomplete
+        - null
+      description: |
+        Raison de l’absence de prix, null si le calcul aboutit : `price_not_set` (prix d’un champ de la prestation non
+        fixé), `option_price_not_set` (forfait d’une option ou prix de ses champs), `answers_incomplete` (ancien format
+        sans les réponses obligatoires du nouveau formulaire).
+    CleaningCalculationLine:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - optionCode
+        - fieldCode
+        - choiceCode
+        - label
+        - quantity
+        - unitLabel
+        - unitPrice
+        - amount
+      properties:
+        kind:
           enum:
-            - once
-            - weekly
-            - monthly
-          description: 'Informatif : le prix est celui d’un passage.'
+            - unit_price
+            - supplement
+            - flat_price
+          description: '`unit_price` : nombre × prix par unité ; `supplement` : valeur choisie ou réponse oui ; `flat_price` : forfait d’une option.'
+        optionCode:
+          type:
+            - string
+            - 'null'
+          description: Option concernée, null pour la prestation elle-même.
+        fieldCode:
+          type:
+            - string
+            - 'null'
+          description: Champ concerné, null pour un forfait.
+        choiceCode:
+          type:
+            - string
+            - 'null'
+          description: Valeur choisie (`choice`), null sinon.
+        label:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitLabel:
+          type:
+            - string
+            - 'null'
+        unitPrice:
+          $ref: '#/components/schemas/Money'
+        amount:
+          $ref: '#/components/schemas/Money'
+    CleaningAppliedCoefficient:
+      type: object
+      additionalProperties: false
+      required:
+        - source
+        - optionCode
+        - fieldCode
+        - code
+        - label
+        - coefficientBp
+      properties:
+        source:
+          enum:
+            - choice
+            - boolean
+            - commune
+            - frequency
+        optionCode:
+          type:
+            - string
+            - 'null'
+          description: Option dont le champ porte ce coefficient ; il ne s’applique alors qu’au montant de cette option. Null pour un coefficient de la prestation, de la commune ou de la fréquence.
+        fieldCode:
+          type:
+            - string
+            - 'null'
+        code:
+          type:
+            - string
+            - 'null'
+          description: Code de la valeur choisie, clé de la commune ou code de la fréquence ; null pour un booléen.
+        label:
+          type: string
+        coefficientBp:
+          type: integer
+          minimum: 1
+          maximum: 100000
+    CleaningMissingPrice:
+      type: object
+      additionalProperties: false
+      description: Prix manquant — forfait d’une option (`fieldCode` null), prix par unité d’un champ (`choiceCode` null) ou effet d’une valeur choisie.
+      required:
+        - optionCode
+        - fieldCode
+        - choiceCode
+      properties:
+        optionCode:
+          type:
+            - string
+            - 'null'
+        fieldCode:
+          type:
+            - string
+            - 'null'
+        choiceCode:
+          type:
+            - string
+            - 'null'
+    CleaningPriceCalculation:
+      type: object
+      additionalProperties: false
+      description: |
+        Détail du calcul d’un passage (ADR-033) :
+        prix = max(minimum, (Σ lignes de la prestation + Σ options [Σ lignes de l’option × Π coefficients de ses champs])
+        × Π coefficients des champs de la prestation × coefficient de la commune × coefficient de la fréquence), arrondi
+        une seule fois, au franc le plus proche ; fourchette −10 % / +15 % arrondie à 500 FCFA. Un coefficient dont
+        `optionCode` est renseigné ne s’applique qu’au montant de cette option. Montants null si `priced` est faux.
+      required:
+        - pricingVersion
+        - priced
+        - reason
+        - missingPrices
+        - lines
+        - baseAmount
+        - coefficients
+        - subtotal
+        - minimumPrice
+        - minimumApplied
+        - computedPrice
+        - estimate
+        - recommendedTeamSize
+      properties:
+        pricingVersion:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          description: Version de la grille utilisée ; null pour une définition essayée sans être enregistrée.
+        priced:
+          type: boolean
+        reason:
+          $ref: '#/components/schemas/CleaningPricingReason'
+        missingPrices:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningMissingPrice'
+        lines:
+          type: array
+          description: Lignes calculables (montant non nul), complètes seulement si `priced`.
+          items:
+            $ref: '#/components/schemas/CleaningCalculationLine'
+        baseAmount:
+          description: Somme des lignes, avant tout coefficient.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        coefficients:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningAppliedCoefficient'
+        subtotal:
+          description: Montant après tous les coefficients (ceux d’une option limités à l’option), arrondi une seule fois au franc.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        minimumPrice:
+          description: Minimum de commande de la grille, null s’il n’est pas fixé.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        minimumApplied:
+          type: boolean
+        computedPrice:
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        estimate:
+          oneOf:
+            - $ref: '#/components/schemas/CleaningPriceRange'
+            - type: 'null'
+        recommendedTeamSize:
+          type: integer
+          minimum: 1
     CleaningSimulation:
       type: object
       additionalProperties: false
@@ -6520,7 +7772,13 @@ components:
         - recommendedTeamSize
         - notice
         - covered
+        - reason
+        - calculation
       properties:
+        reason:
+          $ref: '#/components/schemas/CleaningPricingReason'
+        calculation:
+          $ref: '#/components/schemas/CleaningPriceCalculation'
         serviceCode:
           type: string
           pattern: ^[a-z][a-z0-9_]{1,49}$
@@ -6681,6 +7939,11 @@ components:
         - closingReason
         - createdAt
         - updatedAt
+        - answers
+        - selectedOptions
+        - frequency
+        - pricingVersion
+        - calculation
       properties:
         id:
           type: string
@@ -6712,14 +7975,45 @@ components:
           pattern: ^[a-z][a-z0-9_]{1,49}$
         premisesType:
           $ref: '#/components/schemas/CleaningPremisesType'
+          deprecated: true
+          description: Déprécié (ADR-033) — valeur dérivée des réponses pour les anciens lecteurs ; `other` si la prestation n’a pas de champ `premises_type`.
         quantity:
           type: integer
           minimum: 1
+          deprecated: true
+          description: Déprécié (ADR-033) — réponse au champ de la taille d’équipe de la prestation, 1 sinon.
         options:
           type: array
+          description: Codes des options choisies (détail de leurs réponses dans `selectedOptions`).
           items:
             type: string
             pattern: ^[a-z][a-z0-9_]{1,49}$
+        answers:
+          description: Réponses au formulaire, telles qu’enregistrées (ancien format converti) ; null pour une demande antérieure à la grille paramétrable (ADR-033).
+          oneOf:
+            - $ref: '#/components/schemas/CleaningAnswers'
+            - type: 'null'
+        selectedOptions:
+          type: array
+          description: Options choisies avec leurs réponses ; vide pour une demande antérieure.
+          items:
+            $ref: '#/components/schemas/CleaningOptionSelection'
+        frequency:
+          type:
+            - string
+            - 'null'
+          description: Code de la fréquence choisie, null si aucune.
+        pricingVersion:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          description: Version de la grille utilisée pour le calcul ; null pour une demande antérieure.
+        calculation:
+          description: Détail du calcul au moment de la demande ; le devis est prérempli à partir de lui. Null pour une demande antérieure.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningPriceCalculation'
+            - type: 'null'
         commune:
           type: string
         address:
@@ -7206,6 +8500,14 @@ components:
         maxAgents:
           type: integer
           minimum: 1
+        fieldCode:
+          type:
+            - string
+            - 'null'
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+          description: |
+            Champ `number` de la prestation (pas d’une option) qui porte la quantité : taille d’équipe, et cible de
+            l’ancien champ `quantity` (ADR-033). Absent ou null : taille minimale, ou celle demandée par le client.
     CleaningCommuneCoefficient:
       type: object
       additionalProperties: false
@@ -7249,11 +8551,15 @@ components:
         - checklist
         - updatedBy
         - updatedAt
+        - frequencies
+      description: Grille d’une prestation. La version couvre la définition complète (champs, options, grille) ; chaque enregistrement en crée une nouvelle (ADR-033).
       properties:
         version:
           type: integer
           minimum: 0
         unitPrice:
+          deprecated: true
+          description: Déprécié (ADR-033) — prix par unité du champ de la taille d’équipe, null s’il n’est pas fixé.
           oneOf:
             - $ref: '#/components/schemas/Money'
             - type: 'null'
@@ -7263,8 +8569,15 @@ components:
             - type: 'null'
         options:
           type: array
+          deprecated: true
+          description: Déprécié (ADR-033) — options avec leur forfait ; lire `options` de la prestation.
           items:
             $ref: '#/components/schemas/CleaningOption'
+        frequencies:
+          type: array
+          description: Fréquences propres à la prestation, dans l’ordre d’affichage.
+          items:
+            $ref: '#/components/schemas/CleaningFrequency'
         communeCoefficients:
           type: array
           items:
@@ -7303,6 +8616,8 @@ components:
         - unit
         - active
         - pricing
+        - fields
+        - options
       properties:
         code:
           type: string
@@ -7313,10 +8628,173 @@ components:
           type: string
         unit:
           $ref: '#/components/schemas/CleaningUnit'
+          deprecated: true
+          description: Déprécié (ADR-033) — unité de l’ancien formulaire public.
         active:
           type: boolean
         pricing:
           $ref: '#/components/schemas/CleaningPricing'
+        fields:
+          type: array
+          description: Champs du formulaire, dans l’ordre d’affichage, avec leurs prix (ADR-033).
+          items:
+            $ref: '#/components/schemas/CleaningFieldDefinition'
+        options:
+          type: array
+          description: Options (prestations complémentaires), dans l’ordre d’affichage, avec leurs prix et leurs champs.
+          items:
+            $ref: '#/components/schemas/CleaningOptionDefinition'
+    CleaningFieldChoice:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - supplement
+        - coefficientBp
+        - active
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+        supplement:
+          description: Supplément ajouté au prix ; null si non fixé.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        coefficientBp:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          maximum: 100000
+          description: Coefficient appliqué au prix, en points de base ; null si aucun. Supplément et coefficient null — valeur sans prix.
+        active:
+          type: boolean
+    CleaningFieldDefinition:
+      type: object
+      additionalProperties: false
+      description: |
+        Champ du formulaire, définition complète (back-office, ADR-033). Propriétés propres à un autre type : null ou
+        liste vide. Prix null : non fixé (`priced: false` si le calcul en a besoin) ; 0 : sans effet.
+      required:
+        - code
+        - label
+        - type
+        - required
+        - helpText
+        - active
+        - unitLabel
+        - min
+        - max
+        - pricePerUnit
+        - choices
+        - supplementIfYes
+        - coefficientBpIfYes
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+        type:
+          $ref: '#/components/schemas/CleaningFieldType'
+        required:
+          type: boolean
+        helpText:
+          type:
+            - string
+            - 'null'
+        active:
+          type: boolean
+        unitLabel:
+          type:
+            - string
+            - 'null'
+          description: '`number` : unité libre (« m² », « m³ », « pièces », « mètres linéaires »…).'
+        min:
+          type:
+            - integer
+            - 'null'
+        max:
+          type:
+            - integer
+            - 'null'
+        pricePerUnit:
+          description: '`number` : prix par unité.'
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        choices:
+          type: array
+          description: '`choice` : valeurs, dans l’ordre d’affichage.'
+          items:
+            $ref: '#/components/schemas/CleaningFieldChoice'
+        supplementIfYes:
+          description: '`boolean` : supplément si la réponse est oui (« non » n’a jamais d’effet).'
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        coefficientBpIfYes:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          maximum: 100000
+          description: '`boolean` : coefficient si la réponse est oui. Supplément et coefficient null — réponse oui sans prix.'
+    CleaningOptionDefinition:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - description
+        - active
+        - flatPrice
+        - fields
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        active:
+          type: boolean
+        flatPrice:
+          description: Forfait de l’option, null si aucun. Une option sans champ et sans forfait n’a pas de prix.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningFieldDefinition'
+    CleaningFrequency:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - coefficientBp
+        - active
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+        coefficientBp:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        active:
+          type: boolean
     CleaningSettings:
       type: object
       additionalProperties: false
@@ -7350,7 +8828,8 @@ components:
           type: integer
           minimum: 1
           maximum: 100000
-          description: Sans effet depuis la décision du 2026-10-23 (visite des lieux obligatoire pour toute demande).
+          deprecated: true
+          description: Déprécié — sans effet depuis la décision du 2026-10-23 (visite des lieux obligatoire pour toute demande) ; valeur enregistrée, renvoyée telle quelle (ADR-033).
         maxOpenRequests:
           type: integer
           minimum: 1
@@ -7488,10 +8967,11 @@ components:
     RequestCleaningQuoteRequest:
       type: object
       additionalProperties: false
+      description: |
+        Mêmes deux formats que `SimulateCleaningRequest` (ADR-033), distingués par la présence de `answers`. La demande
+        enregistre les réponses (ancien format converti), la version de la grille et le détail du calcul.
       required:
         - serviceCode
-        - premisesType
-        - quantity
         - commune
         - address
         - preferredSlots
@@ -7499,18 +8979,33 @@ components:
         serviceCode:
           type: string
           pattern: ^[a-z][a-z0-9_]{1,49}$
+        answers:
+          $ref: '#/components/schemas/CleaningAnswers'
+        options:
+          type: array
+          maxItems: 20
+          description: 'Nouveau format : objets `{ code, answers }`. Ancien format (déprécié) : codes.'
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/CleaningOptionSelection'
+              - type: string
+                pattern: ^[a-z][a-z0-9_]{1,49}$
+        frequency:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+          description: |
+            Mêmes règles que dans une simulation. Indépendante de `recurrence`, qui décrit le contrat (passages par
+            période, durée).
         premisesType:
           $ref: '#/components/schemas/CleaningPremisesType'
+          deprecated: true
+          description: Ancien format (déprécié).
         quantity:
           type: integer
           minimum: 1
           maximum: 1000000
-        options:
-          type: array
-          maxItems: 20
-          items:
-            type: string
-            pattern: ^[a-z][a-z0-9_]{1,49}$
+          deprecated: true
+          description: Ancien format (déprécié) — réponse au champ de la taille d’équipe de la prestation.
         commune:
           type: string
           minLength: 1
@@ -7540,6 +9035,29 @@ components:
           minimum: 1
           maximum: 7
           description: Entreprise — jours d'intervention par semaine, si connus.
+      if:
+        required:
+          - answers
+      then:
+        properties:
+          premisesType: false
+          quantity: false
+          options:
+            items:
+              $ref: '#/components/schemas/CleaningOptionSelection'
+      else:
+        required:
+          - premisesType
+          - quantity
+        properties:
+          options:
+            items:
+              type: string
+          frequency:
+            enum:
+              - once
+              - weekly
+              - monthly
     AcceptCleaningQuoteRequest:
       type: object
       additionalProperties: false
@@ -7713,10 +9231,15 @@ components:
     SaveCleaningServiceRequest:
       type: object
       additionalProperties: false
+      description: |
+        Prestation complète au nouveau format (ADR-033) : une nouvelle version à chaque enregistrement. `fields` est
+        obligatoire (au moins un champ actif) ; l’ancien corps (`unit`, `pricing.unitPrice`, `pricing.options`) est
+        refusé. L’unité de l’ancien formulaire public (`unit`, dépréciée) est déduite de l’unité du champ de la taille
+        d’équipe. Montants en entiers de FCFA ; `null` : non fixé.
       required:
         - name
-        - unit
         - active
+        - fields
         - pricing
       properties:
         name:
@@ -7727,63 +9250,292 @@ components:
           type: string
           minLength: 0
           maxLength: 1000
-        unit:
-          $ref: '#/components/schemas/CleaningUnit'
         active:
           type: boolean
+        fields:
+          type: array
+          minItems: 1
+          maxItems: 30
+          description: Champs du formulaire, dans l’ordre d’affichage ; codes uniques dans la prestation.
+          items:
+            $ref: '#/components/schemas/CleaningFieldInput'
+        options:
+          type: array
+          maxItems: 20
+          description: Options, dans l’ordre d’affichage ; codes uniques dans la prestation.
+          items:
+            $ref: '#/components/schemas/CleaningOptionInput'
         pricing:
-          type: object
-          additionalProperties: false
-          required:
-            - unitPrice
-            - minimumPrice
-          properties:
-            unitPrice:
+          $ref: '#/components/schemas/CleaningPricingInput'
+    CleaningFieldChoiceInput:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - supplement
+        - active
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+        supplement:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+          description: Supplément en FCFA ; null si non fixé (sans coefficient non plus, la valeur est sans prix).
+        coefficientBp:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          maximum: 100000
+          description: Coefficient en points de base (10000 = 1) ; absent ou null si aucun.
+        active:
+          type: boolean
+    CleaningFieldInput:
+      type: object
+      additionalProperties: false
+      description: |
+        Champ du formulaire (ADR-033). `number` : `unitLabel`, `min`, `max` (entiers, 0 ≤ min ≤ max ≤ 1 000 000) et
+        `pricePerUnit` obligatoires. `choice` : `choices` obligatoire (codes uniques). `boolean` : `supplementIfYes` et
+        `coefficientBpIfYes` facultatifs. Les propriétés d’un autre type sont refusées.
+      required:
+        - code
+        - label
+        - type
+        - required
+        - active
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          $ref: '#/components/schemas/CleaningFieldType'
+        required:
+          type: boolean
+        helpText:
+          type:
+            - string
+            - 'null'
+          maxLength: 300
+        active:
+          type: boolean
+        unitLabel:
+          type: string
+          minLength: 1
+          maxLength: 30
+        min:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        max:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        pricePerUnit:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+        choices:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CleaningFieldChoiceInput'
+        supplementIfYes:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+        coefficientBpIfYes:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          maximum: 100000
+      allOf:
+        - if:
+            properties:
               type:
-                - integer
-                - 'null'
-              minimum: 0
-            minimumPrice:
+                const: number
+          then:
+            required:
+              - unitLabel
+              - min
+              - max
+              - pricePerUnit
+            properties:
+              choices: false
+              supplementIfYes: false
+              coefficientBpIfYes: false
+        - if:
+            properties:
               type:
-                - integer
-                - 'null'
-              minimum: 0
-            options:
-              type: array
-              items:
-                type: object
-                additionalProperties: false
-                required:
-                  - code
-                  - label
-                  - price
-                properties:
-                  code:
-                    type: string
-                    pattern: ^[a-z][a-z0-9_]{1,49}$
-                  label:
-                    type: string
-                    minLength: 1
-                    maxLength: 100
-                  price:
-                    type:
-                      - integer
-                      - 'null'
-                    minimum: 0
-            communeCoefficients:
-              type: array
-              items:
-                $ref: '#/components/schemas/CleaningCommuneCoefficient'
-            defaultCoefficientBp:
-              type: integer
-              minimum: 1
-              maximum: 100000
-            teamSize:
-              $ref: '#/components/schemas/CleaningTeamSizeRule'
-            checklist:
-              type: array
-              items:
-                $ref: '#/components/schemas/CleaningChecklistTemplateItem'
+                const: choice
+          then:
+            required:
+              - choices
+            properties:
+              unitLabel: false
+              min: false
+              max: false
+              pricePerUnit: false
+              supplementIfYes: false
+              coefficientBpIfYes: false
+        - if:
+            properties:
+              type:
+                const: boolean
+          then:
+            properties:
+              unitLabel: false
+              min: false
+              max: false
+              pricePerUnit: false
+              choices: false
+    CleaningOptionInput:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - active
+        - flatPrice
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type:
+            - string
+            - 'null'
+          maxLength: 500
+        active:
+          type: boolean
+        flatPrice:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+          description: Forfait en FCFA ; null si aucun (une option sans champ et sans forfait n’a pas de prix).
+        fields:
+          type: array
+          maxItems: 10
+          description: Champs propres à l’option ; codes uniques dans l’option.
+          items:
+            $ref: '#/components/schemas/CleaningFieldInput'
+    CleaningFrequencyInput:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - coefficientBp
+        - active
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+        coefficientBp:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        active:
+          type: boolean
+    CleaningPricingInput:
+      type: object
+      additionalProperties: false
+      description: Grille d’une prestation au nouveau format (ADR-033).
+      required:
+        - minimumPrice
+      properties:
+        minimumPrice:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+        communeCoefficients:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningCommuneCoefficient'
+        defaultCoefficientBp:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        frequencies:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/CleaningFrequencyInput'
+        teamSize:
+          $ref: '#/components/schemas/CleaningTeamSizeRule'
+        checklist:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningChecklistTemplateItem'
+    PreviewCleaningServiceRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - answers
+        - commune
+      properties:
+        definition:
+          $ref: '#/components/schemas/SaveCleaningServiceRequest'
+          description: Définition à essayer, non enregistrée ; absente, version en vigueur de la prestation.
+        answers:
+          $ref: '#/components/schemas/CleaningAnswers'
+        options:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CleaningOptionSelection'
+        commune:
+          type: string
+          minLength: 1
+          maxLength: 100
+        frequency:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        requestedTeamSize:
+          type: integer
+          minimum: 1
+          maximum: 50
+    CleaningServicePreview:
+      type: object
+      additionalProperties: false
+      required:
+        - serviceCode
+        - calculation
+        - covered
+      properties:
+        serviceCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        calculation:
+          $ref: '#/components/schemas/CleaningPriceCalculation'
+        covered:
+          type: boolean
+          description: Vrai si la commune est dans une zone desservie.
     UpdateCleaningSettingsRequest:
       type: object
       additionalProperties: false
@@ -7791,7 +9543,6 @@ components:
         - quoteValidityDays
         - minimumLeadHours
         - freeCancellationHours
-        - visitThresholdSquareMeters
         - maxOpenRequests
         - depositPercent
       properties:
@@ -7811,7 +9562,8 @@ components:
           type: integer
           minimum: 1
           maximum: 100000
-          description: Sans effet depuis la décision du 2026-10-23 (visite des lieux obligatoire pour toute demande).
+          deprecated: true
+          description: 'Déprécié — ignoré (ADR-033) : la visite des lieux est obligatoire pour toute demande depuis le 2026-10-23 ; facultatif, la valeur enregistrée ne change pas.'
         maxOpenRequests:
           type: integer
           minimum: 1

@@ -73,8 +73,12 @@ export const STANDING_SETTING_KEYS = [
   'individualPaymentGraceHours',
 ] as const;
 
+/**
+ * Réglages à enregistrer. Le seuil de visite, sans effet depuis le 2026-10-23 (visite obligatoire
+ * pour toute demande), est déprécié et ignoré à l'écriture : la valeur enregistrée ne change pas (ADR-033).
+ */
 export function mergeSettings(current: CleaningSettings, update: CleaningSettings): CleaningSettings {
-  const merged = { ...update };
+  const merged = { ...update, visitThresholdSquareMeters: current.visitThresholdSquareMeters };
   for (const key of STANDING_SETTING_KEYS) {
     if (!merged[key]) merged[key] = current[key];
   }

@@ -29,6 +29,62 @@ export const IDS = {
 const xof = (amount: number) => ({ amount, currency: 'XOF' });
 const SLOT = { start: '2026-11-05T08:00:00.000Z', end: '2026-11-05T11:00:00.000Z' };
 
+/** Détail du calcul (ADR-033) : 6 pièces × 4 500 + 1 salle de bain × 3 000 + 8 fenêtres × 500, × 1,05. */
+export const protoCalculation: cleaningV1.PriceCalculation = {
+  pricingVersion: 3,
+  priced: true,
+  reason: '',
+  missingPrices: [],
+  lines: [
+    {
+      kind: 'unit_price',
+      optionCode: '',
+      fieldCode: 'rooms',
+      choiceCode: '',
+      label: 'Nombre de pièces',
+      quantity: 6,
+      unitLabel: 'pièces',
+      unitPrice: xof(4500),
+      amount: xof(27000),
+    },
+    {
+      kind: 'unit_price',
+      optionCode: 'windows',
+      fieldCode: 'window_count',
+      choiceCode: '',
+      label: 'Vitres — nombre de fenêtres',
+      quantity: 8,
+      unitLabel: 'fenêtres',
+      unitPrice: xof(500),
+      amount: xof(4000),
+    },
+  ],
+  baseAmount: xof(31000),
+  coefficients: [
+    {
+      source: 'commune',
+      optionCode: '',
+      fieldCode: '',
+      code: 'abomey-calavi',
+      label: 'Abomey-Calavi',
+      coefficientBp: 10500,
+    },
+  ],
+  subtotal: xof(32550),
+  minimumPrice: xof(15000),
+  minimumApplied: false,
+  computedPrice: xof(32550),
+  estimate: { low: xof(29500), high: xof(37500) },
+  recommendedTeamSize: 2,
+};
+export const protoAnswers: cleaningV1.AnswerSet = {
+  values: {
+    housing_type: { choiceValue: 'apartment' },
+    rooms: { numberValue: 6 },
+    pets: { booleanValue: false },
+  },
+};
+
 export const protoRequest: cleaningV1.QuoteRequest = {
   id: IDS.request,
   status: 'quote_sent',
@@ -67,6 +123,11 @@ export const protoRequest: cleaningV1.QuoteRequest = {
   updatedAt: '2026-10-23T08:00:00.000Z',
   customerName: 'Koffi Adjovi',
   organizationName: '',
+  answers: protoAnswers,
+  optionSelections: [{ code: 'windows', answers: { values: { window_count: { numberValue: 8 } } } }],
+  frequency: 'once',
+  pricingVersion: 3,
+  calculation: protoCalculation,
 };
 
 export const protoMission: cleaningV1.Mission = {
@@ -133,15 +194,86 @@ const definition: cleaningV1.ServiceDefinition = {
   active: true,
   pricing: {
     version: 1,
+    unitPrice: xof(4500),
     options: [{ code: 'windows', label: 'Vitres' }],
     communeCoefficients: [],
     defaultCoefficientBp: 10000,
-    teamSize: { unitsPerAgent: 3, minAgents: 1, maxAgents: 6 },
+    frequencies: [{ code: 'once', label: 'Une fois', coefficientBp: 10000, active: true }],
+    teamSize: { fieldCode: 'rooms', unitsPerAgent: 3, minAgents: 1, maxAgents: 6 },
     checklist: [],
     updatedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001',
     updatedAt: '2026-10-23T08:00:00.000Z',
     updatedByName: 'Afi Superviseure',
   },
+  fields: [
+    {
+      code: 'rooms',
+      label: 'Nombre de pièces',
+      type: 'number',
+      required: true,
+      helpText: '',
+      active: true,
+      unitLabel: 'pièces',
+      min: 1,
+      max: 50,
+      pricePerUnit: xof(4500),
+      choices: [],
+      coefficientBpIfYes: 0,
+    },
+    {
+      code: 'condition',
+      label: 'État',
+      type: 'choice',
+      required: true,
+      helpText: '',
+      active: true,
+      unitLabel: '',
+      min: 0,
+      max: 0,
+      choices: [
+        { code: 'normal', label: 'Normal', supplement: xof(0), coefficientBp: 0, active: true },
+        { code: 'dirty', label: 'Sale', coefficientBp: 12000, active: true },
+      ],
+      coefficientBpIfYes: 0,
+    },
+    {
+      code: 'pets',
+      label: "Présence d'animaux",
+      type: 'boolean',
+      required: false,
+      helpText: '',
+      active: true,
+      unitLabel: '',
+      min: 0,
+      max: 0,
+      choices: [],
+      coefficientBpIfYes: 11000,
+    },
+  ],
+  options: [
+    {
+      code: 'windows',
+      label: 'Vitres',
+      description: '',
+      active: true,
+      fields: [
+        {
+          code: 'window_count',
+          label: 'Nombre de fenêtres',
+          type: 'number',
+          required: true,
+          helpText: '',
+          active: true,
+          unitLabel: 'fenêtres',
+          min: 1,
+          max: 200,
+          pricePerUnit: xof(500),
+          choices: [],
+          coefficientBpIfYes: 0,
+        },
+      ],
+    },
+  ],
 };
 const settings: cleaningV1.Settings = {
   quoteValidityDays: 15,
@@ -197,6 +329,37 @@ const DEFAULTS: Record<Method, () => unknown> = {
         unit: 'room',
         options: [],
         priced: false,
+        form: {
+          fields: [
+            {
+              code: 'rooms',
+              label: 'Nombre de pièces',
+              type: 'number',
+              required: true,
+              helpText: '',
+              unitLabel: 'pièces',
+              min: 1,
+              max: 50,
+              choices: [],
+            },
+            {
+              code: 'condition',
+              label: 'État',
+              type: 'choice',
+              required: true,
+              helpText: 'Selon la dernière remise en état.',
+              unitLabel: '',
+              min: 0,
+              max: 0,
+              choices: [
+                { code: 'normal', label: 'Normal' },
+                { code: 'dirty', label: 'Sale' },
+              ],
+            },
+          ],
+          options: [{ code: 'appliances', label: 'Électroménager', description: '', fields: [] }],
+          frequencies: [{ code: 'once', label: 'Une fois' }],
+        },
       },
     ],
   }),
@@ -211,6 +374,8 @@ const DEFAULTS: Record<Method, () => unknown> = {
     recommendedTeamSize: 2,
     notice: 'Estimation non contractuelle.',
     covered: true,
+    reason: '',
+    calculation: protoCalculation,
   }),
   listServedZones: () => ({
     zones: [
@@ -248,6 +413,7 @@ const DEFAULTS: Record<Method, () => unknown> = {
   cancelMissionAsSupervisor: withMission,
   getCatalog: () => ({ services: [definition], settings }),
   saveService: () => ({ service: definition }),
+  previewService: () => ({ serviceCode: 'home_cleaning', calculation: protoCalculation, covered: true }),
   updateSettings: () => ({ settings }),
   listZones: () => ({ zones: [zone] }),
   saveZone: () => ({ zone }),

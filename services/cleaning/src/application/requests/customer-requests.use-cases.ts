@@ -1,5 +1,5 @@
 import { isCovered } from '../../domain/zone';
-import { PREMISES_TYPES, recommendedTeamSize } from '../../domain/catalog';
+import { legacyPremisesType, legacyQuantity } from '../../domain/answers';
 import { type Mission } from '../../domain/mission';
 import { isValidPlan, newPaymentState, type PaymentPlan } from '../../domain/payment';
 import { findProposedSlot, isQuoteExpired } from '../../domain/quote';
@@ -11,14 +11,14 @@ import {
   type RequestStatus,
 } from '../../domain/quote-request';
 import { respectsLeadTime } from '../../domain/schedule';
-import { simulate, unknownOptions } from '../../domain/simulator';
+import { calculatePrice } from '../../domain/simulator';
 import { activeService } from '../catalog/catalog.use-cases';
+import { type PricingInput, resolveAnswers } from '../catalog/pricing-input';
 import { type CleaningDeps, missionView, type MissionView, presentRequest } from '../deps';
 import { type Changes } from '../ports';
 import { currentCustomer, type Customer } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import {
-  oneOf,
   optionalText,
   type PageRequest,
   type PageResult,
@@ -57,12 +57,10 @@ export async function saveRequest(
   return { ...next, version: next.version + 1 };
 }
 
-export interface RequestQuoteInput {
+/** Demande au nouveau format (answers) ou à l'ancien format déprécié (ADR-033). */
+export interface RequestQuoteInput extends PricingInput {
   idempotencyKey: string;
   serviceCode: string;
-  premisesType: string;
-  quantity: number;
-  options: string[];
   commune: string;
   address: string;
   preferredSlots: { start: string; end: string }[];
@@ -96,8 +94,6 @@ export class RequestQuoteUseCase {
       throw CleaningErrors.organizationSuspended();
     }
 
-    const premisesType = oneOf('premisesType', input.premisesType, PREMISES_TYPES);
-    const quantity = requirePositiveInt('quantity', input.quantity);
     const commune = requiredText('commune', input.commune, 100);
     const address = requiredText('address', input.address, 500);
     const comment = optionalText('comment', input.comment, 2000);
@@ -107,7 +103,7 @@ export class RequestQuoteUseCase {
       : 0;
     const daysPerWeek = input.daysPerWeek ? requirePositiveInt('daysPerWeek', input.daysPerWeek, 7) : null;
     const service = await activeService(this.deps, input.serviceCode);
-    if (unknownOptions(service, input.options).length) throw CleaningErrors.invalid('options');
+    const { value: form, incomplete } = resolveAnswers(service, input);
     // Zones desservies : une demande hors zone est refusée (le simulateur, lui, reste ouvert).
     if (!isCovered(await this.deps.catalog.listZones(), commune))
       throw CleaningErrors.zoneNotCovered(commune);
@@ -126,8 +122,7 @@ export class RequestQuoteUseCase {
       throw CleaningErrors.tooManyOpenRequests(settings.maxOpenRequests);
     }
 
-    const options = [...new Set(input.options)];
-    const simulation = simulate(service, { quantity, options, commune, requestedTeamSize });
+    const calculation = calculatePrice(service, { ...form, commune, requestedTeamSize, incomplete });
     const visitRequired = VISIT_REQUIRED;
     const request: QuoteRequest = {
       id: this.deps.ids.next(),
@@ -136,9 +131,14 @@ export class RequestQuoteUseCase {
       customerKind: customer.kind,
       organizationId: customer.organizationId,
       serviceCode: service.code,
-      premisesType,
-      quantity,
-      options,
+      premisesType: legacyPremisesType(form.answers),
+      quantity: legacyQuantity(service, form.answers),
+      options: form.options.map((option) => option.code),
+      answers: form.answers,
+      optionSelections: form.options,
+      frequency: form.frequency,
+      pricingVersion: service.pricing.version,
+      calculation,
       commune,
       address,
       preferredSlots,
@@ -146,8 +146,8 @@ export class RequestQuoteUseCase {
       recurrence,
       requestedTeamSize,
       daysPerWeek,
-      recommendedTeamSize: recommendedTeamSize(service.pricing.teamSize, quantity, requestedTeamSize),
-      estimate: simulation.priced ? { low: simulation.low, high: simulation.high } : null,
+      recommendedTeamSize: calculation.recommendedTeamSize,
+      estimate: calculation.estimate,
       visit: null,
       quote: null,
       missionId: null,

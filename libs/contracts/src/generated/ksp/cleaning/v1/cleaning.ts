@@ -136,9 +136,21 @@ export interface QuoteRequest {
   /** Organisation au nom de laquelle la demande est faite, vide pour un particulier. */
   organizationId: string;
   serviceCode: string;
-  /** "apartment", "house", "office", "shop", "warehouse" ou "other". */
+  /**
+   * Déprécié (ADR-033) : valeur dérivée des réponses pour les anciens lecteurs, "other" si la
+   * prestation n'a pas de champ "premises_type". "apartment", "house", "office", "shop",
+   * "warehouse" ou "other".
+   *
+   * @deprecated
+   */
   premisesType: string;
+  /**
+   * Déprécié (ADR-033) : réponse au champ de la taille d'équipe (TeamSizeRule.field_code), 1 sinon.
+   *
+   * @deprecated
+   */
   quantity: number;
+  /** Codes des options choisies (le détail de leurs réponses est dans option_selections). */
   options: string[];
   commune: string;
   /** Adresse d'intervention : jamais dans les journaux ni dans les événements. */
@@ -165,6 +177,24 @@ export interface QuoteRequest {
   customerName: string;
   /** Back-office : raison sociale de l'organisation, vide pour un particulier (ADR-029). */
   organizationName: string;
+  /**
+   * Réponses au formulaire de la prestation, telles qu'enregistrées (ancien format converti,
+   * ADR-033). Absentes pour une demande antérieure à la grille paramétrable.
+   */
+  answers?:
+    | AnswerSet
+    | undefined;
+  /** Options choisies, avec leurs réponses. */
+  optionSelections: OptionSelection[];
+  /** Code de la fréquence choisie, vide si aucune. */
+  frequency: string;
+  /** Version de la grille utilisée pour le calcul, 0 si inconnue (demande antérieure). */
+  pricingVersion: number;
+  /**
+   * Détail du calcul au moment de la demande, absent pour une demande antérieure ; le devis est
+   * prérempli à partir de lui.
+   */
+  calculation?: PriceCalculation | undefined;
 }
 
 export interface ChecklistItem {
@@ -258,7 +288,7 @@ export interface Suspension {
 export interface CatalogOption {
   code: string;
   label: string;
-  /** Absent tant que l'option n'a pas de prix. */
+  /** Absent tant que l'option n'a pas de prix. Depuis l'ADR-033 : forfait de l'option (flat_price). */
   price?: Money | undefined;
 }
 
@@ -266,12 +296,250 @@ export interface ServiceOffer {
   code: string;
   name: string;
   description: string;
-  /** Unité de calcul : "square_meter", "room", "septic_tank" ou "cubic_meter". */
+  /**
+   * Déprécié (ADR-033) : unité de l'ancien formulaire, "square_meter", "room", "septic_tank" ou
+   * "cubic_meter". Les unités sont désormais celles des champs (FormField.unit_label).
+   *
+   * @deprecated
+   */
   unit: string;
+  /**
+   * Déprécié (ADR-033) : options actives avec leur forfait ; lire form.options.
+   *
+   * @deprecated
+   */
   options: CatalogOption[];
-  /** Faux tant que l'équipe Nettoyage n'a pas fixé le prix unitaire. */
+  /**
+   * Vrai si toute réponse au formulaire (hors options) peut être chiffrée : tous les prix
+   * nécessaires des champs actifs sont fixés.
+   */
   priced: boolean;
+  /**
+   * Déprécié (ADR-033) : le formulaire public ne montre plus de prix.
+   *
+   * @deprecated
+   */
+  minimumPrice?:
+    | Money
+    | undefined;
+  /** Formulaire de la prestation, sans aucun prix (ADR-033). */
+  form?: ServiceForm | undefined;
+}
+
+/**
+ * Réponse à un champ : nombre entier (type "number"), code d'un choix ("choice") ou oui/non
+ * ("boolean").
+ */
+export interface AnswerValue {
+  numberValue?: number | undefined;
+  choiceValue?: string | undefined;
+  booleanValue?: boolean | undefined;
+}
+
+/**
+ * Réponses à un formulaire, par code de champ. Le message présent (même vide) signale le nouveau
+ * format de demande ; absent, la demande est à l'ancien format (premises_type, quantity, options).
+ */
+export interface AnswerSet {
+  values: { [key: string]: AnswerValue };
+}
+
+export interface AnswerSet_ValuesEntry {
+  key: string;
+  value?: AnswerValue | undefined;
+}
+
+/** Option choisie par le client, avec les réponses à ses propres champs. */
+export interface OptionSelection {
+  code: string;
+  answers?: AnswerSet | undefined;
+}
+
+/** Valeur d'un champ "choice" (définition complète, back-office). */
+export interface FieldChoice {
+  code: string;
+  label: string;
+  /** Supplément ajouté au prix ; absent si non fixé. */
+  supplement?:
+    | Money
+    | undefined;
+  /**
+   * Coefficient appliqué au prix, en points de base ; 0 si aucun.
+   * Supplément absent et coefficient 0 : valeur sans prix (priced = false si elle est choisie).
+   */
+  coefficientBp: number;
+  active: boolean;
+}
+
+/** Champ du formulaire (définition complète, back-office). Les champs sont dans l'ordre d'affichage. */
+export interface FieldDefinition {
+  /** Code unique dans la prestation (ou dans l'option), par exemple "surface". */
+  code: string;
+  label: string;
+  /** "number", "choice" ou "boolean". */
+  type: string;
+  required: boolean;
+  /** Aide affichée sous le champ, vide si aucune. */
+  helpText: string;
+  active: boolean;
+  /**
+   * "number" : unité libre ("m²", "m³", "pièces", "mètres linéaires"…), bornes entières incluses
+   * et prix par unité (absent tant que non fixé).
+   */
+  unitLabel: string;
+  min: number;
+  max: number;
+  pricePerUnit?:
+    | Money
+    | undefined;
+  /** "choice" : valeurs proposées, dans l'ordre d'affichage. */
+  choices: FieldChoice[];
+  /**
+   * "boolean" : effet de la réponse « oui » (la réponse « non » n'a jamais d'effet). Supplément
+   * absent et coefficient 0 : non fixé (priced = false si le client répond oui).
+   */
+  supplementIfYes?: Money | undefined;
+  coefficientBpIfYes: number;
+}
+
+/** Option (prestation complémentaire) : forfait facultatif et champs propres. */
+export interface OptionDefinition {
+  code: string;
+  label: string;
+  description: string;
+  active: boolean;
+  /** Forfait de l'option, absent si aucun. Une option sans champ et sans forfait n'a pas de prix. */
+  flatPrice?: Money | undefined;
+  fields: FieldDefinition[];
+}
+
+/** Fréquence propre à la prestation, avec son coefficient sur le prix d'un passage. */
+export interface ServiceFrequency {
+  /** Par exemple "once", "weekly", "monthly". */
+  code: string;
+  label: string;
+  coefficientBp: number;
+  active: boolean;
+}
+
+/** Valeur d'un champ "choice" vue du public : sans supplément ni coefficient. */
+export interface FormChoice {
+  code: string;
+  label: string;
+}
+
+/** Champ actif du formulaire public : jamais de prix, de supplément ni de coefficient. */
+export interface FormField {
+  code: string;
+  label: string;
+  /** "number", "choice" ou "boolean". */
+  type: string;
+  required: boolean;
+  helpText: string;
+  /** "number" seulement : unité et bornes entières incluses. */
+  unitLabel: string;
+  min: number;
+  max: number;
+  /** "choice" seulement : valeurs actives. */
+  choices: FormChoice[];
+}
+
+export interface FormOption {
+  code: string;
+  label: string;
+  description: string;
+  fields: FormField[];
+}
+
+export interface FormFrequency {
+  code: string;
+  label: string;
+}
+
+/** Formulaire public d'une prestation : éléments actifs seulement, dans l'ordre d'affichage. */
+export interface ServiceForm {
+  fields: FormField[];
+  options: FormOption[];
+  /** Fréquences actives ; si la liste n'est pas vide, la fréquence est obligatoire (nouveau format). */
+  frequencies: FormFrequency[];
+}
+
+/** Ligne du détail d'un calcul. */
+export interface CalculationLine {
+  /**
+   * "unit_price" (nombre × prix par unité), "supplement" (choix ou réponse oui) ou "flat_price"
+   * (forfait d'une option).
+   */
+  kind: string;
+  /** Option concernée, vide pour la prestation elle-même. */
+  optionCode: string;
+  /** Champ concerné, vide pour un forfait. */
+  fieldCode: string;
+  /** Valeur choisie ("choice"), vide sinon. */
+  choiceCode: string;
+  label: string;
+  quantity: number;
+  unitLabel: string;
+  unitPrice?: Money | undefined;
+  amount?: Money | undefined;
+}
+
+/** Coefficient appliqué : au montant d'une option (option_code renseigné) ou au total. */
+export interface AppliedCoefficient {
+  /** "choice", "boolean", "commune" ou "frequency". */
+  source: string;
+  /**
+   * Option dont le champ porte ce coefficient : il ne s'applique qu'au montant de cette option.
+   * Vide pour un coefficient de la prestation, de la commune ou de la fréquence.
+   */
+  optionCode: string;
+  fieldCode: string;
+  /** Code du choix, clé de la commune ou code de la fréquence ; vide pour un booléen. */
+  code: string;
+  label: string;
+  coefficientBp: number;
+}
+
+/**
+ * Prix manquant dans la grille : forfait d'une option (field_code vide), prix par unité d'un champ
+ * (choice_code vide) ou effet d'une valeur choisie.
+ */
+export interface MissingPrice {
+  optionCode: string;
+  fieldCode: string;
+  choiceCode: string;
+}
+
+/**
+ * Détail du calcul d'un passage (ADR-033) :
+ *   prix = max(minimum, (Σ lignes de la prestation + Σ options [Σ lignes de l'option × Π coefficients
+ *   de ses champs]) × Π coefficients des champs de la prestation × commune × fréquence),
+ *   arrondi une seule fois, au franc le plus proche.
+ */
+export interface PriceCalculation {
+  pricingVersion: number;
+  priced: boolean;
+  /**
+   * Vide si priced ; sinon "price_not_set" (prix d'un champ de la prestation), "option_price_not_set"
+   * (prix d'une option ou de ses champs) ou "answers_incomplete" (ancien format sans les réponses
+   * obligatoires du nouveau formulaire).
+   */
+  reason: string;
+  missingPrices: MissingPrice[];
+  /** Lignes calculables ; complètes seulement si priced. */
+  lines: CalculationLine[];
+  /** Montants absents si priced = false. */
+  baseAmount?: Money | undefined;
+  coefficients: AppliedCoefficient[];
+  subtotal?:
+    | Money
+    | undefined;
+  /** Minimum de commande de la grille, absent s'il n'est pas fixé. */
   minimumPrice?: Money | undefined;
+  minimumApplied: boolean;
+  computedPrice?: Money | undefined;
+  estimate?: PriceRange | undefined;
+  recommendedTeamSize: number;
 }
 
 export interface ListServicesRequest {
@@ -281,15 +549,46 @@ export interface ListServicesResponse {
   services: ServiceOffer[];
 }
 
+/**
+ * Deux formats (ADR-033), distingués par la présence du message answers :
+ * - nouveau : answers (présent, même vide), option_selections, frequency (code d'une fréquence
+ *   active de la prestation, obligatoire si elle en a) ; premises_type, quantity et options vides ;
+ * - ancien (déprécié) : premises_type, quantity, options (codes) ; converti vers le nouveau.
+ */
 export interface SimulateRequest {
   serviceCode: string;
+  /**
+   * Ancien format (déprécié).
+   *
+   * @deprecated
+   */
   premisesType: string;
-  /** Quantité dans l'unité de la prestation (m², pièces…), entière et positive. */
+  /**
+   * Ancien format (déprécié) : quantité dans l'unité de la prestation, entière et positive ;
+   * devient la réponse au champ de la taille d'équipe (TeamSizeRule.field_code).
+   *
+   * @deprecated
+   */
   quantity: number;
+  /**
+   * Ancien format (déprécié) : codes des options choisies.
+   *
+   * @deprecated
+   */
   options: string[];
   commune: string;
-  /** "once", "weekly" ou "monthly" : informatif, le prix est celui d'un passage. */
+  /**
+   * Nouveau format : code d'une fréquence de la prestation (coefficient sur le prix d'un passage).
+   * Ancien format : "once", "weekly" ou "monthly", appliqué si la prestation a une fréquence de
+   * même code, sans effet sinon.
+   */
   frequency: string;
+  /** Nouveau format : réponses au formulaire de la prestation. */
+  answers?:
+    | AnswerSet
+    | undefined;
+  /** Nouveau format : options choisies, avec leurs réponses. */
+  optionSelections: OptionSelection[];
 }
 
 export interface SimulateResponse {
@@ -306,6 +605,10 @@ export interface SimulateResponse {
   notice: string;
   /** Vrai si la commune est dans une zone desservie ; l'estimation est donnée dans tous les cas. */
   covered: boolean;
+  /** Raison de l'absence de prix (voir PriceCalculation.reason), vide si priced. */
+  reason: string;
+  /** Détail complet du calcul (ADR-033) ; breakdown reprend ses lignes. */
+  calculation?: PriceCalculation | undefined;
 }
 
 /** Zone desservie vue du public. */
@@ -329,11 +632,27 @@ export interface Page {
   cursor: string;
 }
 
+/** Mêmes deux formats que SimulateRequest (ADR-033), distingués par la présence de answers. */
 export interface RequestQuoteRequest {
   idempotencyKey: string;
   serviceCode: string;
+  /**
+   * Ancien format (déprécié).
+   *
+   * @deprecated
+   */
   premisesType: string;
+  /**
+   * Ancien format (déprécié).
+   *
+   * @deprecated
+   */
   quantity: number;
+  /**
+   * Ancien format (déprécié) : codes des options choisies.
+   *
+   * @deprecated
+   */
   options: string[];
   commune: string;
   address: string;
@@ -343,6 +662,17 @@ export interface RequestQuoteRequest {
   requestedTeamSize: number;
   /** Entreprise : jours d'intervention par semaine, si connus (1 à 7) ; 0 si non précisés. */
   daysPerWeek: number;
+  /** Nouveau format : réponses au formulaire de la prestation. */
+  answers?:
+    | AnswerSet
+    | undefined;
+  /** Nouveau format : options choisies, avec leurs réponses. */
+  optionSelections: OptionSelection[];
+  /**
+   * Code de la fréquence (règles de SimulateRequest.frequency) ; vide si aucune. Indépendante de
+   * recurrence, qui décrit le contrat (passages par période, durée).
+   */
+  frequency: string;
 }
 
 export interface RequestQuoteResponse {
@@ -485,7 +815,12 @@ export interface CompleteVisitResponse {
 
 export interface SendQuoteRequest {
   requestId: string;
-  /** Vide : lignes préremplies depuis la grille en vigueur. */
+  /**
+   * Vide : lignes préremplies depuis le détail du calcul de la demande (ADR-033) : ses lignes, une
+   * ligne d'ajustement pour les coefficients et, s'il s'applique, une ligne pour le minimum de
+   * commande. Calcul sans prix : nouveau calcul avec la grille en vigueur et les réponses
+   * enregistrées ; toujours sans prix : CLEANING_PRICE_NOT_SET.
+   */
   lines: PriceLine[];
   proposedSlots: TimeSlot[];
   /** 0 : validité par défaut (réglages). */
@@ -614,13 +949,36 @@ export interface TeamSizeRule {
   unitsPerAgent: number;
   minAgents: number;
   maxAgents: number;
+  /**
+   * Champ "number" de la prestation (pas d'une option) qui porte la quantité : taille d'équipe,
+   * et cible de l'ancien champ quantity (ADR-033). Vide : taille minimale (ou celle demandée).
+   */
+  fieldCode: string;
 }
 
+/**
+ * Grille d'une prestation. La version couvre la définition complète (champs, options, grille) :
+ * chaque enregistrement en crée une nouvelle (ADR-033).
+ */
 export interface PricingRule {
   version: number;
-  /** Absents tant que non fixés. */
-  unitPrice?: Money | undefined;
-  minimumPrice?: Money | undefined;
+  /**
+   * Déprécié (ADR-033) : prix par unité du champ de la taille d'équipe, absent s'il n'est pas fixé.
+   *
+   * @deprecated
+   */
+  unitPrice?:
+    | Money
+    | undefined;
+  /** Absent tant que non fixé (aucun minimum). */
+  minimumPrice?:
+    | Money
+    | undefined;
+  /**
+   * Déprécié (ADR-033) : options avec leur forfait ; lire ServiceDefinition.options.
+   *
+   * @deprecated
+   */
   options: CatalogOption[];
   communeCoefficients: CommuneCoefficient[];
   /** Coefficient d'une commune absente de la liste. */
@@ -631,22 +989,50 @@ export interface PricingRule {
   updatedAt: string;
   /** Back-office : nom affiché de l'auteur de la version (ADR-029). */
   updatedByName: string;
+  /** Fréquences propres à la prestation, dans l'ordre d'affichage (ADR-033). */
+  frequencies: ServiceFrequency[];
 }
 
+/**
+ * Définition complète d'une prestation (back-office).
+ *
+ * À l'écriture (SaveService, PreviewService), nouveau format seulement (ADR-033) : fields non vide
+ * (au moins un champ actif), options, pricing ; unit, pricing.unit_price et pricing.options sont
+ * ignorés. fields vide (ancien corps) : CLEANING_VALIDATION_FAILED, details.field = "fields",
+ * details.reason = "required".
+ */
 export interface ServiceDefinition {
   code: string;
   name: string;
   description: string;
+  /**
+   * Déprécié (ADR-033) : unité de l'ancien formulaire ("square_meter", "room", "septic_tank" ou
+   * "cubic_meter"). Ignoré à l'écriture : déduit de l'unité du champ de la taille d'équipe.
+   *
+   * @deprecated
+   */
   unit: string;
   active: boolean;
-  pricing?: PricingRule | undefined;
+  pricing?:
+    | PricingRule
+    | undefined;
+  /** Champs du formulaire, dans l'ordre d'affichage (ADR-033). */
+  fields: FieldDefinition[];
+  /** Options (prestations complémentaires), dans l'ordre d'affichage (ADR-033). */
+  options: OptionDefinition[];
 }
 
 export interface Settings {
   quoteValidityDays: number;
   minimumLeadHours: number;
   freeCancellationHours: number;
-  /** Sans effet depuis la décision du 2026-10-23 : visite des lieux obligatoire pour toute demande. */
+  /**
+   * Déprécié : sans effet depuis la décision du 2026-10-23 (visite des lieux obligatoire pour toute
+   * demande). Toujours renvoyé ; à l'écriture, ignoré (0 accepté), la valeur enregistrée ne change pas
+   * (ADR-033).
+   *
+   * @deprecated
+   */
   visitThresholdSquareMeters: number;
   maxOpenRequests: number;
   depositPercent: number;
@@ -682,6 +1068,35 @@ export interface SaveServiceRequest {
 
 export interface SaveServiceResponse {
   service?: ServiceDefinition | undefined;
+}
+
+export interface PreviewServiceRequest {
+  serviceCode: string;
+  /**
+   * Définition à tester, au nouveau format seulement (fields non vide) ; elle n'est pas enregistrée.
+   * Absente : version en vigueur de la prestation (CLEANING_SERVICE_NOT_FOUND si elle n'existe pas ;
+   * une prestation inactive est acceptée).
+   */
+  definition?:
+    | ServiceDefinition
+    | undefined;
+  /** Réponses au nouveau format, validées comme celles du client (obligatoire, même vide). */
+  answers?: AnswerSet | undefined;
+  optionSelections: OptionSelection[];
+  commune: string;
+  frequency: string;
+  /** 0 : taille recommandée par la règle. */
+  requestedTeamSize: number;
+}
+
+export interface PreviewServiceResponse {
+  serviceCode: string;
+  /** pricing_version : version en vigueur, ou 0 pour une définition envoyée. */
+  calculation?:
+    | PriceCalculation
+    | undefined;
+  /** Vrai si la commune est dans une zone desservie. */
+  covered: boolean;
 }
 
 export interface UpdateSettingsRequest {
@@ -847,7 +1262,10 @@ export interface GetMissionAmountDueResponse {
  */
 
 export interface CatalogServiceClient {
-  /** Prestations actives, avec leurs options et leur minimum de commande quand ils sont fixés. */
+  /**
+   * Prestations actives et leur formulaire (champs, options, fréquences), sans aucun prix
+   * (ServiceOffer.form, ADR-033) ; anciens champs (options avec prix, minimum) dépréciés.
+   */
 
   listServices(request: ListServicesRequest, metadata?: Metadata): Observable<ListServicesResponse>;
 
@@ -873,7 +1291,10 @@ export interface CatalogServiceClient {
  */
 
 export interface CatalogServiceController {
-  /** Prestations actives, avec leurs options et leur minimum de commande quand ils sont fixés. */
+  /**
+   * Prestations actives et leur formulaire (champs, options, fréquences), sans aucun prix
+   * (ServiceOffer.form, ADR-033) ; anciens champs (options avec prix, minimum) dépréciés.
+   */
 
   listServices(
     request: ListServicesRequest,
@@ -1162,7 +1583,16 @@ export interface CleaningAdminServiceClient {
 
   getCatalog(request: GetCatalogRequest, metadata?: Metadata): Observable<GetCatalogResponse>;
 
+  /** Crée ou remplace une prestation complète (champs, options, grille) : une nouvelle version (ADR-033). */
+
   saveService(request: SaveServiceRequest, metadata?: Metadata): Observable<SaveServiceResponse>;
+
+  /**
+   * Calcule un prix avec une définition envoyée (ou la version en vigueur) et des réponses, pour
+   * tester une grille avant de l'enregistrer. Rien n'est enregistré (ADR-033).
+   */
+
+  previewService(request: PreviewServiceRequest, metadata?: Metadata): Observable<PreviewServiceResponse>;
 
   updateSettings(request: UpdateSettingsRequest, metadata?: Metadata): Observable<UpdateSettingsResponse>;
 
@@ -1315,10 +1745,22 @@ export interface CleaningAdminServiceController {
     metadata?: Metadata,
   ): Promise<GetCatalogResponse> | Observable<GetCatalogResponse> | GetCatalogResponse;
 
+  /** Crée ou remplace une prestation complète (champs, options, grille) : une nouvelle version (ADR-033). */
+
   saveService(
     request: SaveServiceRequest,
     metadata?: Metadata,
   ): Promise<SaveServiceResponse> | Observable<SaveServiceResponse> | SaveServiceResponse;
+
+  /**
+   * Calcule un prix avec une définition envoyée (ou la version en vigueur) et des réponses, pour
+   * tester une grille avant de l'enregistrer. Rien n'est enregistré (ADR-033).
+   */
+
+  previewService(
+    request: PreviewServiceRequest,
+    metadata?: Metadata,
+  ): Promise<PreviewServiceResponse> | Observable<PreviewServiceResponse> | PreviewServiceResponse;
 
   updateSettings(
     request: UpdateSettingsRequest,
@@ -1398,6 +1840,7 @@ export function CleaningAdminServiceControllerMethods() {
       "cancelMissionAsSupervisor",
       "getCatalog",
       "saveService",
+      "previewService",
       "updateSettings",
       "listZones",
       "saveZone",

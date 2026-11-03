@@ -1,6 +1,7 @@
 import { ResolveBackofficeNamesUseCase } from './backoffice/backoffice-names.use-case';
 import {
   GetCatalogUseCase,
+  PreviewServiceUseCase,
   SaveServiceUseCase,
   UpdateSettingsUseCase,
 } from './catalog/admin-catalog.use-cases';
@@ -97,6 +98,7 @@ export function createUseCases(deps: CleaningDeps) {
     cancelMissionAsSupervisor: new CancelMissionAsSupervisorUseCase(deps),
     getCatalog: new GetCatalogUseCase(deps),
     saveService: new SaveServiceUseCase(deps),
+    previewService: new PreviewServiceUseCase(deps),
     updateSettings: new UpdateSettingsUseCase(deps),
     listAgents: new ListAgentsUseCase(deps),
     registerAgent: new RegisterAgentUseCase(deps),

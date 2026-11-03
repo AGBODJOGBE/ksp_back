@@ -1,11 +1,26 @@
 import { AppError } from '@ksp/platform';
+import { type AnswerProblemReason } from '../../domain/answers';
 import { CURRENCY, formatXof } from '../../domain/money';
 import { formatDateTimeFr, formatDayFr, localDay } from '../../domain/schedule';
 
 /** Erreurs du service (contrat gRPC, en-tête de cleaning.proto). Messages en français, pour l'utilisateur. */
+const ANSWER_MESSAGES: Record<AnswerProblemReason, string> = {
+  unknown_field: 'Ce champ ne fait pas partie du formulaire de la prestation.',
+  required: 'Ce champ est obligatoire.',
+  invalid_type: "Le type de la réponse n'est pas le bon.",
+  out_of_range: 'Cette valeur est hors des bornes autorisées.',
+  unknown_choice: "Cette valeur n'est pas proposée.",
+  unknown_option: "Cette option n'est pas proposée.",
+  duplicate_option: 'Cette option est choisie deux fois.',
+  unknown_frequency: "Cette fréquence n'est pas proposée pour cette prestation.",
+};
+
 export const CleaningErrors = {
   invalid: (field: string, message = 'La requête est invalide.') =>
     AppError.invalid('CLEANING_VALIDATION_FAILED', message, { field }),
+  /** Réponse au formulaire refusée (ADR-033) : champ et raison. */
+  answerRefused: (field: string, reason: AnswerProblemReason) =>
+    AppError.invalid('CLEANING_VALIDATION_FAILED', ANSWER_MESSAGES[reason], { field, reason }),
   slotInvalid: (message = 'Le créneau est invalide.') => AppError.invalid('CLEANING_SLOT_INVALID', message),
   serviceNotFound: () => AppError.notFound('CLEANING_SERVICE_NOT_FOUND', 'Cette prestation est introuvable.'),
   requestNotFound: () => AppError.notFound('CLEANING_REQUEST_NOT_FOUND', 'Cette demande est introuvable.'),

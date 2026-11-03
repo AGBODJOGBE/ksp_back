@@ -9,11 +9,14 @@ import {
   asCustomer,
   asSupervisor,
   CUSTOMER_ID,
+  definitionInput,
   FixedClock,
   OTHER_AGENT_ID,
 } from '../src/application/testing/fakes';
 import { createUseCases } from '../src/application/use-cases';
+import { definitionProblems, isFullyPriced } from '../src/domain/catalog';
 import { DEFAULT_FIELD_DATE_POLICY } from '../src/domain/schedule';
+import { homeCleaningService } from '../src/domain/testing';
 import { PrismaAgentRepository } from '../src/infrastructure/persistence/prisma-agent.repository';
 import { PrismaCatalogRepository } from '../src/infrastructure/persistence/prisma-catalog.repository';
 import { PrismaContractInvoiceRepository } from '../src/infrastructure/persistence/prisma-contract-invoice.repository';
@@ -86,13 +89,40 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       (row) => row.event_type,
     );
 
-  it('la migration crée les réglages par défaut et une grille vide', async () => {
+  it('la migration crée les réglages par défaut et les six prestations, prix à null (ADR-033)', async () => {
     expect(await deps.catalog.getSettings()).toMatchObject({
       quoteValidityDays: 15,
       depositPercent: 30,
       maxOpenRequests: 5,
     });
-    expect(await deps.catalog.listServices()).toEqual([]);
+    const services = await deps.catalog.listServices();
+    expect(
+      services.map((service) => [service.code, service.unit, service.active, service.pricing.version]),
+    ).toEqual([
+      ['garden_maintenance', 'square_meter', true, 1],
+      ['home_cleaning', 'room', true, 1],
+      ['office_cleaning', 'square_meter', true, 1],
+      ['pest_control', 'square_meter', true, 1],
+      ['post_construction', 'square_meter', true, 1],
+      ['septic_emptying', 'cubic_meter', true, 1],
+    ]);
+    for (const service of services) {
+      // Chaque définition de départ est valide et n'a aucun prix.
+      expect(definitionProblems(service)).toEqual([]);
+      expect(isFullyPriced(service)).toBe(false);
+      expect(service.options.every((option) => option.flatPrice === null)).toBe(true);
+      expect(service.pricing.minimumPrice).toBeNull();
+    }
+    const septic = services.find((service) => service.code === 'septic_emptying')!;
+    expect(septic.fields.map((field) => field.code)).toEqual(['tank_volume', 'tank_type', 'truck_access']);
+    expect(septic.pricing.frequencies.map((frequency) => frequency.code)).toEqual(['once']);
+    expect(septic.pricing.teamSize.fieldCode).toBe('tank_volume');
+    const garden = services.find((service) => service.code === 'garden_maintenance')!;
+    expect(garden.pricing.frequencies.map((frequency) => [frequency.code, frequency.coefficientBp])).toEqual([
+      ['once', 10000],
+      ['weekly', 10000],
+      ['monthly', 10000],
+    ]);
     expect((await deps.catalog.listZones()).map((zone) => zone.code)).toEqual([
       'abomey-calavi',
       'cotonou',
@@ -101,36 +131,37 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
   });
 
   it('parcours complet : grille versionnée, demande idempotente, devis, acceptation, passage', async () => {
-    const pricing = {
-      unitPrice: 5000,
-      minimumPrice: 15000,
-      options: [],
-      communeCoefficients: [],
-      defaultCoefficientBp: 10000,
-      teamSize: { unitsPerAgent: 3, minAgents: 1, maxAgents: 6 },
-      checklist: [],
+    const definition = (roomPrice: number) => {
+      const service = homeCleaningService({
+        pricing: { ...homeCleaningService().pricing, communeCoefficients: {} },
+      });
+      service.fields[1]!.pricePerUnit = roomPrice;
+      return definitionInput(service);
     };
-    const service = {
-      code: 'home_cleaning',
-      name: 'Nettoyage à domicile',
-      description: '',
-      unit: 'room',
-      active: true,
-    };
-    await asAdmin(() =>
-      useCases.saveService.execute({ ...service, pricing: { ...pricing, unitPrice: 4000 } }),
+    await asAdmin(() => useCases.saveService.execute('home_cleaning', definition(4000)));
+    const saved = await asAdmin(() => useCases.saveService.execute('home_cleaning', definition(5000)));
+    expect(saved.pricing).toMatchObject({ version: 3, minimumPrice: 15000 });
+    expect(saved.fields[1]).toMatchObject({ code: 'rooms', pricePerUnit: 5000 });
+    expect(saved.options.map((option) => option.code)).toEqual(['windows', 'sofa', 'appliances']);
+    // Anciennes colonnes déduites, pour les anciens lecteurs.
+    const legacy = await pool.query(
+      "SELECT unit_price, options FROM pricing_rules WHERE service_code = 'home_cleaning' AND version = 3",
     );
-    const saved = await asAdmin(() => useCases.saveService.execute({ ...service, pricing }));
-    expect(saved.pricing).toMatchObject({ version: 2, unitPrice: 5000 });
+    expect(legacy.rows[0]).toMatchObject({ unit_price: 5000 });
+    expect(legacy.rows[0].options).toEqual([
+      { code: 'windows', label: 'Vitres', price: null },
+      { code: 'sofa', label: 'Canapé', price: null },
+      { code: 'appliances', label: 'Électroménager', price: 5000 },
+    ]);
     await asAdmin(() => useCases.registerAgent.execute({ agentId: AGENT_ID, displayName: 'Awa' }));
     await asAdmin(() => useCases.registerAgent.execute({ agentId: OTHER_AGENT_ID, displayName: 'Koffi' }));
 
     const input = {
       idempotencyKey: 'int-1',
       serviceCode: 'home_cleaning',
-      premisesType: 'house',
-      quantity: 4,
-      options: [],
+      answers: { housing_type: 'apartment', rooms: 4, bathrooms: 0, condition: 'normal' },
+      optionSelections: [],
+      frequency: 'once',
       commune: 'Cotonou',
       address: 'Lot 12, Cotonou',
       preferredSlots: [SLOT],
@@ -144,6 +175,15 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     ]);
     expect(a.id).toBe(b.id);
     expect((await pool.query('SELECT count(*)::int AS n FROM quote_requests')).rows[0].n).toBe(1);
+    // Réponses, version de grille et détail du calcul enregistrés avec la demande.
+    expect(await deps.requests.findById(a.id)).toMatchObject({
+      answers: input.answers,
+      optionSelections: [],
+      frequency: 'once',
+      pricingVersion: 3,
+      quantity: 4,
+      calculation: { priced: true, computedPrice: 20000, pricingVersion: 3 },
+    });
     expect(await outbox()).toEqual(['cleaning.quote.requested']);
     const { rows } = await pool.query('SELECT payload FROM outbox');
     expect(JSON.stringify(rows)).not.toContain('Lot 12');
@@ -700,5 +740,32 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     expect(await outbox()).toEqual(outboxBefore);
     // Missions d'une organisation : seules les non terminées, de cette organisation.
     expect(await deps.missions.listActiveForOrganization(suspendedOrganization)).toEqual([]);
+  });
+
+  it('données de démonstration : chargées après les migrations, rejouables, désinsectisation sans prix', async () => {
+    const demo = readFileSync(join(__dirname, '..', 'prisma', 'demo', 'demo-data.sql'), 'utf8');
+    const client = await pool.connect();
+    try {
+      await client.query("SET ksp.demo = 'on'");
+      await client.query(demo);
+      await client.query(demo);
+    } finally {
+      client.release();
+    }
+    const services = await deps.catalog.listServices();
+    const priced = Object.fromEntries(services.map((service) => [service.code, isFullyPriced(service)]));
+    expect(priced).toEqual({
+      garden_maintenance: true,
+      home_cleaning: true,
+      office_cleaning: true,
+      pest_control: false,
+      post_construction: true,
+      septic_emptying: true,
+    });
+    for (const service of services) expect(definitionProblems(service)).toEqual([]);
+    const versions = await pool.query(
+      "SELECT count(*)::int AS n FROM pricing_rules WHERE created_by = 'demo' AND fields <> '[]'::jsonb",
+    );
+    expect(versions.rows[0].n).toBe(5);
   });
 });

@@ -6,7 +6,7 @@ Nettoyage & assainissement (lot 2) : simulateur public, demandes de devis, devis
 
 ```bash
 cp .env.example .env
-pnpm --filter @ksp/cleaning-service prisma:deploy   # crée les tables (grille vide)
+pnpm --filter @ksp/cleaning-service prisma:deploy   # crée les tables et les six prestations (prix vides)
 pnpm --filter @ksp/cleaning-service build && node --env-file=.env dist/main.js
 ```
 
@@ -16,7 +16,7 @@ pnpm --filter @ksp/cleaning-service build && node --env-file=.env dist/main.js
 
 ### Données de démonstration (développement uniquement)
 
-La grille tarifaire est vide tant que l'équipe Nettoyage ne l'a pas remplie au back-office : le simulateur répond alors `priced: false`. Pour essayer le simulateur en local, `prisma/demo/demo-data.sql` charge cinq prestations avec des **prix inventés** ; le script refuse de s'exécuter sans l'accord explicite `ksp.demo=on` :
+Les six prestations de départ (formulaire, options, fréquences) sont créées par la migration 0007, prix vides tant que l'équipe Nettoyage ne les a pas saisis au back-office : le simulateur répond alors `priced: false` (ADR-033). Pour essayer le simulateur en local, `prisma/demo/demo-data.sql` ajoute des **prix inventés** à cinq d'entre elles (la désinsectisation reste sans prix) ; le script refuse de s'exécuter sans l'accord explicite `ksp.demo=on` :
 
 ```bash
 PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cleaning \
@@ -25,17 +25,17 @@ PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cl
 
 ## Règles (cahier des charges, parties 4 et 9)
 
-| Sujet      | Fonctionnement                                                                                                                                                                                                                |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Simulateur | `max(minimum, (quantité × prix unitaire + options) × coefficient de commune)` ; fourchette −10 % / +15 % arrondie à 500 FCFA ; entiers XOF. Rien n'est enregistré.                                                            |
-| Grille     | Versionnée : chaque enregistrement crée une version datée avec son auteur ; un devis envoyé garde son prix.                                                                                                                   |
-| Réglages   | Validité des devis (15 j), délai minimum (48 h), annulation sans frais (24 h), 5 demandes ouvertes, acompte 30 %, seuils d'impayés : modifiables au back-office.                                                              |
-| Demande    | reçue → visite planifiée → devis envoyé → acceptée / refusée / expirée / annulée, ou refusée par KSP. Visite des lieux réalisée obligatoire avant tout devis.                                                                 |
-| Mission    | Un passage pour une prestation ponctuelle, plusieurs pour un contrat récurrent (passages par semaine ou par mois, sur N mois) ; chaque passage a ses agents, sa liste de contrôle et ses références de photos (service file). |
-| Conflits   | Un agent ne peut être affecté à deux passages qui se chevauchent, ni pendant une indisponibilité (`CLEANING_TEAM_UNAVAILABLE`) ; agents verrouillés pendant la planification.                                                 |
-| Paiement   | Option choisie à l'acceptation (acompte ou totalité, avant ou après, espèces ou Mobile Money) ; état dû / acompte reçu / payé ; paiements manuels cochés par le superviseur ; paiement en ligne : port prévu (`payment`).     |
-| Droits     | Client : ses demandes et missions (404 sinon) ; agent : les missions où il est affecté ; superviseur et admin : rôle et double authentification revérifiés par le service.                                                    |
-| Traces     | Événements par l'outbox dans la transaction de l'état (identifiants seulement, jamais d'adresse) ; table `audit_log` pour les prix, devis, affectations et paiements.                                                         |
+| Sujet      | Fonctionnement                                                                                                                                                                                                                                                                                                |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Simulateur | Formulaire paramétrable par prestation (ADR-033) : `max(minimum, (Σ nombre × prix par unité + suppléments + options × leurs coefficients) × coefficients des réponses × commune × fréquence)`, arrondi une fois au franc ; fourchette −10 % / +15 % arrondie à 500 FCFA ; entiers XOF. Rien n'est enregistré. |
+| Grille     | Versionnée : chaque enregistrement crée une version datée avec son auteur ; un devis envoyé garde son prix.                                                                                                                                                                                                   |
+| Réglages   | Validité des devis (15 j), délai minimum (48 h), annulation sans frais (24 h), 5 demandes ouvertes, acompte 30 %, seuils d'impayés : modifiables au back-office.                                                                                                                                              |
+| Demande    | reçue → visite planifiée → devis envoyé → acceptée / refusée / expirée / annulée, ou refusée par KSP. Visite des lieux réalisée obligatoire avant tout devis.                                                                                                                                                 |
+| Mission    | Un passage pour une prestation ponctuelle, plusieurs pour un contrat récurrent (passages par semaine ou par mois, sur N mois) ; chaque passage a ses agents, sa liste de contrôle et ses références de photos (service file).                                                                                 |
+| Conflits   | Un agent ne peut être affecté à deux passages qui se chevauchent, ni pendant une indisponibilité (`CLEANING_TEAM_UNAVAILABLE`) ; agents verrouillés pendant la planification.                                                                                                                                 |
+| Paiement   | Option choisie à l'acceptation (acompte ou totalité, avant ou après, espèces ou Mobile Money) ; état dû / acompte reçu / payé ; paiements manuels cochés par le superviseur ; paiement en ligne : port prévu (`payment`).                                                                                     |
+| Droits     | Client : ses demandes et missions (404 sinon) ; agent : les missions où il est affecté ; superviseur et admin : rôle et double authentification revérifiés par le service.                                                                                                                                    |
+| Traces     | Événements par l'outbox dans la transaction de l'état (identifiants seulement, jamais d'adresse) ; table `audit_log` pour les prix, devis, affectations et paiements.                                                                                                                                         |
 
 ## Zones desservies et visite des lieux (décisions du 2026-10-23)
 

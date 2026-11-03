@@ -10,6 +10,7 @@ import {
   presentRequest,
   presentServedZone,
 } from './presenters';
+import { calculationToProto, pricingInputFromProto } from './form.presenters';
 
 /**
  * Adaptateurs gRPC du catalogue public et de l'espace client : traduction des messages et appel
@@ -26,25 +27,27 @@ export class CatalogGrpcController implements cleaningV1.CatalogServiceControlle
   }
 
   async simulate(request: cleaningV1.SimulateRequest): Promise<cleaningV1.SimulateResponse> {
-    const { serviceCode, simulation, notice, covered } = await this.useCases.simulate.execute(request);
-    const base = {
-      serviceCode,
-      notice,
-      recommendedTeamSize: simulation.recommendedTeamSize,
-      breakdown: [] as cleaningV1.PriceLine[],
-      minimumApplied: false,
-      communeCoefficientBp: 0,
-      covered,
-    };
-    if (!simulation.priced) return { ...base, priced: false };
+    const { serviceCode, calculation, notice, covered } = await this.useCases.simulate.execute({
+      serviceCode: request.serviceCode,
+      commune: request.commune,
+      ...pricingInputFromProto(request),
+    });
+    const commune = calculation.coefficients.find((coefficient) => coefficient.source === 'commune');
     return {
-      ...base,
-      priced: true,
-      estimate: { low: money(simulation.low), high: money(simulation.high) },
-      computedPrice: money(simulation.computedPrice),
-      breakdown: simulation.breakdown.map(presentLine),
-      minimumApplied: simulation.minimumApplied,
-      communeCoefficientBp: simulation.coefficientBp,
+      serviceCode,
+      priced: calculation.priced,
+      estimate: calculation.estimate
+        ? { low: money(calculation.estimate.low), high: money(calculation.estimate.high) }
+        : undefined,
+      computedPrice: calculation.computedPrice === null ? undefined : money(calculation.computedPrice),
+      breakdown: calculation.priced ? calculation.lines.map(presentLine) : [],
+      minimumApplied: calculation.minimumApplied,
+      communeCoefficientBp: calculation.priced ? (commune?.coefficientBp ?? 0) : 0,
+      recommendedTeamSize: calculation.recommendedTeamSize,
+      notice,
+      covered,
+      reason: calculation.reason ?? '',
+      calculation: calculationToProto(calculation),
     };
   }
 
@@ -59,7 +62,9 @@ export class QuoteGrpcController implements cleaningV1.QuoteServiceController {
   constructor(@Inject(CLEANING_USE_CASES) private readonly useCases: CleaningUseCases) {}
 
   async requestQuote(request: cleaningV1.RequestQuoteRequest): Promise<cleaningV1.RequestQuoteResponse> {
-    return { request: presentRequest(await this.useCases.requestQuote.execute(request)) };
+    const { answers: _answers, optionSelections: _selections, ...rest } = request;
+    const input = { ...rest, ...pricingInputFromProto(request) };
+    return { request: presentRequest(await this.useCases.requestQuote.execute(input)) };
   }
 
   async listMyRequests(

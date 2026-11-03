@@ -34,6 +34,9 @@ export interface Changes {
 
 export type NewPricing = Omit<PricingRule, 'version' | 'updatedBy' | 'updatedAt'>;
 
+/** Définition complète à enregistrer : sa grille devient une nouvelle version. */
+export type NewServiceVersion = Omit<ServiceDefinition, 'pricing'> & { pricing: NewPricing };
+
 export interface StoredSettings extends CleaningSettings {
   updatedBy: string | null;
   updatedAt: Date | null;
@@ -42,12 +45,11 @@ export interface StoredSettings extends CleaningSettings {
 export interface CatalogRepository {
   listServices(): Promise<ServiceDefinition[]>;
   findService(code: string): Promise<ServiceDefinition | null>;
-  /** Crée ou modifie la prestation ; la grille devient une nouvelle version datée, avec son auteur. */
-  saveService(
-    service: Omit<ServiceDefinition, 'pricing'>,
-    pricing: NewPricing,
-    changes: Changes,
-  ): Promise<ServiceDefinition>;
+  /**
+   * Crée ou remplace la prestation complète (champs, options, grille) : une nouvelle version
+   * datée, avec son auteur (ADR-033).
+   */
+  saveService(definition: NewServiceVersion, changes: Changes): Promise<ServiceDefinition>;
   getSettings(): Promise<StoredSettings>;
   saveSettings(settings: CleaningSettings, changes: Changes): Promise<StoredSettings>;
   /** Zones desservies, actives et désactivées, par nom de commune. */

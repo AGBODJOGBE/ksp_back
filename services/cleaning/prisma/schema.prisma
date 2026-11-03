@@ -47,7 +47,8 @@ model CleaningService {
   code        String        @id
   name        String
   description String        @default("")
-  /// square_meter, room, septic_tank, cubic_meter.
+  /// Déprécié (ADR-033) : unité de l'ancien formulaire, déduite du champ de la taille d'équipe
+  /// (square_meter, room, septic_tank, cubic_meter).
   unit        String
   active      Boolean       @default(true)
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -62,7 +63,7 @@ model PricingRule {
   id                   String          @id @db.Uuid
   serviceCode          String          @map("service_code")
   version              Int
-  /// Absent tant que l'équipe Nettoyage n'a pas fixé le prix.
+  /// Déprécié (ADR-033) : prix par unité du champ de la taille d'équipe, déduit.
   unitPrice            Int?            @map("unit_price")
   minimumPrice         Int?            @map("minimum_price")
   options              Json            @default("[]")
@@ -70,6 +71,12 @@ model PricingRule {
   defaultCoefficientBp Int             @default(10000) @map("default_coefficient_bp")
   teamSize             Json            @map("team_size")
   checklist            Json            @default("[]")
+  /// Champs du formulaire, dans l'ordre d'affichage (ADR-033).
+  fields               Json            @default("[]")
+  /// Options et leurs champs (ADR-033). L'ancienne colonne options garde les forfaits, déduits.
+  optionDefinitions    Json            @default("[]") @map("option_definitions")
+  /// Fréquences propres à la prestation (ADR-033).
+  frequencies          Json            @default("[]")
   createdBy            String          @map("created_by")
   createdAt            DateTime        @map("created_at") @db.Timestamptz(3)
   service              CleaningService @relation(fields: [serviceCode], references: [code])
@@ -127,6 +134,15 @@ model QuoteRequest {
   currentQuoteId      String?    @map("current_quote_id") @db.Uuid
   missionId           String?    @map("mission_id") @db.Uuid
   closingReason       String?    @map("closing_reason")
+  /// Réponses au formulaire (ADR-033), null pour une demande antérieure.
+  answers             Json?
+  /// Options choisies avec leurs réponses.
+  optionSelections    Json       @default("[]") @map("option_selections")
+  frequency           String?
+  /// Version de la grille du calcul, null pour une demande antérieure.
+  pricingVersion      Int?       @map("pricing_version")
+  /// Détail du calcul au moment de la demande, null pour une demande antérieure.
+  calculation         Json?
   createdAt           DateTime   @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime   @map("updated_at") @db.Timestamptz(3)
   /// Contrôle de concurrence optimiste.

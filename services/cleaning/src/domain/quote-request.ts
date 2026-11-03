@@ -1,7 +1,8 @@
-import { type PremisesType } from './catalog';
+import { type Answers, type OptionSelection, type PremisesType } from './answers';
 import { type Quote } from './quote';
 import { type Recurrence } from './recurrence';
 import { type Slot } from './schedule';
+import { type PriceCalculation } from './simulator';
 
 /**
  * Demande de devis (UC-CL-02 à 08) :
@@ -57,9 +58,20 @@ export interface QuoteRequest {
   customerKind: CustomerKind;
   organizationId: string | null;
   serviceCode: string;
+  /** Déprécié (ADR-033) : valeur déduite des réponses, pour les anciens lecteurs. */
   premisesType: PremisesType;
+  /** Déprécié (ADR-033) : réponse au champ de la taille d'équipe, 1 sinon. */
   quantity: number;
+  /** Codes des options choisies. */
   options: string[];
+  /** Réponses au formulaire (ancien format converti) ; null pour une demande antérieure à l'ADR-033. */
+  answers: Answers | null;
+  optionSelections: OptionSelection[];
+  frequency: string | null;
+  /** Version de la grille du calcul, null pour une demande antérieure. */
+  pricingVersion: number | null;
+  /** Détail du calcul au moment de la demande, null pour une demande antérieure. */
+  calculation: PriceCalculation | null;
   commune: string;
   address: string;
   preferredSlots: Slot[];
