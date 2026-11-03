@@ -13,6 +13,8 @@ export interface MissionDue {
   /** Acompte encore dû (0 pour un plan « totalité » ou un acompte déjà reçu). */
   depositDue: number;
   remainingDue: number;
+  /** Paiements en ligne (identifiants payment) déjà enregistrés sur la mission par cleaning. */
+  recordedPaymentIds: string[];
 }
 
 export interface InvoiceDue {
@@ -22,6 +24,18 @@ export interface InvoiceDue {
   organizationId: string | null;
   status: string;
   balance: number;
+  /** Paiements en ligne (identifiants payment) déjà enregistrés sur la facture par billing. */
+  recordedPaymentIds: string[];
+}
+
+/**
+ * Paiement réussi que le service de l'objet n'a pas encore enregistré (événement en route, relais en
+ * retard) : son montant n'est pas encore déduit du montant dû. Tant qu'il en existe un, un nouveau
+ * paiement ferait payer deux fois (ADR-032).
+ */
+export function unrecordedSuccess(succeededIds: readonly string[], recordedIds: readonly string[]): boolean {
+  const recorded = new Set(recordedIds);
+  return succeededIds.some((id) => !recorded.has(id));
 }
 
 /** Périmètre du payeur : son organisation active, sinon lui-même (contexte personnel). */

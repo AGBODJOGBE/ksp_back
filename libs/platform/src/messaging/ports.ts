@@ -8,18 +8,35 @@ export interface EventPublisher {
 export interface OutboxRecord {
   id: string;
   envelope: EventEnvelope;
+  /** Tentatives de publication déjà échouées. */
   attempts: number;
 }
 
+/** Échec de publication imputé à un événement (ADR-032). */
+export interface OutboxFailure {
+  id: string;
+  /** Message d'erreur du broker (jamais le contenu de l'événement). */
+  error: string;
+  /** Délai avant la prochaine tentative ; null : l'événement est mis de côté (limite atteinte). */
+  retryInMs: number | null;
+}
+
+/** Issue d'un passage sur un lot : publiés, et échecs imputés aux événements. */
+export interface OutboxBatchResult {
+  published: string[];
+  failed: OutboxFailure[];
+}
+
 /**
- * Stockage de l'outbox. `withUnpublishedBatch` verrouille un lot d'événements non publiés
- * (aucune autre instance ne peut le prendre), appelle `publish`, puis marque comme publiés
- * les identifiants renvoyés. Renvoie le nombre d'événements publiés.
+ * Stockage de l'outbox. `withUnpublishedBatch` verrouille un lot d'événements à publier (non
+ * publiés, non mis de côté, dont le délai de nouvelle tentative est écoulé ; aucune autre instance
+ * ne peut le prendre), appelle `publish`, puis marque les publiés et enregistre les échecs
+ * (tentative comptée, prochaine tentative ou mise de côté). Renvoie le nombre d'événements publiés.
  */
 export interface OutboxStore {
   withUnpublishedBatch(
     limit: number,
-    publish: (records: OutboxRecord[]) => Promise<string[]>,
+    publish: (records: OutboxRecord[]) => Promise<OutboxBatchResult>,
   ): Promise<number>;
 }
 

@@ -30,6 +30,11 @@ export const PaymentErrors = {
       'PAYMENT_IDEMPOTENCY_KEY_REUSED',
       'Cette clé d’idempotence a déjà servi pour un autre paiement.',
     ),
+  alreadyReceived: () =>
+    AppError.conflict(
+      'PAYMENT_ALREADY_RECEIVED',
+      'Un paiement a déjà été reçu pour cet objet et est en cours d’enregistrement. Réessayez dans quelques instants.',
+    ),
   concurrentUpdate: () =>
     AppError.conflict(
       'PAYMENT_CONCURRENT_UPDATE',

@@ -1,4 +1,4 @@
-import { billingV1, cleaningV1 } from '@ksp/contracts';
+import { billingV1, cleaningV1, identityV1 } from '@ksp/contracts';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -13,6 +13,7 @@ import { createUseCases, PAYMENT_USE_CASES } from './application/use-cases';
 import { type ServiceConfig, simulationEnabled } from './config';
 import { LoggerPaymentAlerts } from './infrastructure/alerts/logger-payment-alerts';
 import { GrpcAmountDueDirectory } from './infrastructure/dues/grpc-amount-due.directory';
+import { IdentityPeopleDirectory } from './infrastructure/identity/identity-people-directory';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import {
   PrismaPaymentRepository,
@@ -34,6 +35,7 @@ import {
 
 const CLEANING_CLIENT = Symbol('CLEANING_CLIENT');
 const BILLING_CLIENT = Symbol('BILLING_CLIENT');
+const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 
 /** Prestataire choisi par la configuration (ADR-031) : FedaPay, ou simulé en développement. */
 export function createProvider(config: ServiceConfig): PaymentProvider {
@@ -59,6 +61,7 @@ export class AppModule {
         ClientsModule.register([
           grpcClientOptions(CLEANING_CLIENT, 'cleaning', config.CLEANING_GRPC_URL),
           grpcClientOptions(BILLING_CLIENT, 'billing', config.BILLING_GRPC_URL),
+          grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
         ]),
       ],
       controllers: [PaymentGrpcController, PaymentWebhookGrpcController, PaymentAdminGrpcController],
@@ -76,6 +79,7 @@ export class AppModule {
             PrismaProviderNotificationLog,
             CLEANING_CLIENT,
             BILLING_CLIENT,
+            IDENTITY_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
           ],
           useFactory: (
@@ -83,12 +87,13 @@ export class AppModule {
             notifications: PrismaProviderNotificationLog,
             cleaning: ClientGrpc,
             billing: ClientGrpc,
+            identity: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
           ) => {
             const logger = new Logger('Payment');
             if (!serviceTokens) {
               logger.warn(
-                'Aucun jeton de service : appels vers cleaning et billing non authentifiés (développement uniquement).',
+                'Aucun jeton de service : appels vers cleaning, billing et identity non authentifiés (développement uniquement).',
               );
             }
             const caller = (target: string) =>
@@ -111,6 +116,10 @@ export class AppModule {
                   ),
                   caller: caller('billing'),
                 },
+              ),
+              people: new IdentityPeopleDirectory(
+                identity.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
+                caller('identity'),
               ),
               provider,
               alerts: new LoggerPaymentAlerts(),

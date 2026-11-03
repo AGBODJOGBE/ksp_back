@@ -102,6 +102,9 @@ message Invoice {
   // (heure du Bénin), émise le 1er du mois suivant à 00:00 ; mois partiels et jours de
   // suspension au prorata des jours.
   int32 period_index = 8;
+  // Période facturée : period_start est le premier instant facturé (minuit, heure du Bénin) ;
+  // period_end est une borne EXCLUSIVE, minuit (heure du Bénin) du lendemain du dernier jour
+  // facturé. Une facture de novembre complet va du 1er novembre 00:00 au 1er décembre 00:00.
   string period_start = 9;
   string period_end = 10;
   repeated InvoiceLine lines = 11;
@@ -156,6 +159,11 @@ message ListInvoicesRequest {
   string customer_id = 3;
   string organization_id = 4;
   string contract_id = 5;
+  // Période facturée (dates AAAA-MM-JJ, heure du Bénin, Africa/Porto-Novo), bornes incluses :
+  // factures dont la période facturée [period_start, period_end) touche au moins un jour de
+  // [period_from, period_to]. Vides : sans borne.
+  string period_from = 6;
+  string period_to = 7;
 }
 
 message ListInvoicesResponse {
@@ -177,6 +185,9 @@ message RecordInvoicePaymentRequest {
   // "cash", "bank_transfer" ou "mobile_money_offline".
   string method = 3;
   string reference = 4;
+  // En-tête Idempotency-Key, facultatif (8 à 100 caractères : lettres, chiffres, "_" et "-") : un
+  // second envoi avec la même clé pour la même facture renvoie la facture sans second paiement.
+  string idempotency_key = 5;
 }
 
 message RecordInvoicePaymentResponse {
@@ -221,4 +232,7 @@ message GetInvoiceAmountDueResponse {
   ksp.common.v1.Money total = 6;
   ksp.common.v1.Money paid = 7;
   ksp.common.v1.Money balance = 8;
+  // Paiements en ligne déjà enregistrés sur la facture (identifiants du service payment) : payment
+  // refuse un nouveau paiement tant qu'un paiement réussi n'y figure pas encore (ADR-032).
+  repeated string online_payment_ids = 9;
 }

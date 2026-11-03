@@ -14,6 +14,7 @@ import {
   type PaymentAlerts,
   type PaymentDeps,
   type PaymentFilter,
+  type PeopleDirectory,
   type PaymentProvider,
   type PaymentRepository,
   type ProviderNotification,
@@ -92,6 +93,16 @@ export class InMemoryPayments implements PaymentRepository {
       );
     return row ? { ...row } : null;
   }
+  async listSucceededIds(input: { subjectType: string; subjectId: string }) {
+    return [...this.rows.values()]
+      .filter(
+        (r) =>
+          r.subject.type === input.subjectType &&
+          r.subject.id === input.subjectId &&
+          r.status === 'succeeded',
+      )
+      .map((r) => r.id);
+  }
   async save(intent: PaymentIntent, events: OutboxMessage[]) {
     const current = this.rows.get(intent.id);
     if (!current || current.version !== intent.version) return false;
@@ -151,6 +162,26 @@ export class InMemoryNotificationLog implements ProviderNotificationLog {
   readonly entries: { outcome: NotificationOutcome; eventName: string; paymentId: string | null }[] = [];
   async record(entry: { outcome: NotificationOutcome; eventName: string; paymentId: string | null }) {
     this.entries.push({ outcome: entry.outcome, eventName: entry.eventName, paymentId: entry.paymentId });
+  }
+}
+
+/** Noms d'identity en mémoire ; `down` simule une panne (noms absents, comme l'adaptateur). */
+export class InMemoryPeople implements PeopleDirectory {
+  readonly users = new Map<string, string>();
+  readonly organizations = new Map<string, string>();
+  down = false;
+  calls = 0;
+  async userNames(ids: readonly string[]) {
+    this.calls += 1;
+    if (this.down) return new Map<string, string>();
+    return new Map(ids.filter((id) => this.users.has(id)).map((id) => [id, this.users.get(id)!]));
+  }
+  async organizationNames(ids: readonly string[]) {
+    this.calls += 1;
+    if (this.down) return new Map<string, string>();
+    return new Map(
+      ids.filter((id) => this.organizations.has(id)).map((id) => [id, this.organizations.get(id)!]),
+    );
   }
 }
 
@@ -243,6 +274,7 @@ export function makeDeps(overrides: Partial<PaymentDeps> = {}) {
     payments: new InMemoryPayments(),
     notifications: new InMemoryNotificationLog(),
     dues: new InMemoryDues(),
+    people: new InMemoryPeople(),
     provider: new FakeProvider(),
     alerts: new RecordingAlerts(),
     settings: {
@@ -268,6 +300,7 @@ export function missionDue(overrides: Partial<MissionDue> = {}): MissionDue {
     status: 'scheduled',
     depositDue: 15000,
     remainingDue: 50000,
+    recordedPaymentIds: [],
     ...overrides,
   };
 }
@@ -280,6 +313,7 @@ export function invoiceDue(overrides: Partial<InvoiceDue> = {}): InvoiceDue {
     organizationId: ORGANIZATION_ID,
     status: 'pending_payment',
     balance: 160000,
+    recordedPaymentIds: [],
     ...overrides,
   };
 }

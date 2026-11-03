@@ -140,15 +140,38 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
       }),
     );
     expect(page.items).toHaveLength(2);
-    const paid = await asStaff(() =>
-      useCases.recordInvoicePayment.execute({
-        invoiceId: page.items[0]!.id,
-        amount: page.items[0]!.total,
-        method: 'mobile_money_offline',
-        reference: 'MM-77',
+    // Période facturée (dates au Bénin) : décembre seulement ; la fin de novembre est exclusive.
+    const december = await asStaff(() =>
+      useCases.listInvoices.execute({
+        page: { limit: 20, cursor: null },
+        status: '',
+        customerId: '',
+        organizationId: '',
+        contractId: '',
+        periodFrom: '2026-12-01',
+        periodTo: '2026-12-31',
       }),
     );
+    expect(december.items.map((invoice) => invoice.periodIndex)).toEqual([2]);
+    // Même clé envoyée deux fois en même temps : un seul paiement, les deux réponses la facture payée.
+    const payOnce = () =>
+      asStaff(() =>
+        useCases.recordInvoicePayment.execute({
+          invoiceId: page.items[0]!.id,
+          amount: page.items[0]!.total,
+          method: 'mobile_money_offline',
+          reference: 'MM-77',
+          idempotencyKey: 'paiement-cle-0001',
+        }),
+      );
+    const [paid, replayed] = await Promise.all([payOnce(), payOnce()]);
     expect(paid.status).toBe('paid');
+    expect(replayed.status).toBe('paid');
+    expect((await payOnce()).payments).toHaveLength(1);
+    const keyed = await pool.query('SELECT idempotency_key FROM invoice_payments WHERE invoice_id = $1', [
+      paid.id,
+    ]);
+    expect(keyed.rows).toEqual([{ idempotency_key: 'paiement-cle-0001' }]);
     // L'en-tête copié à l'émission ne change pas avec un paiement.
     expect(paid.organization).toEqual({
       legalName: 'SARL Bénin Propre',

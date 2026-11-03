@@ -13,12 +13,17 @@ datasource db {
 
 /// Événements à publier (pattern outbox, règle d'or n° 4). Écrits dans la même transaction que la donnée métier.
 model OutboxEvent {
-  id          String    @id @db.Uuid
-  eventType   String    @map("event_type")
-  payload     Json
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  publishedAt DateTime? @map("published_at") @db.Timestamptz(3)
-  attempts    Int       @default(0)
+  id            String    @id @db.Uuid
+  eventType     String    @map("event_type")
+  payload       Json
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  publishedAt   DateTime? @map("published_at") @db.Timestamptz(3)
+  attempts      Int       @default(0)
+  /// Prochaine tentative après un échec (délai croissant, ADR-032).
+  nextAttemptAt DateTime? @map("next_attempt_at") @db.Timestamptz(3)
+  /// Mis de côté au-delà de la limite de tentatives : rejouable (ADR-032).
+  parkedAt      DateTime? @map("parked_at") @db.Timestamptz(3)
+  lastError     String?   @map("last_error")
 
   @@map("outbox")
 }

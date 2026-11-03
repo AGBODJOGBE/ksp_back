@@ -1,4 +1,4 @@
-import { type DueRefusal, invoiceAmount, missionAmount } from '../domain/amount-due';
+import { type DueRefusal, invoiceAmount, missionAmount, unrecordedSuccess } from '../domain/amount-due';
 import {
   MISSION_PARTS,
   type MissionPart,
@@ -9,7 +9,13 @@ import {
   SUBJECT_TYPES,
   type SubjectType,
 } from '../domain/payment-intent';
-import { type NotificationOutcome, type PageRequest, type PageResult, type PaymentDeps } from './ports';
+import {
+  type NameBook,
+  type NotificationOutcome,
+  type PageRequest,
+  type PageResult,
+  type PaymentDeps,
+} from './ports';
 import { currentPayer, isVisibleTo, PAYMENT_STAFF, requireCaller, requireStaff } from './shared/access';
 import { PaymentErrors } from './shared/errors';
 import { IDEMPOTENCY_KEY, oneOf, optionalOneOf, optionalUuid, requireUuid } from './shared/validation';
@@ -42,6 +48,9 @@ async function visiblePayment(deps: PaymentDeps, paymentId: string): Promise<Pay
  * Création d'un paiement (ADR-031) : montant dû lu dans cleaning ou billing, payeur vérifié,
  * idempotence par (payeur, clé), réutilisation d'un paiement encore en attente pour le même objet
  * et le même montant, puis page de paiement chez le prestataire.
+ *
+ * Refus (409 PAYMENT_ALREADY_RECEIVED, ADR-032) tant qu'un paiement réussi de l'objet n'est pas
+ * encore enregistré par cleaning ou billing : le montant dû lu ne le déduit pas encore.
  */
 export class CreatePaymentUseCase {
   private readonly sync: PaymentSync;
@@ -73,7 +82,14 @@ export class CreatePaymentUseCase {
       return { payment: await this.withCheckout(replay), created: false };
     }
 
-    const { amount, subject, organizationId } = await this.amountDue(type, subjectId, part, payer);
+    const { amount, subject, organizationId, recordedPaymentIds } = await this.amountDue(
+      type,
+      subjectId,
+      part,
+      payer,
+    );
+    const succeeded = await this.deps.payments.listSucceededIds({ subjectType: type, subjectId });
+    if (unrecordedSuccess(succeeded, recordedPaymentIds)) throw PaymentErrors.alreadyReceived();
     const now = this.deps.clock.now();
     const open = await this.deps.payments.findOpen({
       customerId: payer.userId,
@@ -116,7 +132,12 @@ export class CreatePaymentUseCase {
     subjectId: string,
     part: MissionPart | null,
     payer: ReturnType<typeof currentPayer>,
-  ): Promise<{ amount: number; subject: PaymentSubject; organizationId: string | null }> {
+  ): Promise<{
+    amount: number;
+    subject: PaymentSubject;
+    organizationId: string | null;
+    recordedPaymentIds: string[];
+  }> {
     if (type === 'cleaning_mission') {
       const due = await this.deps.dues.missionDue(subjectId);
       if (!due) throw PaymentErrors.subjectNotFound();
@@ -126,6 +147,7 @@ export class CreatePaymentUseCase {
         amount: result.amount,
         subject: { type, id: subjectId, part, reference: null },
         organizationId: null,
+        recordedPaymentIds: due.recordedPaymentIds,
       };
     }
     const due = await this.deps.dues.invoiceDue(subjectId);
@@ -136,6 +158,7 @@ export class CreatePaymentUseCase {
       amount: result.amount,
       subject: { type, id: subjectId, part: null, reference: due.number },
       organizationId: due.organizationId,
+      recordedPaymentIds: due.recordedPaymentIds,
     };
   }
 
@@ -192,7 +215,12 @@ export class ListMyPaymentsUseCase {
   }
 }
 
-/** Back-office : tous les paiements, filtrables. */
+const present = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is string => Boolean(id)))];
+
+/**
+ * Back-office : tous les paiements, filtrables, avec le nom du payeur et de son organisation lus
+ * dans identity (ADR-029, un appel par lot) ; noms absents si identity ne répond pas.
+ */
 export class ListPaymentsUseCase {
   constructor(private readonly deps: PaymentDeps) {}
 
@@ -203,14 +231,14 @@ export class ListPaymentsUseCase {
     subjectId: string;
     customerId: string;
     organizationId: string;
-  }): Promise<PageResult<PaymentIntent>> {
+  }): Promise<PageResult<PaymentIntent> & { names: NameBook }> {
     requireStaff(PAYMENT_STAFF);
     const status = optionalOneOf('status', input.status, PAYMENT_STATUSES);
     const subjectType = optionalOneOf('subjectType', input.subjectType, SUBJECT_TYPES);
     const subjectId = optionalUuid('subjectId', input.subjectId);
     const customerId = optionalUuid('customerId', input.customerId);
     const organizationId = optionalUuid('organizationId', input.organizationId);
-    return this.deps.payments.list(
+    const page = await this.deps.payments.list(
       {
         ...(status ? { status } : {}),
         ...(subjectType ? { subjectType } : {}),
@@ -220,6 +248,15 @@ export class ListPaymentsUseCase {
       },
       input.page,
     );
+    const userIds = present(page.items.map((intent) => intent.customerId));
+    const organizationIds = present(page.items.map((intent) => intent.organizationId));
+    const [users, organizations] = await Promise.all([
+      userIds.length ? this.deps.people.userNames(userIds) : new Map<string, string>(),
+      organizationIds.length
+        ? this.deps.people.organizationNames(organizationIds)
+        : new Map<string, string>(),
+    ]);
+    return { ...page, names: { users, organizations } };
   }
 }
 

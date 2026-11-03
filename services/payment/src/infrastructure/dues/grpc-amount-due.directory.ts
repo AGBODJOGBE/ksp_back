@@ -42,6 +42,7 @@ export class GrpcAmountDueDirectory implements AmountDueDirectory {
         status: res.status,
         depositDue: amount(res.depositDue),
         remainingDue: amount(res.remainingDue),
+        recordedPaymentIds: res.onlinePaymentIds ?? [],
       };
     });
   }
@@ -60,6 +61,7 @@ export class GrpcAmountDueDirectory implements AmountDueDirectory {
         organizationId: res.organizationId || null,
         status: res.status,
         balance: amount(res.balance),
+        recordedPaymentIds: res.onlinePaymentIds ?? [],
       };
     });
   }

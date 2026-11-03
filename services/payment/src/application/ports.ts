@@ -61,6 +61,8 @@ export interface PaymentRepository {
     part: string | null;
     now: Date;
   }): Promise<PaymentIntent | null>;
+  /** Identifiants des paiements réussis (`succeeded`) d'un objet, quel que soit le payeur ou la part. */
+  listSucceededIds(input: { subjectType: SubjectType; subjectId: string }): Promise<string[]>;
   /**
    * Enregistre le paiement si sa version n'a pas changé depuis la lecture, avec ses événements
    * (outbox) dans la même transaction ; sinon false.
@@ -212,8 +214,25 @@ export interface PaymentAlerts {
   }): void;
 }
 
+/**
+ * Noms affichés au back-office (identity, ADR-029), lus à l'affichage et jamais enregistrés. Lecture
+ * au mieux : un compte sans nom est absent du résultat, et une panne d'identity rend des noms
+ * absents au lieu d'une erreur (la liste reste utilisable).
+ */
+export interface PeopleDirectory {
+  userNames(userIds: readonly string[]): Promise<Map<string, string>>;
+  organizationNames(organizationIds: readonly string[]): Promise<Map<string, string>>;
+}
+
+/** Noms affichés d'une réponse du back-office, par identifiant de compte et d'organisation. */
+export interface NameBook {
+  users: ReadonlyMap<string, string>;
+  organizations: ReadonlyMap<string, string>;
+}
+
 export interface PaymentDeps {
   payments: PaymentRepository;
+  people: PeopleDirectory;
   notifications: ProviderNotificationLog;
   dues: AmountDueDirectory;
   provider: PaymentProvider;

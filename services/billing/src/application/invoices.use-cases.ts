@@ -5,6 +5,7 @@ import {
   paymentRefusal,
   withPayment,
 } from '../domain/invoice';
+import { beninMidnight } from '../domain/contract';
 import { billingSettingsProblems, type BillingSettings } from '../domain/settings';
 import { invoiceReference } from './issuing.use-cases';
 import {
@@ -22,7 +23,9 @@ import {
   requireStaff,
 } from './shared/access';
 import { BillingErrors } from './shared/errors';
-import { oneOf, optionalText, optionalUuid, requireUuid } from './shared/validation';
+import { oneOf, optionalDay, optionalText, optionalUuid, requireUuid } from './shared/validation';
+
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,100}$/;
 
 function statusFilter(status: string): InvoiceStatus | undefined {
   return status ? oneOf('status', status, INVOICE_STATUSES) : undefined;
@@ -64,7 +67,11 @@ export class GetMyInvoiceUseCase {
   }
 }
 
-/** Back-office : toutes les factures, filtrables. */
+/**
+ * Back-office : toutes les factures, filtrables. Période (`periodFrom`, `periodTo`, dates
+ * AAAA-MM-JJ au Bénin, bornes incluses) : factures dont la période facturée touche au moins un jour
+ * de l'intervalle.
+ */
 export class ListInvoicesUseCase {
   constructor(private readonly deps: BillingDeps) {}
 
@@ -74,9 +81,16 @@ export class ListInvoicesUseCase {
     customerId: string;
     organizationId: string;
     contractId: string;
+    periodFrom?: string;
+    periodTo?: string;
   }): Promise<PageResult<Invoice>> {
     requireStaff(BILLING_STAFF);
     const status = statusFilter(input.status);
+    const fromDay = optionalDay('periodFrom', input.periodFrom);
+    const toDay = optionalDay('periodTo', input.periodTo);
+    if (fromDay !== undefined && toDay !== undefined && fromDay > toDay) {
+      throw BillingErrors.invalid('periodTo', 'La fin de la période précède son début.');
+    }
     const customerId = optionalUuid('customerId', input.customerId);
     const organizationId = optionalUuid('organizationId', input.organizationId);
     const contractId = optionalUuid('contractId', input.contractId);
@@ -86,6 +100,9 @@ export class ListInvoicesUseCase {
         ...(customerId ? { customerId } : {}),
         ...(organizationId ? { organizationId } : {}),
         ...(contractId ? { contractId } : {}),
+        ...(fromDay !== undefined ? { periodFrom: beninMidnight(fromDay) } : {}),
+        // Borne de fin incluse : jusqu'à minuit du lendemain.
+        ...(toDay !== undefined ? { periodTo: beninMidnight(toDay + 1) } : {}),
       },
       input.page,
     );
@@ -106,6 +123,11 @@ export class GetInvoiceUseCase {
 /**
  * Paiement reçu hors ligne, enregistré au back-office. Paiement partiel accepté, jamais au-delà
  * du reste dû ; la facture devient « payée » au total (billing.invoice.paid).
+ *
+ * Idempotent par clé (en-tête Idempotency-Key, facultatif ; comme le paiement manuel du
+ * Nettoyage) : un second envoi avec la même clé pour la même facture la renvoie telle quelle, sans
+ * second paiement ni nouveau contrôle. Deux envois simultanés : le contrôle de version (et l'unicité
+ * facture + clé en base) n'en laisse passer qu'un, l'autre relit la facture et rejoue.
  */
 export class RecordInvoicePaymentUseCase {
   constructor(private readonly deps: BillingDeps) {}
@@ -115,10 +137,16 @@ export class RecordInvoicePaymentUseCase {
     amount: number;
     method: string;
     reference: string;
+    idempotencyKey?: string;
   }): Promise<Invoice> {
     const staff = requireStaff(BILLING_STAFF);
+    const key = input.idempotencyKey ?? '';
+    if (key && !IDEMPOTENCY_KEY.test(key)) {
+      throw BillingErrors.invalid('idempotencyKey', 'Clé d’idempotence invalide (8 à 100 caractères).');
+    }
     const invoice = await this.deps.invoices.findById(requireUuid('invoiceId', input.invoiceId));
     if (!invoice) throw BillingErrors.invoiceNotFound();
+    if (key && hasPaymentKey(invoice, key)) return invoice;
     if (invoice.status === 'paid' || invoice.status === 'cancelled') {
       throw BillingErrors.invalidTransition(invoice.status, 'paid');
     }
@@ -132,21 +160,44 @@ export class RecordInvoicePaymentUseCase {
       reference: optionalText('reference', input.reference, 100),
       recordedBy: staff.userId,
       recordedAt: now,
+      idempotencyKey: key || null,
     };
     const updated = withPayment(invoice, payment);
-    const saved = await this.deps.invoices.recordPayment(updated, payment, (overdueCount) =>
-      updated.status === 'paid'
-        ? [
-            {
-              type: 'billing.invoice.paid',
-              payload: { ...invoiceReference(updated), paidAt: now.toISOString(), overdueCount },
-            },
-          ]
-        : [],
-    );
-    if (!saved) throw BillingErrors.concurrentUpdate();
+    let saved: boolean;
+    try {
+      saved = await this.deps.invoices.recordPayment(updated, payment, (overdueCount) =>
+        updated.status === 'paid'
+          ? [
+              {
+                type: 'billing.invoice.paid',
+                payload: { ...invoiceReference(updated), paidAt: now.toISOString(), overdueCount },
+              },
+            ]
+          : [],
+      );
+    } catch (error) {
+      // Unicité facture + clé : un envoi concurrent avec la même clé vient d'être enregistré.
+      const replayed = key ? await this.replay(invoice.id, key) : null;
+      if (replayed) return replayed;
+      throw error;
+    }
+    if (!saved) {
+      const replayed = key ? await this.replay(invoice.id, key) : null;
+      if (replayed) return replayed;
+      throw BillingErrors.concurrentUpdate();
+    }
     return { ...updated, version: updated.version + 1 };
   }
+
+  /** Facture relue après une écriture concurrente : rejouée si le paiement de cette clé y figure. */
+  private async replay(invoiceId: string, key: string): Promise<Invoice | null> {
+    const current = await this.deps.invoices.findById(invoiceId);
+    return current && hasPaymentKey(current, key) ? current : null;
+  }
+}
+
+function hasPaymentKey(invoice: Invoice, key: string): boolean {
+  return invoice.payments.some((payment) => payment.idempotencyKey === key);
 }
 
 export class GetBillingSettingsUseCase {

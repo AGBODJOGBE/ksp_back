@@ -2356,6 +2356,10 @@ paths:
                     paid:
                       amount: 10710
                       currency: XOF
+                    remainingDue:
+                      amount: 24990
+                      currency: XOF
+                    depositDue: null
                     payments:
                       - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001
                         amount:
@@ -2572,6 +2576,10 @@ paths:
                       paid:
                         amount: 10710
                         currency: XOF
+                      remainingDue:
+                        amount: 24990
+                        currency: XOF
+                      depositDue: null
                       payments:
                         - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001
                           amount:
@@ -2675,6 +2683,10 @@ paths:
                   paid:
                     amount: 10710
                     currency: XOF
+                  remainingDue:
+                    amount: 24990
+                    currency: XOF
+                  depositDue: null
                   payments:
                     - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001
                       amount:
@@ -4363,8 +4375,8 @@ paths:
                     source: cleaning
                     contractId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000
                     periodIndex: 1
-                    periodStart: 2026-11-05T08:00:00Z
-                    periodEnd: 2026-12-05T08:00:00Z
+                    periodStart: 2026-11-04T23:00:00Z
+                    periodEnd: 2026-11-30T23:00:00Z
                     lines:
                       - label: Prestation de nettoyage — mois 1 sur 3
                         quantity: 1
@@ -4453,9 +4465,13 @@ paths:
       operationId: listInvoices
       summary: Factures (back-office)
       description: |
-        Toutes les factures, filtrables par état, client, organisation ou contrat (mission du Nettoyage).
+        Toutes les factures, filtrables par état, client, organisation, contrat (mission du Nettoyage) ou période
+        facturée (`from`, `to`).
 
         Rôles : `finance_officer`, `cleaning_supervisor`, `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400, date mal formée), `BILLING_VALIDATION_FAILED` (400, date qui
+        n'existe pas, ou `to` avant `from`).
       x-ksp-grpc: ksp.billing.v1.BillingAdminService/ListInvoices
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -4490,6 +4506,24 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: from
+          in: query
+          required: false
+          description: |
+            Début de la période facturée, date AAAA-MM-JJ (jour civil à l'heure du Bénin, Africa/Porto-Novo), incluse :
+            factures dont la période facturée touche au moins un jour de [`from`, `to`].
+          schema:
+            type: string
+            format: date
+          example: '2026-11-01'
+        - name: to
+          in: query
+          required: false
+          description: Fin de la période facturée, date AAAA-MM-JJ (heure du Bénin), incluse.
+          schema:
+            type: string
+            format: date
+          example: '2026-11-30'
       responses:
         '200':
           description: Succès
@@ -4575,8 +4609,13 @@ paths:
 
         Rôles : `finance_officer`, `cleaning_supervisor`, `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
 
-        Erreurs : `BILLING_PAYMENT_INVALID` (400, `details.reason`), `BILLING_INVOICE_NOT_FOUND` (404),
-        `BILLING_CONCURRENT_UPDATE` (409), `BILLING_INVALID_TRANSITION` (422, facture déjà payée ou annulée).
+        Idempotent avec l'en-tête `Idempotency-Key` (facultatif) : un second envoi avec la même clé pour la même
+        facture renvoie la facture telle quelle, sans second paiement (même si elle est payée depuis). Sans clé,
+        chaque envoi enregistre un paiement.
+
+        Erreurs : `BILLING_PAYMENT_INVALID` (400, `details.reason`), `BILLING_VALIDATION_FAILED` (400, clé
+        d'idempotence invalide), `BILLING_INVOICE_NOT_FOUND` (404), `BILLING_CONCURRENT_UPDATE` (409),
+        `BILLING_INVALID_TRANSITION` (422, facture déjà payée ou annulée).
       x-ksp-grpc: ksp.billing.v1.BillingAdminService/RecordInvoicePayment
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -4590,6 +4629,7 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/InvoiceId'
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
       requestBody:
         required: true
         content:
@@ -4752,8 +4792,15 @@ paths:
         pour le même objet et le même montant est réutilisé. Prestataire injoignable : 503, réessayer avec la
         même clé.
 
+        Un paiement réussi que cleaning ou billing n'a pas encore enregistré (quelques secondes en temps normal)
+        n'est pas encore déduit du montant dû : tant qu'il en existe un pour l'objet (mission, toutes parts
+        confondues, ou facture), la création est refusée (`PAYMENT_ALREADY_RECEIVED`, 409) pour ne pas faire payer
+        deux fois. Le portail affiche « paiement reçu, en cours d'enregistrement » et relit la mission ou la
+        facture un peu plus tard (ADR-032).
+
         Erreurs : `PAYMENT_VALIDATION_FAILED` (400), `PAYMENT_SUBJECT_NOT_FOUND` (404),
-        `PAYMENT_IDEMPOTENCY_KEY_REUSED` (409, clé déjà utilisée pour un autre objet), `PAYMENT_NOTHING_DUE`,
+        `PAYMENT_IDEMPOTENCY_KEY_REUSED` (409, clé déjà utilisée pour un autre objet), `PAYMENT_ALREADY_RECEIVED`
+        (409, paiement réussi pas encore enregistré : réessayer plus tard), `PAYMENT_NOTHING_DUE`,
         `PAYMENT_SUBJECT_NOT_PAYABLE`, `PAYMENT_VIA_INVOICE` (422), `PAYMENT_PROVIDER_UNAVAILABLE` (503).
       x-ksp-grpc: ksp.payment.v1.PaymentService/CreatePayment
       x-ksp-access: authenticated
@@ -6877,7 +6924,10 @@ components:
             - cash
             - mobile_money_offline
             - mobile_money_online
-          description: 'mobile_money_online : encaissé par le service payment, branché plus tard.'
+          description: |
+            Moyen prévu, choisi à l'acceptation du devis. `mobile_money_online` : le client paie en ligne depuis la
+            fiche de la mission (`POST /api/v1/payment/payments`, ADR-031) ; il peut aussi payer en ligne quel que
+            soit le moyen prévu.
     CleaningPaymentRecord:
       type: object
       additionalProperties: false
@@ -6924,6 +6974,8 @@ components:
         - depositAmount
         - paid
         - payments
+        - remainingDue
+        - depositDue
       properties:
         plan:
           $ref: '#/components/schemas/CleaningPaymentPlan'
@@ -6946,6 +6998,19 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CleaningPaymentRecord'
+        remainingDue:
+          $ref: '#/components/schemas/Money'
+          description: |
+            Reste dû, calculé par cleaning : total moins les paiements enregistrés, jamais négatif (entier XOF).
+            C'est le montant que `POST /api/v1/payment/payments` demande pour `part` = `balance`.
+        depositDue:
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+          description: |
+            Acompte encore attendu, calculé par cleaning (entier XOF) : acompte du plan moins les paiements
+            enregistrés. `null` quand aucun acompte n'est attendu (plan « totalité », ou acompte déjà reçu en
+            entier). C'est le montant que `POST /api/v1/payment/payments` demande pour `part` = `deposit`.
     CleaningMission:
       type: object
       additionalProperties: false
@@ -8009,6 +8074,20 @@ components:
             - string
             - 'null'
           format: date-time
+        customerName:
+          type:
+            - string
+            - 'null'
+          description: |
+            Back-office seulement (`GET /api/v1/admin/payment/payments`) : nom affiché du payeur, lu dans identity à
+            l'affichage (ADR-029) ; null s'il est inconnu ou si identity ne répond pas. Absent des routes client.
+        organizationName:
+          type:
+            - string
+            - 'null'
+          description: |
+            Back-office seulement : raison sociale de l'organisation payeuse, lue dans identity à l'affichage
+            (ADR-029) ; null pour un particulier, si elle est inconnue ou si identity ne répond pas.
     PaymentList:
       type: object
       additionalProperties: false
@@ -8120,9 +8199,16 @@ components:
         periodStart:
           type: string
           format: date-time
+          description: |
+            Premier instant facturé : minuit, heure du Bénin (Africa/Porto-Novo, UTC+1), du premier jour facturé du
+            mois (1er du mois, ou jour de début du contrat). Exemple : `2026-10-31T23:00:00Z` pour le 1er novembre.
         periodEnd:
           type: string
           format: date-time
+          description: |
+            Borne **exclusive** : minuit, heure du Bénin, du lendemain du dernier jour facturé. Une facture de
+            novembre complet va de `2026-10-31T23:00:00Z` (1er novembre 00:00) à `2026-11-30T23:00:00Z`
+            (1er décembre 00:00) : le dernier jour facturé est la veille de `periodEnd`, à afficher « au 30 novembre ».
         lines:
           type: array
           items:

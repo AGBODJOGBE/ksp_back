@@ -84,7 +84,22 @@ describe('gateway → billing', () => {
     expect(billing.stub.last('listInvoices')!.request).toMatchObject({
       contractId: CONTRACT,
       customerId: '',
+      periodFrom: '',
+      periodTo: '',
     });
+
+    // Période facturée : dates transmises telles quelles (billing les lit à l'heure du Bénin).
+    const period = await backoffice(
+      http().get('/api/v1/admin/billing/invoices?from=2026-11-01&to=2026-11-30'),
+      finance,
+    );
+    expect(period.status).toBe(200);
+    expect(billing.stub.last('listInvoices')!.request).toMatchObject({
+      periodFrom: '2026-11-01',
+      periodTo: '2026-11-30',
+    });
+    const badPeriod = await backoffice(http().get('/api/v1/admin/billing/invoices?from=01/11/2026'), finance);
+    expect(badPeriod.status).toBe(400);
 
     const paid = await backoffice(
       http().post(`/api/v1/admin/billing/invoices/${INVOICE_ID}/payments`),
@@ -102,7 +117,27 @@ describe('gateway → billing', () => {
       amount: { amount: 100000, currency: 'XOF' },
       method: 'cash',
       reference: '',
+      idempotencyKey: '',
     });
+
+    // Idempotency-Key facultative : transmise si présente, refusée si mal formée.
+    const keyed = await backoffice(
+      http().post(`/api/v1/admin/billing/invoices/${INVOICE_ID}/payments`),
+      finance,
+    )
+      .set('Idempotency-Key', 'paiement-cle-0001')
+      .send({ amount: 100000, method: 'cash' });
+    expect(keyed.status).toBe(200);
+    expect(billing.stub.last('recordInvoicePayment')!.request).toMatchObject({
+      idempotencyKey: 'paiement-cle-0001',
+    });
+    const badKey = await backoffice(
+      http().post(`/api/v1/admin/billing/invoices/${INVOICE_ID}/payments`),
+      finance,
+    )
+      .set('Idempotency-Key', 'court')
+      .send({ amount: 100000, method: 'cash' });
+    expect(badKey.status).toBe(400);
   });
 
   it('refus avant tout appel : client sur le back-office, double authentification absente, corps invalide', async () => {

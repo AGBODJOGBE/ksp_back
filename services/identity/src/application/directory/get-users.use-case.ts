@@ -10,12 +10,15 @@ export interface UserDirectory {
 /**
  * Services autorisés à lire les comptes, et s'ils reçoivent les coordonnées (téléphone, e-mail).
  * Carte des services : notification en a besoin pour prévenir un utilisateur à partir d'un événement
- * qui ne porte que son identifiant ; cleaning n'en lit que le nom, affiché au back-office (ADR-029).
+ * qui ne porte que son identifiant ; cleaning et payment n'en lisent que le nom, affiché au
+ * back-office (ADR-029).
  * Tout autre appelant est refusé jusqu'à son ajout ici.
  */
 export const DIRECTORY_CALLERS: Readonly<Record<string, { contact: boolean }>> = {
   notification: { contact: true },
   cleaning: { contact: false },
+  // Nom du payeur affiché dans les paiements en ligne du back-office (ADR-029).
+  payment: { contact: false },
 };
 
 /** Nombre maximum d'identifiants par appel à GetUsersByIds. */

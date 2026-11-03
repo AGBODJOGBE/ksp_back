@@ -103,7 +103,9 @@ export class InMemoryInvoices implements InvoiceRepository {
           (!filter.customerId || i.customerId === filter.customerId) &&
           (filter.organizationId === undefined || i.organizationId === filter.organizationId) &&
           (!filter.contractId || i.contractId === filter.contractId) &&
-          (!filter.status || i.status === filter.status),
+          (!filter.status || i.status === filter.status) &&
+          (!filter.periodFrom || i.periodEnd > filter.periodFrom) &&
+          (!filter.periodTo || i.periodStart < filter.periodTo),
       )
       .sort((a, b) => b.id.localeCompare(a.id));
     const from = page.cursor ? items.filter((i) => i.id < page.cursor!) : items;

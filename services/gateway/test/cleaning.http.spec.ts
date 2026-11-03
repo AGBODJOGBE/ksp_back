@@ -64,6 +64,7 @@ describe('gateway → cleaning', () => {
   });
 
   const http = () => request(app.getHttpServer());
+  const xof = (amount: number) => ({ amount, currency: 'XOF' });
   const QUOTE_BODY = {
     serviceCode: 'home_cleaning',
     premisesType: 'house',
@@ -152,6 +153,15 @@ describe('gateway → cleaning', () => {
       'accepte-0003',
     );
     expect(badPlan.status).toBe(400);
+
+    // Mobile Money en ligne : moyen proposé à l'acceptation.
+    const online = { ...plan, method: 'mobile_money_online' };
+    const onlinePlan = await accept(
+      { slotStart: '2026-11-05T08:00:00Z', paymentPlan: online },
+      'accepte-0004',
+    );
+    expect(onlinePlan.status).toBe(200);
+    expect(cleaning.stub.last('acceptQuote')!.request['paymentPlan']).toEqual(online);
   });
 
   it('devis : montant de chaque ligne calculé, rôles transmis', async () => {
@@ -322,6 +332,64 @@ describe('gateway → cleaning', () => {
       .set('Origin', ORIGINS.backoffice)
       .set('Authorization', `Bearer ${superAdmin}`);
     expect(zones.status).toBe(200);
+  });
+
+  it('reste dû et acompte dû calculés par cleaning, côté client et back-office', async () => {
+    const customerView = await http()
+      .get(`/api/v1/cleaning/missions/${IDS.mission}`)
+      .set('Authorization', `Bearer ${customer}`);
+    expect(customerView.status).toBe(200);
+    expect(customerView.body.payment).toMatchObject({
+      remainingDue: { amount: 60000, currency: 'XOF' },
+      depositDue: { amount: 18000, currency: 'XOF' },
+    });
+    const adminView = await http()
+      .get(`/api/v1/admin/cleaning/missions/${IDS.mission}`)
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${staff}`);
+    expect(adminView.status).toBe(200);
+    expect(adminView.body.payment).toMatchObject({
+      remainingDue: { amount: 60000, currency: 'XOF' },
+      depositDue: { amount: 18000, currency: 'XOF' },
+    });
+
+    // Acompte reçu : plus d'acompte attendu (message absent → null).
+    cleaning.stub.on('getMission', async () => ({
+      mission: {
+        ...protoMission,
+        payment: {
+          ...protoMission.payment,
+          status: 'deposit_received',
+          paid: xof(18000),
+          remainingDue: xof(42000),
+          depositDue: undefined,
+        },
+      },
+    }));
+    const received = await http()
+      .get(`/api/v1/cleaning/missions/${IDS.mission}`)
+      .set('Authorization', `Bearer ${customer}`);
+    expect(received.body.payment).toMatchObject({ remainingDue: { amount: 42000 }, depositDue: null });
+
+    // Service cleaning antérieur : reste dû déduit du total et des paiements reçus.
+    cleaning.stub.on('getMission', async () => ({
+      mission: {
+        ...protoMission,
+        payment: {
+          ...protoMission.payment,
+          paid: xof(10000),
+          remainingDue: undefined,
+          depositDue: undefined,
+        },
+      },
+    }));
+    const legacy = await http()
+      .get(`/api/v1/cleaning/missions/${IDS.mission}`)
+      .set('Authorization', `Bearer ${customer}`);
+    expect(legacy.body.payment).toMatchObject({
+      remainingDue: { amount: 50000, currency: 'XOF' },
+      depositDue: null,
+    });
   });
 
   it('paiement manuel : Idempotency-Key transmise si présente, vide sinon', async () => {

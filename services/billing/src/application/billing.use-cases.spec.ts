@@ -172,6 +172,104 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     expect(await code(pay(1))).toBe('BILLING_INVALID_TRANSITION');
   });
 
+  it('paiement manuel idempotent : même clé → un seul paiement, rejoué tel quel', async () => {
+    world.clock.current = new Date('2026-12-06T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    const [invoice] = [...world.invoices.invoices.values()];
+    const pay = (amount: number, idempotencyKey?: string) =>
+      asStaff(() =>
+        useCases.recordInvoicePayment.execute({
+          invoiceId: invoice!.id,
+          amount,
+          method: 'cash',
+          reference: 'R-1',
+          ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+        }),
+      );
+    const first = await pay(40_000, 'paiement-cle-0001');
+    expect(first.payments).toEqual([
+      expect.objectContaining({ amount: 40_000, idempotencyKey: 'paiement-cle-0001' }),
+    ]);
+    const again = await pay(40_000, 'paiement-cle-0001');
+    expect(again.payments).toHaveLength(1);
+    expect(again.version).toBe(first.version);
+    // Rejeu sans nouveau contrôle : même avec un autre montant, la facture est renvoyée telle quelle.
+    expect((await pay(999_999, 'paiement-cle-0001')).payments).toHaveLength(1);
+    // Autre clé, ou sans clé (front existant) : nouveaux paiements.
+    expect((await pay(10_000, 'paiement-cle-0002')).payments).toHaveLength(2);
+    expect((await pay(10_000)).payments).toHaveLength(3);
+    expect((await pay(10_000, '')).payments).toHaveLength(4);
+    // Facture payée ensuite : un rejeu de clé reste accepté, un nouveau paiement non.
+    const paid = await pay(30_000, 'paiement-cle-0003');
+    expect(paid.status).toBe('paid');
+    expect((await pay(30_000, 'paiement-cle-0003')).status).toBe('paid');
+    expect(await code(pay(1, 'paiement-cle-0004'))).toBe('BILLING_INVALID_TRANSITION');
+    expect(await code(pay(1, 'court'))).toBe('BILLING_VALIDATION_FAILED');
+    expect(world.recorder.events.filter((e) => e.type === 'billing.invoice.paid')).toHaveLength(1);
+  });
+
+  it('paiement manuel : envoi concurrent de la même clé, l’écriture perdante rejoue', async () => {
+    world.clock.current = new Date('2026-12-06T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    const [invoice] = [...world.invoices.invoices.values()];
+    const input = {
+      invoiceId: invoice!.id,
+      amount: 40_000,
+      method: 'cash',
+      reference: '',
+      idempotencyKey: 'paiement-cle-0005',
+    };
+    // Le premier envoi lit la facture, puis le second est enregistré avant lui.
+    const original = world.invoices.findById.bind(world.invoices);
+    let reads = 0;
+    world.invoices.findById = async (id: string) => {
+      const found = await original(id);
+      reads += 1;
+      if (reads === 1) await asStaff(() => useCases.recordInvoicePayment.execute(input));
+      return found;
+    };
+    const result = await asStaff(() => useCases.recordInvoicePayment.execute(input));
+    world.invoices.findById = original;
+    expect(result.payments).toHaveLength(1);
+    expect((await original(invoice!.id))!.payments).toHaveLength(1);
+  });
+
+  it('back-office : filtre par période facturée (dates au Bénin, bornes incluses, fin exclusive en base)', async () => {
+    world.clock.current = new Date('2027-02-02T00:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    const list = (periodFrom: string, periodTo: string) =>
+      asStaff(() =>
+        useCases.listInvoices.execute({
+          page: { limit: 20, cursor: null },
+          status: '',
+          customerId: '',
+          organizationId: '',
+          contractId: '',
+          periodFrom,
+          periodTo,
+        }),
+      );
+    const months = async (from: string, to: string) =>
+      (await list(from, to)).items.map((i) => i.periodIndex).sort();
+    // Novembre : 1er novembre 00:00 → 1er décembre 00:00 (borne exclusive), heure du Bénin.
+    const november = [...world.invoices.invoices.values()].find((i) => i.periodIndex === 1)!;
+    expect(november.periodEnd.toISOString()).toBe('2026-11-30T23:00:00.000Z');
+    expect(await months('2026-12-01', '2026-12-31')).toEqual([2]);
+    expect(await months('2026-11-30', '2026-12-01')).toEqual([1, 2]);
+    expect(await months('', '2026-11-30')).toEqual([1]);
+    expect(await months('2027-01-31', '')).toEqual([3]);
+    expect(await months('', '')).toEqual([1, 2, 3]);
+    expect(await months('2027-02-01', '2027-12-31')).toEqual([]);
+    for (const [from, to] of [
+      ['2026-02-30', ''],
+      ['2026-13-01', ''],
+      ['01/12/2026', ''],
+      ['2026-12-31', '2026-12-01'],
+    ]) {
+      expect(await code(list(from!, to!))).toBe('BILLING_VALIDATION_FAILED');
+    }
+  });
+
   it('jours de suspension déduits au prorata ; annulation : prorata jusqu’au jour de l’annulation', async () => {
     await useCases.suspendContract.execute({
       eventId: event(3),
@@ -319,8 +417,15 @@ describe('paiement en ligne d’une facture (ADR-031)', () => {
       runWithContext({ correlationId: 'c-test', callerService: service }, () =>
         useCases.getInvoiceAmountDue.execute(invoice().id),
       );
-    expect(await asService('payment')).toMatchObject({ paid: 0, balance: 100_000 });
+    expect(await asService('payment')).toMatchObject({ paid: 0, balance: 100_000, onlinePaymentIds: [] });
     expect(await code(asService('gateway'))).toBe('BILLING_CALLER_FORBIDDEN');
+    // Paiement en ligne enregistré : son identifiant est rendu à payment (ADR-032).
+    await succeeded({ amount: 40_000 });
+    expect(await asService('payment')).toMatchObject({
+      paid: 40_000,
+      balance: 60_000,
+      onlinePaymentIds: [PAYMENT_ID],
+    });
   });
 
   it('payment.intent.succeeded : facture payée (billing.invoice.paid), idempotent', async () => {

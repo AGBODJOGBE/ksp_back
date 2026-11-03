@@ -1,4 +1,4 @@
-import { invoiceAmount, missionAmount } from './amount-due';
+import { invoiceAmount, missionAmount, unrecordedSuccess } from './amount-due';
 import {
   applyProviderStatus,
   expire,
@@ -76,8 +76,16 @@ describe('montant dû', () => {
     status: 'scheduled',
     depositDue: 15000,
     remainingDue: 50000,
+    recordedPaymentIds: [],
   };
   const payer = { userId: USER, organizationId: null };
+
+  it('paiement réussi pas encore enregistré par le service de l’objet', () => {
+    expect(unrecordedSuccess([], [])).toBe(false);
+    expect(unrecordedSuccess(['p1'], ['p1'])).toBe(false);
+    expect(unrecordedSuccess(['p1', 'p2'], ['p1'])).toBe(true);
+    expect(unrecordedSuccess(['p1'], [])).toBe(true);
+  });
 
   it('mission : acompte ou reste dû, lus tels quels', () => {
     expect(missionAmount(mission, 'deposit', payer)).toEqual({ amount: 15000 });
@@ -107,6 +115,7 @@ describe('montant dû', () => {
       organizationId: 'o1',
       status: 'overdue',
       balance: 1000,
+      recordedPaymentIds: [],
     };
     expect(invoiceAmount(invoice, { userId: 'u2', organizationId: 'o1' })).toEqual({ amount: 1000 });
     expect(invoiceAmount(invoice, payer)).toEqual({ refusal: 'not_found' });

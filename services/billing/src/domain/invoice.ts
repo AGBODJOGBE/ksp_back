@@ -44,6 +44,8 @@ export interface InvoicePayment {
   reference: string | null;
   recordedBy: string;
   recordedAt: Date;
+  /** Clé d'idempotence d'un paiement manuel (en-tête Idempotency-Key) ; null sans clé. */
+  idempotencyKey?: string | null;
 }
 
 /**

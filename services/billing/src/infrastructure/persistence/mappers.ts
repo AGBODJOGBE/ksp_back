@@ -96,6 +96,7 @@ export function toInvoice(row: InvoiceRow & { payments: PaymentRow[] }): Invoice
       reference: payment.reference,
       recordedBy: payment.recordedBy,
       recordedAt: payment.recordedAt,
+      idempotencyKey: payment.idempotencyKey,
     })),
     organization: toInvoiceOrganization(row),
     version: row.version,

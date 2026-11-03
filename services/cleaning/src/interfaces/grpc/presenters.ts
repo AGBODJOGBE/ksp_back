@@ -6,7 +6,7 @@ import { type StoredSettings } from '../../application/ports';
 import { type Agent, type Team } from '../../domain/agent';
 import { type ServiceDefinition } from '../../domain/catalog';
 import { CURRENCY } from '../../domain/money';
-import { paidAmount, paymentStatus } from '../../domain/payment';
+import { expectedDeposit, paidAmount, paymentStatus, remainingDue } from '../../domain/payment';
 import { type Quote } from '../../domain/quote';
 import { type QuoteRequest } from '../../domain/quote-request';
 import { type Recurrence } from '../../domain/recurrence';
@@ -139,6 +139,8 @@ export function presentMission(
       depositPercent: payment.depositPercent,
       depositAmount: money(payment.depositAmount),
       paid: money(paidAmount(payment)),
+      remainingDue: money(remainingDue(payment)),
+      depositDue: optionalMoney(expectedDeposit(payment)),
       payments: payment.payments.map((record) => ({
         id: record.id,
         amount: money(record.amount),

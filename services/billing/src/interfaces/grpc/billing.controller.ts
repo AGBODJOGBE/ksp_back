@@ -36,6 +36,8 @@ export class BillingAdminGrpcController implements billingV1.BillingAdminService
       customerId: request.customerId,
       organizationId: request.organizationId,
       contractId: request.contractId,
+      periodFrom: request.periodFrom,
+      periodTo: request.periodTo,
     });
     return { invoices: page.items.map(presentInvoice), nextCursor: page.nextCursor ?? '' };
   }
@@ -52,6 +54,7 @@ export class BillingAdminGrpcController implements billingV1.BillingAdminService
       amount: Number(request.amount?.amount ?? 0),
       method: request.method,
       reference: request.reference,
+      idempotencyKey: request.idempotencyKey,
     });
     return { invoice: presentInvoice(invoice) };
   }
@@ -93,6 +96,7 @@ export class InvoicePaymentDueGrpcController implements billingV1.InvoicePayment
       total: xof(due.invoice.total),
       paid: xof(due.paid),
       balance: xof(due.balance),
+      onlinePaymentIds: due.onlinePaymentIds,
     };
   }
 }

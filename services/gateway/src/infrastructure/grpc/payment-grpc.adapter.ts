@@ -33,8 +33,11 @@ const PROVIDER_DEADLINES_MS = {
 } as const;
 const page = (value: Page): paymentV1.Page => ({ limit: value.limit ?? 0, cursor: value.cursor ?? '' });
 
-/** Traduction d'un paiement ksp.payment.v1 vers le JSON du contrat OpenAPI. */
-export function presentPayment(value: paymentV1.Payment | undefined) {
+/**
+ * Traduction d'un paiement ksp.payment.v1 vers le JSON du contrat OpenAPI. Back-office : nom du
+ * payeur et de son organisation (ADR-029), null s'ils sont inconnus ou si identity n'a pas répondu.
+ */
+export function presentPayment(value: paymentV1.Payment | undefined, backoffice = false) {
   if (!value?.subject) throw malformed('paiement');
   return {
     id: value.id,
@@ -57,6 +60,9 @@ export function presentPayment(value: paymentV1.Payment | undefined) {
     updatedAt: value.updatedAt,
     expiresAt: value.expiresAt,
     completedAt: orNull(value.completedAt),
+    ...(backoffice
+      ? { customerName: orNull(value.customerName), organizationName: orNull(value.organizationName) }
+      : {}),
   };
 }
 
@@ -65,8 +71,8 @@ const deadline = (name: string): { deadlineMs?: number } =>
     ? { deadlineMs: PROVIDER_DEADLINES_MS[name as keyof typeof PROVIDER_DEADLINES_MS] }
     : {};
 
-const list = (res: { payments: paymentV1.Payment[]; nextCursor: string }) => ({
-  data: res.payments.map(presentPayment),
+const list = (res: { payments: paymentV1.Payment[]; nextCursor: string }, backoffice = false) => ({
+  data: res.payments.map((payment) => presentPayment(payment, backoffice)),
   nextCursor: res.nextCursor || null,
 });
 
@@ -142,6 +148,7 @@ export class PaymentGrpcAdapter implements PaymentApi {
           m,
         ),
       ),
+      true,
     );
   }
 

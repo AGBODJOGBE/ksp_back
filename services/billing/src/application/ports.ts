@@ -59,6 +59,9 @@ export interface InvoiceFilter {
   organizationId?: string | null;
   contractId?: string;
   status?: InvoiceStatus;
+  /** Période facturée qui touche [periodFrom, periodTo) : instants, bornes de jours au Bénin. */
+  periodFrom?: Date;
+  periodTo?: Date;
 }
 
 export interface InvoiceRepository {

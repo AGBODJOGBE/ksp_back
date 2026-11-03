@@ -22,6 +22,25 @@ export function optionalText(field: string, value: string | undefined, max: numb
   return text || null;
 }
 
+const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Date facultative AAAA-MM-JJ (chaîne vide = absente), lue comme un jour civil au Bénin : renvoie
+ * son numéro de jour (beninDay). Une date qui n'existe pas (2026-02-30) est refusée.
+ */
+export function optionalDay(field: string, value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const match = DATE.exec(value);
+  if (!match) throw BillingErrors.invalid(field, 'Date attendue au format AAAA-MM-JJ.');
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const utc = Date.UTC(year, month - 1, day);
+  const date = new Date(utc);
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    throw BillingErrors.invalid(field, 'Cette date n’existe pas.');
+  }
+  return utc / 86_400_000;
+}
+
 export function oneOf<T extends string>(field: string, value: string, allowed: readonly T[]): T {
   if (!allowed.includes(value as T)) throw BillingErrors.invalid(field);
   return value as T;

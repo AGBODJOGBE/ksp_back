@@ -148,6 +148,14 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return row ? toDomain(row) : null;
   }
 
+  async listSucceededIds(input: { subjectType: SubjectType; subjectId: string }): Promise<string[]> {
+    const rows = await this.prisma.paymentIntent.findMany({
+      where: { subjectType: input.subjectType, subjectId: input.subjectId, status: 'succeeded' },
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
+  }
+
   save(intent: PaymentIntent, events: OutboxMessage[]): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       const { count } = await tx.paymentIntent.updateMany({

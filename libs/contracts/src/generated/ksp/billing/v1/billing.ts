@@ -58,6 +58,11 @@ export interface Invoice {
    * suspension au prorata des jours.
    */
   periodIndex: number;
+  /**
+   * Période facturée : period_start est le premier instant facturé (minuit, heure du Bénin) ;
+   * period_end est une borne EXCLUSIVE, minuit (heure du Bénin) du lendemain du dernier jour
+   * facturé. Une facture de novembre complet va du 1er novembre 00:00 au 1er décembre 00:00.
+   */
   periodStart: string;
   periodEnd: string;
   lines: InvoiceLine[];
@@ -118,6 +123,13 @@ export interface ListInvoicesRequest {
   customerId: string;
   organizationId: string;
   contractId: string;
+  /**
+   * Période facturée (dates AAAA-MM-JJ, heure du Bénin, Africa/Porto-Novo), bornes incluses :
+   * factures dont la période facturée [period_start, period_end) touche au moins un jour de
+   * [period_from, period_to]. Vides : sans borne.
+   */
+  periodFrom: string;
+  periodTo: string;
 }
 
 export interface ListInvoicesResponse {
@@ -141,6 +153,11 @@ export interface RecordInvoicePaymentRequest {
   /** "cash", "bank_transfer" ou "mobile_money_offline". */
   method: string;
   reference: string;
+  /**
+   * En-tête Idempotency-Key, facultatif (8 à 100 caractères : lettres, chiffres, "_" et "-") : un
+   * second envoi avec la même clé pour la même facture renvoie la facture sans second paiement.
+   */
+  idempotencyKey: string;
 }
 
 export interface RecordInvoicePaymentResponse {
@@ -185,7 +202,14 @@ export interface GetInvoiceAmountDueResponse {
   status: string;
   total?: Money | undefined;
   paid?: Money | undefined;
-  balance?: Money | undefined;
+  balance?:
+    | Money
+    | undefined;
+  /**
+   * Paiements en ligne déjà enregistrés sur la facture (identifiants du service payment) : payment
+   * refuse un nouveau paiement tant qu'un paiement réussi n'y figure pas encore (ADR-032).
+   */
+  onlinePaymentIds: string[];
 }
 
 /**

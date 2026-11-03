@@ -88,6 +88,9 @@ describe('gateway → payment', () => {
       checkoutUrl: 'https://process.fedapay.com/tok',
       completedAt: null,
     });
+    // Noms du payeur : back-office seulement.
+    expect(res.body).not.toHaveProperty('customerName');
+    expect(res.body).not.toHaveProperty('organizationName');
     const call = payment.stub.last('createPayment')!;
     expect(call.request).toEqual({
       subjectType: 'cleaning_mission',
@@ -126,6 +129,15 @@ describe('gateway → payment', () => {
       .set('Idempotency-Key', 'pay-key-0002')
       .send({ subjectType: 'billing_invoice', subjectId: MISSION_ID });
     expect(nothing.status).toBe(422);
+    // Paiement réussi pas encore enregistré par cleaning ou billing : 409 (ADR-032).
+    payment.stub.on('createPayment', () =>
+      Promise.reject(AppError.conflict('PAYMENT_ALREADY_RECEIVED', 'Paiement déjà reçu.')),
+    );
+    const received = await web(http().post('/api/v1/payment/payments'))
+      .set('Idempotency-Key', 'pay-key-0003')
+      .send({ subjectType: 'billing_invoice', subjectId: MISSION_ID });
+    expect(received.status).toBe(409);
+    expect(received.body.error.code).toBe('PAYMENT_ALREADY_RECEIVED');
   });
 
   it('notification FedaPay : publique, corps exact et signature transmis, aucune interprétation', async () => {
@@ -188,6 +200,8 @@ describe('gateway → payment', () => {
       .set('Authorization', `Bearer ${finance}`);
     expect(res.status).toBe(200);
     expect(res.body.nextCursor).toBe(PAYMENT_ID);
+    // Noms lus dans identity par payment (ADR-029) ; vide → null.
+    expect(res.body.data[0]).toMatchObject({ customerName: 'Koffi Adjovi', organizationName: null });
     expect(payment.stub.last('listPayments')!.request).toMatchObject({
       status: 'pending',
       subjectType: 'cleaning_mission',

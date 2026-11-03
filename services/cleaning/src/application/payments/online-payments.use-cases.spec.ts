@@ -79,7 +79,32 @@ describe('paiement en ligne d’une mission (ADR-031)', () => {
   describe('montant dû (lu par payment)', () => {
     it('acompte encore dû et reste dû, calculés par cleaning', async () => {
       const due = await asService('payment', () => new GetMissionAmountDueUseCase(world).execute(MISSION_ID));
-      expect(due).toMatchObject({ paid: 0, depositDue: 15_000, remainingDue: 50_000 });
+      expect(due).toMatchObject({ paid: 0, depositDue: 15_000, remainingDue: 50_000, onlinePaymentIds: [] });
+    });
+
+    it('paiements en ligne déjà enregistrés, pour que payment ne fasse pas payer deux fois', async () => {
+      await succeeded();
+      const current = stored();
+      world.missions.missions.set(MISSION_ID, {
+        ...current,
+        payment: {
+          ...current.payment,
+          payments: [
+            ...current.payment.payments,
+            {
+              id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7001',
+              amount: 5_000,
+              method: 'cash',
+              reference: null,
+              recordedBy: CUSTOMER_ID,
+              recordedAt: new Date('2026-10-25T09:00:00Z'),
+              idempotencyKey: 'manuel-0001',
+            },
+          ],
+        },
+      });
+      const due = await asService('payment', () => new GetMissionAmountDueUseCase(world).execute(MISSION_ID));
+      expect(due.onlinePaymentIds).toEqual([PAYMENT_ID]);
     });
 
     it('acompte reçu : plus d’acompte dû ; plan « totalité » : jamais d’acompte', async () => {

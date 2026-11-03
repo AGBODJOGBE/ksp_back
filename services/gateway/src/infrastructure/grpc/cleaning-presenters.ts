@@ -173,6 +173,11 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
       depositPercent: payment?.depositPercent ?? 0,
       depositAmount: requiredMoney(payment?.depositAmount),
       paid: requiredMoney(payment?.paid),
+      // Calculés par cleaning ; un service cleaning antérieur ne les envoie pas : reste dû déduit du total.
+      remainingDue:
+        money(payment?.remainingDue) ??
+        xof(Math.max(0, (payment?.total?.amount ?? 0) - (payment?.paid?.amount ?? 0))),
+      depositDue: money(payment?.depositDue),
       payments: (payment?.payments ?? []).map((record) => ({
         id: record.id,
         amount: requiredMoney(record.amount),

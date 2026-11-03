@@ -2,6 +2,7 @@ import { AppError, currentContext } from '@ksp/platform';
 import { type Mission } from '../../domain/mission';
 import {
   depositDue,
+  onlinePaymentIds,
   onlinePaymentKey,
   paidAmount,
   type PaymentRecord,
@@ -25,6 +26,8 @@ export interface MissionAmountDue {
   paid: number;
   depositDue: number;
   remainingDue: number;
+  /** Paiements en ligne déjà enregistrés (identifiants payment, ADR-032). */
+  onlinePaymentIds: string[];
 }
 
 /**
@@ -51,6 +54,7 @@ export class GetMissionAmountDueUseCase {
       paid: paidAmount(mission.payment),
       depositDue: depositDue(mission.payment),
       remainingDue: remainingDue(mission.payment),
+      onlinePaymentIds: onlinePaymentIds(mission.payment),
     };
   }
 }

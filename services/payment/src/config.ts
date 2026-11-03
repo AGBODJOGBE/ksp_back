@@ -43,6 +43,8 @@ export const configSchema = baseServiceConfigSchema
     /** Adresses gRPC de cleaning et billing (montants dus). */
     CLEANING_GRPC_URL: z.string().min(1).default('localhost:50053'),
     BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
+    /** Adresse gRPC d'identity (noms affichés au back-office, ADR-029). */
+    IDENTITY_GRPC_URL: z.string().min(1).default('localhost:50051'),
   })
   .superRefine((cfg, ctx) => {
     const fail = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
