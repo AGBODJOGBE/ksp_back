@@ -12,6 +12,7 @@ import {
   type InMemoryDues,
   type InMemoryNotificationLog,
   type InMemoryPayments,
+  type InMemoryPeople,
   makeDeps,
   MISSION_ID,
   missionDue,
@@ -226,6 +227,124 @@ describe('paiement en ligne (cas d’usage)', () => {
         ),
       );
       expect(error.code).toBe('PAYMENT_NOTHING_DUE');
+    });
+
+    it('paiement réussi pas encore enregistré par cleaning : pas de second paiement (409)', async () => {
+      const first = await createMission('deposit', 'pay-key-0001');
+      provider().set('1001', { status: 'approved' });
+      await notify('1001');
+      // cleaning n'a pas encore reçu l'événement : le montant dû ne déduit pas encore l'acompte.
+      const error = await rejection(createMission('deposit', 'pay-key-0002'));
+      expect(error.code).toBe('PAYMENT_ALREADY_RECEIVED');
+      // Toutes parts confondues : le solde attend aussi.
+      expect((await rejection(createMission('balance', 'pay-key-0003'))).code).toBe(
+        'PAYMENT_ALREADY_RECEIVED',
+      );
+      expect(provider().checkouts).toHaveLength(1);
+      // Rejeu de la même clé : toujours le même paiement (réussi).
+      expect((await createMission('deposit', 'pay-key-0001')).payment).toMatchObject({
+        id: first.payment.id,
+        status: 'succeeded',
+      });
+      // Enregistré par cleaning : le montant dû est à jour, un nouveau paiement est permis.
+      dues().missions.set(
+        MISSION_ID,
+        missionDue({ depositDue: 0, remainingDue: 35000, recordedPaymentIds: [first.payment.id] }),
+      );
+      const balance = await createMission('balance', 'pay-key-0004');
+      expect(balance).toMatchObject({ created: true, payment: { amount: 35000 } });
+    });
+
+    it('toujours pas enregistré après 15 min : autre refus (support) et alerte, jamais de second paiement', async () => {
+      const first = await createMission('deposit', 'pay-key-0001');
+      provider().set('1001', { status: 'approved' });
+      await notify('1001');
+      const succeededAt = clock().now();
+      // Juste avant 15 min : « réessayez dans quelques instants », sans alerte.
+      clock().advance(15 * 60_000 - 1);
+      expect((await rejection(createMission('deposit', 'pay-key-0002'))).code).toBe(
+        'PAYMENT_ALREADY_RECEIVED',
+      );
+      expect(alerts().unrecordedPayments).toEqual([]);
+      // 15 min après la réussite : le client est orienté vers le support, l'équipe est alertée.
+      clock().advance(1);
+      const late = await rejection(createMission('balance', 'pay-key-0003'));
+      expect(late.code).toBe('PAYMENT_RECONCILIATION_PENDING');
+      expect(late.message).toContain('contactez le support');
+      expect(alerts().unrecordedPayments).toEqual([
+        {
+          subjectType: 'cleaning_mission',
+          subjectId: MISSION_ID,
+          paymentIds: [first.payment.id],
+          since: succeededAt,
+        },
+      ]);
+      // Des heures plus tard, toujours refusé : une seule page de paiement a été ouverte.
+      clock().advance(6 * 3_600_000);
+      expect((await rejection(createMission('deposit', 'pay-key-0004'))).code).toBe(
+        'PAYMENT_RECONCILIATION_PENDING',
+      );
+      expect(provider().checkouts).toHaveLength(1);
+      // Enregistré enfin : le paiement suivant est permis.
+      dues().missions.set(
+        MISSION_ID,
+        missionDue({ depositDue: 0, remainingDue: 35000, recordedPaymentIds: [first.payment.id] }),
+      );
+      expect((await createMission('balance', 'pay-key-0005')).created).toBe(true);
+    });
+
+    it('délai avant l’orientation vers le support réglable', async () => {
+      deps = makeDeps({ settings: { ...makeDeps().settings, unrecordedGraceMinutes: 2 } });
+      useCases = createUseCases(deps);
+      dues().missions.set(MISSION_ID, missionDue());
+      await createMission('deposit', 'pay-key-0001');
+      provider().set('1001', { status: 'approved' });
+      await notify('1001');
+      clock().advance(2 * 60_000);
+      expect((await rejection(createMission('deposit', 'pay-key-0002'))).code).toBe(
+        'PAYMENT_RECONCILIATION_PENDING',
+      );
+    });
+
+    it('facture : même refus tant que billing n’a pas enregistré le paiement réussi', async () => {
+      const pay = (key: string) =>
+        asCustomer(
+          () =>
+            useCases.createPayment.execute({
+              subjectType: 'billing_invoice',
+              subjectId: INVOICE_ID,
+              part: '',
+              idempotencyKey: key,
+            }),
+          CUSTOMER_ID,
+          ORGANIZATION_ID,
+        );
+      const first = await pay('pay-key-0001');
+      provider().set('1001', { status: 'approved' });
+      await notify('1001');
+      // Un autre membre de l'organisation non plus : le refus porte sur la facture.
+      const other = asCustomer(
+        () =>
+          useCases.createPayment.execute({
+            subjectType: 'billing_invoice',
+            subjectId: INVOICE_ID,
+            part: '',
+            idempotencyKey: 'pay-key-0002',
+          }),
+        OTHER_CUSTOMER_ID,
+        ORGANIZATION_ID,
+      );
+      expect((await rejection(other)).code).toBe('PAYMENT_ALREADY_RECEIVED');
+      dues().invoices.set(INVOICE_ID, invoiceDue({ balance: 10000, recordedPaymentIds: [first.payment.id] }));
+      expect((await pay('pay-key-0003')).payment.amount).toBe(10000);
+    });
+
+    it('un paiement non abouti (échec, abandon) ne bloque pas un nouveau paiement', async () => {
+      await createMission('deposit', 'pay-key-0001');
+      provider().set('1001', { status: 'declined' });
+      await notify('1001');
+      const again = await createMission('deposit', 'pay-key-0002');
+      expect(again.created).toBe(true);
     });
 
     it('prestataire en panne : 503, puis la même clé reprend la page', async () => {
@@ -484,6 +603,45 @@ describe('paiement en ligne (cas d’usage)', () => {
       expect(
         (await rejection(asStaff(() => useCases.listPayments.execute(all), 'finance_officer', false))).code,
       ).toBe('AUTH_MFA_REQUIRED');
+    });
+
+    it('back-office : nom du payeur et de son organisation lus dans identity, absents si identity ne répond pas', async () => {
+      const people = deps.people as InMemoryPeople;
+      people.users.set(CUSTOMER_ID, 'Koffi Adjovi');
+      people.organizations.set(ORGANIZATION_ID, 'SARL Bénin Propre');
+      const mission = (await createMission()).payment;
+      const invoice = (
+        await asCustomer(
+          () =>
+            useCases.createPayment.execute({
+              subjectType: 'billing_invoice',
+              subjectId: INVOICE_ID,
+              part: '',
+              idempotencyKey: 'pay-key-0002',
+            }),
+          OTHER_CUSTOMER_ID,
+          ORGANIZATION_ID,
+        )
+      ).payment;
+      const all = {
+        page: { limit: 20, cursor: null },
+        status: '',
+        subjectType: '',
+        subjectId: '',
+        customerId: '',
+        organizationId: '',
+      };
+      const list = await asStaff(() => useCases.listPayments.execute(all));
+      expect(list.items.map((p) => p.id).sort()).toEqual([mission.id, invoice.id].sort());
+      expect(list.names.users.get(CUSTOMER_ID)).toBe('Koffi Adjovi');
+      // Compte sans nom chez identity : absent.
+      expect(list.names.users.has(OTHER_CUSTOMER_ID)).toBe(false);
+      expect(list.names.organizations.get(ORGANIZATION_ID)).toBe('SARL Bénin Propre');
+
+      people.down = true;
+      const degraded = await asStaff(() => useCases.listPayments.execute(all));
+      expect(degraded.items).toHaveLength(2);
+      expect(degraded.names.users.size + degraded.names.organizations.size).toBe(0);
     });
   });
 

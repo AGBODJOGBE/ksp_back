@@ -433,6 +433,7 @@ export class CancelMissionAsSupervisorUseCase {
             requestId: mission.requestId,
             missionId: mission.id,
             customerId: mission.customerId,
+            organizationId: mission.organizationId,
             cancelledBy: 'supervisor',
             outcome: 'cancelled',
           },

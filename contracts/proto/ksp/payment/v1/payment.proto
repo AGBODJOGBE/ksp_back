@@ -39,6 +39,10 @@ import "ksp/common/v1/money.proto";
 //   PAYMENT_SUBJECT_NOT_PAYABLE         FAILED_PRECONDITION mission annulée, facture annulée
 //   PAYMENT_VIA_INVOICE                 FAILED_PRECONDITION mission d'entreprise : réglée par sa facture
 //   PAYMENT_IDEMPOTENCY_KEY_REUSED      ALREADY_EXISTS      clé déjà utilisée pour un autre objet
+//   PAYMENT_ALREADY_RECEIVED            ALREADY_EXISTS      paiement réussi pas encore enregistré par cleaning
+//                                                           ou billing : réessayer plus tard (ADR-032)
+//   PAYMENT_RECONCILIATION_PENDING      ALREADY_EXISTS      le même, toujours pas enregistré 15 min (réglable)
+//                                                           après sa réussite : contacter le support (ADR-032)
 //   PAYMENT_CONCURRENT_UPDATE           ALREADY_EXISTS      paiement modifié en même temps par un autre appel
 //   PAYMENT_PROVIDER_UNAVAILABLE        UNAVAILABLE         prestataire injoignable : réessayer avec la même clé
 //   PAYMENT_CALLER_FORBIDDEN            PERMISSION_DENIED   méthode réservée à un autre service
@@ -114,6 +118,10 @@ message Payment {
   string expires_at = 14;
   // Date de la réussite ou de l'échec, vide en attente.
   string completed_at = 15;
+  // Back-office seulement : nom affiché du payeur et raison sociale de son organisation, lus dans
+  // identity à l'affichage (ADR-029) ; vides s'ils sont inconnus ou si identity ne répond pas.
+  string customer_name = 16;
+  string organization_name = 17;
 }
 
 message CreatePaymentRequest {

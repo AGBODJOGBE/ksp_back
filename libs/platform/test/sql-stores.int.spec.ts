@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client, Pool, type PoolClient } from 'pg';
 import { v7 as uuidv7 } from 'uuid';
@@ -13,16 +13,13 @@ import {
 
 /**
  * Test d'intégration contre un vrai PostgreSQL : vérifie les requêtes de l'outbox et de l'inbox
- * avec la migration initiale du modèle de service. Ignoré si TEST_DATABASE_URL n'est pas défini
+ * avec les migrations du modèle de service. Ignoré si TEST_DATABASE_URL n'est pas défini
  * (la CI le fournit).
  */
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const describeWithDatabase = databaseUrl ? describe : describe.skip;
 
-const MIGRATION = join(
-  __dirname,
-  '../../../tools/new-service/template/prisma/migrations/0001_init/migration.sql',
-);
+const MIGRATIONS = join(__dirname, '../../../tools/new-service/template/prisma/migrations');
 
 /** Adaptateur pg → interface attendue par le kit (même forme que le client Prisma). */
 function executor(client: PoolClient | Client): SqlExecutor {
@@ -71,7 +68,11 @@ describeWithDatabase('Outbox et inbox SQL (PostgreSQL)', () => {
     await admin.query(`CREATE SCHEMA ${schema}`);
     await admin.end();
     pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}` });
-    await pool.query(readFileSync(MIGRATION, 'utf8'));
+    for (const name of readdirSync(MIGRATIONS)
+      .filter((entry) => /^\d{4}_/.test(entry))
+      .sort()) {
+      await pool.query(readFileSync(join(MIGRATIONS, name, 'migration.sql'), 'utf8'));
+    }
     client = transactional(pool);
   });
 
@@ -96,7 +97,7 @@ describeWithDatabase('Outbox et inbox SQL (PostgreSQL)', () => {
     const store = new SqlOutboxStore(client);
     const count = await store.withUnpublishedBatch(10, async (records) => {
       seen.push(...records.map((record) => record.envelope.eventId));
-      return records.map((record) => record.id);
+      return { published: records.map((record) => record.id), failed: [] };
     });
 
     expect(count).toBe(2);
@@ -105,16 +106,107 @@ describeWithDatabase('Outbox et inbox SQL (PostgreSQL)', () => {
     expect(rows[0].n).toBe(0);
   });
 
-  it('compte une tentative sur le premier événement non publié', async () => {
+  it('un échec est compté, l’événement attend son délai sans bloquer les suivants', async () => {
     const failing = envelope();
-    await client.$transaction((tx) => appendToOutbox(tx, failing));
+    const next = envelope();
+    await client.$transaction(async (tx) => {
+      await appendToOutbox(tx, failing);
+      await appendToOutbox(tx, next);
+    });
+    const store = new SqlOutboxStore(client);
 
-    await new SqlOutboxStore(client).withUnpublishedBatch(10, async () => []);
+    await store.withUnpublishedBatch(10, async () => ({
+      published: [next.eventId],
+      failed: [{ id: failing.eventId, error: 'read ECONNRESET', retryInMs: 60_000 }],
+    }));
 
-    const { rows } = await pool.query('SELECT attempts, published_at FROM outbox WHERE id = $1', [
+    const { rows } = await pool.query(
+      'SELECT attempts, published_at, parked_at, last_error, first_failed_at IS NOT NULL AS failed_since, ' +
+        "next_attempt_at > now() + interval '50 seconds' AS later FROM outbox WHERE id = $1",
+      [failing.eventId],
+    );
+    expect(rows[0]).toMatchObject({
+      attempts: 1,
+      published_at: null,
+      parked_at: null,
+      last_error: 'read ECONNRESET',
+      failed_since: true,
+      later: true,
+    });
+    // Délai non écoulé : l'événement n'est pas repris.
+    const seen: string[] = [];
+    await store.withUnpublishedBatch(10, async (records) => {
+      seen.push(...records.map((record) => record.id));
+      return { published: [], failed: [] };
+    });
+    expect(seen).toEqual([]);
+    // Délai écoulé : repris.
+    await pool.query("UPDATE outbox SET next_attempt_at = now() - interval '1 second' WHERE id = $1", [
       failing.eventId,
     ]);
-    expect(rows[0]).toMatchObject({ attempts: 1, published_at: null });
+    await store.withUnpublishedBatch(10, async (records) => {
+      seen.push(...records.map((record) => record.id));
+      return { published: records.map((record) => record.id), failed: [] };
+    });
+    expect(seen).toEqual([failing.eventId]);
+  });
+
+  it('mis de côté (avec un autre échec, en une requête), puis rejoué', async () => {
+    const parked = envelope();
+    const retried = envelope();
+    await client.$transaction(async (tx) => {
+      await appendToOutbox(tx, parked);
+      await appendToOutbox(tx, retried);
+    });
+    const store = new SqlOutboxStore(client);
+    await store.withUnpublishedBatch(10, async () => ({
+      published: [],
+      failed: [
+        { id: parked.eventId, error: 'read ECONNRESET', retryInMs: null },
+        { id: retried.eventId, error: 'délai de publication dépassé', retryInMs: 60_000 },
+      ],
+    }));
+    const failures = await pool.query(
+      'SELECT id::text AS id, attempts, parked_at IS NOT NULL AS parked, next_attempt_at IS NOT NULL AS waiting, ' +
+        'first_failed_at IS NOT NULL AS failed_since, last_error FROM outbox ORDER BY created_at, id',
+    );
+    expect(failures.rows).toEqual([
+      {
+        id: parked.eventId,
+        attempts: 1,
+        parked: true,
+        waiting: false,
+        failed_since: true,
+        last_error: 'read ECONNRESET',
+      },
+      {
+        id: retried.eventId,
+        attempts: 1,
+        parked: false,
+        waiting: true,
+        failed_since: true,
+        last_error: 'délai de publication dépassé',
+      },
+    ]);
+    await pool.query('DELETE FROM outbox WHERE id = $1', [retried.eventId]);
+    const seen: string[] = [];
+    const collect = () =>
+      store.withUnpublishedBatch(10, async (records) => {
+        seen.push(...records.map((record) => record.id));
+        return { published: records.map((record) => record.id), failed: [] };
+      });
+    await collect();
+    expect(seen).toEqual([]);
+
+    await expect(store.replayParked([parked.eventId])).resolves.toBe(1);
+    const { rows } = await pool.query(
+      'SELECT attempts, parked_at, first_failed_at FROM outbox WHERE id = $1',
+      [parked.eventId],
+    );
+    expect(rows[0]).toMatchObject({ attempts: 0, parked_at: null, first_failed_at: null });
+    await collect();
+    expect(seen).toEqual([parked.eventId]);
+    await expect(store.replayParked()).resolves.toBe(0);
   });
 
   it('n’annule pas l’écriture métier si la publication échoue plus tard (l’événement reste en attente)', async () => {
@@ -137,7 +229,7 @@ describeWithDatabase('Outbox et inbox SQL (PostgreSQL)', () => {
       new SqlOutboxStore(client).withUnpublishedBatch(3, async (records) => {
         await new Promise((resolve) => setTimeout(resolve, 50));
         published.push(...records.map((record) => record.id));
-        return records.map((record) => record.id);
+        return { published: records.map((record) => record.id), failed: [] };
       });
 
     await Promise.all([relay(), relay()]);

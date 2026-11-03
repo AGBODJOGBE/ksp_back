@@ -1,4 +1,4 @@
-import { invoiceAmount, missionAmount } from './amount-due';
+import { invoiceAmount, missionAmount, unrecordedSuccesses } from './amount-due';
 import {
   applyProviderStatus,
   expire,
@@ -76,8 +76,22 @@ describe('montant dû', () => {
     status: 'scheduled',
     depositDue: 15000,
     remainingDue: 50000,
+    recordedPaymentIds: [],
   };
   const payer = { userId: USER, organizationId: null };
+
+  it('paiement réussi pas encore enregistré par le service de l’objet', () => {
+    const at = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000);
+    const p1 = { id: 'p1', succeededAt: at(0) };
+    const p2 = { id: 'p2', succeededAt: at(5) };
+    const p3 = { id: 'p3', succeededAt: at(-3) };
+    expect(unrecordedSuccesses([], [])).toBeNull();
+    expect(unrecordedSuccesses([p1], ['p1'])).toBeNull();
+    expect(unrecordedSuccesses([p1, p2], ['p1'])).toEqual({ paymentIds: ['p2'], since: at(5) });
+    expect(unrecordedSuccesses([p1], [])).toEqual({ paymentIds: ['p1'], since: at(0) });
+    // La plus ancienne réussite non enregistrée compte.
+    expect(unrecordedSuccesses([p1, p2, p3], ['p1'])).toEqual({ paymentIds: ['p2', 'p3'], since: at(-3) });
+  });
 
   it('mission : acompte ou reste dû, lus tels quels', () => {
     expect(missionAmount(mission, 'deposit', payer)).toEqual({ amount: 15000 });
@@ -107,6 +121,7 @@ describe('montant dû', () => {
       organizationId: 'o1',
       status: 'overdue',
       balance: 1000,
+      recordedPaymentIds: [],
     };
     expect(invoiceAmount(invoice, { userId: 'u2', organizationId: 'o1' })).toEqual({ amount: 1000 });
     expect(invoiceAmount(invoice, payer)).toEqual({ refusal: 'not_found' });

@@ -38,11 +38,18 @@ export const configSchema = baseServiceConfigSchema
     PAYMENT_LATE_SUCCESS_WINDOW_HOURS: z.coerce.number().int().min(1).max(720).default(24),
     /** Intervalle entre deux relectures d'un paiement non abouti (réussite tardive), en minutes. */
     PAYMENT_LATE_SUCCESS_RECHECK_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
+    /**
+     * Paiement réussi pas encore enregistré par cleaning ou billing : un nouveau paiement est refusé
+     * avec « réessayez » pendant ce délai (minutes), puis avec « contactez le support » (ADR-032).
+     */
+    PAYMENT_UNRECORDED_GRACE_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
     /** Rapprochement planifié des paiements en attente (2 minutes) ; 0 : désactivé. */
     PAYMENT_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(0).default(120_000),
     /** Adresses gRPC de cleaning et billing (montants dus). */
     CLEANING_GRPC_URL: z.string().min(1).default('localhost:50053'),
     BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
+    /** Adresse gRPC d'identity (noms affichés au back-office, ADR-029). */
+    IDENTITY_GRPC_URL: z.string().min(1).default('localhost:50051'),
   })
   .superRefine((cfg, ctx) => {
     const fail = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });

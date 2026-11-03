@@ -140,15 +140,38 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
       }),
     );
     expect(page.items).toHaveLength(2);
-    const paid = await asStaff(() =>
-      useCases.recordInvoicePayment.execute({
-        invoiceId: page.items[0]!.id,
-        amount: page.items[0]!.total,
-        method: 'mobile_money_offline',
-        reference: 'MM-77',
+    // Période facturée (dates au Bénin) : décembre seulement ; la fin de novembre est exclusive.
+    const december = await asStaff(() =>
+      useCases.listInvoices.execute({
+        page: { limit: 20, cursor: null },
+        status: '',
+        customerId: '',
+        organizationId: '',
+        contractId: '',
+        periodFrom: '2026-12-01',
+        periodTo: '2026-12-31',
       }),
     );
+    expect(december.items.map((invoice) => invoice.periodIndex)).toEqual([2]);
+    // Même clé envoyée deux fois en même temps : un seul paiement, les deux réponses la facture payée.
+    const payOnce = () =>
+      asStaff(() =>
+        useCases.recordInvoicePayment.execute({
+          invoiceId: page.items[0]!.id,
+          amount: page.items[0]!.total,
+          method: 'mobile_money_offline',
+          reference: 'MM-77',
+          idempotencyKey: 'paiement-cle-0001',
+        }),
+      );
+    const [paid, replayed] = await Promise.all([payOnce(), payOnce()]);
     expect(paid.status).toBe('paid');
+    expect(replayed.status).toBe('paid');
+    expect((await payOnce()).payments).toHaveLength(1);
+    const keyed = await pool.query('SELECT idempotency_key FROM invoice_payments WHERE invoice_id = $1', [
+      paid.id,
+    ]);
+    expect(keyed.rows).toEqual([{ idempotency_key: 'paiement-cle-0001' }]);
     // L'en-tête copié à l'émission ne change pas avec un paiement.
     expect(paid.organization).toEqual({
       legalName: 'SARL Bénin Propre',
@@ -181,5 +204,51 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
       "SELECT payload FROM outbox WHERE event_type = 'billing.invoice.paid'",
     );
     expect(paidEvents.rows).toHaveLength(2);
+  });
+
+  it('annulation arrivée avant la confirmation : pas marquée traitée, appliquée au nouvel essai (ADR-032)', async () => {
+    const missionId = '0192f1c4-0000-7000-8000-0000000000c1';
+    const cancellation = {
+      eventId: '0192f1c4-0000-7000-8000-0000000000c2',
+      type: 'cleaning.request.cancelled' as const,
+      occurredAt: '2026-11-20T08:00:00Z',
+      payload: {
+        requestId: '0192f1c4-0000-7000-8000-0000000000c3',
+        missionId,
+        customerId: CUSTOMER_ID,
+        organizationId: ORGANIZATION_ID,
+        cancelledBy: 'customer' as const,
+        outcome: 'cancelled' as const,
+      },
+    };
+    await expect(useCases.terminateContract.execute(cancellation)).rejects.toMatchObject({
+      code: 'BILLING_CONTRACT_NOT_YET_REGISTERED',
+    });
+    const inbox = await pool.query('SELECT count(*)::int AS n FROM processed_events WHERE event_id = $1', [
+      cancellation.eventId,
+    ]);
+    expect(inbox.rows[0].n).toBe(0);
+    await useCases.registerContract.execute({
+      eventId: '0192f1c4-0000-7000-8000-0000000000c4',
+      type: 'cleaning.booking.confirmed',
+      occurredAt: '2026-11-01T08:00:00Z',
+      payload: {
+        requestId: cancellation.payload.requestId,
+        quoteId: '0192f1c4-0000-7000-8000-0000000000c5',
+        missionId,
+        customerId: CUSTOMER_ID,
+        organizationId: ORGANIZATION_ID,
+        total: { amount: 100_000, currency: 'XOF' },
+        plannedInterventions: 4,
+        recurrence: null,
+        paymentPlan: { option: 'full', timing: 'after', method: 'cash' },
+        depositAmount: { amount: 100_000, currency: 'XOF' },
+        startsAt: '2026-11-05T08:00:00.000Z',
+      },
+    });
+    await useCases.terminateContract.execute(cancellation);
+    expect((await deps.contracts.findById(missionId))?.terminatedAt).toEqual(
+      new Date('2026-11-20T08:00:00Z'),
+    );
   });
 });

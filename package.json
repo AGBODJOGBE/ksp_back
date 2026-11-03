@@ -20,6 +20,7 @@
     "prisma:generate": "pnpm -r --if-present run prisma:generate",
     "ci:changed-services": "tsx tools/ci/changed-services.ts",
     "new-service": "tsx tools/new-service/index.ts",
+    "outbox:replay": "tsx tools/outbox/replay.ts",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "prepare": "husky || true"

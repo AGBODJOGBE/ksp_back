@@ -29,7 +29,10 @@ export class PaymentGrpcController implements paymentV1.PaymentServiceController
       page: parsePage(request.page),
       status: request.status,
     });
-    return { payments: page.items.map(presentPayment), nextCursor: page.nextCursor ?? '' };
+    return {
+      payments: page.items.map((intent) => presentPayment(intent)),
+      nextCursor: page.nextCursor ?? '',
+    };
   }
 
   async simulatePayment(
@@ -86,6 +89,9 @@ export class PaymentAdminGrpcController implements paymentV1.PaymentAdminService
       customerId: request.customerId,
       organizationId: request.organizationId,
     });
-    return { payments: page.items.map(presentPayment), nextCursor: page.nextCursor ?? '' };
+    return {
+      payments: page.items.map((intent) => presentPayment(intent, page.names)),
+      nextCursor: page.nextCursor ?? '',
+    };
   }
 }

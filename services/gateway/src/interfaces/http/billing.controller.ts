@@ -1,4 +1,4 @@
-import { Body, Controller, Inject, Param, Query } from '@nestjs/common';
+import { Body, Controller, Headers, Inject, Param, Query } from '@nestjs/common';
 import { type BillingApi } from '../../application/billing/billing.ports';
 import { BILLING_API } from '../../tokens';
 import { billingParams } from './billing-schemas';
@@ -11,6 +11,8 @@ type Query = Record<string, unknown>;
 
 const statusFrom = (query: Query) => parseParam(billingParams.invoiceStatus, query['status'], 'status');
 const optionalId = (query: Query, name: string) => parseParam(billingParams.optionalId, query[name], name);
+const optionalDate = (query: Query, name: string) =>
+  parseParam(billingParams.optionalDate, query[name], name);
 
 /**
  * Routes /api/v1/billing/* (« Mes factures ») et /api/v1/admin/billing/* (back-office). Rôles et
@@ -38,6 +40,8 @@ export class BillingHttpController {
       customerId: optionalId(query, 'customerId'),
       organizationId: optionalId(query, 'organizationId'),
       contractId: optionalId(query, 'contractId'),
+      from: optionalDate(query, 'from'),
+      to: optionalDate(query, 'to'),
     };
     return this.billing.listInvoices(pageFrom(query), filters);
   }
@@ -48,9 +52,18 @@ export class BillingHttpController {
   }
 
   @Route('recordInvoicePayment')
-  recordInvoicePayment(@Param('id') id: unknown, @Body() body: unknown) {
+  recordInvoicePayment(
+    @Param('id') id: unknown,
+    @Body() body: unknown,
+    @Headers('idempotency-key') key: unknown,
+  ) {
     const invoiceId = idFrom(id);
-    return this.billing.recordInvoicePayment(invoiceId, parseBody(requestBodies.recordInvoicePayment, body));
+    // Facultative : un front qui ne l'envoie pas encore reste servi (comme le paiement manuel du Nettoyage).
+    const idempotencyKey = parseParam(billingParams.optionalIdempotencyKey, key, 'Idempotency-Key');
+    return this.billing.recordInvoicePayment(invoiceId, {
+      ...parseBody(requestBodies.recordInvoicePayment, body),
+      idempotencyKey,
+    });
   }
 
   @Route('getBillingSettings')

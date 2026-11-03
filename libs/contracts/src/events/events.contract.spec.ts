@@ -204,6 +204,7 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     requestId: uuid,
     missionId: null,
     customerId: uuid,
+    organizationId: null,
     cancelledBy: 'customer',
     outcome: 'cancelled',
   },
@@ -278,6 +279,18 @@ describe('Contrats des événements cleaning', () => {
       }
     },
   );
+
+  it('annulation : organisation ajoutée (ADR-032), les événements antérieurs sans elle restent valides', () => {
+    const validate = ajv.compile(schemas.get('cleaning.request.cancelled')!);
+    const { organizationId: _organizationId, ...before } = cleaningExamples['cleaning.request.cancelled'];
+    expect(validate(before)).toBe(true);
+    expect(
+      validate({ ...cleaningExamples['cleaning.request.cancelled'], missionId: uuid, organizationId: uuid }),
+    ).toBe(true);
+    expect(validate({ ...cleaningExamples['cleaning.request.cancelled'], organizationId: 'acme' })).toBe(
+      false,
+    );
+  });
 
   it('suspension et reprise portent aussi la cause « organisation suspendue » (ADR-030)', () => {
     const suspended = ajv.compile(schemas.get('cleaning.contract.suspended')!);

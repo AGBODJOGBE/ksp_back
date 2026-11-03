@@ -14,7 +14,16 @@ import {
   remainingToSchedule,
 } from './mission';
 import { applyCoefficient, percentOf, roundToStep } from './money';
-import { newPaymentState, paymentRefusal, paymentStatus, type PaymentState } from './payment';
+import {
+  expectedDeposit,
+  isValidPlan,
+  newPaymentState,
+  onlinePaymentIds,
+  paymentRefusal,
+  paymentStatus,
+  type PaymentState,
+  remainingDue,
+} from './payment';
 import { buildQuote, findProposedSlot, isQuoteExpired, isValidLine } from './quote';
 import { canSendQuote, canTransitionRequest, effectiveRequestStatus } from './quote-request';
 import { isValidRecurrence, plannedInterventions } from './recurrence';
@@ -372,5 +381,39 @@ describe('paiement', () => {
     expect(paymentRefusal(state, 5000, 'mobile_money_online', true)).toBe('method_not_allowed');
     expect(paymentRefusal(state, 10_001, 'cash', true)).toBe('exceeds_balance');
     expect(paymentRefusal(state, 10_000, 'mobile_money_offline', true)).toBeNull();
+  });
+  it('reste dû et acompte encore attendu (null s’il n’y en a pas)', () => {
+    const deposit = newPaymentState({ option: 'deposit', timing: 'before', method: 'cash' }, 50_000, 30);
+    expect([remainingDue(deposit), expectedDeposit(deposit)]).toEqual([50_000, 15_000]);
+    const partial = { ...deposit, payments: [record(10_000)] };
+    expect([remainingDue(partial), expectedDeposit(partial)]).toEqual([40_000, 5_000]);
+    const received = { ...deposit, payments: [record(15_000)] };
+    expect([remainingDue(received), expectedDeposit(received)]).toEqual([35_000, null]);
+    const overpaid = { ...deposit, payments: [record(60_000)] };
+    expect([remainingDue(overpaid), expectedDeposit(overpaid)]).toEqual([0, null]);
+    const full = newPaymentState({ option: 'full', timing: 'after', method: 'cash' }, 50_000, 30);
+    expect([remainingDue(full), expectedDeposit(full)]).toEqual([50_000, null]);
+  });
+
+  it('paiements en ligne enregistrés : identifiants du service payment', () => {
+    const state = newPaymentState({ option: 'full', timing: 'after', method: 'cash' }, 50_000, 30);
+    expect(
+      onlinePaymentIds({
+        ...state,
+        payments: [
+          { ...record(1_000), idempotencyKey: 'online-p1' },
+          { ...record(2_000), idempotencyKey: 'manuel-1' },
+          record(3_000),
+          { ...record(4_000), idempotencyKey: 'online-p2' },
+        ],
+      }),
+    ).toEqual(['p1', 'p2']);
+  });
+
+  it('Mobile Money en ligne : moyen accepté dans le plan choisi à l’acceptation', () => {
+    for (const method of ['cash', 'mobile_money_offline', 'mobile_money_online'] as const) {
+      expect(isValidPlan({ option: 'deposit', timing: 'before', method })).toBe(true);
+    }
+    expect(isValidPlan({ option: 'deposit', timing: 'before', method: 'cheque' as never })).toBe(false);
   });
 });

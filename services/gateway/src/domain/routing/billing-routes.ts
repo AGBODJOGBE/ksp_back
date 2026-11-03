@@ -57,6 +57,8 @@ export const BILLING_ROUTES = [
     access: { level: 'authenticated', anyRole: BILLING_STAFF, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
     rateLimit: 'authenticated',
     requiresKnownClient: false,
+    // Ajouté après le branchement du back-office : facultatif, pour ne rien casser.
+    idempotencyKey: 'optional',
   },
   {
     operationId: 'getBillingSettings',

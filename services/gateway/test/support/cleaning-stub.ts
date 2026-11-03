@@ -106,6 +106,8 @@ export const protoMission: cleaningV1.Mission = {
     depositAmount: xof(18000),
     paid: xof(0),
     payments: [],
+    remainingDue: xof(60000),
+    depositDue: xof(18000),
   },
   cancellationReason: '',
   daysPerWeek: 2,

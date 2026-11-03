@@ -35,9 +35,23 @@ export class RabbitMqConnection {
   /** Canal avec confirmations : une publication n'est considérée faite qu'une fois confirmée par le broker. */
   confirmChannel(): Promise<ConfirmChannel> {
     if (!this.publishChannel) {
-      this.publishChannel = this.getConnection().then((connection) => connection.createConfirmChannel());
-      this.publishChannel.catch(() => {
-        this.publishChannel = undefined;
+      const channel = this.getConnection().then(async (connection) => {
+        const created = await connection.createConfirmChannel();
+        // Canal fermé seul (erreur de canal, connexion réinitialisée) : un nouveau au prochain usage,
+        // sinon toutes les publications suivantes échoueraient sur un canal mort (ADR-032).
+        const forget = () => {
+          if (this.publishChannel === channel) this.publishChannel = undefined;
+        };
+        created.on('close', forget);
+        created.on('error', (error: Error) => {
+          this.logger.warn(`Canal de publication RabbitMQ en erreur : ${error.message}`);
+          forget();
+        });
+        return created;
+      });
+      this.publishChannel = channel;
+      channel.catch(() => {
+        if (this.publishChannel === channel) this.publishChannel = undefined;
       });
     }
     return this.publishChannel;

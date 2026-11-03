@@ -92,6 +92,23 @@ export function onlinePaymentKey(paymentId: string): string {
   return `online-${paymentId}`;
 }
 
+/** Paiements en ligne enregistrés (identifiants du service payment), dans l'ordre d'enregistrement. */
+export function onlinePaymentIds(state: Pick<PaymentState, 'payments'>): string[] {
+  const prefix = onlinePaymentKey('');
+  return state.payments
+    .filter((payment) => payment.idempotencyKey?.startsWith(prefix))
+    .map((payment) => payment.idempotencyKey!.slice(prefix.length));
+}
+
+/**
+ * Acompte encore attendu, exposé aux fronts (CleaningPaymentState.depositDue) : null quand aucun
+ * acompte n'est attendu (plan « totalité », ou acompte déjà reçu en entier).
+ */
+export function expectedDeposit(state: PaymentState): number | null {
+  const due = depositDue(state);
+  return due > 0 ? due : null;
+}
+
 /** Paiement déjà enregistré avec cette clé d'idempotence, ou null. */
 export function paymentWithKey(
   state: Pick<PaymentState, 'payments'>,

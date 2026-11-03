@@ -20,13 +20,23 @@ const MAX_ATTEMPTS = 3;
 export class GetInvoiceAmountDueUseCase {
   constructor(private readonly deps: BillingDeps) {}
 
-  async execute(invoiceId: string): Promise<{ invoice: Invoice; paid: number; balance: number }> {
+  async execute(
+    invoiceId: string,
+  ): Promise<{ invoice: Invoice; paid: number; balance: number; onlinePaymentIds: string[] }> {
     // Renseigné par le kit après vérification du jeton de service ; absent sans vérificateur (développement).
     const caller = currentContext()?.callerService;
     if (caller && !PAYMENT_CALLERS.has(caller)) throw BillingErrors.callerForbidden();
     const invoice = await this.deps.invoices.findById(requireUuid('invoiceId', invoiceId));
     if (!invoice) throw BillingErrors.invoiceNotFound();
-    return { invoice, paid: paidAmount(invoice), balance: balance(invoice) };
+    return {
+      invoice,
+      paid: paidAmount(invoice),
+      balance: balance(invoice),
+      // Paiements en ligne déjà enregistrés : leur identifiant est celui du paiement de payment (ADR-032).
+      onlinePaymentIds: invoice.payments
+        .filter((payment) => payment.method === 'mobile_money_online')
+        .map((payment) => payment.id),
+    };
   }
 }
 

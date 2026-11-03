@@ -19,6 +19,8 @@ export const ORGANIZATION_DIRECTORY_CALLERS: Readonly<Record<string, { billingEm
   // Raison sociale affichée au back-office du Nettoyage (ADR-029).
   cleaning: { billingEmail: false },
   notification: { billingEmail: true },
+  // Raison sociale affichée dans les paiements en ligne du back-office (ADR-029).
+  payment: { billingEmail: false },
 };
 
 /** Nombre maximum d'identifiants par appel à GetOrganizationsByIds. */

@@ -62,6 +62,12 @@ export interface Payment {
   expiresAt: string;
   /** Date de la réussite ou de l'échec, vide en attente. */
   completedAt: string;
+  /**
+   * Back-office seulement : nom affiché du payeur et raison sociale de son organisation, lus dans
+   * identity à l'affichage (ADR-029) ; vides s'ils sont inconnus ou si identity ne répond pas.
+   */
+  customerName: string;
+  organizationName: string;
 }
 
 export interface CreatePaymentRequest {

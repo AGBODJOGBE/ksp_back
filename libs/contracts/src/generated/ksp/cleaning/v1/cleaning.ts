@@ -48,7 +48,8 @@ export interface PaymentPlan {
   timing: string;
   /**
    * "cash", "mobile_money_offline" (coché par le superviseur) ou "mobile_money_online"
-   * (encaissé par le service payment, ADR-031 ; le client peut aussi payer en ligne un autre plan).
+   * (payé en ligne par le client depuis la fiche de la mission, service payment, ADR-031 ; le client
+   * peut aussi payer en ligne avec un autre moyen prévu).
    */
   method: string;
 }
@@ -81,6 +82,12 @@ export interface PaymentState {
   depositAmount?: Money | undefined;
   paid?: Money | undefined;
   payments: PaymentRecord[];
+  /** Reste dû : total moins les paiements enregistrés, jamais négatif (calculé par cleaning). */
+  remainingDue?:
+    | Money
+    | undefined;
+  /** Acompte encore attendu (plan « acompte », acompte pas encore reçu en entier) ; absent sinon. */
+  depositDue?: Money | undefined;
 }
 
 export interface SiteVisit {
@@ -823,7 +830,14 @@ export interface GetMissionAmountDueResponse {
     | Money
     | undefined;
   /** Reste dû : total moins les paiements reçus. */
-  remainingDue?: Money | undefined;
+  remainingDue?:
+    | Money
+    | undefined;
+  /**
+   * Paiements en ligne déjà enregistrés sur la mission (identifiants du service payment) : payment
+   * refuse un nouveau paiement tant qu'un paiement réussi n'y figure pas encore (ADR-032).
+   */
+  onlinePaymentIds: string[];
 }
 
 /**

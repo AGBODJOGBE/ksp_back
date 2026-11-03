@@ -36,6 +36,8 @@ export const protoPayment: paymentV1.Payment = {
   updatedAt: '2026-11-02T09:00:01.000Z',
   expiresAt: '2026-11-02T09:30:00.000Z',
   completedAt: '',
+  customerName: '',
+  organizationName: '',
 };
 
 type Method =
@@ -63,7 +65,10 @@ const DEFAULTS: Record<Method, () => unknown> = {
     },
   }),
   receiveProviderNotification: () => ({ outcome: 'applied' }),
-  listPayments: () => ({ payments: [protoPayment], nextCursor: PAYMENT_ID }),
+  listPayments: () => ({
+    payments: [{ ...protoPayment, customerName: 'Koffi Adjovi', organizationName: '' }],
+    nextCursor: PAYMENT_ID,
+  }),
 };
 
 export class PaymentStub {

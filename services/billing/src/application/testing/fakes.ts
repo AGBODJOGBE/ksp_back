@@ -54,8 +54,9 @@ export class InMemoryContracts implements ContractRepository {
   ) {
     const key = `${eventId}/${consumer}`;
     if (this.processed.has(key)) return 'duplicate' as const;
-    this.processed.add(key);
+    // Comme la transaction SQL : une erreur levée par `change` n'enregistre pas l'événement (inbox).
     const next = change(this.contracts.get(contractId) ?? null);
+    this.processed.add(key);
     if (next) this.contracts.set(contractId, next);
     return 'processed' as const;
   }
@@ -103,7 +104,9 @@ export class InMemoryInvoices implements InvoiceRepository {
           (!filter.customerId || i.customerId === filter.customerId) &&
           (filter.organizationId === undefined || i.organizationId === filter.organizationId) &&
           (!filter.contractId || i.contractId === filter.contractId) &&
-          (!filter.status || i.status === filter.status),
+          (!filter.status || i.status === filter.status) &&
+          (!filter.periodFrom || i.periodEnd > filter.periodFrom) &&
+          (!filter.periodTo || i.periodStart < filter.periodTo),
       )
       .sort((a, b) => b.id.localeCompare(a.id));
     const from = page.cursor ? items.filter((i) => i.id < page.cursor!) : items;

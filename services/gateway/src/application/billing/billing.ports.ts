@@ -10,12 +10,17 @@ export interface InvoiceFilters {
   customerId?: string | undefined;
   organizationId?: string | undefined;
   contractId?: string | undefined;
+  /** Période facturée, dates AAAA-MM-JJ (heure du Bénin), bornes incluses. */
+  from?: string | undefined;
+  to?: string | undefined;
 }
 
 export interface InvoicePaymentInput {
   amount: number;
   method: string;
   reference?: string | undefined;
+  /** En-tête Idempotency-Key, facultatif. */
+  idempotencyKey?: string | undefined;
 }
 
 /** Un appel par méthode du contrat ksp.billing.v1 exposée en REST. */

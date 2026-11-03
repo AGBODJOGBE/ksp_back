@@ -145,6 +145,7 @@ export class MissionPaymentDueGrpcController implements cleaningV1.MissionPaymen
       paid: money(due.paid),
       depositDue: money(due.depositDue),
       remainingDue: money(due.remainingDue),
+      onlinePaymentIds: due.onlinePaymentIds,
     };
   }
 }

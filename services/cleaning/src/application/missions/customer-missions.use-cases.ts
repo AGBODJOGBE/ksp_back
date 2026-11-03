@@ -85,6 +85,7 @@ export class CancelMyMissionUseCase {
             requestId: mission.requestId,
             missionId: mission.id,
             customerId: mission.customerId,
+            organizationId: mission.organizationId,
             cancelledBy: 'customer',
             outcome: 'cancelled',
           },

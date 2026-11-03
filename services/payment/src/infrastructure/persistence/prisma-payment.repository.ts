@@ -10,6 +10,7 @@ import {
   type PaymentRepository,
   type ProviderNotificationLog,
 } from '../../application/ports';
+import { type SucceededPayment } from '../../domain/amount-due';
 import {
   type FailureReason,
   LATE_SUCCESS_STATUSES,
@@ -146,6 +147,15 @@ export class PrismaPaymentRepository implements PaymentRepository {
       orderBy: { id: 'desc' },
     });
     return row ? toDomain(row) : null;
+  }
+
+  async listSucceeded(input: { subjectType: SubjectType; subjectId: string }): Promise<SucceededPayment[]> {
+    const rows = await this.prisma.paymentIntent.findMany({
+      where: { subjectType: input.subjectType, subjectId: input.subjectId, status: 'succeeded' },
+      select: { id: true, completedAt: true, updatedAt: true },
+    });
+    // Réussite datée par completedAt ; updatedAt par prudence (toujours renseigné).
+    return rows.map((row) => ({ id: row.id, succeededAt: row.completedAt ?? row.updatedAt }));
   }
 
   save(intent: PaymentIntent, events: OutboxMessage[]): Promise<boolean> {

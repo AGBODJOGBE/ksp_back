@@ -213,6 +213,28 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
     );
   });
 
+  it('paiements réussis d’un objet, quels que soient le payeur et la part', async () => {
+    const subjectId = ids.next();
+    const subject = (part: 'deposit' | 'balance') => ({
+      type: 'cleaning_mission' as const,
+      id: subjectId,
+      part,
+      reference: null,
+    });
+    const ok = await payments.create(draft('key-succ-1', { subject: subject('deposit') }));
+    const other = await payments.create(
+      draft('key-succ-2', { subject: subject('balance'), customerId: ids.next() }),
+    );
+    await payments.create(draft('key-succ-3', { subject: subject('deposit') }));
+    for (const { intent } of [ok, other]) {
+      expect(await payments.save({ ...intent, status: 'succeeded', completedAt: new Date() }, [])).toBe(true);
+    }
+    const succeeded = await payments.listSucceeded({ subjectType: 'cleaning_mission', subjectId });
+    expect(succeeded.map((payment) => payment.id).sort()).toEqual([ok.intent.id, other.intent.id].sort());
+    expect(succeeded.every((payment) => payment.succeededAt instanceof Date)).toBe(true);
+    expect(await payments.listSucceeded({ subjectType: 'billing_invoice', subjectId })).toEqual([]);
+  });
+
   it('montant nul refusé par la base', async () => {
     await expect(payments.create(draft('key-zero', { amount: 0 }))).rejects.toThrow();
   });

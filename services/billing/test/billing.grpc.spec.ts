@@ -138,7 +138,17 @@ describe('billing en gRPC', () => {
   it('paiement manuel au back-office, réglages, erreurs traduites', async () => {
     const { invoices: all } = await call(
       (m) =>
-        admin.listInvoices({ status: '', customerId: '', organizationId: '', contractId: MISSION_ID }, m),
+        admin.listInvoices(
+          {
+            status: '',
+            customerId: '',
+            organizationId: '',
+            contractId: MISSION_ID,
+            periodFrom: '',
+            periodTo: '',
+          },
+          m,
+        ),
       finance,
     );
     const { invoice } = await call(
@@ -149,6 +159,7 @@ describe('billing en gRPC', () => {
             amount: { amount: 150_000, currency: 'XOF' },
             method: 'cash',
             reference: 'reçu 7',
+            idempotencyKey: '',
           },
           m,
         ),

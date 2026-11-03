@@ -30,6 +30,21 @@ export const PaymentErrors = {
       'PAYMENT_IDEMPOTENCY_KEY_REUSED',
       'Cette clé d’idempotence a déjà servi pour un autre paiement.',
     ),
+  alreadyReceived: () =>
+    AppError.conflict(
+      'PAYMENT_ALREADY_RECEIVED',
+      'Un paiement a déjà été reçu pour cet objet et est en cours d’enregistrement. Réessayez dans quelques instants.',
+    ),
+  /**
+   * Paiement réussi toujours pas enregistré par cleaning ou billing après le délai normal (ADR-032) :
+   * un nouveau paiement reste refusé (jamais payer deux fois), le client passe par le support.
+   */
+  reconciliationPending: () =>
+    AppError.conflict(
+      'PAYMENT_RECONCILIATION_PENDING',
+      'Un paiement a déjà été reçu pour cet objet mais son enregistrement prend plus de temps que prévu. ' +
+        'Ne payez pas une seconde fois : contactez le support KSP, qui finalisera son enregistrement.',
+    ),
   concurrentUpdate: () =>
     AppError.conflict(
       'PAYMENT_CONCURRENT_UPDATE',

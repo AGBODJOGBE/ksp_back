@@ -118,6 +118,7 @@ export class RejectQuoteRequestUseCase {
               requestId: request.id,
               missionId: null,
               customerId: request.customerId,
+              organizationId: request.organizationId,
               cancelledBy: 'supervisor',
               outcome: 'rejected',
             },

@@ -16,4 +16,13 @@ export const billingBodies = {
 export const billingParams = {
   invoiceStatus: z.enum(['pending_payment', 'overdue', 'paid', 'cancelled']).optional(),
   optionalId: z.guid().optional(),
+  /** Date AAAA-MM-JJ (jour civil au Bénin) ; billing vérifie qu'elle existe. */
+  optionalDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  optionalIdempotencyKey: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{8,100}$/)
+    .optional(),
 };

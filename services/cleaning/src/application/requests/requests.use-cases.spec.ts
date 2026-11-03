@@ -373,6 +373,26 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect(world.missions.missions.size).toBe(0);
   });
 
+  it('particulier : Mobile Money en ligne accepté comme moyen prévu à l’acceptation', async () => {
+    const created = await request();
+    await sendQuote(created.id);
+    const accepted = await asCustomer(() =>
+      new AcceptQuoteUseCase(world).execute({
+        requestId: created.id,
+        idempotencyKey: 'plan-en-ligne',
+        slotStart: SLOT.start,
+        paymentPlan: { option: 'deposit', timing: 'before', method: 'mobile_money_online' },
+      }),
+    );
+    expect(accepted.mission.mission.payment.plan).toEqual({
+      option: 'deposit',
+      timing: 'before',
+      method: 'mobile_money_online',
+    });
+    const booking = world.recorder.events.find((e) => e.type === 'cleaning.booking.confirmed');
+    expect(booking?.payload).toMatchObject({ paymentPlan: { method: 'mobile_money_online' } });
+  });
+
   it('entreprise : jours par semaine gardés, plan de paiement par défaut, début du contrat publié', async () => {
     const created = await as(
       CUSTOMER_ID,
@@ -555,8 +575,8 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect(
       world.recorder.events.filter((e) => e.type === 'cleaning.request.cancelled').map((e) => e.payload),
     ).toEqual([
-      expect.objectContaining({ outcome: 'declined', cancelledBy: 'customer' }),
-      expect.objectContaining({ outcome: 'rejected', cancelledBy: 'supervisor' }),
+      expect.objectContaining({ outcome: 'declined', cancelledBy: 'customer', organizationId: null }),
+      expect.objectContaining({ outcome: 'rejected', cancelledBy: 'supervisor', organizationId: null }),
     ]);
   });
 

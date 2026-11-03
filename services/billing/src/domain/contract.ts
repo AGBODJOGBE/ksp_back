@@ -40,7 +40,10 @@ export interface ContractPeriod {
   year: number;
   /** Mois civil, 1 à 12. */
   month: number;
-  /** Premier et dernier instant facturés : bornes du contrat dans ce mois (minuit, heure du Bénin). */
+  /**
+   * Bornes du contrat dans ce mois (minuit, heure du Bénin) : `start` est le premier instant facturé,
+   * `end` une borne exclusive (minuit du lendemain du dernier jour facturé).
+   */
   start: Date;
   end: Date;
   /** Émission : 1er du mois suivant à 00:00 heure du Bénin. */

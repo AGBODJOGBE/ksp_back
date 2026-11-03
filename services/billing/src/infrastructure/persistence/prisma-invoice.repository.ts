@@ -87,6 +87,9 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
         ...(filter.organizationId !== undefined ? { organizationId: filter.organizationId } : {}),
         ...(filter.contractId ? { contractId: filter.contractId } : {}),
         ...(filter.status ? { status: filter.status } : {}),
+        // Période facturée [periodStart, periodEnd) qui touche [periodFrom, periodTo).
+        ...(filter.periodFrom ? { periodEnd: { gt: filter.periodFrom } } : {}),
+        ...(filter.periodTo ? { periodStart: { lt: filter.periodTo } } : {}),
         ...cursor,
       },
       include: INVOICE_INCLUDE,

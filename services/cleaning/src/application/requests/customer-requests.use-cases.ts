@@ -373,6 +373,7 @@ async function closeByCustomer(
             requestId: request.id,
             missionId: null,
             customerId: request.customerId,
+            organizationId: request.organizationId,
             cancelledBy: 'customer',
             outcome: to,
           },
