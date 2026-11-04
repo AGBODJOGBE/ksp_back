@@ -1,8 +1,15 @@
 import { type CleaningEventPayloads, type CleaningEventType } from '@ksp/contracts';
 import { type Agent, type Team, type Unavailability } from '../domain/agent';
 import { type PricingRule, type ServiceDefinition } from '../domain/catalog';
+import { type GeocodedPlace, type GeoPoint } from '../domain/location';
 import { type Intervention, type Mission, type MissionStatus } from '../domain/mission';
-import { type CustomerKind, type QuoteRequest, type RequestStatus } from '../domain/quote-request';
+import { type PlaceType } from '../domain/place-type';
+import {
+  type CustomerKind,
+  type QuoteRequest,
+  type QuoteRequestGroup,
+  type RequestStatus,
+} from '../domain/quote-request';
 import { type BusyPeriod } from '../domain/schedule';
 import { type CleaningSettings } from '../domain/settings';
 import { type Zone } from '../domain/zone';
@@ -20,7 +27,16 @@ export type OutboxMessage = {
 export interface AuditEntry {
   actorId: string;
   action: string;
-  entityType: 'quote_request' | 'mission' | 'service' | 'settings' | 'agent' | 'team' | 'zone';
+  entityType:
+    | 'quote_request'
+    | 'mission'
+    | 'service'
+    | 'settings'
+    | 'agent'
+    | 'team'
+    | 'zone'
+    | 'place_type'
+    | 'request_group';
   entityId: string;
   at: Date;
   /** Identifiants et montants seulement : jamais d'adresse ni de commentaire. */
@@ -56,6 +72,16 @@ export interface CatalogRepository {
   listZones(): Promise<Zone[]>;
   /** Crée ou modifie la zone (clé = commune normalisée). */
   saveZone(zone: Zone, changes: Changes): Promise<Zone>;
+  /** Types de lieu du parcours client (ADR-034), actifs et désactivés. */
+  listPlaceTypes(): Promise<PlaceType[]>;
+  /** Crée ou modifie le type de lieu (clé = code). */
+  savePlaceType(placeType: PlaceType, changes: Changes): Promise<PlaceType>;
+}
+
+/** Groupe et ses demandes, dans l'ordre des prestations envoyées (ADR-034). */
+export interface QuoteRequestGroupView {
+  group: QuoteRequestGroup;
+  requests: QuoteRequest[];
 }
 
 export type CreateResult<T> = { created: true; value: T } | { created: false; value: T };
@@ -67,9 +93,31 @@ export interface QuoteRequestFilter {
   /** Code de zone : commune normalisée (zoneCode), comparée à celle enregistrée avec la demande. */
   communeCode?: string;
   customerKind?: CustomerKind;
+  /** Parcours par lieu (ADR-034) : groupe, type de lieu, prestation. */
+  groupId?: string;
+  placeType?: string;
+  serviceCode?: string;
 }
 
 export interface QuoteRequestRepository {
+  /**
+   * Groupe de demandes (ADR-034) : le groupe et toutes ses demandes, avec leurs événements et
+   * traces, dans une seule transaction. Idempotent par (client, clé) : un second appel renvoie le
+   * groupe déjà créé, sans rien écrire.
+   */
+  createGroup(
+    group: QuoteRequestGroup,
+    requests: QuoteRequest[],
+    idempotencyKey: string,
+    changes: Changes,
+  ): Promise<CreateResult<QuoteRequestGroupView>>;
+  findGroupByIdempotencyKey(
+    customerId: string,
+    idempotencyKey: string,
+  ): Promise<QuoteRequestGroupView | null>;
+  findGroup(groupId: string): Promise<QuoteRequestGroupView | null>;
+  /** Nombre de demandes de chacun de ces groupes (absent : groupe inconnu). */
+  groupSizes(groupIds: readonly string[]): Promise<Map<string, number>>;
   /** Idempotent par (client, clé) : un second appel renvoie la demande déjà créée. */
   create(
     request: QuoteRequest,
@@ -110,6 +158,9 @@ export interface MissionFilter {
   customerId?: string;
   agentId?: string;
   status?: MissionStatus;
+  /** Groupe de la demande d'origine et prestation (ADR-034). */
+  groupId?: string;
+  serviceCode?: string;
 }
 
 export interface MissionRepository {
@@ -201,6 +252,15 @@ export interface AgentRepository {
   listTeams(): Promise<Team[]>;
   findTeam(teamId: string): Promise<Team | null>;
   saveTeam(team: Team, changes: Changes): Promise<void>;
+}
+
+/**
+ * Géocodage inverse (ADR-034) : noms de commune possibles d'un point GPS. Null si aucun
+ * fournisseur ne répond ou ne trouve de commune ; jamais d'erreur (le client choisit alors sa
+ * commune). L'adaptateur ne journalise jamais les coordonnées.
+ */
+export interface ReverseGeocoder {
+  reverse(point: GeoPoint): Promise<GeocodedPlace | null>;
 }
 
 /**

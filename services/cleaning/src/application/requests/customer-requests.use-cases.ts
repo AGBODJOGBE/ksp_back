@@ -1,3 +1,4 @@
+import { eventSubject } from '../shared/event-subject';
 import { isCovered } from '../../domain/zone';
 import { legacyPremisesType, legacyQuantity } from '../../domain/answers';
 import { type Mission } from '../../domain/mission';
@@ -141,6 +142,12 @@ export class RequestQuoteUseCase {
       calculation,
       commune,
       address,
+      groupId: null,
+      placeType: null,
+      location: null,
+      landmark: null,
+      geocodingProvider: null,
+      geocodedAddress: null,
       preferredSlots,
       comment,
       recurrence,
@@ -261,6 +268,11 @@ export class AcceptQuoteUseCase {
       serviceCode: request.serviceCode,
       commune: request.commune,
       address: request.address,
+      // Position et repère copiés de la demande (ADR-034) : les agents vont sur place.
+      location: request.location,
+      landmark: request.landmark,
+      groupId: request.groupId,
+      placeType: request.placeType,
       chosenSlot: slot,
       recurrence: quote.recurrence,
       plannedInterventions: quote.interventionCount,
@@ -279,11 +291,13 @@ export class AcceptQuoteUseCase {
       version: 0,
     };
     const accepted: QuoteRequest = { ...request, status: 'accepted', missionId: mission.id, updatedAt: now };
+    const subject = await eventSubject(this.deps, request);
     const outcome = await this.deps.requests.accept(accepted, mission, key, {
       events: [
         {
           type: 'cleaning.booking.confirmed',
           payload: {
+            ...subject,
             requestId: request.id,
             quoteId: quote.id,
             missionId: mission.id,
@@ -362,6 +376,7 @@ async function closeByCustomer(
   const now = deps.clock.now();
   assertRequestTransition(request, to, now);
   const reason = optionalText('reason', input.reason, 500);
+  const subject = await eventSubject(deps, request);
   const saved = await saveRequest(
     deps,
     { ...request, status: to, closingReason: reason },
@@ -370,6 +385,7 @@ async function closeByCustomer(
         {
           type: 'cleaning.request.cancelled',
           payload: {
+            ...subject,
             requestId: request.id,
             missionId: null,
             customerId: request.customerId,

@@ -23,6 +23,14 @@ export const REDACTED_PATHS = [
   '*.clientSecret',
   '*.variables',
   '*.phoneE164',
+  // Lieu d'intervention (ADR-034) : position GPS, repère et adresse sont des données personnelles.
+  '*.latitude',
+  '*.longitude',
+  '*.location',
+  '*.landmark',
+  '*.address',
+  '*.geocodedAddress',
+  '*.displayAddress',
 ];
 
 export function createLoggerModule(serviceName: string, level: string) {

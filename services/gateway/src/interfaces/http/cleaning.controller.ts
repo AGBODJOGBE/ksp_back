@@ -42,6 +42,37 @@ export class CleaningHttpController {
     return this.cleaning.simulate(parseBody(requestBodies.simulateCleaning, body));
   }
 
+  // --- Parcours par lieu (ADR-034) ---------------------------------------------------------------
+
+  @Route('getCleaningPlaceCatalog')
+  getPlaceCatalog() {
+    return this.cleaning.getPlaceCatalog();
+  }
+
+  @Route('estimateCleaning')
+  estimate(@Body() body: unknown) {
+    return this.cleaning.estimate(parseBody(requestBodies.estimateCleaning, body));
+  }
+
+  @Route('resolveCleaningLocation')
+  resolveLocation(@Body() body: unknown) {
+    return this.cleaning.resolveLocation(parseBody(requestBodies.resolveCleaningLocation, body));
+  }
+
+  @Route('requestCleaningQuoteGroup')
+  requestQuoteGroup(@Body() body: unknown, @Headers('idempotency-key') key: unknown) {
+    const idempotencyKey = keyFrom(key);
+    return this.requestQuoteUseCase.executeGroup(
+      parseBody(requestBodies.requestCleaningQuoteGroup, body),
+      idempotencyKey,
+    );
+  }
+
+  @Route('getMyCleaningQuoteRequestGroup')
+  getMyQuoteRequestGroup(@Param('id') id: unknown) {
+    return this.cleaning.getMyQuoteRequestGroup(idFrom(id));
+  }
+
   @Route('requestCleaningQuote')
   requestQuote(@Body() body: unknown, @Headers('idempotency-key') key: unknown) {
     const idempotencyKey = keyFrom(key);

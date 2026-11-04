@@ -1,4 +1,5 @@
 import { type ChecklistTemplateItem } from './catalog';
+import { type GeoLocation } from './location';
 import { type PaymentState } from './payment';
 import { type Recurrence } from './recurrence';
 import { type Slot } from './schedule';
@@ -79,6 +80,12 @@ export interface Mission {
   serviceCode: string;
   commune: string;
   address: string;
+  /** Position GPS et point de repère copiés de la demande (ADR-034), pour aller sur place ; null sinon. */
+  location: GeoLocation | null;
+  landmark: string | null;
+  /** Groupe et type de lieu de la demande d'origine (ADR-034), null sinon. */
+  groupId: string | null;
+  placeType: string | null;
   chosenSlot: Slot;
   recurrence: Recurrence | null;
   plannedInterventions: number;

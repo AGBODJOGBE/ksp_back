@@ -25,6 +25,21 @@
     "outcome": {
       "enum": ["cancelled", "rejected", "declined"],
       "description": "cancelled : annulation ; rejected : refus de KSP ; declined : devis refusé par le client"
+    },
+    "serviceCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Facultatif (ADR-034) : prestation de la demande"
+    },
+    "serviceName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Facultatif (ADR-034) : nom de la prestation au moment de l'événement"
+    },
+    "groupId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu"
     }
   }
 }

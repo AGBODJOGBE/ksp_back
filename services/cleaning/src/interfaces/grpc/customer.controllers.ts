@@ -2,15 +2,37 @@ import { cleaningV1, commonV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import { parsePage } from '../../application/shared/validation';
 import { CLEANING_USE_CASES, type CleaningUseCases } from '../../application/use-cases';
+import { type QuoteRequestGroupView } from '../../application/ports';
+import { type QuoteRequest } from '../../domain/quote-request';
 import {
   money,
+  presentGroup,
   presentLine,
   presentMission,
   presentOffer,
+  presentPublicPlaceType,
   presentRequest,
   presentServedZone,
 } from './presenters';
-import { calculationToProto, pricingInputFromProto } from './form.presenters';
+import {
+  answersFromProto,
+  calculationToProto,
+  pricingInputFromProto,
+  selectionsFromProto,
+} from './form.presenters';
+
+/** Réponses d'une prestation d'une estimation ou d'un groupe (nouveau format seulement, ADR-034). */
+const placeItemFromProto = (item: {
+  serviceCode: string;
+  answers?: cleaningV1.AnswerSet | undefined;
+  optionSelections: cleaningV1.OptionSelection[];
+  frequency: string;
+}) => ({
+  serviceCode: item.serviceCode,
+  ...(item.answers ? { answers: answersFromProto(item.answers) } : {}),
+  optionSelections: selectionsFromProto(item.optionSelections),
+  frequency: item.frequency,
+});
 
 /**
  * Adaptateurs gRPC du catalogue public et de l'espace client : traduction des messages et appel
@@ -27,11 +49,12 @@ export class CatalogGrpcController implements cleaningV1.CatalogServiceControlle
   }
 
   async simulate(request: cleaningV1.SimulateRequest): Promise<cleaningV1.SimulateResponse> {
-    const { serviceCode, calculation, notice, covered } = await this.useCases.simulate.execute({
-      serviceCode: request.serviceCode,
-      commune: request.commune,
-      ...pricingInputFromProto(request),
-    });
+    const { serviceCode, calculation, notice, covered, communeApplied } =
+      await this.useCases.simulate.execute({
+        serviceCode: request.serviceCode,
+        commune: request.commune,
+        ...pricingInputFromProto(request),
+      });
     const commune = calculation.coefficients.find((coefficient) => coefficient.source === 'commune');
     return {
       serviceCode,
@@ -42,12 +65,44 @@ export class CatalogGrpcController implements cleaningV1.CatalogServiceControlle
       computedPrice: calculation.computedPrice === null ? undefined : money(calculation.computedPrice),
       breakdown: calculation.priced ? calculation.lines.map(presentLine) : [],
       minimumApplied: calculation.minimumApplied,
-      communeCoefficientBp: calculation.priced ? (commune?.coefficientBp ?? 0) : 0,
+      // Sans commune (ADR-034) : coefficient neutre.
+      communeCoefficientBp: calculation.priced ? (commune?.coefficientBp ?? 10_000) : 0,
       recommendedTeamSize: calculation.recommendedTeamSize,
       notice,
       covered,
       reason: calculation.reason ?? '',
       calculation: calculationToProto(calculation),
+      communeApplied,
+    };
+  }
+
+  async getPlaceCatalog(): Promise<cleaningV1.GetPlaceCatalogResponse> {
+    const { placeTypes, services } = await this.useCases.getPlaceCatalog.execute();
+    return { placeTypes: placeTypes.map(presentPublicPlaceType), services: services.map(presentOffer) };
+  }
+
+  async estimate(request: cleaningV1.EstimateRequest): Promise<cleaningV1.EstimateResponse> {
+    const result = await this.useCases.estimate.execute({
+      placeType: request.placeType,
+      commune: request.commune,
+      items: request.items.map(placeItemFromProto),
+    });
+    return {
+      placeType: result.placeType,
+      commune: result.commune ?? '',
+      communeApplied: result.communeApplied,
+      covered: result.covered,
+      status: result.status,
+      total: result.total === null ? undefined : money(result.total),
+      notice: result.notice,
+      items: result.items.map((item) => ({
+        serviceCode: item.service.code,
+        serviceName: item.service.name,
+        priced: item.calculation.priced,
+        reason: item.calculation.reason ?? '',
+        notice: item.notice,
+        calculation: calculationToProto(item.calculation),
+      })),
     };
   }
 
@@ -64,31 +119,85 @@ export class QuoteGrpcController implements cleaningV1.QuoteServiceController {
   async requestQuote(request: cleaningV1.RequestQuoteRequest): Promise<cleaningV1.RequestQuoteResponse> {
     const { answers: _answers, optionSelections: _selections, ...rest } = request;
     const input = { ...rest, ...pricingInputFromProto(request) };
-    return { request: presentRequest(await this.useCases.requestQuote.execute(input)) };
+    return { request: await this.request(await this.useCases.requestQuote.execute(input)) };
   }
 
   async listMyRequests(
     request: cleaningV1.ListMyRequestsRequest,
   ): Promise<cleaningV1.ListMyRequestsResponse> {
     const page = await this.useCases.listMyRequests.execute(parsePage(request.page));
-    return { requests: page.items.map((item) => presentRequest(item)), nextCursor: page.nextCursor ?? '' };
+    const labels = await this.useCases.describeRequests.execute(page.items);
+    return {
+      requests: page.items.map((item) => presentRequest(item, undefined, labels)),
+      nextCursor: page.nextCursor ?? '',
+    };
   }
 
   async getRequest(request: cleaningV1.GetRequestRequest): Promise<cleaningV1.GetRequestResponse> {
-    return { request: presentRequest(await this.useCases.getMyRequest.execute(request.requestId)) };
+    return { request: await this.request(await this.useCases.getMyRequest.execute(request.requestId)) };
   }
 
   async acceptQuote(request: cleaningV1.AcceptQuoteRequest): Promise<cleaningV1.AcceptQuoteResponse> {
     const result = await this.useCases.acceptQuote.execute(request);
-    return { request: presentRequest(result.request), mission: presentMission(result.mission) };
+    return { request: await this.request(result.request), mission: presentMission(result.mission) };
   }
 
   async declineQuote(request: cleaningV1.DeclineQuoteRequest): Promise<cleaningV1.DeclineQuoteResponse> {
-    return { request: presentRequest(await this.useCases.declineQuote.execute(request)) };
+    return { request: await this.request(await this.useCases.declineQuote.execute(request)) };
   }
 
   async cancelRequest(request: cleaningV1.CancelRequestRequest): Promise<cleaningV1.CancelRequestResponse> {
-    return { request: presentRequest(await this.useCases.cancelRequest.execute(request)) };
+    return { request: await this.request(await this.useCases.cancelRequest.execute(request)) };
+  }
+
+  async resolveLocation(
+    request: cleaningV1.ResolveLocationRequest,
+  ): Promise<cleaningV1.ResolveLocationResponse> {
+    const result = await this.useCases.resolveLocation.execute(request);
+    return {
+      latitude: result.latitude,
+      longitude: result.longitude,
+      commune: result.commune ?? '',
+      zoneCode: result.zoneCode ?? '',
+      served: result.served,
+      displayAddress: result.displayAddress ?? '',
+      provider: result.provider ?? '',
+    };
+  }
+
+  async requestQuoteGroup(
+    request: cleaningV1.RequestQuoteGroupRequest,
+  ): Promise<cleaningV1.RequestQuoteGroupResponse> {
+    const view = await this.useCases.requestQuoteGroup.execute({
+      idempotencyKey: request.idempotencyKey,
+      placeType: request.placeType,
+      location: request.location,
+      landmark: request.landmark,
+      commune: request.commune,
+      items: request.items.map((item) => ({
+        ...placeItemFromProto(item),
+        requestedTeamSize: item.requestedTeamSize,
+      })),
+      preferredSlots: request.preferredSlots,
+      comment: request.comment,
+      recurrence: request.recurrence,
+    });
+    return { group: await this.group(view) };
+  }
+
+  async getRequestGroup(
+    request: cleaningV1.GetRequestGroupRequest,
+  ): Promise<cleaningV1.GetRequestGroupResponse> {
+    return { group: await this.group(await this.useCases.getMyRequestGroup.execute(request.groupId)) };
+  }
+
+  /** Demande avec ses libellés (prestation, lieu, taille du groupe ; ADR-034). */
+  private async request(request: QuoteRequest): Promise<cleaningV1.QuoteRequest> {
+    return presentRequest(request, undefined, await this.useCases.describeRequests.execute([request]));
+  }
+
+  private async group(view: QuoteRequestGroupView): Promise<cleaningV1.QuoteRequestGroup> {
+    return presentGroup(view, await this.useCases.describeRequests.execute(view.requests));
   }
 }
 

@@ -15,7 +15,12 @@ import {
 import { type PaymentMethod, type PaymentPlan } from '../../domain/payment';
 import { slotFrom } from '../../domain/schedule';
 import { json } from './changes';
-import { recurrenceFromJson, recurrenceToJson } from './quote-request.mapper';
+import {
+  locationColumns,
+  locationFromColumns,
+  recurrenceFromJson,
+  recurrenceToJson,
+} from './quote-request.mapper';
 
 export const MISSION_INCLUDE = {
   interventions: { orderBy: { scheduledStart: 'asc' as const } },
@@ -52,6 +57,10 @@ export function toMission(row: MissionWithRelations): Mission {
     serviceCode: row.serviceCode,
     commune: row.commune,
     address: row.address,
+    location: locationFromColumns(row),
+    landmark: row.landmark,
+    groupId: row.groupId,
+    placeType: row.placeType,
     chosenSlot: { start: row.chosenSlotStart, end: row.chosenSlotEnd },
     recurrence: recurrenceFromJson(row.recurrence),
     plannedInterventions: row.plannedInterventions,
@@ -105,6 +114,10 @@ export function missionCreateColumns(mission: Mission, acceptanceKey: string) {
     serviceCode: mission.serviceCode,
     commune: mission.commune,
     address: mission.address,
+    ...locationColumns(mission.location),
+    landmark: mission.landmark,
+    groupId: mission.groupId,
+    placeType: mission.placeType,
     chosenSlotStart: mission.chosenSlot.start,
     chosenSlotEnd: mission.chosenSlot.end,
     recurrence: recurrenceToJson(mission.recurrence),

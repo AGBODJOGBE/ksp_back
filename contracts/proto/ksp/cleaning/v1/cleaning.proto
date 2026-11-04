@@ -53,6 +53,12 @@ import "ksp/common/v1/money.proto";
 //                                                           acceptation de devis en son nom (ADR-030)
 //   CLEANING_ZONE_NOT_COVERED           FAILED_PRECONDITION commune hors des zones desservies (details.commune)
 //   CLEANING_ZONE_NOT_FOUND             NOT_FOUND           zone inconnue
+//   CLEANING_PLACE_TYPE_NOT_FOUND       NOT_FOUND           type de lieu inconnu ou inactif (ADR-034)
+//   CLEANING_SERVICE_NOT_OFFERED        INVALID_ARGUMENT    prestation non proposée pour ce type de lieu
+//                                                           (details.field, details.placeType, details.serviceCode)
+//   CLEANING_LOCATION_UNRESOLVED        FAILED_PRECONDITION position non rattachée à une commune et aucune commune
+//                                                           choisie par le client : la lui demander (ADR-034)
+//   CLEANING_REQUEST_GROUP_NOT_FOUND    NOT_FOUND           groupe de demandes inconnu ou d'un autre client
 //   CLEANING_PAYMENT_VIA_INVOICE        FAILED_PRECONDITION mission d'entreprise : paiement par sa facture (billing)
 //   CLEANING_TEAM_UNAVAILABLE           ALREADY_EXISTS      details.agentIds : agents déjà pris sur le créneau
 //   CLEANING_CONCURRENT_UPDATE          ALREADY_EXISTS      dossier modifié en même temps par un autre appel
@@ -81,6 +87,12 @@ service CatalogService {
   // Zones desservies actives, par nom de commune : seules les communes où une demande de devis
   // est acceptée, sans les champs d'administration.
   rpc ListServedZones(ListServedZonesRequest) returns (ListServedZonesResponse);
+  // Parcours par lieu (ADR-034) : types de lieu actifs, triés, avec les codes de leurs prestations
+  // actives, et ces prestations avec leur formulaire (comme ListServices), en un seul appel.
+  rpc GetPlaceCatalog(GetPlaceCatalogRequest) returns (GetPlaceCatalogResponse);
+  // Estimation de plusieurs prestations d'un même lieu (ADR-034), avec le simulateur de l'ADR-033 ;
+  // rien n'est enregistré. Commune facultative : sans elle, coefficient neutre.
+  rpc Estimate(EstimateRequest) returns (EstimateResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +110,16 @@ service QuoteService {
   rpc AcceptQuote(AcceptQuoteRequest) returns (AcceptQuoteResponse);
   rpc DeclineQuote(DeclineQuoteRequest) returns (DeclineQuoteResponse);
   rpc CancelRequest(CancelRequestRequest) returns (CancelRequestResponse);
+  // Commune d'un point GPS (géocodage inverse, ADR-034), rapprochée des zones desservies. Client
+  // connecté seulement (un des fournisseurs est payant). Aucun fournisseur ne répond : réponse vide
+  // (provider vide), le client choisit sa commune dans la liste des zones desservies.
+  rpc ResolveLocation(ResolveLocationRequest) returns (ResolveLocationResponse);
+  // Plusieurs prestations d'un même lieu : une demande de devis par prestation, liées par un groupe
+  // et créées dans une seule transaction (ADR-034). Profil complet exigé (contrôlé par la gateway).
+  // Idempotent par idempotency_key et par client : le rejeu rend le même groupe.
+  rpc RequestQuoteGroup(RequestQuoteGroupRequest) returns (RequestQuoteGroupResponse);
+  // Groupe du client et ses demandes ; celui d'un autre client : CLEANING_REQUEST_GROUP_NOT_FOUND.
+  rpc GetRequestGroup(GetRequestGroupRequest) returns (GetRequestGroupResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +182,12 @@ service CleaningAdminService {
   // Ajoute la commune, ou la réactive si elle existe déjà.
   rpc SaveZone(SaveZoneRequest) returns (SaveZoneResponse);
   rpc DeactivateZone(DeactivateZoneRequest) returns (DeactivateZoneResponse);
+
+  // Types de lieu du parcours client (cleaning_admin, super_admin ; ADR-034) : tous, actifs ou non.
+  rpc ListPlaceTypes(ListPlaceTypesRequest) returns (ListPlaceTypesResponse);
+  // Crée ou modifie un type de lieu (pas de suppression : active = false). Une prestation inconnue
+  // est refusée ; une prestation inactive est acceptée mais masquée côté public.
+  rpc SavePlaceType(SavePlaceTypeRequest) returns (SavePlaceTypeResponse);
 
   // Agents et équipes (cleaning_admin, super_admin ; listes : aussi cleaning_supervisor).
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
@@ -337,6 +365,34 @@ message QuoteRequest {
   // Détail du calcul au moment de la demande, absent pour une demande antérieure ; le devis est
   // prérempli à partir de lui.
   PriceCalculation calculation = 31;
+  // Groupe de demandes créées ensemble pour un même lieu (ADR-034), vide pour une demande seule.
+  string group_id = 32;
+  // Code du type de lieu choisi par le client, vide pour une demande sans lieu.
+  string place_type = 33;
+  // Position GPS du lieu, absente pour une demande sans position. Jamais dans les journaux ni
+  // dans les événements.
+  GeoLocation location = 34;
+  // Point de repère donné par le client, vide sans position.
+  string landmark = 35;
+  // Fournisseur qui a trouvé la commune : "nominatim" ou "google" ; vide si la commune est celle
+  // choisie par le client (aucun fournisseur n'a répondu) ou pour une demande sans position.
+  string geocoding_provider = 36;
+  // Nombre de demandes du groupe (1 pour une demande seule).
+  int32 group_size = 37;
+  // Nom de la prestation et libellé du type de lieu, résolus par cleaning au moment de la réponse
+  // (même pour une prestation ou un lieu désactivé) ; vides s'ils sont inconnus.
+  string service_name = 38;
+  string place_type_label = 39;
+  // Adresse lisible rendue par le géocodeur pour la position, vide si aucune.
+  string geocoded_address = 40;
+}
+
+// Position GPS d'un lieu d'intervention (ADR-034).
+message GeoLocation {
+  double latitude = 1;
+  double longitude = 2;
+  // Précision annoncée par le téléphone, en mètres ; 0 si inconnue.
+  double accuracy_meters = 3;
 }
 
 message ChecklistItem {
@@ -403,6 +459,13 @@ message Mission {
   string customer_name = 22;
   // Back-office : raison sociale de l'organisation, vide pour un particulier (ADR-029).
   string organization_name = 23;
+  // Position GPS et point de repère copiés de la demande à l'acceptation (ADR-034), pour que les
+  // agents aillent sur place ; absents pour une mission sans position.
+  GeoLocation location = 24;
+  string landmark = 25;
+  // Groupe et type de lieu de la demande d'origine (ADR-034), vides sinon.
+  string group_id = 26;
+  string place_type = 27;
 }
 
 message Suspension {
@@ -656,6 +719,7 @@ message SimulateRequest {
   int32 quantity = 3 [deprecated = true];
   // Ancien format (déprécié) : codes des options choisies.
   repeated string options = 4 [deprecated = true];
+  // Facultative (ADR-034) : vide, coefficient de commune neutre (10000) et commune_applied = false.
   string commune = 5;
   // Nouveau format : code d'une fréquence de la prestation (coefficient sur le prix d'un passage).
   // Ancien format : "once", "weekly" ou "monthly", appliqué si la prestation a une fréquence de
@@ -685,6 +749,9 @@ message SimulateResponse {
   string reason = 11;
   // Détail complet du calcul (ADR-033) ; breakdown reprend ses lignes.
   PriceCalculation calculation = 12;
+  // Faux si la simulation est faite sans commune (ADR-034) : coefficient neutre, prix indicatif,
+  // recalculé avec la vraie commune à la demande de devis.
+  bool commune_applied = 13;
 }
 
 // Zone desservie vue du public.
@@ -699,6 +766,71 @@ message ListServedZonesRequest {}
 
 message ListServedZonesResponse {
   repeated ServedZone zones = 1;
+}
+
+// Type de lieu vu du public (ADR-034).
+message PublicPlaceType {
+  // Code stable, par exemple "house".
+  string code = 1;
+  string label = 2;
+  string description = 3;
+  // Nom d'icône libre, interprété par le front (par exemple "house").
+  string icon = 4;
+  int32 display_order = 5;
+  // Codes des prestations actives proposées pour ce lieu, dans l'ordre choisi au back-office.
+  repeated string service_codes = 6;
+}
+
+message GetPlaceCatalogRequest {}
+
+message GetPlaceCatalogResponse {
+  // Types de lieu actifs proposant au moins une prestation active, par ordre d'affichage puis code.
+  repeated PublicPlaceType place_types = 1;
+  // Prestations actives référencées par ces types de lieu, avec leur formulaire (sans prix).
+  repeated ServiceOffer services = 2;
+}
+
+// Une prestation d'une estimation : réponses au nouveau format seulement (ADR-033).
+message EstimateItemRequest {
+  string service_code = 1;
+  AnswerSet answers = 2;
+  repeated OptionSelection option_selections = 3;
+  string frequency = 4;
+}
+
+message EstimateRequest {
+  // Type de lieu actif ; chaque prestation doit être proposée par lui (CLEANING_SERVICE_NOT_OFFERED).
+  string place_type = 1;
+  // Facultative : vide, coefficient de commune neutre (10000) et commune_applied = false.
+  string commune = 2;
+  // 1 à 10 prestations distinctes ; erreurs de réponse : details.field préfixé par "items[i].".
+  repeated EstimateItemRequest items = 3;
+}
+
+message EstimateItem {
+  string service_code = 1;
+  string service_name = 2;
+  bool priced = 3;
+  // Voir PriceCalculation.reason ; vide si priced.
+  string reason = 4;
+  // Mention « estimation non contractuelle », ou raison de l'absence de prix.
+  string notice = 5;
+  PriceCalculation calculation = 6;
+}
+
+message EstimateResponse {
+  string place_type = 1;
+  // Commune envoyée, vide si aucune.
+  string commune = 2;
+  bool commune_applied = 3;
+  // Vrai si la commune est dans une zone desservie ; faux sans commune.
+  bool covered = 4;
+  // "priced" (toutes les prestations ont un prix), "partially_priced" ou "unpriced".
+  string status = 5;
+  // Somme des prix des prestations, absente si une seule n'a pas de prix.
+  ksp.common.v1.Money total = 6;
+  string notice = 7;
+  repeated EstimateItem items = 8;
 }
 
 // ===========================================================================
@@ -792,6 +924,76 @@ message CancelRequestResponse {
   QuoteRequest request = 1;
 }
 
+message ResolveLocationRequest {
+  // Degrés décimaux (WGS 84) : latitude entre -90 et 90, longitude entre -180 et 180.
+  double latitude = 1;
+  double longitude = 2;
+}
+
+message ResolveLocationResponse {
+  double latitude = 1;
+  double longitude = 2;
+  // Commune trouvée (nom de la zone desservie si elle l'est), vide si aucune.
+  string commune = 3;
+  // Code de la zone desservie, vide si la commune n'est pas desservie ou inconnue.
+  string zone_code = 4;
+  bool served = 5;
+  // Adresse lisible rendue par le fournisseur, vide si aucune.
+  string display_address = 6;
+  // "nominatim", "google", ou vide si aucun fournisseur n'a trouvé de commune.
+  string provider = 7;
+}
+
+// Une prestation d'un groupe : réponses au nouveau format seulement (ADR-033).
+message QuoteGroupItem {
+  string service_code = 1;
+  AnswerSet answers = 2;
+  repeated OptionSelection option_selections = 3;
+  string frequency = 4;
+  // 0 : taille recommandée par la règle de la prestation.
+  int32 requested_team_size = 5;
+}
+
+message RequestQuoteGroupRequest {
+  string idempotency_key = 1;
+  string place_type = 2;
+  GeoLocation location = 3;
+  // Point de repère (obligatoire, 500 caractères au plus) : il sert aussi d'adresse d'intervention.
+  string landmark = 4;
+  // Repli : commune choisie par le client, utilisée seulement si aucun fournisseur de géocodage ne
+  // rattache la position à une commune. Ignorée sinon (le serveur ne lui fait pas confiance).
+  string commune = 5;
+  // 1 à 10 prestations distinctes, toutes proposées par le type de lieu.
+  repeated QuoteGroupItem items = 6;
+  repeated TimeSlot preferred_slots = 7;
+  string comment = 8;
+  Recurrence recurrence = 9;
+}
+
+// Groupe de demandes créées ensemble pour un même lieu (ADR-034).
+message QuoteRequestGroup {
+  string id = 1;
+  string place_type = 2;
+  // Commune retenue (trouvée par géocodage, ou choisie par le client en repli).
+  string commune = 3;
+  string zone_code = 4;
+  string created_at = 5;
+  // Demandes du groupe, dans l'ordre des prestations envoyées.
+  repeated QuoteRequest requests = 6;
+}
+
+message RequestQuoteGroupResponse {
+  QuoteRequestGroup group = 1;
+}
+
+message GetRequestGroupRequest {
+  string group_id = 1;
+}
+
+message GetRequestGroupResponse {
+  QuoteRequestGroup group = 1;
+}
+
 // ===========================================================================
 // MissionService
 // ===========================================================================
@@ -835,6 +1037,12 @@ message ListQuoteRequestsRequest {
   string commune = 3;
   // "individual" ou "business".
   string customer_kind = 4;
+  // Groupe de demandes (ADR-034).
+  string group_id = 5;
+  // Code du type de lieu.
+  string place_type = 6;
+  // Code de la prestation.
+  string service_code = 7;
 }
 
 message ListQuoteRequestsResponse {
@@ -848,6 +1056,23 @@ message GetQuoteRequestRequest {
 
 message GetQuoteRequestResponse {
   QuoteRequest request = 1;
+  // Autres demandes du même groupe (ADR-034), vide pour une demande seule.
+  repeated GroupedRequestSummary group_requests = 2;
+}
+
+// Demande sœur d'un groupe, vue du back-office.
+message GroupedRequestSummary {
+  string id = 1;
+  string service_code = 2;
+  // Même valeurs que QuoteRequest.status.
+  string status = 3;
+  string service_name = 4;
+  // Date de la visite des lieux planifiée ou réalisée, vide si aucune.
+  string visit_scheduled_at = 5;
+  // Total du devis en vigueur, absent sans devis.
+  ksp.common.v1.Money quote_total = 6;
+  // Mission créée à l'acceptation, vide sinon.
+  string mission_id = 7;
 }
 
 message RejectQuoteRequestRequest {
@@ -905,6 +1130,9 @@ message SendQuoteResponse {
 message ListMissionsRequest {
   Page page = 1;
   string status = 2;
+  // Filtres facultatifs, cumulables (ADR-034) : groupe de la demande d'origine, prestation.
+  string group_id = 3;
+  string service_code = 4;
 }
 
 message ListMissionsResponse {
@@ -1094,6 +1322,9 @@ message GetCatalogRequest {}
 message GetCatalogResponse {
   repeated ServiceDefinition services = 1;
   Settings settings = 2;
+  // Prestations actives proposées par aucun type de lieu actif (ADR-034) : invisibles dans le
+  // parcours par lieu.
+  repeated string unplaced_service_codes = 3;
 }
 
 message SaveServiceRequest {
@@ -1102,6 +1333,9 @@ message SaveServiceRequest {
 
 message SaveServiceResponse {
   ServiceDefinition service = 1;
+  // Prestation enregistrée inactive (ADR-034) : types de lieu actifs qui la proposent encore (elle
+  // y est masquée côté public) ; vide sinon.
+  repeated PlaceTypeRef affected_place_types = 2;
 }
 
 message PreviewServiceRequest {
@@ -1147,6 +1381,14 @@ message Zone {
   string updated_at = 5;
   // Back-office : nom affiché de l'auteur de la dernière modification (ADR-029).
   string updated_by_name = 6;
+  // Autres noms de la commune (« Sèmè-Kpodji » pour « Sèmè-Podji »), utilisés pour rattacher une
+  // position géocodée à la zone (ADR-034).
+  repeated string aliases = 7;
+}
+
+// Noms alternatifs d'une zone : message présent = liste remplacée ; absent = inchangée.
+message ZoneAliases {
+  repeated string names = 1;
 }
 
 message ListZonesRequest {}
@@ -1157,6 +1399,8 @@ message ListZonesResponse {
 
 message SaveZoneRequest {
   string commune = 1;
+  // Facultatif (ADR-034) : absent, les noms alternatifs en vigueur sont gardés.
+  ZoneAliases aliases = 2;
 }
 
 message SaveZoneResponse {
@@ -1169,6 +1413,54 @@ message DeactivateZoneRequest {
 
 message DeactivateZoneResponse {
   Zone zone = 1;
+}
+
+// Type de lieu du parcours client (ADR-034), défini au back-office.
+message PlaceType {
+  // Code stable : ^[a-z][a-z0-9_]{1,49}$.
+  string code = 1;
+  string label = 2;
+  string description = 3;
+  // Nom d'icône libre (par exemple "house"), interprété par le front.
+  string icon = 4;
+  // Ordre d'affichage croissant.
+  int32 display_order = 5;
+  bool active = 6;
+  // Codes des prestations proposées, dans l'ordre d'affichage ; une prestation inactive y reste
+  // mais est masquée côté public.
+  repeated string service_codes = 7;
+  string updated_by = 8;
+  string updated_at = 9;
+  // Back-office : nom affiché de l'auteur de la dernière modification (ADR-029).
+  string updated_by_name = 10;
+  // Cohérence du catalogue (back-office, ListPlaceTypes) : prestations proposées inconnues ou
+  // inactives, et visibilité publique du lieu.
+  repeated string unknown_service_codes = 11;
+  repeated string inactive_service_codes = 12;
+  bool publicly_visible = 13;
+  // Raison d'un lieu non visible : "inactive" ou "no_active_service" ; vide s'il est visible.
+  string visibility_reason = 14;
+}
+
+// Type de lieu cité dans une réponse (code et libellé).
+message PlaceTypeRef {
+  string code = 1;
+  string label = 2;
+}
+
+message ListPlaceTypesRequest {}
+
+message ListPlaceTypesResponse {
+  repeated PlaceType place_types = 1;
+}
+
+message SavePlaceTypeRequest {
+  // updated_by, updated_at et updated_by_name sont ignorés.
+  PlaceType place_type = 1;
+}
+
+message SavePlaceTypeResponse {
+  PlaceType place_type = 1;
 }
 
 // ===========================================================================

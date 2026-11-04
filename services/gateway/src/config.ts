@@ -86,6 +86,7 @@ export const configSchema = z
     RATE_LIMIT_MFA_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.mfa_verify.limit),
     RATE_LIMIT_REFRESH_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.refresh.limit),
     RATE_LIMIT_CLEANING_SIMULATION_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.cleaning_simulation.limit),
+    RATE_LIMIT_CLEANING_GEOCODING_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.cleaning_geocoding.limit),
     RATE_LIMIT_EMAIL_CODE_REQUEST_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.email_code_request.limit),
     RATE_LIMIT_EMAIL_CODE_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.email_code_verify.limit),
     RATE_LIMIT_ACCOUNT_LOOKUP_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.account_lookup.limit),
@@ -146,6 +147,10 @@ export function rateLimitsFrom(config: GatewayConfig): RateLimitTable {
     cleaning_simulation: {
       ...DEFAULT_RATE_LIMITS.cleaning_simulation,
       limit: config.RATE_LIMIT_CLEANING_SIMULATION_PER_MINUTE,
+    },
+    cleaning_geocoding: {
+      ...DEFAULT_RATE_LIMITS.cleaning_geocoding,
+      limit: config.RATE_LIMIT_CLEANING_GEOCODING_PER_MINUTE,
     },
     email_code_request: {
       ...DEFAULT_RATE_LIMITS.email_code_request,

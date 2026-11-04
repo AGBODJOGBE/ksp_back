@@ -107,54 +107,104 @@ model CleaningSettings {
 
 /// Demande de devis (UC-CL-02 à 08).
 model QuoteRequest {
-  id                  String     @id @db.Uuid
-  customerId          String     @map("customer_id") @db.Uuid
-  idempotencyKey      String     @map("idempotency_key")
+  id                  String             @id @db.Uuid
+  customerId          String             @map("customer_id") @db.Uuid
+  idempotencyKey      String             @map("idempotency_key")
   status              String
-  customerKind        String     @map("customer_kind")
-  organizationId      String?    @map("organization_id") @db.Uuid
-  serviceCode         String     @map("service_code")
-  premisesType        String     @map("premises_type")
+  customerKind        String             @map("customer_kind")
+  organizationId      String?            @map("organization_id") @db.Uuid
+  serviceCode         String             @map("service_code")
+  premisesType        String             @map("premises_type")
   quantity            Int
   options             String[]
   commune             String
   /// Code de zone de la commune saisie (minuscules, sans accents, tirets) : filtre du back-office.
-  communeCode         String     @map("commune_code")
+  communeCode         String             @map("commune_code")
   /// Adresse d'intervention : jamais dans les journaux ni dans les événements.
   address             String
-  preferredSlots      Json       @map("preferred_slots")
+  preferredSlots      Json               @map("preferred_slots")
   comment             String?
   recurrence          Json?
-  requestedTeamSize   Int        @default(0) @map("requested_team_size")
+  requestedTeamSize   Int                @default(0) @map("requested_team_size")
   /// Entreprise : jours d'intervention par semaine, null si non précisés.
-  daysPerWeek         Int?       @map("days_per_week")
-  recommendedTeamSize Int        @map("recommended_team_size")
-  estimateLow         Int?       @map("estimate_low")
-  estimateHigh        Int?       @map("estimate_high")
-  currentQuoteId      String?    @map("current_quote_id") @db.Uuid
-  missionId           String?    @map("mission_id") @db.Uuid
-  closingReason       String?    @map("closing_reason")
+  daysPerWeek         Int?               @map("days_per_week")
+  recommendedTeamSize Int                @map("recommended_team_size")
+  estimateLow         Int?               @map("estimate_low")
+  estimateHigh        Int?               @map("estimate_high")
+  currentQuoteId      String?            @map("current_quote_id") @db.Uuid
+  missionId           String?            @map("mission_id") @db.Uuid
+  closingReason       String?            @map("closing_reason")
   /// Réponses au formulaire (ADR-033), null pour une demande antérieure.
   answers             Json?
   /// Options choisies avec leurs réponses.
-  optionSelections    Json       @default("[]") @map("option_selections")
+  optionSelections    Json               @default("[]") @map("option_selections")
   frequency           String?
   /// Version de la grille du calcul, null pour une demande antérieure.
-  pricingVersion      Int?       @map("pricing_version")
+  pricingVersion      Int?               @map("pricing_version")
   /// Détail du calcul au moment de la demande, null pour une demande antérieure.
   calculation         Json?
-  createdAt           DateTime   @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime   @map("updated_at") @db.Timestamptz(3)
+  /// Groupe des demandes créées ensemble pour un même lieu (ADR-034), null pour une demande seule.
+  groupId             String?            @map("group_id") @db.Uuid
+  /// Type de lieu choisi par le client (ADR-034).
+  placeType           String?            @map("place_type")
+  /// Position GPS du lieu (ADR-034) : jamais dans les journaux ni dans les événements.
+  latitude            Float?
+  longitude           Float?
+  locationAccuracyM   Float?             @map("location_accuracy_m")
+  /// Point de repère donné par le client (ADR-034).
+  landmark            String?
+  /// Fournisseur qui a trouvé la commune (nominatim, google), null si choisie par le client.
+  geocodingProvider   String?            @map("geocoding_provider")
+  /// Adresse lisible rendue par le géocodeur pour la position (ADR-034).
+  geocodedAddress     String?            @map("geocoded_address")
+  createdAt           DateTime           @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime           @map("updated_at") @db.Timestamptz(3)
   /// Contrôle de concurrence optimiste.
-  version             Int        @default(0)
+  version             Int                @default(0)
   visit               SiteVisit?
   quotes              Quote[]
+  group               QuoteRequestGroup? @relation(fields: [groupId], references: [id])
 
   @@unique([customerId, idempotencyKey])
   @@index([customerId, id])
   @@index([status, id])
   @@index([communeCode, id])
+  @@index([groupId])
   @@map("quote_requests")
+}
+
+/// Groupe de demandes créées ensemble pour un même lieu, une par prestation (ADR-034).
+/// Idempotent par (client, clé) : le rejeu d'une même clé rend le même groupe.
+model QuoteRequestGroup {
+  id             String         @id @db.Uuid
+  customerId     String         @map("customer_id") @db.Uuid
+  idempotencyKey String         @map("idempotency_key")
+  placeType      String         @map("place_type")
+  /// Commune retenue : trouvée par géocodage, ou choisie par le client en repli.
+  commune        String
+  createdAt      DateTime       @map("created_at") @db.Timestamptz(3)
+  requests       QuoteRequest[]
+
+  @@unique([customerId, idempotencyKey])
+  @@map("quote_request_groups")
+}
+
+/// Type de lieu du parcours client (ADR-034), géré au back-office ; jamais supprimé (active = false).
+model PlaceType {
+  code         String    @id
+  label        String
+  description  String    @default("")
+  /// Nom d'icône libre, interprété par le front.
+  icon         String
+  displayOrder Int       @default(0) @map("display_order")
+  active       Boolean   @default(true)
+  /// Codes des prestations proposées, dans l'ordre d'affichage.
+  serviceCodes String[]  @default([]) @map("service_codes")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedBy    String?   @map("updated_by")
+  updatedAt    DateTime? @map("updated_at") @db.Timestamptz(3)
+
+  @@map("place_types")
 }
 
 /// Visite technique (UC-CL-07) ; une replanification garde la même ligne.
@@ -206,6 +256,14 @@ model Mission {
   serviceCode          String           @map("service_code")
   commune              String
   address              String
+  /// Position GPS et repère copiés de la demande (ADR-034), pour aller sur place.
+  latitude             Float?
+  longitude            Float?
+  locationAccuracyM    Float?           @map("location_accuracy_m")
+  landmark             String?
+  /// Groupe et type de lieu de la demande d'origine (ADR-034).
+  groupId              String?          @map("group_id") @db.Uuid
+  placeType            String?          @map("place_type")
   chosenSlotStart      DateTime         @map("chosen_slot_start") @db.Timestamptz(3)
   chosenSlotEnd        DateTime         @map("chosen_slot_end") @db.Timestamptz(3)
   recurrence           Json?
@@ -235,6 +293,7 @@ model Mission {
   @@index([customerId, id])
   @@index([status, id])
   @@index([organizationId])
+  @@index([groupId])
   @@map("missions")
 }
 
@@ -368,6 +427,8 @@ model OrganizationStanding {
 model ServiceZone {
   code      String    @id
   commune   String
+  /// Autres noms de la commune, pour rattacher une position géocodée à la zone (ADR-034).
+  aliases   String[]  @default([])
   active    Boolean   @default(true)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedBy String?   @map("updated_by")

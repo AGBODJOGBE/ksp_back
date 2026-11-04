@@ -1,3 +1,4 @@
+import { eventSubject } from '../shared/event-subject';
 import { DEFAULT_CHECKLIST } from '../../domain/catalog';
 import {
   deriveMissionStatus,
@@ -188,6 +189,7 @@ export class MissionSuspension {
     const activeAgentIds = agents.filter((agent) => agent.active).map((agent) => agent.agentId);
     const template = service?.pricing.checklist.length ? service.pricing.checklist : DEFAULT_CHECKLIST;
 
+    const subject = await eventSubject(this.deps, mission);
     const saved = await this.deps.missions.saveWithAgenda(activeAgentIds, (busy) => {
       const plan = planRescheduling({ passages, activeAgentIds, busy, now, minimumLeadHours });
       const created: Intervention[] = plan.placed.map((placed) => ({
@@ -230,6 +232,7 @@ export class MissionSuspension {
         ...created.map((intervention): OutboxMessage => ({
           type: 'cleaning.mission.scheduled',
           payload: {
+            ...subject,
             missionId: mission.id,
             interventionId: intervention.id,
             customerId: mission.customerId,

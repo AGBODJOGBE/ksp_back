@@ -6,9 +6,15 @@ import { type Observable } from 'rxjs';
 import {
   type AcceptQuoteInput,
   type CleaningApi,
+  type EstimateInput,
   type Json,
+  type LocationInput,
+  type MissionFilters,
   type Page,
+  type PlaceItemInput,
+  type PlaceTypeInput,
   type PreviewInput,
+  type QuoteGroupInput,
   type QuoteInput,
   type QuoteRequestFilters,
   type QuoteRequestInput,
@@ -19,11 +25,17 @@ import {
 import {
   presentAgent,
   presentDefinition,
+  presentEstimate,
+  presentGroup,
+  presentLocationResolution,
   presentMission,
   presentOffer,
+  presentPlaceCatalog,
+  presentPlaceType,
   presentRequest,
   presentServedZone,
   presentSettings,
+  presentSibling,
   presentSimulation,
   presentTeam,
   presentZone,
@@ -47,6 +59,13 @@ export interface CleaningClients {
 
 const page = (value: Page): cleaningV1.Page => ({ limit: value.limit ?? 0, cursor: value.cursor ?? '' });
 const list = <T>(items: T[], nextCursor: string) => ({ data: items, nextCursor: nextCursor || null });
+/** Prestation d'un lieu (ADR-034) : réponses au nouveau format. */
+const placeItem = (item: PlaceItemInput) => ({
+  serviceCode: item.serviceCode,
+  answers: answersToProto(item.answers),
+  optionSelections: selectionsToProto(item.options ?? []),
+  frequency: item.frequency ?? '',
+});
 
 /**
  * Client gRPC de cleaning : traduction des messages, délai, coupe-circuit et jeton de service par
@@ -71,7 +90,7 @@ export class CleaningGrpcAdapter implements CleaningApi {
   async simulate(input: SimulationInput): Promise<Json> {
     const res = await this.read('simulate', (m) =>
       this.clients.catalog.simulate(
-        { serviceCode: input.serviceCode, commune: input.commune, ...formToProto(input) },
+        { serviceCode: input.serviceCode, commune: input.commune ?? '', ...formToProto(input) },
         m,
       ),
     );
@@ -81,6 +100,99 @@ export class CleaningGrpcAdapter implements CleaningApi {
   async listServedZones(): Promise<Json> {
     const res = await this.read('listServedZones', (m) => this.clients.catalog.listServedZones({}, m));
     return { data: res.zones.map(presentServedZone) };
+  }
+
+  // --- Parcours par lieu (ADR-034) ---------------------------------------------------------------
+
+  async getPlaceCatalog(): Promise<Json> {
+    return presentPlaceCatalog(
+      await this.read('getPlaceCatalog', (m) => this.clients.catalog.getPlaceCatalog({}, m)),
+    );
+  }
+
+  async estimate(input: EstimateInput): Promise<Json> {
+    // Rien n'est enregistré : l'estimation est une lecture, rejouable.
+    const res = await this.read('estimate', (m) =>
+      this.clients.catalog.estimate(
+        { placeType: input.placeType, commune: input.commune ?? '', items: input.items.map(placeItem) },
+        m,
+      ),
+    );
+    return presentEstimate(res);
+  }
+
+  async resolveLocation(input: LocationInput): Promise<Json> {
+    // Jamais rejouée par la gateway : un appel peut coûter (géocodeur payant).
+    const res = await this.write('resolveLocation', (m) =>
+      this.clients.quotes.resolveLocation({ latitude: input.latitude, longitude: input.longitude }, m),
+    );
+    return presentLocationResolution(res);
+  }
+
+  async requestQuoteGroup(input: QuoteGroupInput, idempotencyKey: string): Promise<Json> {
+    const res = await this.write('requestQuoteGroup', (m) =>
+      this.clients.quotes.requestQuoteGroup(
+        {
+          idempotencyKey,
+          placeType: input.placeType,
+          location: {
+            latitude: input.location.latitude,
+            longitude: input.location.longitude,
+            accuracyMeters: input.location.accuracyMeters ?? 0,
+          },
+          landmark: input.landmark,
+          commune: input.commune ?? '',
+          items: input.items.map((item) => ({
+            ...placeItem(item),
+            requestedTeamSize: item.requestedTeamSize ?? 0,
+          })),
+          preferredSlots: input.preferredSlots,
+          comment: input.comment ?? '',
+          ...(input.recurrence ? { recurrence: input.recurrence } : {}),
+        },
+        m,
+      ),
+    );
+    return presentGroup(res.group);
+  }
+
+  async getMyQuoteRequestGroup(id: string): Promise<Json> {
+    const res = await this.read('getRequestGroup', (m) =>
+      this.clients.quotes.getRequestGroup({ groupId: id }, m),
+    );
+    return presentGroup(res.group);
+  }
+
+  async listPlaceTypes(): Promise<Json> {
+    const res = await this.read('listPlaceTypes', (m) => this.clients.admin.listPlaceTypes({}, m));
+    return { data: res.placeTypes.map(presentPlaceType) };
+  }
+
+  async savePlaceType(code: string, input: PlaceTypeInput): Promise<Json> {
+    const res = await this.write('savePlaceType', (m) =>
+      this.clients.admin.savePlaceType(
+        {
+          placeType: {
+            code,
+            label: input.label,
+            description: input.description ?? '',
+            icon: input.icon,
+            displayOrder: input.displayOrder,
+            active: input.active,
+            serviceCodes: input.serviceCodes,
+            updatedBy: '',
+            updatedAt: '',
+            updatedByName: '',
+            unknownServiceCodes: [],
+            inactiveServiceCodes: [],
+            publiclyVisible: false,
+            visibilityReason: '',
+          },
+        },
+        m,
+      ),
+    );
+    return presentPlaceType(res.placeType);
   }
 
   async requestQuote(input: QuoteRequestInput, idempotencyKey: string): Promise<Json> {
@@ -177,6 +289,9 @@ export class CleaningGrpcAdapter implements CleaningApi {
           status: filters.status ?? '',
           commune: filters.commune ?? '',
           customerKind: filters.customerKind ?? '',
+          groupId: filters.groupId ?? '',
+          placeType: filters.placeType ?? '',
+          serviceCode: filters.serviceCode ?? '',
         },
         m,
       ),
@@ -185,10 +300,11 @@ export class CleaningGrpcAdapter implements CleaningApi {
   }
 
   async getQuoteRequest(id: string): Promise<Json> {
-    return presentRequest(
-      (await this.read('getQuoteRequest', (m) => this.clients.admin.getQuoteRequest({ requestId: id }, m)))
-        .request,
+    const res = await this.read('getQuoteRequest', (m) =>
+      this.clients.admin.getQuoteRequest({ requestId: id }, m),
     );
+    // Demandes sœurs du groupe (ADR-034), vide pour une demande seule.
+    return { ...presentRequest(res.request), groupRequests: (res.groupRequests ?? []).map(presentSibling) };
   }
 
   async rejectQuoteRequest(id: string, reason: string): Promise<Json> {
@@ -241,9 +357,17 @@ export class CleaningGrpcAdapter implements CleaningApi {
     return presentRequest(res.request);
   }
 
-  async listMissions(value: Page, status: string | undefined): Promise<Json> {
+  async listMissions(value: Page, filters: MissionFilters): Promise<Json> {
     const res = await this.read('listMissions', (m) =>
-      this.clients.admin.listMissions({ page: page(value), status: status ?? '' }, m),
+      this.clients.admin.listMissions(
+        {
+          page: page(value),
+          status: filters.status ?? '',
+          groupId: filters.groupId ?? '',
+          serviceCode: filters.serviceCode ?? '',
+        },
+        m,
+      ),
     );
     return list(res.missions.map(presentMission), res.nextCursor);
   }
@@ -358,14 +482,26 @@ export class CleaningGrpcAdapter implements CleaningApi {
 
   async getCatalog(): Promise<Json> {
     const res = await this.read('getCatalog', (m) => this.clients.admin.getCatalog({}, m));
-    return { services: res.services.map(presentDefinition), settings: presentSettings(res.settings) };
+    return {
+      services: res.services.map(presentDefinition),
+      settings: presentSettings(res.settings),
+      // Prestations actives proposées par aucun type de lieu actif (ADR-034).
+      unplacedServiceCodes: res.unplacedServiceCodes ?? [],
+    };
   }
 
   async saveService(code: string, input: ServiceInput): Promise<Json> {
     const res = await this.write('saveService', (m) =>
       this.clients.admin.saveService({ service: definitionToProto(code, input) }, m),
     );
-    return presentDefinition(res.service);
+    return {
+      ...presentDefinition(res.service),
+      // Prestation désactivée (ADR-034) : types de lieu actifs qui la proposent encore.
+      affectedPlaceTypes: (res.affectedPlaceTypes ?? []).map((place) => ({
+        code: place.code,
+        label: place.label,
+      })),
+    };
   }
 
   async previewService(code: string, input: PreviewInput): Promise<Json> {
@@ -420,9 +556,13 @@ export class CleaningGrpcAdapter implements CleaningApi {
     return { data: res.zones.map(presentZone) };
   }
 
-  async saveZone(commune: string): Promise<Json> {
+  async saveZone(commune: string, aliases?: string[] | undefined): Promise<Json> {
     return presentZone(
-      (await this.write('saveZone', (m) => this.clients.admin.saveZone({ commune }, m))).zone,
+      (
+        await this.write('saveZone', (m) =>
+          this.clients.admin.saveZone({ commune, ...(aliases ? { aliases: { names: aliases } } : {}) }, m),
+        )
+      ).zone,
     );
   }
 

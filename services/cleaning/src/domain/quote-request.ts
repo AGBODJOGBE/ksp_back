@@ -1,4 +1,5 @@
 import { type Answers, type OptionSelection, type PremisesType } from './answers';
+import { type GeocodingProvider, type GeoLocation } from './location';
 import { type Quote } from './quote';
 import { type Recurrence } from './recurrence';
 import { type Slot } from './schedule';
@@ -74,6 +75,18 @@ export interface QuoteRequest {
   calculation: PriceCalculation | null;
   commune: string;
   address: string;
+  /** Groupe des demandes créées ensemble pour un même lieu (ADR-034), null pour une demande seule. */
+  groupId: string | null;
+  /** Type de lieu choisi par le client, null pour une demande sans lieu. */
+  placeType: string | null;
+  /** Position GPS du lieu (donnée personnelle : jamais journalisée ni publiée), null sans position. */
+  location: GeoLocation | null;
+  /** Point de repère donné par le client, null sans position. */
+  landmark: string | null;
+  /** Fournisseur qui a trouvé la commune ; null si elle a été choisie par le client. */
+  geocodingProvider: GeocodingProvider | null;
+  /** Adresse lisible rendue par le géocodeur pour la position, null si aucune. */
+  geocodedAddress: string | null;
   preferredSlots: Slot[];
   comment: string | null;
   recurrence: Recurrence | null;
@@ -90,6 +103,19 @@ export interface QuoteRequest {
   updatedAt: Date;
   /** Version pour le contrôle de concurrence optimiste (double acceptation, etc.). */
   version: number;
+}
+
+/**
+ * Groupe de demandes (ADR-034) : plusieurs prestations pour un même lieu, une demande de devis
+ * par prestation, créées ensemble. Chaque demande suit ensuite son propre circuit.
+ */
+export interface QuoteRequestGroup {
+  id: string;
+  customerId: string;
+  placeType: string;
+  /** Commune retenue : trouvée par géocodage, ou choisie par le client en repli. */
+  commune: string;
+  createdAt: Date;
 }
 
 /**

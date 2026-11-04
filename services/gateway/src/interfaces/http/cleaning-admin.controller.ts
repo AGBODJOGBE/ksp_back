@@ -24,7 +24,17 @@ export class CleaningAdminHttpController {
     const status = parseParam(cleaningParams.requestStatus, query['status'], 'status');
     const commune = parseParam(cleaningParams.communeFilter, query['commune'], 'commune');
     const customerKind = parseParam(cleaningParams.customerKind, query['customerKind'], 'customerKind');
-    return this.cleaning.listQuoteRequests(pageFrom(query), { status, commune, customerKind });
+    const groupId = parseParam(cleaningParams.groupId, query['groupId'], 'groupId');
+    const placeType = parseParam(cleaningParams.optionalCode, query['placeType'], 'placeType');
+    const serviceCode = parseParam(cleaningParams.optionalCode, query['serviceCode'], 'serviceCode');
+    return this.cleaning.listQuoteRequests(pageFrom(query), {
+      status,
+      commune,
+      customerKind,
+      groupId,
+      placeType,
+      serviceCode,
+    });
   }
 
   @Route('getCleaningQuoteRequest')
@@ -64,7 +74,9 @@ export class CleaningAdminHttpController {
   @Route('listCleaningMissions')
   listMissions(@Query() query: Query) {
     const status = parseParam(cleaningParams.missionStatus, query['status'], 'status');
-    return this.cleaning.listMissions(pageFrom(query), status);
+    const groupId = parseParam(cleaningParams.groupId, query['groupId'], 'groupId');
+    const serviceCode = parseParam(cleaningParams.optionalCode, query['serviceCode'], 'serviceCode');
+    return this.cleaning.listMissions(pageFrom(query), { status, groupId, serviceCode });
   }
 
   @Route('getCleaningMission')
@@ -168,7 +180,21 @@ export class CleaningAdminHttpController {
 
   @Route('saveCleaningZone')
   saveZone(@Body() body: unknown) {
-    return this.cleaning.saveZone(parseBody(requestBodies.saveCleaningZone, body).commune);
+    const input = parseBody(requestBodies.saveCleaningZone, body);
+    return this.cleaning.saveZone(input.commune, input.aliases);
+  }
+
+  // --- Types de lieu (ADR-034) -----------------------------------------------------------------
+
+  @Route('listCleaningPlaceTypes')
+  listPlaceTypes() {
+    return this.cleaning.listPlaceTypes();
+  }
+
+  @Route('saveCleaningPlaceType')
+  savePlaceType(@Param('code') code: unknown, @Body() body: unknown) {
+    const placeType = parseParam(cleaningParams.serviceCode, code, 'code');
+    return this.cleaning.savePlaceType(placeType, parseBody(requestBodies.saveCleaningPlaceType, body));
   }
 
   @Route('deactivateCleaningZone')

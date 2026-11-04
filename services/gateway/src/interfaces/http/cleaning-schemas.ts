@@ -164,14 +164,58 @@ const serviceDefinition = z.strictObject({
   }),
 });
 
+// --- Parcours par lieu (ADR-034) ------------------------------------------------------------------
+
+/** Une prestation d'un lieu : nouveau format seulement (answers obligatoire, options en objets). */
+const placeItem = {
+  serviceCode: code,
+  answers,
+  options: z.array(optionSelection).max(20).optional(),
+  frequency: code.optional(),
+};
+const latitude = z.number().min(-90).max(90);
+const longitude = z.number().min(-180).max(180);
+
 export const cleaningBodies = {
   simulateCleaning: z
     .strictObject({
       serviceCode: code,
       ...formAnswers,
-      commune: text(100),
+      // Facultative (ADR-034) : sans elle, coefficient neutre et communeApplied = false.
+      commune: text(100).optional(),
     })
     .superRefine(oneFormat),
+  estimateCleaning: z.strictObject({
+    placeType: code,
+    commune: text(100).optional(),
+    items: z.array(z.strictObject(placeItem)).min(1).max(10),
+  }),
+  resolveCleaningLocation: z.strictObject({ latitude, longitude }),
+  requestCleaningQuoteGroup: z.strictObject({
+    placeType: code,
+    location: z.strictObject({
+      latitude,
+      longitude,
+      accuracyMeters: z.number().min(0).max(100_000).optional(),
+    }),
+    landmark: text(500),
+    commune: text(100).optional(),
+    items: z
+      .array(z.strictObject({ ...placeItem, requestedTeamSize: int(1, 50).optional() }))
+      .min(1)
+      .max(10),
+    preferredSlots: z.array(slot).min(1).max(3),
+    comment: text(2000, 0).optional(),
+    recurrence: recurrence.optional(),
+  }),
+  saveCleaningPlaceType: z.strictObject({
+    label: text(100),
+    description: text(500, 0).optional(),
+    icon: text(50),
+    displayOrder: int(0, 10_000),
+    active: z.boolean(),
+    serviceCodes: z.array(code).max(30),
+  }),
   requestCleaningQuote: z
     .strictObject({
       serviceCode: code,
@@ -249,7 +293,11 @@ export const cleaningBodies = {
     individualSuspensionUnpaidInterventions: int(1, 50).optional(),
     individualPaymentGraceHours: int(1, 720).optional(),
   }),
-  saveCleaningZone: z.strictObject({ commune: text(100) }),
+  saveCleaningZone: z.strictObject({
+    commune: text(100),
+    // Facultatif (ADR-034) : absent, les noms alternatifs en vigueur sont gardés.
+    aliases: z.array(text(100)).max(20).optional(),
+  }),
   registerCleaningAgent: z.strictObject({ agentId: uuid, displayName: text(100) }),
   declareCleaningUnavailability: z.strictObject({
     start: dateTime,
@@ -295,6 +343,9 @@ export const cleaningParams = {
     .regex(/^[a-z][a-z0-9-]{1,99}$/)
     .optional(),
   customerKind: z.enum(['individual', 'business']).optional(),
+  /** Filtres du parcours par lieu (ADR-034). */
+  groupId: uuid.optional(),
+  optionalCode: code.optional(),
 };
 
 /** Paramètre invalide : 400 GATEWAY_VALIDATION_FAILED, sans reprendre la valeur envoyée. */

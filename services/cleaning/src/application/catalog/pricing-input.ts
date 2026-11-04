@@ -46,18 +46,25 @@ function parseAnswers(field: string, answers: unknown): Answers {
   return answers as Answers;
 }
 
-/** Nouveau format : contrôle strict contre la définition. */
-export function resolveNewFormat(service: ServiceDefinition, input: PricingInput): ResolvedAnswers {
+/**
+ * Nouveau format : contrôle strict contre la définition. `prefix` précède le champ en défaut des
+ * erreurs (« items[1]. » pour une prestation d'une estimation ou d'un groupe, ADR-034).
+ */
+export function resolveNewFormat(
+  service: ServiceDefinition,
+  input: PricingInput,
+  prefix = '',
+): ResolvedAnswers {
   const value: FormAnswers = {
-    answers: parseAnswers('answers', input.answers),
+    answers: parseAnswers(`${prefix}answers`, input.answers),
     options: (input.optionSelections ?? []).map((selection, index) => ({
       code: selection.code,
-      answers: parseAnswers(`options[${index}].answers`, selection.answers ?? {}),
+      answers: parseAnswers(`${prefix}options[${index}].answers`, selection.answers ?? {}),
     })),
     frequency: input.frequency || null,
   };
   const check = checkAnswers(service, value);
-  if (!check.ok) throw CleaningErrors.answerRefused(check.problem.field, check.problem.reason);
+  if (!check.ok) throw CleaningErrors.answerRefused(`${prefix}${check.problem.field}`, check.problem.reason);
   return { value: check.value, incomplete: false };
 }
 

@@ -10,6 +10,7 @@ import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { CLEANING_USE_CASES, createUseCases } from './application/use-cases';
 import { type ServiceConfig } from './config';
+import { createGeocoder } from './infrastructure/geocoding/fallback.geocoder';
 import { IdentityPeopleDirectory } from './infrastructure/identity/identity-people-directory';
 import { BillingEventsConsumer } from './infrastructure/messaging/billing-events.consumer';
 import { IdentityEventsConsumer } from './infrastructure/messaging/identity-events.consumer';
@@ -92,6 +93,12 @@ export class AppModule {
             grpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
           ) => {
+            const geocoder = createGeocoder(config);
+            new Logger('Cleaning').log(
+              geocoder.providerNames.length
+                ? `Géocodage inverse : ${geocoder.providerNames.join(' puis ')}.`
+                : 'Géocodage inverse désactivé (NOMINATIM_URL et GOOGLE_MAPS_API_KEY vides) : le client choisit sa commune.',
+            );
             if (!serviceTokens) {
               new Logger('Cleaning').warn(
                 'Aucun jeton de service : appels vers identity non authentifiés (développement uniquement).',
@@ -111,6 +118,7 @@ export class AppModule {
                   ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
                 }),
               ),
+              geocoder,
               fieldDates: {
                 blockEarlyInterventionStart: config.CLEANING_BLOCK_EARLY_INTERVENTION_START,
                 blockEarlyVisitReport: config.CLEANING_BLOCK_EARLY_VISIT_REPORT,

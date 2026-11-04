@@ -18,6 +18,7 @@ import {
   teamSizeField,
 } from '../../domain/catalog';
 import { BASIS_POINTS } from '../../domain/money';
+import { type PlaceType } from '../../domain/place-type';
 import { type CleaningSettings, DEFAULT_SETTINGS } from '../../domain/settings';
 import { type Zone } from '../../domain/zone';
 import { UuidV7Generator } from '../system/system';
@@ -156,6 +157,7 @@ export class PrismaCatalogRepository implements CatalogRepository {
     return rows.map((row) => ({
       code: row.code,
       commune: row.commune,
+      aliases: row.aliases,
       active: row.active,
       updatedBy: row.updatedBy,
       updatedAt: row.updatedAt,
@@ -165,6 +167,7 @@ export class PrismaCatalogRepository implements CatalogRepository {
   async saveZone(zone: Zone, changes: Changes): Promise<Zone> {
     const values = {
       commune: zone.commune,
+      aliases: zone.aliases,
       active: zone.active,
       updatedBy: zone.updatedBy,
       updatedAt: zone.updatedAt,
@@ -178,5 +181,31 @@ export class PrismaCatalogRepository implements CatalogRepository {
       await writeChanges(tx, changes, () => ids.next());
     });
     return zone;
+  }
+
+  async listPlaceTypes(): Promise<PlaceType[]> {
+    const rows = await this.prisma.placeType.findMany({
+      orderBy: [{ displayOrder: 'asc' }, { code: 'asc' }],
+    });
+    return rows.map((row) => ({
+      code: row.code,
+      label: row.label,
+      description: row.description,
+      icon: row.icon,
+      displayOrder: row.displayOrder,
+      active: row.active,
+      serviceCodes: row.serviceCodes,
+      updatedBy: row.updatedBy,
+      updatedAt: row.updatedAt,
+    }));
+  }
+
+  async savePlaceType(placeType: PlaceType, changes: Changes): Promise<PlaceType> {
+    const { code, ...values } = placeType;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.placeType.upsert({ where: { code }, create: { code, ...values }, update: values });
+      await writeChanges(tx, changes, () => ids.next());
+    });
+    return placeType;
   }
 }

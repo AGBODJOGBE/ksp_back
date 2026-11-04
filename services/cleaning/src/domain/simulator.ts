@@ -83,7 +83,11 @@ export interface PriceCalculation {
 }
 
 export interface CalculationInput extends FormAnswers {
-  commune: string;
+  /**
+   * Commune du lieu ; null : simulation sans commune (ADR-034), coefficient neutre (aucun
+   * coefficient de commune dans le détail).
+   */
+  commune: string | null;
   requestedTeamSize?: number;
   /** Ancien format converti sans toutes les réponses obligatoires. */
   incomplete?: boolean;
@@ -263,15 +267,16 @@ export function calculatePrice(
     groups.push({ amount: sum(optionLines), coefficients: part.coefficients.map((c) => c.coefficientBp) });
   }
 
-  const communeBp = communeCoefficient(pricing, input.commune);
-  coefficients.push({
-    source: 'commune',
-    optionCode: null,
-    fieldCode: null,
-    code: normalizeCommune(input.commune),
-    label: input.commune.trim(),
-    coefficientBp: communeBp,
-  });
+  if (input.commune !== null) {
+    coefficients.push({
+      source: 'commune',
+      optionCode: null,
+      fieldCode: null,
+      code: normalizeCommune(input.commune),
+      label: input.commune.trim(),
+      coefficientBp: communeCoefficient(pricing, input.commune),
+    });
+  }
   const frequency = pricing.frequencies.find((candidate) => candidate.code === input.frequency);
   if (frequency) {
     coefficients.push({

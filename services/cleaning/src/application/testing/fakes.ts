@@ -9,7 +9,9 @@ import {
   isTerminalMission,
   type Mission,
 } from '../../domain/mission';
-import { isOpenRequest, type QuoteRequest } from '../../domain/quote-request';
+import { type GeocodedPlace, type GeoPoint } from '../../domain/location';
+import { type PlaceType } from '../../domain/place-type';
+import { isOpenRequest, type QuoteRequest, type QuoteRequestGroup } from '../../domain/quote-request';
 import {
   type BusyPeriod,
   DEFAULT_FIELD_DATE_POLICY,
@@ -32,7 +34,9 @@ import {
   type OrganizationStandingRepository,
   type PeopleDirectory,
   type QuoteRequestFilter,
+  type QuoteRequestGroupView,
   type QuoteRequestRepository,
+  type ReverseGeocoder,
   type StoredSettings,
 } from '../ports';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
@@ -115,7 +119,7 @@ export class InMemoryCatalog implements CatalogRepository {
   readonly zones = new Map<string, Zone>(
     INITIAL_ZONES.map((commune) => [
       zoneCode(commune),
-      { code: zoneCode(commune), commune, active: true, updatedBy: null, updatedAt: null },
+      { code: zoneCode(commune), commune, aliases: [], active: true, updatedBy: null, updatedAt: null },
     ]),
   );
   async listZones() {
@@ -126,6 +130,48 @@ export class InMemoryCatalog implements CatalogRepository {
     this.recorder.record(changes);
     return zone;
   }
+  readonly placeTypes = new Map<string, PlaceType>();
+  async listPlaceTypes() {
+    return [...this.placeTypes.values()];
+  }
+  async savePlaceType(placeType: PlaceType, changes: Changes) {
+    this.placeTypes.set(placeType.code, placeType);
+    this.recorder.record(changes);
+    return placeType;
+  }
+}
+
+/** Géocodeur simulé : réponse réglable, panne possible, points reçus comptés. */
+export class FakeGeocoder implements ReverseGeocoder {
+  readonly calls: GeoPoint[] = [];
+  result: GeocodedPlace | null = {
+    provider: 'nominatim',
+    communes: ['Abomey-Calavi', 'Atlantique'],
+    displayAddress: 'Zogbadjè, Abomey-Calavi, Atlantique, Bénin',
+  };
+  failure: Error | null = null;
+
+  async reverse(point: GeoPoint) {
+    this.calls.push(point);
+    if (this.failure) throw this.failure;
+    return this.result;
+  }
+}
+
+/** Type de lieu de test (Maison : ménage et vitres en option, jardin…). */
+export function placeType(overrides: Partial<PlaceType> = {}): PlaceType {
+  return {
+    code: 'house',
+    label: 'Maison',
+    description: 'Maison individuelle avec ou sans cour.',
+    icon: 'house',
+    displayOrder: 10,
+    active: true,
+    serviceCodes: ['home_cleaning'],
+    updatedBy: null,
+    updatedAt: null,
+    ...overrides,
+  };
 }
 
 export class InMemoryMissions implements MissionRepository {
@@ -147,6 +193,8 @@ export class InMemoryMissions implements MissionRepository {
       (m) =>
         (!filter.customerId || m.customerId === filter.customerId) &&
         (!filter.status || m.status === filter.status) &&
+        (!filter.groupId || m.groupId === filter.groupId) &&
+        (!filter.serviceCode || m.serviceCode === filter.serviceCode) &&
         (!filter.agentId || m.interventions.some((i) => i.agentIds.includes(filter.agentId!))),
     );
     return paginate(items, page);
@@ -273,6 +321,10 @@ export class InMemoryRequests implements QuoteRequestRepository {
   readonly requests = new Map<string, QuoteRequest>();
   readonly keys = new Map<string, string>();
   readonly acceptances = new Map<string, string>();
+  readonly groups = new Map<string, QuoteRequestGroup>();
+  readonly groupKeys = new Map<string, string>();
+  /** Simule l'échec de la transaction du groupe après la première demande : rien n'est gardé. */
+  failGroupWrites = false;
 
   constructor(
     private readonly recorder: Recorder,
@@ -297,6 +349,43 @@ export class InMemoryRequests implements QuoteRequestRepository {
     const id = this.keys.get(`${customerId}:${idempotencyKey}`);
     return id ? this.requests.get(id)! : null;
   }
+  async createGroup(
+    group: QuoteRequestGroup,
+    requests: QuoteRequest[],
+    idempotencyKey: string,
+    changes: Changes,
+  ): Promise<CreateResult<QuoteRequestGroupView>> {
+    const key = `${group.customerId}:${idempotencyKey}`;
+    const existing = this.groupKeys.get(key);
+    if (existing) return { created: false, value: (await this.findGroup(existing))! };
+    // Une seule transaction : tout ou rien.
+    if (this.failGroupWrites) throw new Error('transaction annulée');
+    this.groupKeys.set(key, group.id);
+    this.groups.set(group.id, group);
+    for (const request of requests) this.requests.set(request.id, request);
+    this.recorder.record(changes);
+    return { created: true, value: { group, requests } };
+  }
+  async findGroupByIdempotencyKey(customerId: string, idempotencyKey: string) {
+    const id = this.groupKeys.get(`${customerId}:${idempotencyKey}`);
+    return id ? this.findGroup(id) : null;
+  }
+  async groupSizes(groupIds: readonly string[]) {
+    const sizes = new Map<string, number>();
+    for (const request of this.requests.values()) {
+      if (request.groupId && groupIds.includes(request.groupId))
+        sizes.set(request.groupId, (sizes.get(request.groupId) ?? 0) + 1);
+    }
+    return sizes;
+  }
+  async findGroup(groupId: string) {
+    const group = this.groups.get(groupId);
+    if (!group) return null;
+    const requests = [...this.requests.values()]
+      .filter((request) => request.groupId === groupId)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    return { group, requests };
+  }
   async findById(id: string) {
     return this.requests.get(id) ?? null;
   }
@@ -312,7 +401,10 @@ export class InMemoryRequests implements QuoteRequestRepository {
         (!filter.customerId || r.customerId === filter.customerId) &&
         (!filter.status || r.status === filter.status) &&
         (!filter.communeCode || zoneCode(r.commune) === filter.communeCode) &&
-        (!filter.customerKind || r.customerKind === filter.customerKind),
+        (!filter.customerKind || r.customerKind === filter.customerKind) &&
+        (!filter.groupId || r.groupId === filter.groupId) &&
+        (!filter.placeType || r.placeType === filter.placeType) &&
+        (!filter.serviceCode || r.serviceCode === filter.serviceCode),
     );
     return paginate(items, page);
   }
@@ -411,6 +503,7 @@ export interface TestWorld extends CleaningDeps {
   invoices: InMemoryContractInvoices;
   organizations: InMemoryOrganizationStandings;
   people: InMemoryPeople;
+  geocoder: FakeGeocoder;
   fieldDates: FieldDatePolicy;
 }
 
@@ -429,6 +522,7 @@ export function testWorld(): TestWorld {
     invoices: new InMemoryContractInvoices(),
     organizations,
     people: new InMemoryPeople(),
+    geocoder: new FakeGeocoder(),
     fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
   };
 }

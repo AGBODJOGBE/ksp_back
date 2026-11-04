@@ -21,6 +21,11 @@
     "visitRequired": {
       "type": "boolean",
       "description": "Visite technique obligatoire avant le devis (entreprise ou grande surface)"
+    },
+    "groupId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu, une par prestation ; absent pour une demande seule"
     }
   }
 }

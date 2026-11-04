@@ -1,4 +1,5 @@
-import { DEFAULT_CHECKLIST } from '../../domain/catalog';
+import { eventSubject } from '../shared/event-subject';
+import { DEFAULT_CHECKLIST, isCode } from '../../domain/catalog';
 import {
   canTransitionIntervention,
   deriveMissionStatus,
@@ -58,14 +59,23 @@ async function visibleMission(deps: CleaningDeps, staff: Staff, missionId: strin
 export class ListMissionsUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
-  async execute(input: { page: PageRequest; status: string }): Promise<PageResult<MissionView>> {
+  async execute(input: {
+    page: PageRequest;
+    status: string;
+    /** Filtres facultatifs (ADR-034) : groupe de la demande d'origine, prestation. */
+    groupId?: string | undefined;
+    serviceCode?: string | undefined;
+  }): Promise<PageResult<MissionView>> {
     const staff = requireStaff(FIELD_WORK);
     if (input.status && !MISSION_STATUSES.includes(input.status as MissionStatus)) {
       throw CleaningErrors.invalid('status');
     }
+    if (input.serviceCode && !isCode(input.serviceCode)) throw CleaningErrors.invalid('serviceCode');
     const result = await this.deps.missions.list(
       {
         ...(input.status ? { status: input.status as MissionStatus } : {}),
+        ...(input.groupId ? { groupId: requireUuid('groupId', input.groupId) } : {}),
+        ...(input.serviceCode ? { serviceCode: input.serviceCode } : {}),
         ...(seesEverything(staff) ? {} : { agentId: staff.userId }),
       },
       input.page,
@@ -150,6 +160,7 @@ export class ScheduleInterventionUseCase {
     updated.status = deriveMissionStatus(updated);
 
     const slot = slotFrom(start, durationMinutes);
+    const subject = await eventSubject(this.deps, mission);
     const result = await this.deps.missions.scheduleIntervention(
       updated,
       intervention,
@@ -159,6 +170,7 @@ export class ScheduleInterventionUseCase {
           {
             type: 'cleaning.mission.scheduled',
             payload: {
+              ...subject,
               missionId: mission.id,
               interventionId: intervention.id,
               customerId: mission.customerId,
@@ -425,11 +437,13 @@ export class CancelMissionAsSupervisorUseCase {
       throw CleaningErrors.invalidTransition(mission.status, 'cancelled');
     const reason = requiredText('reason', input.reason, 500);
     const now = this.deps.clock.now();
+    const subject = await eventSubject(this.deps, mission);
     return saveMission(this.deps, cancelled(mission, reason, now), {
       events: [
         {
           type: 'cleaning.request.cancelled',
           payload: {
+            ...subject,
             requestId: mission.requestId,
             missionId: mission.id,
             customerId: mission.customerId,

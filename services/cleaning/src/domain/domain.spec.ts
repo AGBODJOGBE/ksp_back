@@ -83,6 +83,7 @@ describe('demande de devis', () => {
     const zones = INITIAL_ZONES.map((commune) => ({
       code: zoneCode(commune),
       commune,
+      aliases: [],
       active: commune !== 'Porto-Novo',
       updatedBy: null,
       updatedAt: null,

@@ -40,6 +40,11 @@ const line = (value: cleaningV1.PriceLine) => ({
 });
 const range = (value: cleaningV1.PriceRange | undefined) =>
   value ? { low: requiredMoney(value.low), high: requiredMoney(value.high) } : null;
+/** Position (ADR-034) ; précision 0 : inconnue. */
+const location = (value: cleaningV1.GeoLocation | undefined) =>
+  value
+    ? { latitude: value.latitude, longitude: value.longitude, accuracyMeters: value.accuracyMeters || null }
+    : null;
 const option = (value: cleaningV1.CatalogOption) => ({
   code: value.code,
   label: value.label,
@@ -77,6 +82,112 @@ export function presentSimulation(value: cleaningV1.SimulateResponse) {
     covered: value.covered,
     reason: orNull(value.reason),
     calculation: presentCalculation(value.calculation) ?? malformedCalculation(),
+    // Faux sans commune (ADR-034) : coefficient neutre, prix indicatif.
+    communeApplied: value.communeApplied,
+  };
+}
+
+/** Estimation de plusieurs prestations d'un lieu (ADR-034). */
+export function presentEstimate(value: cleaningV1.EstimateResponse) {
+  return {
+    placeType: value.placeType,
+    commune: orNull(value.commune),
+    communeApplied: value.communeApplied,
+    covered: value.covered,
+    status: value.status,
+    total: value.total ? value.total.amount : null,
+    currency: 'XOF',
+    notice: value.notice,
+    items: value.items.map((item) => {
+      const calculation = presentCalculation(item.calculation) ?? malformedCalculation();
+      return {
+        serviceCode: item.serviceCode,
+        serviceName: item.serviceName,
+        priced: item.priced,
+        reason: orNull(item.reason),
+        notice: item.notice,
+        estimate: calculation.estimate,
+        computedPrice: calculation.computedPrice,
+        recommendedTeamSize: calculation.recommendedTeamSize,
+        missingPrices: calculation.missingPrices,
+        calculation,
+      };
+    }),
+  };
+}
+
+export function presentPublicPlaceType(value: cleaningV1.PublicPlaceType) {
+  return {
+    code: value.code,
+    label: value.label,
+    description: orNull(value.description),
+    icon: value.icon,
+    displayOrder: value.displayOrder,
+    serviceCodes: value.serviceCodes,
+  };
+}
+
+export function presentPlaceCatalog(value: cleaningV1.GetPlaceCatalogResponse) {
+  return {
+    placeTypes: value.placeTypes.map(presentPublicPlaceType),
+    services: value.services.map(presentOffer),
+  };
+}
+
+export function presentPlaceType(value: cleaningV1.PlaceType | undefined) {
+  if (!value) throw malformed('type de lieu');
+  return {
+    code: value.code,
+    label: value.label,
+    description: orNull(value.description),
+    icon: value.icon,
+    displayOrder: value.displayOrder,
+    active: value.active,
+    serviceCodes: value.serviceCodes,
+    unknownServiceCodes: value.unknownServiceCodes,
+    inactiveServiceCodes: value.inactiveServiceCodes,
+    publiclyVisible: value.publiclyVisible,
+    visibilityReason: orNull(value.visibilityReason),
+    updatedBy: orNull(value.updatedBy),
+    updatedByName: orNull(value.updatedByName),
+    updatedAt: orNull(value.updatedAt),
+  };
+}
+
+export function presentLocationResolution(value: cleaningV1.ResolveLocationResponse) {
+  return {
+    latitude: value.latitude,
+    longitude: value.longitude,
+    commune: orNull(value.commune),
+    zoneCode: orNull(value.zoneCode),
+    served: value.served,
+    displayAddress: orNull(value.displayAddress),
+    provider: orNull(value.provider),
+  };
+}
+
+export function presentGroup(value: cleaningV1.QuoteRequestGroup | undefined) {
+  if (!value) throw malformed('groupe de demandes');
+  return {
+    groupId: value.id,
+    placeType: value.placeType,
+    commune: value.commune,
+    zoneCode: value.zoneCode,
+    createdAt: value.createdAt,
+    items: value.requests.map(presentRequest),
+  };
+}
+
+/** Demande sœur d'un groupe (back-office, ADR-034). */
+export function presentSibling(value: cleaningV1.GroupedRequestSummary) {
+  return {
+    id: value.id,
+    serviceCode: value.serviceCode,
+    serviceName: orNull(value.serviceName),
+    status: value.status,
+    visitScheduledAt: orNull(value.visitScheduledAt),
+    quoteTotal: money(value.quoteTotal),
+    missionId: orNull(value.missionId),
   };
 }
 
@@ -145,6 +256,16 @@ export function presentRequest(value: cleaningV1.QuoteRequest | undefined) {
     frequency: orNull(value.frequency),
     pricingVersion: value.pricingVersion || null,
     calculation: presentCalculation(value.calculation),
+    // Parcours par lieu (ADR-034) : null pour une demande sans lieu ni position.
+    groupId: orNull(value.groupId),
+    groupSize: value.groupSize || 1,
+    placeType: orNull(value.placeType),
+    placeTypeLabel: orNull(value.placeTypeLabel),
+    serviceName: orNull(value.serviceName),
+    location: location(value.location),
+    landmark: orNull(value.landmark),
+    geocodingProvider: orNull(value.geocodingProvider),
+    geocodedAddress: orNull(value.geocodedAddress),
   };
 }
 
@@ -165,6 +286,11 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
     serviceCode: value.serviceCode,
     commune: value.commune,
     address: value.address,
+    // Position et repère copiés de la demande (ADR-034), pour aller sur place.
+    location: location(value.location),
+    landmark: orNull(value.landmark),
+    groupId: orNull(value.groupId),
+    placeType: orNull(value.placeType),
     chosenSlot: slot(value.chosenSlot),
     recurrence: recurrence(value.recurrence),
     plannedInterventions: value.plannedInterventions,
@@ -318,6 +444,7 @@ export function presentZone(value: cleaningV1.Zone | undefined) {
   return {
     code: value.code,
     commune: value.commune,
+    aliases: value.aliases ?? [],
     active: value.active,
     updatedBy: orNull(value.updatedBy),
     updatedByName: orNull(value.updatedByName),

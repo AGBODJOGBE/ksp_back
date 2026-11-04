@@ -5,6 +5,7 @@ import {
   type SiteVisit as VisitRow,
 } from '../../../prisma/generated';
 import { type Answers, type OptionSelection, type PremisesType } from '../../domain/answers';
+import { type GeocodingProvider, type GeoLocation } from '../../domain/location';
 import { type Quote } from '../../domain/quote';
 import { zoneCode } from '../../domain/zone';
 import {
@@ -28,6 +29,22 @@ export const slotsFromJson = (value: Prisma.JsonValue): Slot[] =>
 export const recurrenceFromJson = (value: Prisma.JsonValue | null): Recurrence | null =>
   value ? (value as unknown as Recurrence) : null;
 export const recurrenceToJson = (value: Recurrence | null) => (value ? json(value) : undefined);
+
+/** Position enregistrée (colonnes latitude, longitude, précision), null si incomplète. */
+export function locationFromColumns(row: {
+  latitude: number | null;
+  longitude: number | null;
+  locationAccuracyM: number | null;
+}): GeoLocation | null {
+  if (row.latitude === null || row.longitude === null) return null;
+  return { latitude: row.latitude, longitude: row.longitude, accuracyMeters: row.locationAccuracyM };
+}
+
+export const locationColumns = (location: GeoLocation | null) => ({
+  latitude: location?.latitude ?? null,
+  longitude: location?.longitude ?? null,
+  locationAccuracyM: location?.accuracyMeters ?? null,
+});
 
 /** Une demande et sa dernière version de devis (la seule en vigueur). */
 export const REQUEST_INCLUDE = { visit: true, quotes: { orderBy: { sentAt: 'desc' as const }, take: 1 } };
@@ -70,6 +87,12 @@ export function toRequest(row: RequestWithRelations): QuoteRequest {
     calculation: (row.calculation ?? null) as unknown as PriceCalculation | null,
     commune: row.commune,
     address: row.address,
+    groupId: row.groupId,
+    placeType: row.placeType,
+    location: locationFromColumns(row),
+    landmark: row.landmark,
+    geocodingProvider: row.geocodingProvider as GeocodingProvider | null,
+    geocodedAddress: row.geocodedAddress,
     preferredSlots: slotsFromJson(row.preferredSlots),
     comment: row.comment,
     recurrence: recurrenceFromJson(row.recurrence),
@@ -118,6 +141,12 @@ export function requestColumns(request: QuoteRequest) {
     // Code de zone de la commune saisie : filtre du back-office.
     communeCode: zoneCode(request.commune),
     address: request.address,
+    groupId: request.groupId,
+    placeType: request.placeType,
+    ...locationColumns(request.location),
+    landmark: request.landmark,
+    geocodingProvider: request.geocodingProvider,
+    geocodedAddress: request.geocodedAddress,
     preferredSlots: slotsToJson(request.preferredSlots),
     comment: request.comment,
     recurrence: recurrenceToJson(request.recurrence),
