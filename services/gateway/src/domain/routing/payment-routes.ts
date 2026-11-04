@@ -73,4 +73,15 @@ export const PAYMENT_ROUTES = [
     rateLimit: 'authenticated',
     requiresKnownClient: false,
   },
+  {
+    // Écart de montant traité par la finance : lève le blocage des nouveaux paiements (ADR-032).
+    operationId: 'resolvePaymentMismatch',
+    method: 'POST',
+    path: '/api/v1/admin/payment/payments/{id}/resolve-mismatch',
+    grpc: `${ADMIN}/ResolveAmountMismatch`,
+    access: { level: 'authenticated', anyRole: PAYMENT_STAFF, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+    idempotencyKey: 'optional',
+  },
 ] as const satisfies readonly RouteDefinition[];

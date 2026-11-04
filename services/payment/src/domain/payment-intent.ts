@@ -8,7 +8,9 @@
  * navigateur. Une réussite confirmée l'emporte sur un échec, un abandon ou une expiration :
  * l'argent est reçu (paiement tardif sur une page encore ouverte). `amount_mismatch` : le
  * prestataire a approuvé un autre montant ou une autre devise ; rien n'est enregistré chez cleaning
- * ni billing, le paiement n'expire jamais et la finance tranche (ADR-031).
+ * ni billing, le paiement n'expire jamais et la finance tranche (ADR-031). Tant qu'elle ne l'a pas
+ * traité (`mismatchResolution`), tout nouveau paiement du même objet est refusé (ADR-032) ; une fois
+ * traité, le statut reste `amount_mismatch` (historique).
  */
 export type PaymentStatus = 'pending' | 'succeeded' | 'failed' | 'expired' | 'cancelled' | 'amount_mismatch';
 export const PAYMENT_STATUSES: readonly PaymentStatus[] = [
@@ -48,6 +50,17 @@ export interface PaymentSubject {
   reference: string | null;
 }
 
+/** Traitement d'un écart de montant par la finance (ADR-032). */
+export interface MismatchResolution {
+  resolvedAt: Date;
+  /** Compte du back-office qui l'a traité. */
+  resolvedBy: string;
+  /** Ce que la finance a fait (remboursement, encaissement manuel enregistré…), 500 caractères au plus. */
+  note: string;
+  /** Clé d'idempotence de la demande, null si elle n'en avait pas. */
+  idempotencyKey: string | null;
+}
+
 export interface PaymentIntent {
   id: string;
   subject: PaymentSubject;
@@ -71,6 +84,8 @@ export interface PaymentIntent {
   completedAt: Date | null;
   /** Dernière interrogation du prestataire (limite les relectures). */
   lastCheckedAt: Date | null;
+  /** Écart de montant traité par la finance ; null sinon (et pour tout autre statut). */
+  mismatchResolution: MismatchResolution | null;
   version: number;
 }
 
@@ -132,6 +147,53 @@ export function flagAmountMismatch(intent: PaymentIntent, now: Date): Transition
   return {
     kind: 'amount_mismatch',
     intent: { ...intent, status: 'amount_mismatch', failureReason: null, completedAt: now, updatedAt: now },
+  };
+}
+
+/**
+ * Écart de montant pas encore traité par la finance : tant qu'il en existe un pour l'objet (mission,
+ * toutes parts confondues, ou facture ; quel que soit le payeur), un nouveau paiement est refusé
+ * (ADR-032).
+ */
+export function isUnderReview(intent: Pick<PaymentIntent, 'status' | 'mismatchResolution'>): boolean {
+  return intent.status === 'amount_mismatch' && intent.mismatchResolution === null;
+}
+
+/** Issue d'une demande de traitement d'un écart de montant. */
+export type MismatchResolutionOutcome =
+  | { kind: 'resolved'; intent: PaymentIntent }
+  /** Même demande déjà appliquée (même clé, ou même auteur et même note) : rien ne change. */
+  | { kind: 'replay' }
+  | { kind: 'refused'; reason: 'not_mismatch' | 'already_resolved' };
+
+/**
+ * Traitement d'un écart de montant par la finance : seul un paiement `amount_mismatch` non encore
+ * traité l'accepte ; le statut ne change pas (historique). Une demande déjà appliquée est rejouée
+ * sans effet ; un second traitement différent est refusé.
+ */
+export function resolveMismatch(
+  intent: PaymentIntent,
+  input: { by: string; note: string; idempotencyKey: string | null; now: Date },
+): MismatchResolutionOutcome {
+  if (intent.status !== 'amount_mismatch') return { kind: 'refused', reason: 'not_mismatch' };
+  const done = intent.mismatchResolution;
+  if (done) {
+    const sameKey = input.idempotencyKey !== null && input.idempotencyKey === done.idempotencyKey;
+    const sameRequest = done.resolvedBy === input.by && done.note === input.note;
+    return sameKey || sameRequest ? { kind: 'replay' } : { kind: 'refused', reason: 'already_resolved' };
+  }
+  return {
+    kind: 'resolved',
+    intent: {
+      ...intent,
+      mismatchResolution: {
+        resolvedAt: input.now,
+        resolvedBy: input.by,
+        note: input.note,
+        idempotencyKey: input.idempotencyKey,
+      },
+      updatedAt: input.now,
+    },
   };
 }
 

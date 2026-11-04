@@ -3,7 +3,9 @@ import {
   applyProviderStatus,
   expire,
   flagAmountMismatch,
+  isUnderReview,
   type PaymentIntent,
+  resolveMismatch,
   supersede,
 } from './payment-intent';
 
@@ -28,6 +30,7 @@ const intent = (overrides: Partial<PaymentIntent> = {}): PaymentIntent => ({
   expiresAt: new Date(NOW.getTime() + 30 * 60_000),
   completedAt: null,
   lastCheckedAt: null,
+  mismatchResolution: null,
   version: 0,
   ...overrides,
 });
@@ -149,5 +152,59 @@ describe('écart de montant et paiement remplacé', () => {
       failureReason: 'cancelled',
     });
     expect(supersede(intent({ status: 'succeeded' }), NOW)).toBeNull();
+  });
+});
+
+describe('traitement d’un écart de montant par la finance (ADR-032)', () => {
+  const LATER = new Date(NOW.getTime() + 3_600_000);
+  const request = { by: 's1', note: 'Remboursé au client.', idempotencyKey: 'res-key-0001', now: LATER };
+  const mismatch = () => flagAmountMismatch(intent(), NOW)!.intent;
+
+  it('en revue tant qu’il n’est pas traité ; aucun autre statut ne l’est', () => {
+    expect(isUnderReview(mismatch())).toBe(true);
+    for (const status of ['pending', 'succeeded', 'failed', 'expired', 'cancelled'] as const) {
+      expect(isUnderReview(intent({ status }))).toBe(false);
+    }
+  });
+
+  it('traité : date, auteur, note et clé enregistrés, statut inchangé, plus en revue', () => {
+    const outcome = resolveMismatch(mismatch(), request);
+    expect(outcome).toMatchObject({
+      kind: 'resolved',
+      intent: {
+        status: 'amount_mismatch',
+        updatedAt: LATER,
+        mismatchResolution: {
+          resolvedAt: LATER,
+          resolvedBy: 's1',
+          note: 'Remboursé au client.',
+          idempotencyKey: 'res-key-0001',
+        },
+      },
+    });
+    expect(isUnderReview((outcome as { intent: PaymentIntent }).intent)).toBe(false);
+  });
+
+  it('rejeu : même clé, ou même auteur et même note ; sinon déjà traité', () => {
+    const treated = (resolveMismatch(mismatch(), request) as { intent: PaymentIntent }).intent;
+    expect(resolveMismatch(treated, { ...request, note: 'Autre note' })).toEqual({ kind: 'replay' });
+    expect(resolveMismatch(treated, { ...request, idempotencyKey: null })).toEqual({ kind: 'replay' });
+    expect(resolveMismatch(treated, { ...request, idempotencyKey: null, note: 'Autre note' })).toEqual({
+      kind: 'refused',
+      reason: 'already_resolved',
+    });
+    expect(resolveMismatch(treated, { ...request, by: 's2', idempotencyKey: 'res-key-0002' })).toEqual({
+      kind: 'refused',
+      reason: 'already_resolved',
+    });
+  });
+
+  it('seul un paiement en écart de montant peut être traité', () => {
+    for (const status of ['pending', 'succeeded', 'failed', 'expired', 'cancelled'] as const) {
+      expect(resolveMismatch(intent({ status }), request)).toEqual({
+        kind: 'refused',
+        reason: 'not_mismatch',
+      });
+    }
   });
 });

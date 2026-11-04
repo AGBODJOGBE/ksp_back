@@ -38,6 +38,22 @@ export const protoPayment: paymentV1.Payment = {
   completedAt: '',
   customerName: '',
   organizationName: '',
+  underReview: false,
+  mismatchResolvedAt: '',
+  mismatchResolvedBy: '',
+  mismatchResolutionNote: '',
+};
+
+/** Écart de montant traité par la finance (ADR-032). */
+export const protoResolvedMismatch: paymentV1.Payment = {
+  ...protoPayment,
+  status: 'amount_mismatch',
+  checkoutUrl: '',
+  completedAt: '2026-11-02T09:05:00.000Z',
+  updatedAt: '2026-11-05T10:00:00.000Z',
+  mismatchResolvedAt: '2026-11-05T10:00:00.000Z',
+  mismatchResolvedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e99',
+  mismatchResolutionNote: 'Remboursé au client par FedaPay le 05/11.',
 };
 
 type Method =
@@ -69,6 +85,7 @@ const DEFAULTS: Record<Method, () => unknown> = {
     payments: [{ ...protoPayment, customerName: 'Koffi Adjovi', organizationName: '' }],
     nextCursor: PAYMENT_ID,
   }),
+  resolveAmountMismatch: () => ({ payment: protoResolvedMismatch }),
 };
 
 export class PaymentStub {

@@ -14,7 +14,8 @@ import "ksp/common/v1/money.proto";
 //   développement seulement, la confirmation simulée.
 // - PaymentWebhookService : notifications du prestataire, relayées par la gateway (route publique,
 //   signature vérifiée par payment).
-// - PaymentAdminService : back-office (liste et filtres).
+// - PaymentAdminService : back-office (liste et filtres, traitement d'un écart de montant par la
+//   finance).
 //
 // Règles :
 // - le montant dû vient toujours de cleaning ou de billing, jamais du client ;
@@ -43,6 +44,12 @@ import "ksp/common/v1/money.proto";
 //                                                           ou billing : réessayer plus tard (ADR-032)
 //   PAYMENT_RECONCILIATION_PENDING      ALREADY_EXISTS      le même, toujours pas enregistré 15 min (réglable)
 //                                                           après sa réussite : contacter le support (ADR-032)
+//   PAYMENT_UNDER_REVIEW                ALREADY_EXISTS      paiement de l'objet en écart de montant (amount_mismatch)
+//                                                           pas encore traité par la finance : contacter le
+//                                                           support (ADR-032)
+//   PAYMENT_NOT_AMOUNT_MISMATCH         FAILED_PRECONDITION traitement d'un écart demandé pour un paiement qui n'est
+//                                                           pas amount_mismatch
+//   PAYMENT_MISMATCH_ALREADY_RESOLVED   ALREADY_EXISTS      écart déjà traité (autre note, autre auteur ou autre clé)
 //   PAYMENT_CONCURRENT_UPDATE           ALREADY_EXISTS      paiement modifié en même temps par un autre appel
 //   PAYMENT_PROVIDER_UNAVAILABLE        UNAVAILABLE         prestataire injoignable : réessayer avec la même clé
 //   PAYMENT_CALLER_FORBIDDEN            PERMISSION_DENIED   méthode réservée à un autre service
@@ -70,6 +77,9 @@ service PaymentWebhookService {
 // Back-office : finance_officer, cleaning_admin, super_admin, avec double authentification.
 service PaymentAdminService {
   rpc ListPayments(ListPaymentsRequest) returns (ListPaymentsResponse);
+  // Écart de montant traité par la finance (remboursement, encaissement manuel enregistré…) : lève le
+  // blocage des nouveaux paiements de l'objet ; le statut reste "amount_mismatch" (ADR-032).
+  rpc ResolveAmountMismatch(ResolveAmountMismatchRequest) returns (ResolveAmountMismatchResponse);
 }
 
 message Page {
@@ -122,6 +132,14 @@ message Payment {
   // identity à l'affichage (ADR-029) ; vides s'ils sont inconnus ou si identity ne répond pas.
   string customer_name = 16;
   string organization_name = 17;
+  // Écart de montant ("amount_mismatch") pas encore traité par la finance : tout nouveau paiement de
+  // l'objet est refusé (PAYMENT_UNDER_REVIEW, ADR-032). false pour tout autre paiement.
+  bool under_review = 18;
+  // Back-office seulement : traitement de l'écart par la finance (date, compte du back-office, note) ;
+  // vides tant qu'il n'est pas traité, et toujours vides sur les routes client.
+  string mismatch_resolved_at = 19;
+  string mismatch_resolved_by = 20;
+  string mismatch_resolution_note = 21;
 }
 
 message CreatePaymentRequest {
@@ -192,9 +210,27 @@ message ListPaymentsRequest {
   string subject_id = 4;
   string customer_id = 5;
   string organization_id = 6;
+  // true : écarts de montant pas encore traités par la finance ; false : tous les autres paiements ;
+  // absent : pas de filtre.
+  optional bool under_review = 7;
 }
 
 message ListPaymentsResponse {
   repeated Payment payments = 1;
   string next_cursor = 2;
+}
+
+message ResolveAmountMismatchRequest {
+  string payment_id = 1;
+  // Ce que la finance a fait (remboursement, encaissement manuel enregistré…) : obligatoire, 500
+  // caractères au plus.
+  string note = 2;
+  // En-tête Idempotency-Key, facultatif (8 à 100 caractères : lettres, chiffres, "_" et "-") : un
+  // second envoi avec la même clé renvoie le paiement tel quel. Sans clé, un second envoi du même
+  // compte avec la même note est aussi rejoué sans effet.
+  string idempotency_key = 3;
+}
+
+message ResolveAmountMismatchResponse {
+  Payment payment = 1;
 }

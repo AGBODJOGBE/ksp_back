@@ -46,9 +46,24 @@ function toDomain(row: PaymentRow): PaymentIntent {
     expiresAt: row.expiresAt,
     completedAt: row.completedAt,
     lastCheckedAt: row.lastCheckedAt,
+    mismatchResolution:
+      row.mismatchResolvedAt && row.mismatchResolvedBy && row.mismatchResolutionNote !== null
+        ? {
+            resolvedAt: row.mismatchResolvedAt,
+            resolvedBy: row.mismatchResolvedBy,
+            note: row.mismatchResolutionNote,
+            idempotencyKey: row.mismatchResolutionKey,
+          }
+        : null,
     version: row.version,
   };
 }
+
+/** Écarts de montant pas encore traités par la finance (ADR-032). */
+const UNDER_REVIEW = {
+  status: 'amount_mismatch',
+  mismatchResolvedAt: null,
+} satisfies Prisma.PaymentIntentWhereInput;
 
 /** Colonnes modifiables d'un paiement (l'objet payé, le montant et le payeur ne changent jamais). */
 function mutableColumns(intent: PaymentIntent) {
@@ -61,6 +76,10 @@ function mutableColumns(intent: PaymentIntent) {
     updatedAt: intent.updatedAt,
     completedAt: intent.completedAt,
     lastCheckedAt: intent.lastCheckedAt,
+    mismatchResolvedAt: intent.mismatchResolution?.resolvedAt ?? null,
+    mismatchResolvedBy: intent.mismatchResolution?.resolvedBy ?? null,
+    mismatchResolutionNote: intent.mismatchResolution?.note ?? null,
+    mismatchResolutionKey: intent.mismatchResolution?.idempotencyKey ?? null,
   };
 }
 
@@ -158,6 +177,15 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return rows.map((row) => ({ id: row.id, succeededAt: row.completedAt ?? row.updatedAt }));
   }
 
+  async listUnresolvedMismatches(input: { subjectType: SubjectType; subjectId: string }): Promise<string[]> {
+    const rows = await this.prisma.paymentIntent.findMany({
+      where: { subjectType: input.subjectType, subjectId: input.subjectId, ...UNDER_REVIEW },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+    return rows.map((row) => row.id);
+  }
+
   save(intent: PaymentIntent, events: OutboxMessage[]): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       const { count } = await tx.paymentIntent.updateMany({
@@ -183,6 +211,10 @@ export class PrismaPaymentRepository implements PaymentRepository {
         ...(filter.subjectId ? { subjectId: filter.subjectId } : {}),
         ...(filter.customerId ? { customerId: filter.customerId } : {}),
         ...(filter.organizationId !== undefined ? { organizationId: filter.organizationId } : {}),
+        // AND : se combine avec le filtre de statut sans le remplacer.
+        ...(filter.underReview !== undefined
+          ? { AND: [filter.underReview ? UNDER_REVIEW : { NOT: UNDER_REVIEW }] }
+          : {}),
         ...(page.cursor ? { id: { lt: page.cursor } } : {}),
       },
       orderBy: { id: 'desc' },

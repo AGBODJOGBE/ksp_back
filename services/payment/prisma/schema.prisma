@@ -43,34 +43,40 @@ model ProcessedEvent {
 /// Paiement en ligne par Mobile Money (ADR-031). Montant en entiers de FCFA (XOF), lu dans cleaning
 /// ou billing à la création ; statut confirmé par le prestataire seulement.
 model PaymentIntent {
-  id                    String    @id @db.Uuid
+  id                     String    @id @db.Uuid
   /// cleaning_mission ou billing_invoice.
-  subjectType           String    @map("subject_type")
-  subjectId             String    @map("subject_id") @db.Uuid
+  subjectType            String    @map("subject_type")
+  subjectId              String    @map("subject_id") @db.Uuid
   /// Mission : deposit ou balance ; null pour une facture.
-  part                  String?
+  part                   String?
   /// Numéro de la facture ; null pour une mission.
-  subjectReference      String?   @map("subject_reference")
-  amount                Int
-  currency              String    @default("XOF")
+  subjectReference       String?   @map("subject_reference")
+  amount                 Int
+  currency               String    @default("XOF")
   /// Payeur : compte connecté qui a créé le paiement.
-  customerId            String    @map("customer_id") @db.Uuid
-  organizationId        String?   @map("organization_id") @db.Uuid
-  /// pending, succeeded, failed, expired ou cancelled.
-  status                String
+  customerId             String    @map("customer_id") @db.Uuid
+  organizationId         String?   @map("organization_id") @db.Uuid
+  /// pending, succeeded, failed, expired, cancelled ou amount_mismatch.
+  status                 String
   /// fedapay ou simulated.
-  provider              String
-  providerTransactionId String?   @map("provider_transaction_id")
-  providerReference     String?   @map("provider_reference")
-  checkoutUrl           String?   @map("checkout_url")
-  idempotencyKey        String    @map("idempotency_key")
-  failureReason         String?   @map("failure_reason")
-  createdAt             DateTime  @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime  @map("updated_at") @db.Timestamptz(3)
-  expiresAt             DateTime  @map("expires_at") @db.Timestamptz(3)
-  completedAt           DateTime? @map("completed_at") @db.Timestamptz(3)
-  lastCheckedAt         DateTime? @map("last_checked_at") @db.Timestamptz(3)
-  version               Int       @default(0)
+  provider               String
+  providerTransactionId  String?   @map("provider_transaction_id")
+  providerReference      String?   @map("provider_reference")
+  checkoutUrl            String?   @map("checkout_url")
+  idempotencyKey         String    @map("idempotency_key")
+  failureReason          String?   @map("failure_reason")
+  createdAt              DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime  @map("updated_at") @db.Timestamptz(3)
+  expiresAt              DateTime  @map("expires_at") @db.Timestamptz(3)
+  completedAt            DateTime? @map("completed_at") @db.Timestamptz(3)
+  lastCheckedAt          DateTime? @map("last_checked_at") @db.Timestamptz(3)
+  /// Écart de montant traité par la finance (ADR-032) : date, compte du back-office, note, clé
+  /// d'idempotence facultative. Vides tant qu'il n'est pas traité (et pour tout autre statut).
+  mismatchResolvedAt     DateTime? @map("mismatch_resolved_at") @db.Timestamptz(3)
+  mismatchResolvedBy     String?   @map("mismatch_resolved_by") @db.Uuid
+  mismatchResolutionNote String?   @map("mismatch_resolution_note")
+  mismatchResolutionKey  String?   @map("mismatch_resolution_key")
+  version                Int       @default(0)
 
   @@unique([customerId, idempotencyKey])
   @@unique([provider, providerTransactionId])

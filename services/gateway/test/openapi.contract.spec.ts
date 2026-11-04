@@ -889,6 +889,50 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         () => call('listPayments', { auth: 'staff_no_mfa' }),
       ],
       [
+        'paiement : écart de montant pas encore traité par la finance',
+        'createPayment',
+        409,
+        () => {
+          payment.stub.on('createPayment', () =>
+            Promise.reject(
+              AppError.conflict(
+                'PAYMENT_UNDER_REVIEW',
+                'Un paiement est en cours de vérification ; contactez le support KSP.',
+              ),
+            ),
+          );
+          return call('createPayment');
+        },
+      ],
+      [
+        'écart de montant : paiement qui n’est pas en écart',
+        'resolvePaymentMismatch',
+        422,
+        () => {
+          payment.stub.on('resolveAmountMismatch', () =>
+            Promise.reject(AppError.precondition('PAYMENT_NOT_AMOUNT_MISMATCH', 'Pas un écart.')),
+          );
+          return call('resolvePaymentMismatch');
+        },
+      ],
+      [
+        'écart de montant déjà traité',
+        'resolvePaymentMismatch',
+        409,
+        () => {
+          payment.stub.on('resolveAmountMismatch', () =>
+            Promise.reject(AppError.conflict('PAYMENT_MISMATCH_ALREADY_RESOLVED', 'Déjà traité.')),
+          );
+          return call('resolvePaymentMismatch');
+        },
+      ],
+      [
+        'écart de montant : note vide',
+        'resolvePaymentMismatch',
+        400,
+        () => call('resolvePaymentMismatch', { body: { note: '' } }),
+      ],
+      [
         'estimation : prestation non proposée par le lieu',
         'estimateCleaning',
         400,

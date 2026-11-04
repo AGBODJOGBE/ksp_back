@@ -68,6 +68,18 @@ export interface Payment {
    */
   customerName: string;
   organizationName: string;
+  /**
+   * Écart de montant ("amount_mismatch") pas encore traité par la finance : tout nouveau paiement de
+   * l'objet est refusé (PAYMENT_UNDER_REVIEW, ADR-032). false pour tout autre paiement.
+   */
+  underReview: boolean;
+  /**
+   * Back-office seulement : traitement de l'écart par la finance (date, compte du back-office, note) ;
+   * vides tant qu'il n'est pas traité, et toujours vides sur les routes client.
+   */
+  mismatchResolvedAt: string;
+  mismatchResolvedBy: string;
+  mismatchResolutionNote: string;
 }
 
 export interface CreatePaymentRequest {
@@ -146,11 +158,35 @@ export interface ListPaymentsRequest {
   subjectId: string;
   customerId: string;
   organizationId: string;
+  /**
+   * true : écarts de montant pas encore traités par la finance ; false : tous les autres paiements ;
+   * absent : pas de filtre.
+   */
+  underReview?: boolean | undefined;
 }
 
 export interface ListPaymentsResponse {
   payments: Payment[];
   nextCursor: string;
+}
+
+export interface ResolveAmountMismatchRequest {
+  paymentId: string;
+  /**
+   * Ce que la finance a fait (remboursement, encaissement manuel enregistré…) : obligatoire, 500
+   * caractères au plus.
+   */
+  note: string;
+  /**
+   * En-tête Idempotency-Key, facultatif (8 à 100 caractères : lettres, chiffres, "_" et "-") : un
+   * second envoi avec la même clé renvoie le paiement tel quel. Sans clé, un second envoi du même
+   * compte avec la même note est aussi rejoué sans effet.
+   */
+  idempotencyKey: string;
+}
+
+export interface ResolveAmountMismatchResponse {
+  payment?: Payment | undefined;
 }
 
 /** Espace client : paiements du client connecté (contexte personnel) ou de son organisation active. */
@@ -270,6 +306,16 @@ export const PAYMENT_WEBHOOK_SERVICE_NAME = "PaymentWebhookService";
 
 export interface PaymentAdminServiceClient {
   listPayments(request: ListPaymentsRequest, metadata?: Metadata): Observable<ListPaymentsResponse>;
+
+  /**
+   * Écart de montant traité par la finance (remboursement, encaissement manuel enregistré…) : lève le
+   * blocage des nouveaux paiements de l'objet ; le statut reste "amount_mismatch" (ADR-032).
+   */
+
+  resolveAmountMismatch(
+    request: ResolveAmountMismatchRequest,
+    metadata?: Metadata,
+  ): Observable<ResolveAmountMismatchResponse>;
 }
 
 /** Back-office : finance_officer, cleaning_admin, super_admin, avec double authentification. */
@@ -279,11 +325,21 @@ export interface PaymentAdminServiceController {
     request: ListPaymentsRequest,
     metadata?: Metadata,
   ): Promise<ListPaymentsResponse> | Observable<ListPaymentsResponse> | ListPaymentsResponse;
+
+  /**
+   * Écart de montant traité par la finance (remboursement, encaissement manuel enregistré…) : lève le
+   * blocage des nouveaux paiements de l'objet ; le statut reste "amount_mismatch" (ADR-032).
+   */
+
+  resolveAmountMismatch(
+    request: ResolveAmountMismatchRequest,
+    metadata?: Metadata,
+  ): Promise<ResolveAmountMismatchResponse> | Observable<ResolveAmountMismatchResponse> | ResolveAmountMismatchResponse;
 }
 
 export function PaymentAdminServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["listPayments"];
+    const grpcMethods: string[] = ["listPayments", "resolveAmountMismatch"];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("PaymentAdminService", method)(constructor.prototype[method], method, descriptor);

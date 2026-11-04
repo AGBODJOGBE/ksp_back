@@ -45,6 +45,22 @@ export const PaymentErrors = {
       'Un paiement a déjà été reçu pour cet objet mais son enregistrement prend plus de temps que prévu. ' +
         'Ne payez pas une seconde fois : contactez le support KSP, qui finalisera son enregistrement.',
     ),
+  /**
+   * Paiement de l'objet en écart de montant (amount_mismatch) pas encore traité par la finance
+   * (ADR-032) : aucun nouveau paiement tant qu'elle ne l'a pas traité.
+   */
+  underReview: () =>
+    AppError.conflict(
+      'PAYMENT_UNDER_REVIEW',
+      'Un paiement est en cours de vérification ; contactez le support KSP.',
+    ),
+  notAmountMismatch: () =>
+    AppError.precondition(
+      'PAYMENT_NOT_AMOUNT_MISMATCH',
+      'Seul un paiement en écart de montant (amount_mismatch) peut être traité.',
+    ),
+  mismatchAlreadyResolved: () =>
+    AppError.conflict('PAYMENT_MISMATCH_ALREADY_RESOLVED', 'Cet écart de montant a déjà été traité.'),
   concurrentUpdate: () =>
     AppError.conflict(
       'PAYMENT_CONCURRENT_UPDATE',

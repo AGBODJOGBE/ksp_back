@@ -6822,10 +6822,18 @@ paths:
         réussite du paiement, le refus devient `PAYMENT_RECONCILIATION_PENDING` (409) : ne pas proposer de payer
         à nouveau, inviter le client à contacter le support ; l'équipe KSP est alertée.
 
+        Un paiement de l'objet en écart de montant (`amount_mismatch` : argent reçu pour un autre montant ou une
+        autre devise) que la finance n'a pas encore traité bloque aussi toute nouvelle création, quel que soit le
+        payeur ou la part : `PAYMENT_UNDER_REVIEW` (409, « Un paiement est en cours de vérification ; contactez le
+        support KSP. »), sans limite de temps, avec une alerte à l'équipe à chaque refus. Le blocage est levé
+        quand la finance a traité l'écart (`POST /api/v1/admin/payment/payments/{id}/resolve-mismatch`, ADR-032).
+        Le rejeu d'une même clé passe avant ces contrôles et renvoie toujours le même paiement.
+
         Erreurs : `PAYMENT_VALIDATION_FAILED` (400), `PAYMENT_SUBJECT_NOT_FOUND` (404),
         `PAYMENT_IDEMPOTENCY_KEY_REUSED` (409, clé déjà utilisée pour un autre objet), `PAYMENT_ALREADY_RECEIVED`
         (409, paiement réussi pas encore enregistré : réessayer plus tard), `PAYMENT_RECONCILIATION_PENDING`
-        (409, toujours pas enregistré après 15 minutes : contacter le support), `PAYMENT_NOTHING_DUE`,
+        (409, toujours pas enregistré après 15 minutes : contacter le support), `PAYMENT_UNDER_REVIEW` (409,
+        écart de montant pas encore traité par la finance : contacter le support), `PAYMENT_NOTHING_DUE`,
         `PAYMENT_SUBJECT_NOT_PAYABLE`, `PAYMENT_VIA_INVOICE` (422), `PAYMENT_PROVIDER_UNAVAILABLE` (503).
       x-ksp-grpc: ksp.payment.v1.PaymentService/CreatePayment
       x-ksp-access: authenticated
@@ -6876,6 +6884,7 @@ paths:
                 updatedAt: 2026-11-02T09:00:01Z
                 expiresAt: 2026-11-02T09:30:00Z
                 completedAt: null
+                underReview: false
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -7110,7 +7119,7 @@ paths:
       summary: Paiements en ligne (back-office)
       description: |
         Tous les paiements en ligne, les plus récents d'abord, filtrables par statut, type d'objet, objet (mission
-        ou facture), payeur ou organisation.
+        ou facture), payeur ou organisation, et par écart de montant à traiter (`underReview`, ADR-032).
 
         Rôles : `finance_officer`, `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.payment.v1.PaymentAdminService/ListPayments
@@ -7152,6 +7161,16 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: underReview
+          in: query
+          required: false
+          description: |
+            `true` : écarts de montant (`amount_mismatch`) pas encore traités par la finance, qui bloquent les
+            nouveaux paiements de leur objet ; `false` : tous les autres paiements. Absent : pas de filtre.
+          schema:
+            enum:
+              - 'true'
+              - 'false'
       responses:
         '200':
           description: Succès
@@ -7168,6 +7187,109 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/payment/payments/{id}/resolve-mismatch:
+    post:
+      tags:
+        - Paiement (back-office)
+      operationId: resolvePaymentMismatch
+      summary: Traiter un écart de montant
+      description: |
+        La finance a traité un paiement `amount_mismatch` (argent reçu pour un autre montant ou une autre devise) :
+        remboursement, encaissement manuel enregistré sur la mission ou la facture… La note dit ce qui a été fait.
+        Le statut reste `amount_mismatch` (historique) ; le paiement n'est plus `underReview`, et les nouveaux
+        paiements de son objet ne sont plus bloqués par lui (ADR-032). Aucun montant n'est enregistré chez
+        cleaning ni billing par cette route.
+
+        Rôles : `finance_officer`, `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Rejouable sans effet : un second envoi avec la même clé `Idempotency-Key` (facultative), ou du même compte
+        avec la même note, renvoie le paiement tel quel. Un autre traitement d'un écart déjà traité est refusé.
+
+        Erreurs : `PAYMENT_VALIDATION_FAILED` (400, `details.field` = `note` ou `idempotencyKey`),
+        `PAYMENT_NOT_FOUND` (404), `PAYMENT_MISMATCH_ALREADY_RESOLVED` (409, écart déjà traité),
+        `PAYMENT_CONCURRENT_UPDATE` (409), `PAYMENT_NOT_AMOUNT_MISMATCH` (422, le paiement n'est pas en écart de
+        montant).
+      x-ksp-grpc: ksp.payment.v1.PaymentAdminService/ResolveAmountMismatch
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolvePaymentMismatchRequest'
+            example:
+              note: Remboursé au client par FedaPay le 05/11 (approuvé 100 FCFA au lieu de 15 000).
+      responses:
+        '200':
+          description: Écart traité (ou déjà traité par la même demande)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+              example:
+                id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001
+                status: amount_mismatch
+                subject:
+                  type: cleaning_mission
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000
+                  part: deposit
+                  reference: null
+                amount:
+                  amount: 15000
+                  currency: XOF
+                customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                organizationId: null
+                method: mobile_money_online
+                provider: fedapay
+                providerReference: null
+                checkoutUrl: null
+                failureReason: null
+                createdAt: 2026-11-02T09:00:00Z
+                updatedAt: 2026-11-05T10:00:00Z
+                expiresAt: 2026-11-02T09:30:00Z
+                completedAt: 2026-11-02T09:05:00Z
+                underReview: false
+                customerName: Koffi Adjovi
+                organizationName: null
+                mismatchResolvedAt: 2026-11-05T10:00:00Z
+                mismatchResolvedBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e99
+                mismatchResolutionNote: Remboursé au client par FedaPay le 05/11 (approuvé 100 FCFA au lieu de 15 000).
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -11062,7 +11184,8 @@ components:
         `cancelled` : abandonné sur la page de paiement, ou remplacé par un nouveau paiement du même objet ;
         `expired` : resté en attente au-delà de son délai ; `amount_mismatch` : le prestataire a approuvé un
         autre montant ou une autre devise — rien n'est enregistré sur la mission ou la facture, la finance tranche
-        (ADR-031). Une réussite confirmée plus tard (24 heures au plus) fait passer un paiement `failed`,
+        (ADR-031) ; tant qu'elle ne l'a pas traité (`underReview`), tout nouveau paiement de l'objet est refusé
+        (ADR-032), et le statut reste `amount_mismatch` une fois l'écart traité. Une réussite confirmée plus tard (24 heures au plus) fait passer un paiement `failed`,
         `cancelled` ou `expired` à `succeeded`.
       enum:
         - pending
@@ -11120,6 +11243,7 @@ components:
         - updatedAt
         - expiresAt
         - completedAt
+        - underReview
       properties:
         id:
           type: string
@@ -11196,6 +11320,32 @@ components:
           description: |
             Back-office seulement : raison sociale de l'organisation payeuse, lue dans identity à l'affichage
             (ADR-029) ; null pour un particulier, si elle est inconnue ou si identity ne répond pas.
+        underReview:
+          type: boolean
+          description: |
+            Écart de montant (`amount_mismatch`) pas encore traité par la finance : tout nouveau paiement de l'objet
+            est refusé (`PAYMENT_UNDER_REVIEW`, ADR-032). Le portail affiche « paiement en cours de vérification,
+            contactez le support KSP ». false pour tout autre paiement, et une fois l'écart traité.
+        mismatchResolvedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: |
+            Back-office seulement (absent des routes client) : date du traitement de l'écart de montant par la
+            finance ; null tant qu'il n'est pas traité, et pour tout autre statut.
+        mismatchResolvedBy:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: "Back-office seulement : compte du back-office qui a traité l'écart ; null sinon."
+        mismatchResolutionNote:
+          type:
+            - string
+            - 'null'
+          maxLength: 500
+          description: "Back-office seulement : ce que la finance a fait de l'écart ; null sinon."
     PaymentList:
       type: object
       additionalProperties: false
@@ -11239,6 +11389,19 @@ components:
           enum:
             - succeeded
             - failed
+    ResolvePaymentMismatchRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - note
+      properties:
+        note:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: |
+            Ce que la finance a fait (remboursement, encaissement manuel enregistré…), espaces de début et de fin
+            retirés ; une note vide est refusée.
     PaymentWebhookAck:
       type: object
       additionalProperties: false

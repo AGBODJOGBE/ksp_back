@@ -5,6 +5,7 @@ import {
   PAYMENT_STATUSES,
   type PaymentIntent,
   type PaymentSubject,
+  resolveMismatch,
   sameSubject,
   SUBJECT_TYPES,
   type SubjectType,
@@ -18,7 +19,15 @@ import {
 } from './ports';
 import { currentPayer, isVisibleTo, PAYMENT_STAFF, requireCaller, requireStaff } from './shared/access';
 import { PaymentErrors } from './shared/errors';
-import { IDEMPOTENCY_KEY, oneOf, optionalOneOf, optionalUuid, requireUuid } from './shared/validation';
+import {
+  IDEMPOTENCY_KEY,
+  oneOf,
+  optionalIdempotencyKey,
+  optionalOneOf,
+  optionalUuid,
+  requireText,
+  requireUuid,
+} from './shared/validation';
 import { PaymentSync } from './sync';
 
 const MINUTE_MS = 60_000;
@@ -53,6 +62,10 @@ async function visiblePayment(deps: PaymentDeps, paymentId: string): Promise<Pay
  * cleaning ou billing : le montant dû lu ne le déduit pas encore. PAYMENT_ALREADY_RECEIVED
  * (« réessayez ») pendant `unrecordedGraceMinutes` après la réussite, puis
  * PAYMENT_RECONCILIATION_PENDING (support) avec une alerte : jamais de second paiement.
+ *
+ * Refus aussi (409 PAYMENT_UNDER_REVIEW, avec une alerte à chaque refus) tant qu'un paiement de
+ * l'objet est en écart de montant non traité par la finance (ADR-032), quel que soit le payeur ou la
+ * part. Le rejeu d'une même clé passe avant ces contrôles : il rend toujours le même paiement.
  */
 export class CreatePaymentUseCase {
   private readonly sync: PaymentSync;
@@ -84,11 +97,18 @@ export class CreatePaymentUseCase {
       return { payment: await this.withCheckout(replay), created: false };
     }
 
-    const [{ amount, subject, organizationId, recordedPaymentIds }, succeeded] = await Promise.all([
-      this.amountDue(type, subjectId, part, payer),
-      this.deps.payments.listSucceeded({ subjectType: type, subjectId }),
-    ]);
+    const [{ amount, subject, organizationId, recordedPaymentIds }, succeeded, underReview] =
+      await Promise.all([
+        this.amountDue(type, subjectId, part, payer),
+        this.deps.payments.listSucceeded({ subjectType: type, subjectId }),
+        this.deps.payments.listUnresolvedMismatches({ subjectType: type, subjectId }),
+      ]);
     const now = this.deps.clock.now();
+    // Argent reçu pour un autre montant : la finance doit trancher avant tout nouveau paiement.
+    if (underReview.length > 0) {
+      this.deps.alerts.paymentUnderReview({ subjectType: type, subjectId, paymentIds: underReview });
+      throw PaymentErrors.underReview();
+    }
     const unrecorded = unrecordedSuccesses(succeeded, recordedPaymentIds);
     if (unrecorded) {
       const graceMs = this.deps.settings.unrecordedGraceMinutes * MINUTE_MS;
@@ -125,6 +145,7 @@ export class CreatePaymentUseCase {
       expiresAt: new Date(now.getTime() + this.deps.settings.intentTtlMinutes * MINUTE_MS),
       completedAt: null,
       lastCheckedAt: null,
+      mismatchResolution: null,
       version: 0,
     };
     const stored = await this.deps.payments.create(draft);
@@ -236,6 +257,8 @@ export class ListPaymentsUseCase {
     subjectId: string;
     customerId: string;
     organizationId: string;
+    /** Absent : pas de filtre. */
+    underReview?: boolean | undefined;
   }): Promise<PageResult<PaymentIntent> & { names: NameBook }> {
     requireStaff(PAYMENT_STAFF);
     const status = optionalOneOf('status', input.status, PAYMENT_STATUSES);
@@ -250,6 +273,7 @@ export class ListPaymentsUseCase {
         ...(subjectId ? { subjectId } : {}),
         ...(customerId ? { customerId } : {}),
         ...(organizationId ? { organizationId } : {}),
+        ...(input.underReview !== undefined ? { underReview: input.underReview } : {}),
       },
       input.page,
     );
@@ -263,6 +287,52 @@ export class ListPaymentsUseCase {
     ]);
     return { ...page, names: { users, organizations } };
   }
+}
+
+/** Note de la finance sur le traitement d'un écart de montant : 500 caractères au plus. */
+export const MISMATCH_NOTE_MAX = 500;
+
+/**
+ * Back-office : la finance a traité un écart de montant (remboursement, encaissement manuel
+ * enregistré…). Seul un paiement `amount_mismatch` non encore traité est accepté ; le statut ne
+ * change pas, et les nouveaux paiements de l'objet ne sont plus bloqués par lui (ADR-032).
+ *
+ * Rejouable sans effet : même clé d'idempotence (facultative), ou même compte et même note. Deux
+ * envois simultanés : le contrôle de version n'en laisse passer qu'un, l'autre relit et rejoue.
+ * Aucun événement : cleaning et billing n'enregistrent rien pour un écart (la finance passe, s'il le
+ * faut, par l'encaissement manuel de la mission ou de la facture).
+ */
+export class ResolveAmountMismatchUseCase {
+  constructor(private readonly deps: PaymentDeps) {}
+
+  async execute(input: { paymentId: string; note: string; idempotencyKey: string }): Promise<PaymentIntent> {
+    const staff = requireStaff(PAYMENT_STAFF);
+    const paymentId = requireUuid('paymentId', input.paymentId);
+    const note = requireText('note', input.note, MISMATCH_NOTE_MAX);
+    const request = { by: staff.userId, note, idempotencyKey: optionalIdempotencyKey(input.idempotencyKey) };
+    const intent = await this.deps.payments.findById(paymentId);
+    if (!intent) throw PaymentErrors.notFound();
+    const outcome = resolveMismatch(intent, { ...request, now: this.deps.clock.now() });
+    if (outcome.kind === 'replay') return intent;
+    if (outcome.kind === 'refused') throw refusedResolution(outcome.reason);
+    if (await this.deps.payments.save(outcome.intent, [])) {
+      return { ...outcome.intent, version: outcome.intent.version + 1 };
+    }
+    // Écriture concurrente : la même demande, déjà appliquée par l'autre envoi, est rejouée.
+    const current = await this.deps.payments.findById(paymentId);
+    if (current) {
+      const again = resolveMismatch(current, { ...request, now: this.deps.clock.now() });
+      if (again.kind === 'replay') return current;
+      if (again.kind === 'refused') throw refusedResolution(again.reason);
+    }
+    throw PaymentErrors.concurrentUpdate();
+  }
+}
+
+function refusedResolution(reason: 'not_mismatch' | 'already_resolved') {
+  return reason === 'not_mismatch'
+    ? PaymentErrors.notAmountMismatch()
+    : PaymentErrors.mismatchAlreadyResolved();
 }
 
 /**

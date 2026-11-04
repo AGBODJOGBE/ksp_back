@@ -47,4 +47,12 @@ export class LoggerPaymentAlerts implements PaymentAlerts {
         'refusé (PAYMENT_RECONCILIATION_PENDING), à rapprocher (outbox de payment, consommateurs de cleaning ou billing)',
     );
   }
+
+  paymentUnderReview(input: { subjectType: string; subjectId: string; paymentIds: string[] }): void {
+    this.logger.error(
+      `ALERTE paiement : paiement(s) en écart de montant ${input.paymentIds.join(', ')} non traité(s) pour ` +
+        `${input.subjectType} ${input.subjectId} ; nouveau paiement refusé (PAYMENT_UNDER_REVIEW), à traiter ` +
+        'par la finance (POST /api/v1/admin/payment/payments/{id}/resolve-mismatch)',
+    );
+  }
 }
