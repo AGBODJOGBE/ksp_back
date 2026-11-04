@@ -852,10 +852,15 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     );
     expect(listed.items.map((request) => request.id)).toEqual([a.requests[1]!.id]);
     const { rows } = await pool.query(
-      "SELECT payload FROM outbox WHERE payload->'payload'->>'groupId' = $1",
+      "SELECT event_type, payload FROM outbox WHERE payload->'payload'->>'groupId' = $1 ORDER BY event_type",
       [a.group.id],
     );
-    expect(rows).toHaveLength(2);
+    // Une demande par prestation, plus le message de groupe (ADR-035, point 14).
+    expect(rows.map((row) => row.event_type)).toEqual([
+      'cleaning.quote.requested',
+      'cleaning.quote.requested',
+      'cleaning.quote_group.requested',
+    ]);
     expect(JSON.stringify(rows)).not.toContain('Portail bleu');
     expect(JSON.stringify(rows)).not.toContain('6.4489');
 
