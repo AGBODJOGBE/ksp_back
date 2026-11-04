@@ -379,6 +379,8 @@ export async function quoteSentChanges(
   { request, quote, pricingVersion }: PreparedQuote,
   now: Date,
   extra: Record<string, unknown> = {},
+  /** Envoi groupé : cleaning.quote_group.sent résume les devis (ADR-035 point 14). */
+  summarizedByGroup = false,
 ): Promise<Changes> {
   const subject = await eventSubject(deps, request);
   return {
@@ -392,6 +394,7 @@ export async function quoteSentChanges(
           customerId: request.customerId,
           total: { amount: quote.total, currency: 'XOF' },
           validUntil: quote.validUntil.toISOString(),
+          ...(summarizedByGroup ? { summarizedByGroup } : {}),
         },
       },
     ],

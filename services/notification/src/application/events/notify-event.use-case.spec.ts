@@ -240,6 +240,270 @@ describe('NotifyEventUseCase — messages des 7 premiers événements du Nettoya
   });
 });
 
+describe('NotifyEventUseCase — messages regroupés et prestation citée (ADR-035 point 14)', () => {
+  const GROUP = '0192f1c4-0000-7000-8000-00000000g001';
+  const REQUEST_2 = '0192f1c4-0000-7000-8000-00000000r002';
+  const REQUEST_3 = '0192f1c4-0000-7000-8000-00000000r003';
+  const groupLink = `https://ksp.bj/mon-espace/nettoyage/demandes/groupes/${GROUP}`;
+  const requests = [
+    { requestId: REQUEST, serviceCode: 'office', serviceName: 'Nettoyage de bureaux' },
+    { requestId: REQUEST_2, serviceCode: 'windows', serviceName: 'Vitres' },
+    { requestId: REQUEST_3, serviceCode: 'old_service' },
+  ];
+
+  it('envoi groupé : un seul message qui liste les prestations ; les demandes résumées n’envoient rien', async () => {
+    const { useCase, whatsapp, inbox } = setup();
+    await useCase.execute(
+      event('cleaning.quote_group.requested', {
+        groupId: GROUP,
+        customerId: CUSTOMER,
+        organizationId: null,
+        customerKind: 'individual',
+        visitRequired: true,
+        requests,
+      }),
+    );
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'cleaning.quote_group_requested.customer',
+      variables: {
+        visit_required: 'true',
+        request_count: '3',
+        services: '« Nettoyage de bureaux », « Vitres » et une prestation de nettoyage',
+        link: groupLink,
+      },
+    });
+    expect(whatsapp.sent[0]!.content!.text).toContain(
+      'vos 3 demandes de devis pour un même lieu : « Nettoyage de bureaux », « Vitres » et une prestation',
+    );
+    expect(inbox.inApp).toEqual([
+      expect.objectContaining({ title: 'Demandes de devis reçues', link: groupLink }),
+    ]);
+
+    for (const [index, request] of requests.entries()) {
+      const summarized = await setup().useCase.execute({
+        ...event('cleaning.quote.requested', {
+          requestId: request.requestId,
+          customerId: CUSTOMER,
+          organizationId: null,
+          customerKind: 'individual',
+          serviceCode: request.serviceCode,
+          visitRequired: true,
+          groupId: GROUP,
+          summarizedByGroup: true,
+        }),
+        eventId: `0192f1c4-aaaa-7000-8000-00000000000${index + 2}`,
+      });
+      expect(summarized).toMatchObject({ status: 'processed', accepted: 0, inApp: 0 });
+    }
+  });
+
+  it('demande groupée publiée avant les messages regroupés (sans marqueur) : message de la demande', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(
+      event('cleaning.quote.requested', {
+        ...(quoteRequested.payload as KspEventPayloads['cleaning.quote.requested']),
+        groupId: GROUP,
+      } as KspEventPayloads['cleaning.quote.requested']),
+    );
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.quote_requested.customer',
+    ]);
+    expect(whatsapp.sent[0]!.content!.subject).toBe('Demande de devis reçue');
+  });
+
+  it('demande seule avec sa prestation : le nom dans l’objet et le texte', async () => {
+    const { useCase, whatsapp, inbox } = setup();
+    await useCase.execute(
+      event('cleaning.quote.requested', {
+        ...(quoteRequested.payload as KspEventPayloads['cleaning.quote.requested']),
+        serviceName: 'Vitres',
+      } as KspEventPayloads['cleaning.quote.requested']),
+    );
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'cleaning.quote_requested.customer',
+      variables: { service_name: 'Vitres', link: `https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST}` },
+    });
+    expect(whatsapp.sent[0]!.content!.text).toContain('votre demande de devis pour « Vitres »');
+    expect(inbox.inApp[0]!.title).toBe('Demande de devis reçue — Vitres');
+  });
+
+  it('groupe d’une seule prestation : le message d’une demande, avec sa prestation', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(
+      event('cleaning.quote_group.requested', {
+        groupId: GROUP,
+        customerId: CUSTOMER,
+        organizationId: null,
+        customerKind: 'individual',
+        visitRequired: false,
+        requests: [requests[1]!],
+      }),
+    );
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'cleaning.quote_requested.customer',
+      variables: {
+        visit_required: 'false',
+        service_name: 'Vitres',
+        link: `https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST_2}`,
+      },
+    });
+  });
+
+  it('visite commune : un message au client et un à l’agent, qui listent les prestations', async () => {
+    const { useCase, whatsapp, inbox } = setup([contact(CUSTOMER), contact(AGENT_1, { firstName: 'Awa' })]);
+    await useCase.execute(
+      event('cleaning.visit.scheduled', {
+        requestId: REQUEST,
+        visitId: '0192f1c4-0000-7000-8000-00000000v001',
+        customerId: CUSTOMER,
+        agentId: AGENT_1,
+        scheduledAt: '2026-10-29T08:30:00Z',
+        serviceCode: 'office',
+        serviceName: 'Nettoyage de bureaux',
+        groupId: GROUP,
+        groupVisitId: '0192f1c4-0000-7000-8000-00000000v100',
+        requestIds: [REQUEST, REQUEST_2],
+        requests: requests.slice(0, 2),
+      }),
+    );
+    expect(whatsapp.sent).toHaveLength(2);
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'cleaning.group_visit_scheduled.customer',
+      variables: { services: '« Nettoyage de bureaux » et « Vitres »', link: groupLink },
+    });
+    expect(whatsapp.sent[0]!.content!.text).toContain(
+      'La visite des lieux commune à vos demandes « Nettoyage de bureaux » et « Vitres » est prévue le',
+    );
+    expect(whatsapp.sent[1]).toMatchObject({
+      templateCode: 'cleaning.group_visit_scheduled.agent',
+      variables: { request_count: '2', services: '« Nettoyage de bureaux » et « Vitres »' },
+    });
+    expect(inbox.inApp.map((notification) => notification.link)).toEqual([groupLink, null]);
+  });
+
+  it('visite commune publiée avant l’ajout des prestations : messages d’avant, prestation de la première', async () => {
+    const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(AGENT_1)]);
+    await useCase.execute(
+      event('cleaning.visit.scheduled', {
+        requestId: REQUEST,
+        visitId: '0192f1c4-0000-7000-8000-00000000v001',
+        customerId: CUSTOMER,
+        agentId: AGENT_1,
+        scheduledAt: '2026-10-29T08:30:00Z',
+        serviceName: 'Nettoyage de bureaux',
+        groupId: GROUP,
+        groupVisitId: '0192f1c4-0000-7000-8000-00000000v100',
+        requestIds: [REQUEST, REQUEST_2],
+      }),
+    );
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.visit_scheduled.customer',
+      'cleaning.visit_scheduled.agent',
+    ]);
+    expect(whatsapp.sent[1]!.content!.text).toContain('Une visite technique pour « Nettoyage de bureaux »');
+  });
+
+  it('devis envoyés ensemble : un seul message, devis, total et validité ; les devis résumés n’envoient rien', async () => {
+    const { useCase, whatsapp, email, inbox } = setup([contact(CUSTOMER, { email: 'koffi@example.bj' })]);
+    await useCase.execute(
+      event('cleaning.quote_group.sent', {
+        groupId: GROUP,
+        customerId: CUSTOMER,
+        total: { amount: 195000, currency: 'XOF' },
+        validUntil: '2026-11-15T22:59:59Z',
+        quotes: [
+          {
+            requestId: REQUEST,
+            quoteId: '0192f1c4-0000-7000-8000-00000000q001',
+            serviceCode: 'office',
+            serviceName: 'Nettoyage de bureaux',
+            total: { amount: 150000, currency: 'XOF' },
+          },
+          {
+            requestId: REQUEST_2,
+            quoteId: '0192f1c4-0000-7000-8000-00000000q002',
+            serviceCode: 'windows',
+            serviceName: 'Vitres',
+            total: { amount: 45000, currency: 'XOF' },
+          },
+        ],
+      }),
+    );
+    expect(whatsapp.sent).toHaveLength(0);
+    expect(email.sent).toHaveLength(1);
+    expect(email.sent[0]).toMatchObject({
+      templateCode: 'cleaning.quote_group_sent.customer',
+      variables: {
+        quote_count: '2',
+        quotes: `« Nettoyage de bureaux » (150${NBSP}000${NBSP}FCFA) et « Vitres » (45${NBSP}000${NBSP}FCFA)`,
+        total: `195${NBSP}000${NBSP}FCFA`,
+        valid_until: '15 novembre 2026',
+        link: groupLink,
+      },
+    });
+    expect(email.sent[0]!.content!.text).toContain(`Total : 195${NBSP}000${NBSP}FCFA`);
+    expect(inbox.inApp).toEqual([
+      expect.objectContaining({ title: 'Vos devis de nettoyage', link: groupLink }),
+    ]);
+
+    const summarized = await setup().useCase.execute(
+      event('cleaning.quote.sent', {
+        ...(quoteSent.payload as KspEventPayloads['cleaning.quote.sent']),
+        groupId: GROUP,
+        summarizedByGroup: true,
+      } as KspEventPayloads['cleaning.quote.sent']),
+    );
+    expect(summarized).toMatchObject({ status: 'processed', accepted: 0, inApp: 0 });
+  });
+
+  it('devis d’une demande groupée envoyé seul : message de la demande, avec sa prestation', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(
+      event('cleaning.quote.sent', {
+        ...(quoteSent.payload as KspEventPayloads['cleaning.quote.sent']),
+        serviceCode: 'windows',
+        serviceName: 'Vitres',
+        groupId: GROUP,
+      } as KspEventPayloads['cleaning.quote.sent']),
+    );
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'cleaning.quote_sent.customer',
+      variables: { service_name: 'Vitres', link: `https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST}` },
+    });
+    expect(whatsapp.sent[0]!.content!.text).toContain(`Votre devis pour « Vitres » est prêt : 150${NBSP}000`);
+  });
+
+  it('ensuite, un message par demande avec sa prestation : réservation, planification, annulation', async () => {
+    const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(AGENT_1), contact(AGENT_2)]);
+    await useCase.execute({
+      ...missionScheduled,
+      payload: {
+        ...(missionScheduled.payload as KspEventPayloads['cleaning.mission.scheduled']),
+        serviceName: 'Vitres',
+        groupId: GROUP,
+      },
+    });
+    await useCase.execute({
+      ...event('cleaning.request.cancelled', {
+        requestId: REQUEST,
+        missionId: null,
+        customerId: CUSTOMER,
+        cancelledBy: 'customer',
+        outcome: 'cancelled',
+        serviceName: 'Vitres',
+      }),
+      eventId: '0192f1c4-aaaa-7000-8000-000000000009',
+    });
+    expect(whatsapp.sent.map((message) => message.content!.text.split('\n')[1])).toEqual([
+      expect.stringContaining('Votre intervention pour « Vitres » est planifiée le'),
+      expect.stringContaining('Une intervention pour « Vitres » vous est confiée le'),
+      expect.stringContaining('Une intervention pour « Vitres » vous est confiée le'),
+      'Votre annulation est bien enregistrée : votre demande « Vitres » est annulée.',
+    ]);
+  });
+});
+
 describe('NotifyEventUseCase — fiabilité', () => {
   it('un événement déjà traité n’envoie rien et ne relit pas identity', async () => {
     const { useCase, whatsapp, directory } = setup();

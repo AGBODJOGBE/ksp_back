@@ -235,6 +235,7 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
           organizationId: null,
           customerKind: 'individual',
           serviceCode: 'home_cleaning',
+          serviceName: 'Nettoyage à domicile',
           visitRequired: true,
         },
       },

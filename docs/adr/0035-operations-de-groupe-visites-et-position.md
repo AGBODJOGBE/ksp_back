@@ -1,6 +1,6 @@
 # ADR-035 — Demandes groupées au back-office, visites des agents et conservation de la position
 
-**Statut** : Proposé (lot 2 ; décisions 1 à 9 et 11 à 13 validées par le responsable le 2026-11-04 ; la décision 10, messages regroupés, est hors de ce lot)
+**Statut** : Proposé (lot 2 ; décisions 1 à 9 et 11 à 13 validées par le responsable le 2026-11-04 ; décision 14, messages regroupés (décision 10 de l'audit), validée dans son principe le 2026-11-05, détails à valider)
 
 ## Contexte
 
@@ -21,6 +21,7 @@ L'ADR-034 crée une demande de devis par prestation, liées par un groupe, et la
 11. **Position** : (a) un agent seul ne voit plus la position, le repère ni l'adresse géocodée d'une mission ou d'une visite terminée ou annulée (`null` ; l'adresse qui n'est que le repère est vidée) ; la supervision garde l'accès ; (b) purge périodique (`CLEANING_LOCATION_PURGE_INTERVAL_MS`, 6 h) des demandes et missions clôturées depuis plus de `locationRetentionMonths` mois (réglage back-office, 12 par défaut), par lots, idempotente ; (c) effacement de toutes les positions d'un client à `identity.user.deleted`.
 12. **Idempotence** : chaque opération de groupe est enregistrée (`request_group_operations`, clé (auteur, opération, clé), résultat gardé) dans la transaction de l'opération : `Idempotency-Key` obligatoire côté client, facultative au back-office ; une clé réutilisée pour un autre groupe : `CLEANING_IDEMPOTENCY_KEY_REUSED` (409).
 13. **Contrats par ajout** : 9 RPC (`QuoteService/CancelRequestGroup`, `AcceptGroupQuotes`, `CleaningAdminService/ScheduleGroupVisit`, `CompleteGroupVisit`, `RejectRequestGroup`, `SendGroupQuotes`, `CorrectRequestLocation`, `ListVisits`, `ScheduleGroupInterventions`), champs ajoutés (`SiteVisit.group_visit_id`, totaux du groupe, activité des zones, `DeactivateZoneRequest.confirm`, `Settings.location_retention_months`) ; OpenAPI : 9 routes, `completeCleaningVisit` ouverte à `cleaning_agent`, corps facultatif de la désactivation. Migrations `cleaning/0009` et `billing/0006`, additives.
+14. **Messages regroupés** : un message par groupe pour l'envoi groupé, la visite commune et l'envoi groupé des devis, qui cite les prestations (et, pour les devis, le montant de chacun, le total et la validité) avec un lien vers la page du groupe (`/mon-espace/nettoyage/demandes/groupes/{groupId}`) ; ensuite un message par demande, comme avant, qui cite sa prestation (`serviceName`, ancien libellé sans lui). Contrats par ajout : `cleaning.quote_group.requested` et `cleaning.quote_group.sent` (groupe, client, demandes `{requestId, serviceCode, serviceName}`, devis avec montant, total, validité), publiés dans la transaction de l'opération ; les événements par demande de ces opérations portent `summarizedByGroup: true` et notification ne les annonce pas ; `cleaning.visit.scheduled` (déjà unique pour une visite commune) liste ses demandes (`requests`) ; `cleaning.quote.requested` reçoit `serviceName`. Un événement sans ces champs (antérieur) garde le message par demande : aucun message perdu, chaque événement reste idempotent par son identifiant. Un groupe d'une seule prestation reçoit le message d'une demande.
 
 ## Alternatives écartées
 
@@ -32,7 +33,8 @@ L'ADR-034 crée une demande de devis par prestation, liées par un groupe, et la
 
 - `cleaning` : domaine `request-group.ts`, conflits par groupe (`conflictingAgents`), masquage et date limite (`location.ts`) ; cas d'usage dans `application/groups`, `places/location-correction`, `privacy` ; tâche `LocationPurgeService` ; abonnement à `identity.user.deleted`.
 - `gateway` : 9 routes, schémas zod, présentateurs. `billing` : colonne et libellé.
-- Déploiement : migrations, puis `cleaning`, puis `billing` et la `gateway`.
+- `notification` (point 14) : règles des deux événements de groupe et de la visite commune, modèles `cleaning.quote_group_requested.customer`, `cleaning.group_visit_scheduled.customer` et `.agent`, `cleaning.quote_group_sent.customer`, nom de prestation facultatif dans les messages d'une demande ; modèles WhatsApp `ksp_cleaning_quote_group_requested(_visit)`, `ksp_cleaning_group_visit_scheduled`, `ksp_cleaning_group_visit_assigned`, `ksp_cleaning_quote_group_sent` et variantes `_service` à faire approuver par Meta avant la production.
+- Déploiement : migrations, puis `cleaning`, puis `billing` et la `gateway`. Point 14 : `notification` avant `cleaning`, pour que les files des deux événements de groupe existent avant leur première publication (dans l'autre ordre, l'ancienne version de notification garde les messages par demande, sans perte).
 
 ## À valider
 
@@ -44,4 +46,5 @@ L'ADR-034 crée une demande de devis par prestation, liées par un groupe, et la
 - Liste des visites : nom du client seulement — cleaning ne reçoit pas le téléphone (ADR-029), comme les missions.
 - `remainingDue` à `null` pour une entreprise.
 - Purge : adresse vidée quand elle n'est que le repère ; demande au devis expiré purgée N mois après sa validité ; aucune trace d'audit par purge (nombres journalisés).
+- Messages regroupés : chemin du portail de la page du groupe (`/mon-espace/nettoyage/demandes/groupes/{groupId}`, page à créer) ; marqueur `summarizedByGroup` plutôt qu'un filtre sur `groupId` (un devis d'une demande groupée envoyé seul garde son message) ; visite commune : liste ajoutée à l'événement existant plutôt qu'un nouvel événement ; variantes WhatsApp `_service` plutôt que modifier les modèles existants.
 - `identity.user.deleted` est défini dans les contrats mais pas encore publié par identity : l'effacement à la suppression du compte ne fonctionnera qu'une fois l'événement publié.

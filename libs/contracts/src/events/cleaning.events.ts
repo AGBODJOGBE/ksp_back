@@ -15,6 +15,14 @@ export interface CleaningRecurrence {
   durationMonths: number;
 }
 
+/** Demande d'un groupe et sa prestation (ADR-035 point 14). */
+export interface CleaningGroupRequestRef {
+  requestId: string;
+  serviceCode: string;
+  /** Nom de la prestation au moment de l'événement ; absent si la prestation n'existe plus. */
+  serviceName?: string;
+}
+
 export interface CleaningEventPayloads {
   'cleaning.quote.requested': {
     requestId: string;
@@ -25,6 +33,13 @@ export interface CleaningEventPayloads {
     visitRequired: boolean;
     /** Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu. */
     groupId?: string;
+    /** Facultatif (ADR-035 point 14) : nom de la prestation. */
+    serviceName?: string;
+    /**
+     * Facultatif (ADR-035 point 14) : true quand cleaning.quote_group.requested résume l'envoi
+     * groupé dans la même transaction ; absent sinon.
+     */
+    summarizedByGroup?: boolean;
   };
   'cleaning.visit.scheduled': {
     requestId: string;
@@ -42,6 +57,8 @@ export interface CleaningEventPayloads {
      */
     groupVisitId?: string;
     requestIds?: string[];
+    /** Facultatif (ADR-035 point 14) : demandes de la visite commune avec leur prestation. */
+    requests?: CleaningGroupRequestRef[];
   };
   'cleaning.quote.sent': {
     requestId: string;
@@ -53,6 +70,28 @@ export interface CleaningEventPayloads {
     serviceCode?: string;
     serviceName?: string;
     groupId?: string;
+    /**
+     * Facultatif (ADR-035 point 14) : true quand cleaning.quote_group.sent résume l'envoi groupé
+     * des devis dans la même transaction ; absent sinon.
+     */
+    summarizedByGroup?: boolean;
+  };
+  /** Envoi groupé reçu (ADR-035 point 14) : un événement pour toutes les demandes créées ensemble. */
+  'cleaning.quote_group.requested': {
+    groupId: string;
+    customerId: string;
+    organizationId: string | null;
+    customerKind: 'individual' | 'business';
+    visitRequired: boolean;
+    requests: CleaningGroupRequestRef[];
+  };
+  /** Devis d'un groupe envoyés ensemble (ADR-035 point 14) : total et validité communs. */
+  'cleaning.quote_group.sent': {
+    groupId: string;
+    customerId: string;
+    total: CleaningMoney;
+    validUntil: string;
+    quotes: (CleaningGroupRequestRef & { quoteId: string; total: CleaningMoney })[];
   };
   'cleaning.booking.confirmed': {
     requestId: string;

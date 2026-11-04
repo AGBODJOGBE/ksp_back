@@ -41,6 +41,26 @@
       "uniqueItems": true,
       "items": { "type": "string", "format": "uuid" },
       "description": "Facultatif (ADR-035) : demandes concernées par la visite commune, requestId compris"
+    },
+    "requests": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "description": "Facultatif (ADR-035 point 14) : demandes de la visite commune avec leur prestation, dans l'ordre de requestIds",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serviceCode"],
+        "properties": {
+          "requestId": { "type": "string", "format": "uuid" },
+          "serviceCode": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "serviceName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Nom de la prestation au moment de l'événement ; absent si la prestation n'existe plus"
+          }
+        }
+      }
     }
   }
 }

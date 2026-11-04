@@ -207,6 +207,19 @@ describe('demandes groupées : refus, annulation, visite commune (ADR-035)', () 
       groupId,
       groupVisitId: outcome.groupVisitId,
       requestIds: [home, garden],
+      // Prestations citées dans le message de la visite commune (ADR-035 point 14).
+      requests: [
+        {
+          requestId: home,
+          serviceCode: 'home_cleaning',
+          serviceName: w.catalog.services.get('home_cleaning')!.name,
+        },
+        {
+          requestId: garden,
+          serviceCode: 'garden_maintenance',
+          serviceName: w.catalog.services.get('garden_maintenance')!.name,
+        },
+      ],
     });
 
     // Replanification en excluant le jardin : il garde sa visite, qui devient la sienne.
@@ -434,8 +447,37 @@ describe('devis, acceptation et planification communs ; totaux (ADR-035)', () =>
     });
     const sent = await sendQuotes();
     expect(sent.affectedIds).toEqual([home, garden]);
-    expect(w.recorder.events.filter((e) => e.type === 'cleaning.quote.sent')).toHaveLength(2);
+    const quoteEvents = w.recorder.events.filter((e) => e.type === 'cleaning.quote.sent');
+    expect(quoteEvents).toHaveLength(2);
+    expect(quoteEvents.map((e) => e.payload)).toEqual([
+      expect.objectContaining({ requestId: home, groupId, summarizedByGroup: true }),
+      expect.objectContaining({ requestId: garden, groupId, summarizedByGroup: true }),
+    ]);
     const homeTotal = w.requests.requests.get(home)!.quote!.total;
+    // Un seul message au client pour l'envoi groupé (ADR-035 point 14) : devis, total et validité.
+    const groupEvents = w.recorder.events.filter((e) => e.type === 'cleaning.quote_group.sent');
+    expect(groupEvents.map((e) => e.payload)).toEqual([
+      {
+        groupId,
+        customerId: CUSTOMER_ID,
+        total: { amount: homeTotal + 20_000, currency: 'XOF' },
+        validUntil: w.requests.requests.get(home)!.quote!.validUntil.toISOString(),
+        quotes: [
+          expect.objectContaining({
+            requestId: home,
+            quoteId: w.requests.requests.get(home)!.quote!.id,
+            serviceCode: 'home_cleaning',
+            serviceName: w.catalog.services.get('home_cleaning')!.name,
+            total: { amount: homeTotal, currency: 'XOF' },
+          }),
+          expect.objectContaining({
+            requestId: garden,
+            serviceCode: 'garden_maintenance',
+            total: { amount: 20_000, currency: 'XOF' },
+          }),
+        ],
+      },
+    ]);
     expect(w.requests.requests.get(garden)!.quote!.total).toBe(20_000);
     expect((await new GroupTotalsUseCase(w).execute(await view())).quotesTotal).toBe(homeTotal + 20_000);
 

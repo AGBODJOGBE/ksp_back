@@ -10,6 +10,10 @@ import { formatXof } from './format';
  * - short : message court transactionnel → WhatsApp, e-mail en bascule ;
  * - document : devis, compte rendu → e-mail si l'adresse existe, WhatsApp sinon ou en bascule ;
  * - important : avertissement et suspension pour impayés → WhatsApp et e-mail.
+ *
+ * Prestation (ADR-035 point 14) : les messages d'une demande citent sa prestation quand l'événement
+ * en donne le nom (`service_name`, facultatif) ; sans lui, l'ancien libellé. Un envoi groupé, une
+ * visite commune et un envoi groupé de devis ont chacun un seul message, qui liste les prestations.
  */
 
 const FIRST_NAME = /^[^\n]{0,100}$/;
@@ -19,6 +23,29 @@ const COUNT = /^[1-9][0-9]{0,4}$/;
 const AMOUNT = /^[0-9\u00a0]{1,20}\u00a0FCFA$/;
 const COUNT_OR_ZERO = /^(0|[1-9][0-9]{0,4})$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SERVICE_NAME = /^[^\n]{1,150}$/;
+/** Liste des prestations d'un groupe (10 au plus), sur une ligne. */
+const LIST = /^[^\n]{1,1000}$/;
+/** Nom de la prestation, facultatif (absent des événements antérieurs à son ajout). */
+const WITH_SERVICE = { service_name: SERVICE_NAME } as const;
+
+/** Nom de la prestation entre guillemets, ou null sans nom. */
+function service(variables: Readonly<Record<string, string>>): string | null {
+  const name = variables['service_name']?.trim();
+  return name ? `« ${name} »` : null;
+}
+
+/** Objet suivi du nom de la prestation quand il est connu. */
+function titled(subject: string, variables: Readonly<Record<string, string>>): string {
+  const name = variables['service_name']?.trim();
+  return name ? `${subject} — ${name}` : subject;
+}
+
+/** « pour « Vitres » », ou le libellé d'avant sans nom de prestation. */
+function forService(variables: Readonly<Record<string, string>>, fallback: string): string {
+  const name = service(variables);
+  return name ? `pour ${name}` : fallback;
+}
 
 function greeting(variables: Readonly<Record<string, string>>): string {
   const name = variables['first_name']?.trim();
@@ -46,16 +73,21 @@ const CANCELLATION_SUBJECTS: Readonly<Record<string, string>> = {
 };
 
 function cancellationText(variables: Readonly<Record<string, string>>): string {
-  const what = variables['scope'] === 'mission' ? 'votre prestation' : 'votre demande';
+  const name = service(variables);
+  const scope = variables['scope'] === 'mission' ? 'votre prestation' : 'votre demande';
+  const what = `${scope} ${name ?? 'de nettoyage'}`;
   switch (variables['case']) {
     case 'cancelled_by_customer':
-      return `Votre annulation est bien enregistrée : ${what} de nettoyage est annulée.`;
+      return `Votre annulation est bien enregistrée : ${what} est annulée.`;
     case 'cancelled_by_supervisor':
-      return `KSP a dû annuler ${what} de nettoyage. Pour toute question, contactez le service client KSP.`;
+      return `KSP a dû annuler ${what}. Pour toute question, contactez le service client KSP.`;
     case 'rejected':
-      return 'Nous ne sommes malheureusement pas en mesure de donner suite à votre demande de nettoyage.';
+      return `Nous ne sommes malheureusement pas en mesure de donner suite à votre demande ${name ?? 'de nettoyage'}.`;
     default:
-      return 'Nous avons bien noté votre refus du devis. Vous pouvez faire une nouvelle demande à tout moment.';
+      return (
+        `Nous avons bien noté votre refus du devis${name ? ` pour ${name}` : ''}. ` +
+        'Vous pouvez faire une nouvelle demande à tout moment.'
+      );
   }
 }
 
@@ -134,8 +166,17 @@ function template(
   kind: EventTemplateDefinition['kind'],
   variables: Readonly<Record<string, RegExp>>,
   render: (variables: Readonly<Record<string, string>>) => RenderedMessage,
+  optionalVariables?: Readonly<Record<string, RegExp>>,
 ): EventTemplateDefinition {
-  return { code, channels: ['whatsapp', 'email'], secret: false, kind, variables, render };
+  return {
+    code,
+    channels: ['whatsapp', 'email'],
+    secret: false,
+    kind,
+    variables,
+    render,
+    ...(optionalVariables ? { optionalVariables } : {}),
+  };
 }
 
 export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
@@ -144,14 +185,38 @@ export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
     'short',
     { first_name: FIRST_NAME, visit_required: /^(true|false)$/, link: LINK },
     (v) => ({
-      subject: 'Demande de devis reçue',
+      subject: titled('Demande de devis reçue', v),
       text: lines(
         greeting(v),
-        'Nous avons bien reçu votre demande de devis de nettoyage. ' +
+        `Nous avons bien reçu votre demande de devis ${forService(v, 'de nettoyage')}. ` +
           (v['visit_required'] === 'true'
             ? "Un superviseur vous contactera pour convenir d'une visite des lieux avant d'établir le devis."
             : "Un superviseur l'étudie et vous enverra votre devis."),
         `Suivez-la dans Mon espace KSP : ${v['link']}`,
+      ),
+    }),
+    WITH_SERVICE,
+  ),
+  // Envoi groupé (ADR-035 point 14) : un message pour toutes les demandes créées ensemble.
+  template(
+    'cleaning.quote_group_requested.customer',
+    'short',
+    {
+      first_name: FIRST_NAME,
+      visit_required: /^(true|false)$/,
+      request_count: COUNT,
+      services: LIST,
+      link: LINK,
+    },
+    (v) => ({
+      subject: 'Demandes de devis reçues',
+      text: lines(
+        greeting(v),
+        `Nous avons bien reçu vos ${v['request_count']} demandes de devis pour un même lieu : ${v['services']}. ` +
+          (v['visit_required'] === 'true'
+            ? "Un superviseur vous contactera pour convenir d'une visite des lieux commune avant d'établir vos devis."
+            : 'Un superviseur les étudie et vous enverra vos devis.'),
+        `Suivez-les dans Mon espace KSP : ${v['link']}`,
       ),
     }),
   ),
@@ -160,33 +225,92 @@ export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
     'short',
     { first_name: FIRST_NAME, date: TEXT, link: LINK },
     (v) => ({
-      subject: 'Visite des lieux planifiée',
+      subject: titled('Visite des lieux planifiée', v),
       text: lines(
         greeting(v),
-        `La visite des lieux pour votre demande de nettoyage est prévue le ${v['date']}. ` +
+        `La visite des lieux pour votre demande ${service(v) ?? 'de nettoyage'} est prévue le ${v['date']}. ` +
           "Un agent KSP se présentera à l'adresse indiquée dans votre demande.",
         `Détails : ${v['link']}`,
       ),
     }),
+    WITH_SERVICE,
   ),
-  template('cleaning.visit_scheduled.agent', 'short', { first_name: FIRST_NAME, date: TEXT }, (v) => ({
-    subject: 'Nouvelle visite technique',
-    text: lines(
-      greeting(v),
-      `Une visite technique vous est confiée le ${v['date']}. ` +
-        "Retrouvez l'adresse et les détails dans votre espace KSP.",
-    ),
-  })),
+  template(
+    'cleaning.visit_scheduled.agent',
+    'short',
+    { first_name: FIRST_NAME, date: TEXT },
+    (v) => ({
+      subject: titled('Nouvelle visite technique', v),
+      text: lines(
+        greeting(v),
+        `Une visite technique${service(v) ? ` pour ${service(v)}` : ''} vous est confiée le ${v['date']}. ` +
+          "Retrouvez l'adresse et les détails dans votre espace KSP.",
+      ),
+    }),
+    WITH_SERVICE,
+  ),
+  // Visite commune à plusieurs demandes d'un groupe (ADR-035 points 2 et 14) : un message.
+  template(
+    'cleaning.group_visit_scheduled.customer',
+    'short',
+    { first_name: FIRST_NAME, date: TEXT, services: LIST, link: LINK },
+    (v) => ({
+      subject: 'Visite des lieux planifiée',
+      text: lines(
+        greeting(v),
+        `La visite des lieux commune à vos demandes ${v['services']} est prévue le ${v['date']}. ` +
+          "Un agent KSP se présentera à l'adresse indiquée dans vos demandes.",
+        `Détails : ${v['link']}`,
+      ),
+    }),
+  ),
+  template(
+    'cleaning.group_visit_scheduled.agent',
+    'short',
+    { first_name: FIRST_NAME, date: TEXT, request_count: COUNT, services: LIST },
+    (v) => ({
+      subject: 'Nouvelle visite technique commune',
+      text: lines(
+        greeting(v),
+        `Une visite technique commune à ${v['request_count']} demandes (${v['services']}) vous est confiée ` +
+          `le ${v['date']}. Retrouvez l'adresse et les détails dans votre espace KSP.`,
+      ),
+    }),
+  ),
   template(
     'cleaning.quote_sent.customer',
     'document',
     { first_name: FIRST_NAME, total: AMOUNT, valid_until: TEXT, link: LINK },
     (v) => ({
-      subject: 'Votre devis de nettoyage',
+      subject: titled('Votre devis de nettoyage', v),
       text: lines(
         greeting(v),
-        `Votre devis de nettoyage est prêt : ${v['total']}, valable jusqu'au ${v['valid_until']}.`,
+        `Votre devis ${forService(v, 'de nettoyage')} est prêt : ${v['total']}, ` +
+          `valable jusqu'au ${v['valid_until']}.`,
         `Consultez-le, puis acceptez-le ou refusez-le dans Mon espace KSP : ${v['link']}`,
+      ),
+    }),
+    WITH_SERVICE,
+  ),
+  // Devis d'un groupe envoyés ensemble (ADR-035 points 4 et 14) : un message, total et validité.
+  template(
+    'cleaning.quote_group_sent.customer',
+    'document',
+    {
+      first_name: FIRST_NAME,
+      quote_count: COUNT,
+      quotes: LIST,
+      total: AMOUNT,
+      valid_until: TEXT,
+      link: LINK,
+    },
+    (v) => ({
+      subject: 'Vos devis de nettoyage',
+      text: lines(
+        greeting(v),
+        `Vos ${v['quote_count']} devis de nettoyage sont prêts : ${v['quotes']}. ` +
+          `Total : ${v['total']}, valables jusqu'au ${v['valid_until']}.`,
+        `Consultez-les, puis acceptez-les ou refusez-les dans Mon espace KSP : ${v['link']}`,
       ),
     }),
   ),
@@ -201,41 +325,45 @@ export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
       link: LINK,
     },
     (v) => ({
-      subject: 'Réservation de nettoyage confirmée',
+      subject: titled('Réservation de nettoyage confirmée', v),
       text: lines(
         greeting(v),
-        `Merci, votre réservation est confirmée : ${passages(v['planned_interventions'])} pour ${v['total']}.`,
+        `Merci, votre réservation${service(v) ? ` pour ${service(v)}` : ''} est confirmée : ` +
+          `${passages(v['planned_interventions'])} pour ${v['total']}.`,
         v['payment_note'],
         `Nous vous préviendrons dès que la date d'intervention sera fixée. Suivi : ${v['link']}`,
       ),
     }),
+    WITH_SERVICE,
   ),
   template(
     'cleaning.mission_scheduled.customer',
     'short',
     { first_name: FIRST_NAME, date: TEXT, duration: TEXT, link: LINK },
     (v) => ({
-      subject: 'Intervention de nettoyage planifiée',
+      subject: titled('Intervention de nettoyage planifiée', v),
       text: lines(
         greeting(v),
-        `Votre intervention de nettoyage est planifiée le ${v['date']} (durée prévue : ${v['duration']}). ` +
-          "Notre équipe se présentera à l'adresse convenue.",
+        `Votre intervention ${forService(v, 'de nettoyage')} est planifiée le ${v['date']} ` +
+          `(durée prévue : ${v['duration']}). Notre équipe se présentera à l'adresse convenue.`,
         `Suivi : ${v['link']}`,
       ),
     }),
+    WITH_SERVICE,
   ),
   template(
     'cleaning.mission_scheduled.agent',
     'short',
     { first_name: FIRST_NAME, date: TEXT, duration: TEXT },
     (v) => ({
-      subject: 'Nouvelle intervention de nettoyage',
+      subject: titled('Nouvelle intervention de nettoyage', v),
       text: lines(
         greeting(v),
-        `Une intervention de nettoyage vous est confiée le ${v['date']} (durée prévue : ${v['duration']}). ` +
-          'Retrouvez les détails dans votre espace KSP.',
+        `Une intervention ${forService(v, 'de nettoyage')} vous est confiée le ${v['date']} ` +
+          `(durée prévue : ${v['duration']}). Retrouvez les détails dans votre espace KSP.`,
       ),
     }),
+    WITH_SERVICE,
   ),
   template(
     'cleaning.mission_completed.customer',
@@ -262,9 +390,10 @@ export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
       link: LINK,
     },
     (v) => ({
-      subject: CANCELLATION_SUBJECTS[v['case']] ?? 'Demande de nettoyage',
+      subject: titled(CANCELLATION_SUBJECTS[v['case']] ?? 'Demande de nettoyage', v),
       text: lines(greeting(v), cancellationText(v), `Détails : ${v['link']}`),
     }),
+    WITH_SERVICE,
   ),
   // Impayés, suspension et reprise (cahier des charges Nettoyage, partie 10).
   template(
@@ -420,6 +549,18 @@ export function paymentNote(plan: {
       : `totalité (${formatXof(plan.total)})`;
   const when = plan.timing === 'before' ? "avant l'intervention" : "après l'intervention";
   return `Paiement choisi : ${what}, ${when}, ${PAYMENT_METHODS[plan.method] ?? 'selon le moyen convenu'}.`;
+}
+
+/** Prestation citée dans une liste : son nom entre guillemets, ou un libellé neutre sans nom. */
+export function quotedService(name: string | undefined): string {
+  const trimmed = name?.trim();
+  return trimmed ? `« ${trimmed} »` : 'une prestation de nettoyage';
+}
+
+/** « A », « A et B », « A, B et C ». */
+export function enumeration(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} et ${items[items.length - 1]}`;
 }
 
 /** « 2 factures impayées » (entreprise) ou « 1 passage impayé » (particulier en récurrent). */

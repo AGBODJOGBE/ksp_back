@@ -18,7 +18,7 @@ const envelope = {
 describe('EventNotificationsConsumer', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('s’abonne aux 12 événements du Nettoyage, aux 3 de la facturation, aux 5 des comptes entreprise et au paiement en ligne (files notification.<événement>)', async () => {
+  it('s’abonne aux 14 événements du Nettoyage, aux 3 de la facturation, aux 5 des comptes entreprise et au paiement en ligne (files notification.<événement>)', async () => {
     const subscribed: string[] = [];
     const consumer = {
       subscribe: async (type: string) => void subscribed.push(type),
@@ -37,6 +37,8 @@ describe('EventNotificationsConsumer', () => {
       'cleaning.mission.scheduled',
       'cleaning.quote.requested',
       'cleaning.quote.sent',
+      'cleaning.quote_group.requested',
+      'cleaning.quote_group.sent',
       'cleaning.request.cancelled',
       'cleaning.rescheduling.failed',
       'cleaning.visit.scheduled',
