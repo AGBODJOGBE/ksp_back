@@ -42,6 +42,8 @@ export interface PaymentFilter {
   customerId?: string;
   /** null : paiements sans organisation (contexte personnel). */
   organizationId?: string | null;
+  /** true : écarts de montant pas encore traités par la finance ; false : tous les autres. */
+  underReview?: boolean;
 }
 
 export interface PaymentRepository {
@@ -66,6 +68,11 @@ export interface PaymentRepository {
    * leur réussite.
    */
   listSucceeded(input: { subjectType: SubjectType; subjectId: string }): Promise<SucceededPayment[]>;
+  /**
+   * Identifiants des paiements `amount_mismatch` d'un objet que la finance n'a pas encore traités,
+   * quel que soit le payeur ou la part (ADR-032).
+   */
+  listUnresolvedMismatches(input: { subjectType: SubjectType; subjectId: string }): Promise<string[]>;
   /**
    * Enregistre le paiement si sa version n'a pas changé depuis la lecture, avec ses événements
    * (outbox) dans la même transaction ; sinon false.
@@ -231,6 +238,11 @@ export interface PaymentAlerts {
     paymentIds: string[];
     since: Date;
   }): void;
+  /**
+   * Nouveau paiement refusé parce qu'un paiement de l'objet est en écart de montant, pas encore
+   * traité par la finance (ADR-032) : à chaque refus.
+   */
+  paymentUnderReview(input: { subjectType: string; subjectId: string; paymentIds: string[] }): void;
 }
 
 /**

@@ -1,6 +1,11 @@
 import { type RoleClaim, runWithContext } from '@ksp/platform';
 import { type InvoiceDue, type MissionDue } from '../../domain/amount-due';
-import { LATE_SUCCESS_STATUSES, type PaymentIntent, type ProviderName } from '../../domain/payment-intent';
+import {
+  isUnderReview,
+  LATE_SUCCESS_STATUSES,
+  type PaymentIntent,
+  type ProviderName,
+} from '../../domain/payment-intent';
 import {
   type AmountDueDirectory,
   type Checkout,
@@ -103,6 +108,14 @@ export class InMemoryPayments implements PaymentRepository {
       )
       .map((r) => ({ id: r.id, succeededAt: r.completedAt ?? r.updatedAt }));
   }
+  async listUnresolvedMismatches(input: { subjectType: string; subjectId: string }) {
+    return [...this.rows.values()]
+      .filter(
+        (r) => r.subject.type === input.subjectType && r.subject.id === input.subjectId && isUnderReview(r),
+      )
+      .map((r) => r.id)
+      .sort();
+  }
   async save(intent: PaymentIntent, events: OutboxMessage[]) {
     const current = this.rows.get(intent.id);
     if (!current || current.version !== intent.version) return false;
@@ -118,7 +131,8 @@ export class InMemoryPayments implements PaymentRepository {
           (!filter.subjectType || r.subject.type === filter.subjectType) &&
           (!filter.subjectId || r.subject.id === filter.subjectId) &&
           (!filter.customerId || r.customerId === filter.customerId) &&
-          (filter.organizationId === undefined || r.organizationId === filter.organizationId),
+          (filter.organizationId === undefined || r.organizationId === filter.organizationId) &&
+          (filter.underReview === undefined || isUnderReview(r) === filter.underReview),
       )
       .sort((a, b) => b.id.localeCompare(a.id))
       .filter((r) => !page.cursor || r.id < page.cursor);
@@ -262,6 +276,7 @@ export class RecordingAlerts implements PaymentAlerts {
   readonly amountMismatches: Parameters<PaymentAlerts['amountMismatch']>[0][] = [];
   readonly transactionMismatches: Parameters<PaymentAlerts['transactionMismatch']>[0][] = [];
   readonly unrecordedPayments: Parameters<PaymentAlerts['unrecordedPayment']>[0][] = [];
+  readonly underReview: Parameters<PaymentAlerts['paymentUnderReview']>[0][] = [];
   amountMismatch(input: Parameters<PaymentAlerts['amountMismatch']>[0]): void {
     this.amountMismatches.push(input);
   }
@@ -270,6 +285,9 @@ export class RecordingAlerts implements PaymentAlerts {
   }
   unrecordedPayment(input: Parameters<PaymentAlerts['unrecordedPayment']>[0]): void {
     this.unrecordedPayments.push(input);
+  }
+  paymentUnderReview(input: Parameters<PaymentAlerts['paymentUnderReview']>[0]): void {
+    this.underReview.push(input);
   }
 }
 

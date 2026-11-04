@@ -12,6 +12,10 @@ type Query = Record<string, unknown>;
 
 const statusFrom = (query: Query) => parseParam(paymentParams.status, query['status'], 'status');
 const optionalId = (query: Query, name: string) => parseParam(paymentParams.optionalId, query[name], name);
+const underReviewFrom = (query: Query) => {
+  const value = parseParam(paymentParams.underReview, query['underReview'], 'underReview');
+  return value === undefined ? undefined : value === 'true';
+};
 
 /**
  * Routes /api/v1/payment/* (paiement en ligne par Mobile Money, ADR-031) et
@@ -81,7 +85,20 @@ export class PaymentHttpController {
       subjectId: optionalId(query, 'subjectId'),
       customerId: optionalId(query, 'customerId'),
       organizationId: optionalId(query, 'organizationId'),
+      underReview: underReviewFrom(query),
     };
     return this.payments.listPayments(pageFrom(query), filters);
+  }
+
+  /** La finance a traité un écart de montant : les nouveaux paiements de l'objet ne sont plus bloqués. */
+  @Route('resolvePaymentMismatch')
+  resolveMismatch(@Param('id') id: unknown, @Body() body: unknown, @Headers('idempotency-key') key: unknown) {
+    const paymentId = idFrom(id);
+    // Facultative, comme pour l'encaissement manuel d'une facture.
+    const idempotencyKey = parseParam(paymentParams.optionalIdempotencyKey, key, 'Idempotency-Key');
+    return this.payments.resolveAmountMismatch(paymentId, {
+      ...parseBody(requestBodies.resolvePaymentMismatch, body),
+      idempotencyKey,
+    });
   }
 }

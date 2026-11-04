@@ -5,6 +5,7 @@ import { Logger } from '@nestjs/common';
 import { type Observable } from 'rxjs';
 import { type Json, type Page } from '../../application/cleaning/cleaning.ports';
 import {
+  type MismatchResolutionInput,
   type PaymentApi,
   type PaymentFilters,
   type PaymentInput,
@@ -34,8 +35,10 @@ const PROVIDER_DEADLINES_MS = {
 const page = (value: Page): paymentV1.Page => ({ limit: value.limit ?? 0, cursor: value.cursor ?? '' });
 
 /**
- * Traduction d'un paiement ksp.payment.v1 vers le JSON du contrat OpenAPI. Back-office : nom du
- * payeur et de son organisation (ADR-029), null s'ils sont inconnus ou si identity n'a pas répondu.
+ * Traduction d'un paiement ksp.payment.v1 vers le JSON du contrat OpenAPI. `underReview` partout
+ * (écart de montant à traiter, ADR-032). Back-office : nom du payeur et de son organisation
+ * (ADR-029), null s'ils sont inconnus ou si identity n'a pas répondu, et traitement de l'écart par la
+ * finance (null tant qu'il n'est pas traité).
  */
 export function presentPayment(value: paymentV1.Payment | undefined, backoffice = false) {
   if (!value?.subject) throw malformed('paiement');
@@ -60,8 +63,15 @@ export function presentPayment(value: paymentV1.Payment | undefined, backoffice 
     updatedAt: value.updatedAt,
     expiresAt: value.expiresAt,
     completedAt: orNull(value.completedAt),
+    underReview: value.underReview,
     ...(backoffice
-      ? { customerName: orNull(value.customerName), organizationName: orNull(value.organizationName) }
+      ? {
+          customerName: orNull(value.customerName),
+          organizationName: orNull(value.organizationName),
+          mismatchResolvedAt: orNull(value.mismatchResolvedAt),
+          mismatchResolvedBy: orNull(value.mismatchResolvedBy),
+          mismatchResolutionNote: orNull(value.mismatchResolutionNote),
+        }
       : {}),
   };
 }
@@ -144,12 +154,23 @@ export class PaymentGrpcAdapter implements PaymentApi {
             subjectId: filters.subjectId ?? '',
             customerId: filters.customerId ?? '',
             organizationId: filters.organizationId ?? '',
+            underReview: filters.underReview,
           },
           m,
         ),
       ),
       true,
     );
+  }
+
+  async resolveAmountMismatch(id: string, input: MismatchResolutionInput): Promise<Json> {
+    const res = await this.write('resolveAmountMismatch', (m) =>
+      this.clients.admin.resolveAmountMismatch(
+        { paymentId: id, note: input.note, idempotencyKey: input.idempotencyKey ?? '' },
+        m,
+      ),
+    );
+    return presentPayment(res.payment, true);
   }
 
   // --- Appels -----------------------------------------------------------------------------------

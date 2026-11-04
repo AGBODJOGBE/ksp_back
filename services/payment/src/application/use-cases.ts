@@ -5,6 +5,7 @@ import {
   ListPaymentsUseCase,
   ReceiveProviderNotificationUseCase,
   ReconcilePendingPaymentsUseCase,
+  ResolveAmountMismatchUseCase,
   SimulatePaymentUseCase,
 } from './payments.use-cases';
 import { type PaymentDeps } from './ports';
@@ -16,6 +17,7 @@ export function createUseCases(deps: PaymentDeps) {
     getMyPayment: new GetMyPaymentUseCase(deps),
     listMyPayments: new ListMyPaymentsUseCase(deps),
     listPayments: new ListPaymentsUseCase(deps),
+    resolveAmountMismatch: new ResolveAmountMismatchUseCase(deps),
     receiveProviderNotification: new ReceiveProviderNotificationUseCase(deps),
     simulatePayment: new SimulatePaymentUseCase(deps),
     reconcilePendingPayments: new ReconcilePendingPaymentsUseCase(deps),

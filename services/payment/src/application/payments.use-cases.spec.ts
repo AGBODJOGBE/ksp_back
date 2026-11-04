@@ -19,6 +19,7 @@ import {
   ORGANIZATION_ID,
   OTHER_CUSTOMER_ID,
   type RecordingAlerts,
+  STAFF_ID,
 } from './testing/fakes';
 import { createUseCases } from './use-cases';
 
@@ -642,6 +643,171 @@ describe('paiement en ligne (cas d’usage)', () => {
       const degraded = await asStaff(() => useCases.listPayments.execute(all));
       expect(degraded.items).toHaveLength(2);
       expect(degraded.names.users.size + degraded.names.organizations.size).toBe(0);
+    });
+  });
+
+  describe('écart de montant non traité (ADR-032)', () => {
+    const NOTE = 'Remboursé au client par FedaPay le 05/11.';
+    const payInvoice = (key: string, userId = CUSTOMER_ID) =>
+      asCustomer(
+        () =>
+          useCases.createPayment.execute({
+            subjectType: 'billing_invoice',
+            subjectId: INVOICE_ID,
+            part: '',
+            idempotencyKey: key,
+          }),
+        userId,
+        ORGANIZATION_ID,
+      );
+    /** Paiement dont le prestataire a approuvé un autre montant (statut amount_mismatch). */
+    const mismatched = async (create: () => Promise<{ payment: PaymentIntent }>) => {
+      const { payment } = await create();
+      provider().set(payment.providerTransactionId!, { status: 'approved', amount: 100 });
+      expect(await notify(payment.providerTransactionId!)).toBe('amount_mismatch');
+      return payment;
+    };
+    const resolve = (
+      paymentId: string,
+      note = NOTE,
+      idempotencyKey = 'res-key-0001',
+      role = 'finance_officer',
+    ) => asStaff(() => useCases.resolveAmountMismatch.execute({ paymentId, note, idempotencyKey }), role);
+
+    it('mission : tout nouveau paiement refusé, toutes parts confondues, avec une alerte à chaque refus', async () => {
+      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const deposit = await rejection(createMission('deposit', 'pay-key-0002'));
+      expect(deposit.code).toBe('PAYMENT_UNDER_REVIEW');
+      expect(deposit.message).toBe('Un paiement est en cours de vérification ; contactez le support KSP.');
+      expect((await rejection(createMission('balance', 'pay-key-0003'))).code).toBe('PAYMENT_UNDER_REVIEW');
+      // Des jours plus tard, toujours refusé : seule la finance lève le blocage.
+      clock().advance(3 * 24 * 3_600_000);
+      expect((await rejection(createMission('balance', 'pay-key-0004'))).code).toBe('PAYMENT_UNDER_REVIEW');
+      const alert = { subjectType: 'cleaning_mission', subjectId: MISSION_ID, paymentIds: [first.id] };
+      expect(alerts().underReview).toEqual([alert, alert, alert]);
+      expect(provider().checkouts).toHaveLength(1);
+      expect(payments().rows.size).toBe(1);
+    });
+
+    it('facture : refus quel que soit le payeur (autre membre de l’organisation)', async () => {
+      const first = await mismatched(() => payInvoice('pay-key-0001'));
+      expect((await rejection(payInvoice('pay-key-0002', OTHER_CUSTOMER_ID))).code).toBe(
+        'PAYMENT_UNDER_REVIEW',
+      );
+      expect(alerts().underReview).toEqual([
+        { subjectType: 'billing_invoice', subjectId: INVOICE_ID, paymentIds: [first.id] },
+      ]);
+    });
+
+    it('rejeu de la même clé : toujours le même paiement, avant le contrôle', async () => {
+      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const replay = await createMission('deposit', 'pay-key-0001');
+      expect(replay).toMatchObject({ created: false, payment: { id: first.id, status: 'amount_mismatch' } });
+      expect(alerts().underReview).toEqual([]);
+    });
+
+    it('traité par la finance : statut conservé, traitement enregistré, blocage levé', async () => {
+      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      clock().advance(60 * 60_000);
+      const resolvedAt = clock().now();
+      const treated = await resolve(first.id, `  ${NOTE}  `);
+      expect(treated).toMatchObject({
+        id: first.id,
+        status: 'amount_mismatch',
+        mismatchResolution: { resolvedAt, resolvedBy: STAFF_ID, note: NOTE, idempotencyKey: 'res-key-0001' },
+      });
+      expect(await payments().findById(first.id)).toEqual(treated);
+      // Aucun événement : cleaning et billing n'enregistrent rien pour un écart.
+      expect(payments().outbox).toEqual([]);
+      const next = await createMission('deposit', 'pay-key-0002');
+      expect(next).toMatchObject({ created: true, payment: { status: 'pending', amount: 15000 } });
+      expect(alerts().underReview).toEqual([]);
+    });
+
+    it('un second écart non traité bloque encore, même si le premier l’est', async () => {
+      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      await resolve(first.id);
+      const second = await mismatched(() => createMission('deposit', 'pay-key-0002'));
+      expect((await rejection(createMission('balance', 'pay-key-0003'))).code).toBe('PAYMENT_UNDER_REVIEW');
+      expect(alerts().underReview.at(-1)?.paymentIds).toEqual([second.id]);
+    });
+
+    it('rejouable sans effet (même clé, ou même compte et même note) ; second traitement différent refusé', async () => {
+      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const treated = await resolve(first.id);
+      clock().advance(60_000);
+      expect(await resolve(first.id, 'Autre note')).toEqual(treated);
+      expect(await resolve(first.id, NOTE, '')).toEqual(treated);
+      expect((await rejection(resolve(first.id, 'Autre note', ''))).code).toBe(
+        'PAYMENT_MISMATCH_ALREADY_RESOLVED',
+      );
+      expect((await rejection(resolve(first.id, 'Encaissement manuel.', 'res-key-0002'))).code).toBe(
+        'PAYMENT_MISMATCH_ALREADY_RESOLVED',
+      );
+      expect(await payments().findById(first.id)).toEqual(treated);
+    });
+
+    it('deux envois simultanés : un seul traitement, l’autre rejoué', async () => {
+      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const [a, b] = await Promise.all([resolve(first.id), resolve(first.id)]);
+      expect(a).toEqual(b);
+      expect((await payments().findById(first.id))!.version).toBe(a.version);
+    });
+
+    it('refusé pour un paiement qui n’est pas en écart, inconnu, ou une note invalide', async () => {
+      const { payment } = await createMission('deposit', 'pay-key-0001');
+      expect((await rejection(resolve(payment.id))).code).toBe('PAYMENT_NOT_AMOUNT_MISMATCH');
+      provider().set('1001', { status: 'approved' });
+      await notify('1001');
+      expect((await rejection(resolve(payment.id))).code).toBe('PAYMENT_NOT_AMOUNT_MISMATCH');
+      expect((await rejection(resolve(MISSION_ID))).code).toBe('PAYMENT_NOT_FOUND');
+      const invalid = async (note: string, key = 'res-key-0001') =>
+        (await rejection(resolve(payment.id, note, key))).details;
+      expect(await invalid('   ')).toEqual({ field: 'note' });
+      expect(await invalid('x'.repeat(501))).toEqual({ field: 'note' });
+      expect(await invalid(NOTE, 'court')).toEqual({ field: 'idempotencyKey' });
+    });
+
+    it('note de 500 caractères acceptée', async () => {
+      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      expect((await resolve(first.id, 'x'.repeat(500))).mismatchResolution?.note).toHaveLength(500);
+    });
+
+    it('réservé au back-office des paiements, avec double authentification', async () => {
+      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const run = () =>
+        useCases.resolveAmountMismatch.execute({ paymentId: first.id, note: NOTE, idempotencyKey: '' });
+      expect((await rejection(asStaff(run, 'cleaning_agent'))).code).toBe('AUTH_FORBIDDEN');
+      expect((await rejection(asStaff(run, 'finance_officer', false))).code).toBe('AUTH_MFA_REQUIRED');
+      expect((await rejection(asCustomer(run))).code).toBe('AUTH_FORBIDDEN');
+      expect((await payments().findById(first.id))!.mismatchResolution).toBeNull();
+      // cleaning_admin et super_admin y ont accès (paiement inconnu : 404, et non 403).
+      for (const role of ['cleaning_admin', 'super_admin']) {
+        expect((await rejection(resolve(MISSION_ID, NOTE, '', role))).code).toBe('PAYMENT_NOT_FOUND');
+      }
+    });
+
+    it('back-office : filtre des écarts à traiter', async () => {
+      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const treated = await mismatched(() => payInvoice('pay-key-0002'));
+      await resolve(treated.id);
+      const list = (underReview: boolean | undefined, status = '') =>
+        asStaff(() =>
+          useCases.listPayments.execute({
+            page: { limit: 20, cursor: null },
+            status,
+            subjectType: '',
+            subjectId: '',
+            customerId: '',
+            organizationId: '',
+            underReview,
+          }),
+        );
+      expect((await list(true)).items.map((p) => p.id)).toEqual([first.id]);
+      expect((await list(false)).items.map((p) => p.id)).toEqual([treated.id]);
+      expect((await list(false, 'amount_mismatch')).items.map((p) => p.id)).toEqual([treated.id]);
+      expect((await list(true, 'pending')).items).toEqual([]);
+      expect((await list(undefined)).items).toHaveLength(2);
     });
   });
 

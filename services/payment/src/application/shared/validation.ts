@@ -18,6 +18,23 @@ export function optionalUuid(field: string, value: string | undefined): string |
   return value ? requireUuid(field, value) : undefined;
 }
 
+/** Texte obligatoire : espaces de début et de fin retirés, 1 à `max` caractères. */
+export function requireText(field: string, value: string | undefined, max: number): string {
+  const text = (value ?? '').trim();
+  if (!text) throw PaymentErrors.invalid(field, 'Ce champ est obligatoire.');
+  if (text.length > max) throw PaymentErrors.invalid(field, `${max} caractères au plus.`);
+  return text;
+}
+
+/** Clé d'idempotence facultative : chaîne vide = absente ; sinon même format qu'à la création. */
+export function optionalIdempotencyKey(value: string | undefined): string | null {
+  if (!value) return null;
+  if (!IDEMPOTENCY_KEY.test(value)) {
+    throw PaymentErrors.invalid('idempotencyKey', 'Clé d’idempotence invalide (8 à 100 caractères).');
+  }
+  return value;
+}
+
 export function oneOf<T extends string>(field: string, value: string, allowed: readonly T[]): T {
   if (!allowed.includes(value as T)) throw PaymentErrors.invalid(field);
   return value as T;

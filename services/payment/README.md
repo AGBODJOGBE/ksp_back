@@ -41,6 +41,14 @@ est refusé (409, ADR-032) : `PAYMENT_ALREADY_RECEIVED` (« réessayez ») penda
 journal. Cause habituelle : événement retenu dans l'outbox de payment ; s'il est mis de côté, le
 rejouer avec `pnpm outbox:replay payment`.
 
+Un paiement `amount_mismatch` (montant ou devise approuvés différents) bloque lui aussi tout nouveau
+paiement du même objet, quel que soit le payeur ou la part, jusqu'à ce que la finance l'ait traité
+(ADR-032, décision 10) : `PAYMENT_UNDER_REVIEW` (409, contacter le support), avec une ligne
+`ALERTE paiement` à chaque refus. La finance traite l'écart au back-office
+(`POST /api/v1/admin/payment/payments/{id}/resolve-mismatch`, RPC `ResolveAmountMismatch`, note
+obligatoire) : date, auteur et note sont enregistrés, le statut reste `amount_mismatch`, le blocage est
+levé. Écarts à traiter : `GET /api/v1/admin/payment/payments?underReview=true`.
+
 ## Organisation
 
 | Dossier              | Contenu                                                         |

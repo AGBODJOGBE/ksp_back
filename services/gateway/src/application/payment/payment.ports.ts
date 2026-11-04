@@ -17,6 +17,15 @@ export interface PaymentFilters {
   subjectId?: string | undefined;
   customerId?: string | undefined;
   organizationId?: string | undefined;
+  /** true : écarts de montant à traiter ; false : tous les autres ; absent : pas de filtre. */
+  underReview?: boolean | undefined;
+}
+
+/** Traitement d'un écart de montant par la finance (ADR-032). */
+export interface MismatchResolutionInput {
+  note: string;
+  /** En-tête Idempotency-Key, facultatif. */
+  idempotencyKey?: string | undefined;
 }
 
 /** Un appel par méthode du contrat ksp.payment.v1 exposée en REST. */
@@ -28,4 +37,5 @@ export interface PaymentApi {
   /** Notification du prestataire : corps exact et en-tête de signature, sans interprétation. */
   receiveWebhook(provider: 'fedapay', payload: Buffer, signature: string): Promise<Json>;
   listPayments(page: Page, filters: PaymentFilters): Promise<Json>;
+  resolveAmountMismatch(id: string, input: MismatchResolutionInput): Promise<Json>;
 }

@@ -2,7 +2,7 @@ import { paymentV1 } from '@ksp/contracts';
 import { Controller, Inject, Logger } from '@nestjs/common';
 import { parsePage } from '../../application/shared/validation';
 import { PAYMENT_USE_CASES, type PaymentUseCases } from '../../application/use-cases';
-import { presentPayment } from './presenters';
+import { presentAdminPayment, presentPayment } from './presenters';
 
 /** Adaptateur gRPC de l'espace client. Aucune règle métier ici. */
 @Controller()
@@ -88,10 +88,22 @@ export class PaymentAdminGrpcController implements paymentV1.PaymentAdminService
       subjectId: request.subjectId,
       customerId: request.customerId,
       organizationId: request.organizationId,
+      underReview: request.underReview,
     });
     return {
-      payments: page.items.map((intent) => presentPayment(intent, page.names)),
+      payments: page.items.map((intent) => presentAdminPayment(intent, page.names)),
       nextCursor: page.nextCursor ?? '',
     };
+  }
+
+  async resolveAmountMismatch(
+    request: paymentV1.ResolveAmountMismatchRequest,
+  ): Promise<paymentV1.ResolveAmountMismatchResponse> {
+    const payment = await this.useCases.resolveAmountMismatch.execute({
+      paymentId: request.paymentId,
+      note: request.note,
+      idempotencyKey: request.idempotencyKey,
+    });
+    return { payment: presentAdminPayment(payment) };
   }
 }

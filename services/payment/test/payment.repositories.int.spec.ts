@@ -13,7 +13,8 @@ import { UuidV7Generator } from '../src/infrastructure/system/system';
 /**
  * Intégration contre un vrai PostgreSQL : migrations du service dans un schéma jetable, puis
  * idempotence par (payeur, clé) sous envois simultanés, contrôle de version et événement écrit dans
- * la même transaction que le changement d'état. Ignoré sans TEST_DATABASE_URL (fourni en CI).
+ * la même transaction que le changement d'état, écarts de montant non traités (ADR-032). Ignoré sans
+ * TEST_DATABASE_URL (fourni en CI).
  */
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const describeWithDatabase = databaseUrl ? describe : describe.skip;
@@ -73,6 +74,7 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
       expiresAt: new Date(now.getTime() + 30 * 60_000),
       completedAt: null,
       lastCheckedAt: null,
+      mismatchResolution: null,
       version: 0,
       ...overrides,
     };
@@ -233,6 +235,79 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
     expect(succeeded.map((payment) => payment.id).sort()).toEqual([ok.intent.id, other.intent.id].sort());
     expect(succeeded.every((payment) => payment.succeededAt instanceof Date)).toBe(true);
     expect(await payments.listSucceeded({ subjectType: 'billing_invoice', subjectId })).toEqual([]);
+  });
+
+  it('écarts de montant non traités d’un objet, quels que soient le payeur et la part ; traitement enregistré', async () => {
+    const subjectId = ids.next();
+    const subject = (part: 'deposit' | 'balance') => ({
+      type: 'cleaning_mission' as const,
+      id: subjectId,
+      part,
+      reference: null,
+    });
+    const first = await payments.create(draft('key-mis-1', { subject: subject('deposit') }));
+    const other = await payments.create(
+      draft('key-mis-2', { subject: subject('balance'), customerId: ids.next() }),
+    );
+    await payments.create(draft('key-mis-3', { subject: subject('deposit') }));
+    for (const { intent } of [first, other]) {
+      expect(await payments.save({ ...intent, status: 'amount_mismatch', completedAt: new Date() }, [])).toBe(
+        true,
+      );
+    }
+    const unresolved = await payments.listUnresolvedMismatches({
+      subjectType: 'cleaning_mission',
+      subjectId,
+    });
+    expect(unresolved).toEqual([first.intent.id, other.intent.id].sort());
+    expect(await payments.listUnresolvedMismatches({ subjectType: 'billing_invoice', subjectId })).toEqual(
+      [],
+    );
+
+    const stored = (await payments.findById(first.intent.id))!;
+    expect(stored.mismatchResolution).toBeNull();
+    const resolution = {
+      resolvedAt: new Date('2026-11-05T10:00:00.000Z'),
+      resolvedBy: CUSTOMER,
+      note: 'Remboursé au client.',
+      idempotencyKey: 'res-key-0001',
+    };
+    expect(await payments.save({ ...stored, mismatchResolution: resolution }, [])).toBe(true);
+    expect((await payments.findById(stored.id))!).toMatchObject({
+      status: 'amount_mismatch',
+      mismatchResolution: resolution,
+    });
+    expect(await payments.listUnresolvedMismatches({ subjectType: 'cleaning_mission', subjectId })).toEqual([
+      other.intent.id,
+    ]);
+
+    const page = { limit: 100, cursor: null };
+    const underReview = await payments.list({ subjectId, underReview: true }, page);
+    expect(underReview.items.map((p) => p.id)).toEqual([other.intent.id]);
+    const others = await payments.list({ subjectId, underReview: false }, page);
+    expect(others.items).toHaveLength(2);
+    expect(others.items.map((p) => p.id)).toContain(stored.id);
+    expect((await payments.list({ subjectId, status: 'pending', underReview: true }, page)).items).toEqual(
+      [],
+    );
+  });
+
+  it('traitement d’écart refusé par la base pour un autre statut, ou une note vide ou trop longue', async () => {
+    const { intent } = await payments.create(draft('key-mis-check'));
+    const resolution = {
+      resolvedAt: new Date(),
+      resolvedBy: CUSTOMER,
+      note: 'Remboursé.',
+      idempotencyKey: null,
+    };
+    await expect(payments.save({ ...intent, mismatchResolution: resolution }, [])).rejects.toThrow();
+    const mismatch = { ...intent, status: 'amount_mismatch' as const };
+    await expect(
+      payments.save({ ...mismatch, mismatchResolution: { ...resolution, note: '' } }, []),
+    ).rejects.toThrow();
+    await expect(
+      payments.save({ ...mismatch, mismatchResolution: { ...resolution, note: 'x'.repeat(501) } }, []),
+    ).rejects.toThrow();
   });
 
   it('montant nul refusé par la base', async () => {
