@@ -101,6 +101,11 @@ x-ksp-rate-limits:
     per: minute
     key: ip
     description: Simulateur public du Nettoyage (cahier des charges Nettoyage, partie 5).
+  cleaning_geocoding:
+    limit: 10
+    per: minute
+    key: user
+    description: Position du lieu d'intervention (ADR-034) ; chaque appel peut interroger un géocodeur payant (Google).
   email_code_request:
     limit: 3
     per: minute
@@ -1907,6 +1912,7 @@ paths:
                     recommendedTeamSize: 2
                     notice: 'Estimation non contractuelle : le prix définitif figure dans le devis établi par KSP.'
                     covered: true
+                    communeApplied: true
                     reason: null
                     calculation:
                       pricingVersion: 3
@@ -1999,6 +2005,7 @@ paths:
                     recommendedTeamSize: 1
                     notice: "Le prix de cette prestation n'est pas encore publié : demandez un devis, KSP vous répondra."
                     covered: true
+                    communeApplied: true
                     reason: price_not_set
                     calculation:
                       pricingVersion: 1
@@ -2026,6 +2033,381 @@ paths:
           $ref: '#/components/responses/NotFound'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/catalog:
+    get:
+      tags:
+        - Nettoyage
+      operationId: getCleaningPlaceCatalog
+      summary: Catalogue par type de lieu
+      description: |
+        Parcours par lieu (ADR-034), en un seul appel : les types de lieu actifs (Maison, Villa, Appartement, Bureau,
+        Chantier…), triés par `displayOrder`, avec les codes de leurs prestations actives ; et ces prestations avec leur
+        formulaire (`form`, même présentation que `GET /api/v1/cleaning/services`, sans aucun prix). Une prestation
+        inactive n’apparaît sous aucun lieu ; un lieu sans prestation active est masqué.
+      x-ksp-grpc: ksp.cleaning.v1.CatalogService/GetPlaceCatalog
+      x-ksp-access: public
+      x-ksp-rate-limit: public
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningPlaceCatalog'
+              example:
+                placeTypes:
+                  - code: house
+                    label: Maison
+                    description: Maison individuelle, avec ou sans cour.
+                    icon: house
+                    displayOrder: 10
+                    serviceCodes:
+                      - house_cleaning
+                      - garden_maintenance
+                      - window_cleaning
+                      - septic_emptying
+                      - pest_control
+                  - code: apartment
+                    label: Appartement
+                    description: Appartement en immeuble.
+                    icon: apartment
+                    displayOrder: 30
+                    serviceCodes:
+                      - home_cleaning
+                      - window_cleaning
+                      - pest_control
+                services:
+                  - code: window_cleaning
+                    name: Nettoyage de vitres
+                    description: Fenêtres et baies vitrées, intérieur et extérieur.
+                    unit: square_meter
+                    options: []
+                    priced: false
+                    minimumPrice: null
+                    form:
+                      fields:
+                        - code: window_count
+                          label: Nombre de fenêtres
+                          type: number
+                          required: true
+                          helpText: null
+                          unitLabel: fenêtres
+                          min: 1
+                          max: 1000
+                          choices: []
+                        - code: access
+                          label: Accès aux fenêtres
+                          type: choice
+                          required: true
+                          helpText: null
+                          unitLabel: null
+                          min: null
+                          max: null
+                          choices:
+                            - code: ground_floor
+                              label: Plain-pied
+                            - code: at_height
+                              label: En hauteur
+                      options: []
+                      frequencies:
+                        - code: once
+                          label: Une fois
+                        - code: weekly
+                          label: Chaque semaine
+                        - code: monthly
+                          label: Chaque mois
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/estimates:
+    post:
+      tags:
+        - Nettoyage
+      operationId: estimateCleaning
+      summary: Estimer plusieurs prestations d’un lieu
+      description: |
+        Parcours par lieu (ADR-034) : le client a choisi un type de lieu et coché une ou plusieurs prestations (1 à 10,
+        distinctes, toutes proposées par ce lieu). Chaque prestation est calculée par le simulateur de l’ADR-033 ; rien
+        n’est enregistré. `total` (entier XOF) est la somme des prix si toutes les prestations en ont un, sinon `null`
+        avec `status` = `partially_priced` ou `unpriced`.
+
+        `commune` est facultative : sans elle, le coefficient de commune est neutre (`communeApplied: false`) et le prix
+        est indicatif ; il est recalculé avec la vraie commune à la demande de devis.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED`, `CLEANING_VALIDATION_FAILED` (400, `details.field` préfixé par
+        `items[i].`, par exemple `items[1].answers.surface`), `CLEANING_SERVICE_NOT_OFFERED` (400, `details.field`,
+        `details.placeType`, `details.serviceCode`), `CLEANING_PLACE_TYPE_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.cleaning.v1.CatalogService/Estimate
+      x-ksp-access: public
+      x-ksp-rate-limit: cleaning_simulation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EstimateCleaningRequest'
+            example:
+              placeType: house
+              items:
+                - serviceCode: house_cleaning
+                  answers:
+                    surface: 180
+                    bedrooms: 4
+                    bathrooms: 2
+                    front_yard: true
+                    back_yard: false
+                    condition: normal
+                  options:
+                    - code: windows
+                      answers:
+                        window_count: 6
+                  frequency: once
+                - serviceCode: garden_maintenance
+                  answers:
+                    surface: 250
+                    condition: overgrown
+                  options: []
+                  frequency: monthly
+                - serviceCode: septic_emptying
+                  answers:
+                    tank_volume: 6
+                    tank_type: septic_tank
+                    truck_access: easy
+                  frequency: once
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningEstimate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/locations/resolve:
+    post:
+      tags:
+        - Nettoyage
+      operationId: resolveCleaningLocation
+      summary: Retrouver la commune d’une position GPS
+      description: |
+        Géocodage inverse (ADR-034) : Nominatim auto-hébergé d’abord, Google Maps en secours ; la commune trouvée est
+        rapprochée des zones desservies (même normalisation que `code`, noms alternatifs compris). Client connecté
+        seulement (un fournisseur est payant), limite dédiée `cleaning_geocoding`. Les coordonnées voyagent dans le
+        corps (jamais dans l’adresse) et ne sont jamais journalisées.
+
+        Aucun fournisseur ne trouve : `commune`, `zoneCode` et `provider` à `null` ; le client choisit alors sa commune
+        dans `GET /api/v1/cleaning/zones`. Commune trouvée mais non desservie : `served: false`.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400, coordonnées hors bornes), `AUTH_REQUIRED` (401).
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/ResolveLocation
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: cleaning_geocoding
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveCleaningLocationRequest'
+            example:
+              latitude: 6.3654
+              longitude: 2.4183
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningLocationResolution'
+              example:
+                latitude: 6.3654
+                longitude: 2.4183
+                commune: Cotonou
+                zoneCode: cotonou
+                served: true
+                displayAddress: Place de l’Étoile rouge, Cotonou, Littoral, Bénin
+                provider: nominatim
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/quote-request-groups:
+    post:
+      tags:
+        - Nettoyage
+      operationId: requestCleaningQuoteGroup
+      summary: Demander un devis pour plusieurs prestations d’un lieu
+      description: |
+        Parcours par lieu (ADR-034). Une demande de devis par prestation, liées par un groupe (même lieu, même position,
+        même repère, mêmes créneaux, même commentaire), créées dans une seule transaction ; chaque demande suit ensuite
+        son circuit habituel (visite, devis, mission, paiement). Profil complet exigé (comme `requestCleaningQuote`).
+        Idempotent par `Idempotency-Key` : le rejeu rend le même groupe.
+
+        La commune est retrouvée depuis `location` (géocodage inverse) ; la `commune` envoyée n’est utilisée qu’en repli,
+        si aucun fournisseur ne trouve. Le prix de chaque demande est recalculé avec cette commune. `landmark` (point de
+        repère) tient aussi lieu d’adresse d’intervention (`address`).
+
+        Erreurs : `CLEANING_VALIDATION_FAILED` (400, `details.field`, par exemple `items[1].answers.surface`),
+        `CLEANING_SERVICE_NOT_OFFERED` (400), `CLEANING_SLOT_INVALID` (400), `CLEANING_PLACE_TYPE_NOT_FOUND` (404),
+        `IDENTITY_PROFILE_INCOMPLETE`, `CLEANING_LOCATION_UNRESOLVED` (422, position non rattachée à une commune et
+        aucune commune envoyée : la demander au client), `CLEANING_ZONE_NOT_COVERED` (422, `details.commune`),
+        `CLEANING_LEAD_TIME_TOO_SHORT`, `CLEANING_TOO_MANY_OPEN_REQUESTS` (422, chaque prestation compte),
+        `CLEANING_ORGANIZATION_SUSPENDED` (422).
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/RequestQuoteGroup
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestCleaningQuoteGroupRequest'
+            example:
+              placeType: house
+              location:
+                latitude: 6.3654
+                longitude: 2.4183
+                accuracyMeters: 12
+              landmark: Près de la place de l’Étoile rouge, portail vert
+              items:
+                - serviceCode: house_cleaning
+                  answers:
+                    surface: 180
+                    bedrooms: 4
+                    bathrooms: 2
+                    front_yard: true
+                    back_yard: false
+                    condition: normal
+                  options:
+                    - code: windows
+                      answers:
+                        window_count: 6
+                  frequency: once
+                - serviceCode: garden_maintenance
+                  answers:
+                    surface: 250
+                    condition: overgrown
+                  frequency: monthly
+                - serviceCode: septic_emptying
+                  answers:
+                    tank_volume: 6
+                    tank_type: septic_tank
+                    truck_access: easy
+                  frequency: once
+              preferredSlots:
+                - start: 2026-11-20T08:00:00Z
+                  end: 2026-11-20T11:00:00Z
+              comment: Chien gentil dans la cour.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequestGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/quote-request-groups/{id}:
+    get:
+      tags:
+        - Nettoyage
+      operationId: getMyCleaningQuoteRequestGroup
+      summary: Groupe de demandes
+      description: |
+        Le groupe et ses demandes (ADR-034), dans l’ordre des prestations envoyées.
+
+        Erreurs : `CLEANING_REQUEST_GROUP_NOT_FOUND` (404), y compris pour le groupe d’un autre client.
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/GetRequestGroup
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequestGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -2123,6 +2505,15 @@ paths:
                       window_count: 8
                 frequency: once
                 pricingVersion: 3
+                groupId: null
+                groupSize: 1
+                placeType: null
+                placeTypeLabel: null
+                serviceName: Nettoyage à domicile
+                location: null
+                landmark: null
+                geocodingProvider: null
+                geocodedAddress: null
                 calculation:
                   pricingVersion: 3
                   priced: true
@@ -2292,6 +2683,15 @@ paths:
                           window_count: 8
                     frequency: once
                     pricingVersion: 3
+                    groupId: null
+                    groupSize: 1
+                    placeType: null
+                    placeTypeLabel: null
+                    serviceName: Nettoyage à domicile
+                    location: null
+                    landmark: null
+                    geocodingProvider: null
+                    geocodedAddress: null
                     calculation:
                       pricingVersion: 3
                       priced: true
@@ -2502,6 +2902,15 @@ paths:
                       window_count: 8
                 frequency: once
                 pricingVersion: 3
+                groupId: null
+                groupSize: 1
+                placeType: null
+                placeTypeLabel: null
+                serviceName: Nettoyage à domicile
+                location: null
+                landmark: null
+                geocodingProvider: null
+                geocodedAddress: null
                 calculation:
                   pricingVersion: 3
                   priced: true
@@ -2730,6 +3139,15 @@ paths:
                         window_count: 8
                   frequency: once
                   pricingVersion: 3
+                  groupId: null
+                  groupSize: 1
+                  placeType: null
+                  placeTypeLabel: null
+                  serviceName: Nettoyage à domicile
+                  location: null
+                  landmark: null
+                  geocodingProvider: null
+                  geocodedAddress: null
                   calculation:
                     pricingVersion: 3
                     priced: true
@@ -2876,6 +3294,10 @@ paths:
                   serviceCode: home_cleaning
                   commune: Abomey-Calavi
                   address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                  location: null
+                  landmark: null
+                  groupId: null
+                  placeType: null
                   chosenSlot:
                     start: 2026-11-05T08:00:00Z
                     end: 2026-11-05T11:00:00Z
@@ -3096,6 +3518,10 @@ paths:
                     serviceCode: home_cleaning
                     commune: Abomey-Calavi
                     address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                    location: null
+                    landmark: null
+                    groupId: null
+                    placeType: null
                     chosenSlot:
                       start: 2026-11-05T08:00:00Z
                       end: 2026-11-05T11:00:00Z
@@ -3203,6 +3629,10 @@ paths:
                 serviceCode: home_cleaning
                 commune: Abomey-Calavi
                 address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                location: null
+                landmark: null
+                groupId: null
+                placeType: null
                 chosenSlot:
                   start: 2026-11-05T08:00:00Z
                   end: 2026-11-05T11:00:00Z
@@ -3335,7 +3765,7 @@ paths:
       operationId: listCleaningQuoteRequests
       summary: Demandes de devis (back-office)
       description: |
-        UC-CL-06. Filtres facultatifs et cumulables : état, zone (`commune`, code de zone) et type de client (`customerKind`) ; toujours paginé par curseur. Chaque demande porte le nom du client et de son organisation (`customerName`, `organizationName`).
+        UC-CL-06. Filtres facultatifs et cumulables : état, zone (`commune`, code de zone), type de client (`customerKind`), groupe (`groupId`), type de lieu (`placeType`) et prestation (`serviceCode`) (ADR-034) ; toujours paginé par curseur. Chaque demande porte le nom du client et de son organisation (`customerName`, `organizationName`), le nom de la prestation, le libellé du lieu et la taille de son groupe (`serviceName`, `placeTypeLabel`, `groupSize`).
 
         Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListQuoteRequests
@@ -3354,6 +3784,9 @@ paths:
         - $ref: '#/components/parameters/CleaningRequestStatus'
         - $ref: '#/components/parameters/CleaningCommuneFilter'
         - $ref: '#/components/parameters/CleaningCustomerKind'
+        - $ref: '#/components/parameters/CleaningGroupIdFilter'
+        - $ref: '#/components/parameters/CleaningPlaceTypeFilter'
+        - $ref: '#/components/parameters/CleaningServiceCodeFilter'
       responses:
         '200':
           description: Succès
@@ -3385,7 +3818,7 @@ paths:
       operationId: getCleaningQuoteRequest
       summary: Détail d’une demande (back-office)
       description: |
-        UC-CL-06.
+        UC-CL-06. Demande groupée (ADR-034) : `groupRequests` liste les autres demandes du même groupe (identifiant, prestation, état, visite, total du devis, mission).
 
         Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/GetQuoteRequest
@@ -3699,6 +4132,8 @@ paths:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/CleaningMissionStatus'
+        - $ref: '#/components/parameters/CleaningGroupIdFilter'
+        - $ref: '#/components/parameters/CleaningServiceCodeFilter'
       responses:
         '200':
           description: Succès
@@ -4751,11 +5186,13 @@ paths:
                 data:
                   - code: abomey-calavi
                     commune: Abomey-Calavi
+                    aliases: []
                     active: true
                     updatedBy: null
                     updatedAt: null
                   - code: cotonou
                     commune: Cotonou
+                    aliases: []
                     active: true
                     updatedBy: null
                     updatedAt: null
@@ -4866,6 +5303,120 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/place-types:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: listCleaningPlaceTypes
+      summary: Types de lieu
+      description: |
+        Types de lieu du parcours client (ADR-034), actifs et désactivés, par ordre d’affichage. Pour chacun : les
+        prestations proposées inconnues (`unknownServiceCodes`) ou désactivées (`inactiveServiceCodes`, masquées côté
+        public), et sa visibilité publique (`publiclyVisible`, `visibilityReason` : `inactive` ou `no_active_service`).
+
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListPlaceTypes
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningPlaceTypeList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/place-types/{code}:
+    put:
+      tags:
+        - Nettoyage (back-office)
+      operationId: saveCleaningPlaceType
+      summary: Créer ou modifier un type de lieu
+      description: |
+        Crée ou remplace le type de lieu `code` (ADR-034) : libellé, description, icône (nom libre interprété par le
+        front), ordre d’affichage, état, liste ordonnée des prestations proposées. Pas de suppression : `active: false`.
+        Une prestation inconnue est refusée ; une prestation désactivée est acceptée mais masquée côté public. Auteur et
+        date enregistrés ; le journal garde la différence des prestations proposées.
+
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED`, `CLEANING_VALIDATION_FAILED` (400, `details.field`, par exemple
+        `serviceCodes[2]` pour une prestation inconnue).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SavePlaceType
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningPlaceTypeCode'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveCleaningPlaceTypeRequest'
+            example:
+              label: Maison
+              description: Maison individuelle, avec ou sans cour.
+              icon: house
+              displayOrder: 10
+              active: true
+              serviceCodes:
+                - house_cleaning
+                - garden_maintenance
+                - window_cleaning
+                - septic_emptying
+                - pest_control
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningPlaceType'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -6173,6 +6724,38 @@ components:
           - on_hold
           - completed
           - cancelled
+    CleaningPlaceTypeCode:
+      name: code
+      in: path
+      required: true
+      description: Code du type de lieu (ADR-034), par exemple `house`.
+      schema:
+        type: string
+        pattern: ^[a-z][a-z0-9_]{1,49}$
+    CleaningGroupIdFilter:
+      name: groupId
+      in: query
+      required: false
+      description: Groupe de demandes (ADR-034).
+      schema:
+        type: string
+        format: uuid
+    CleaningPlaceTypeFilter:
+      name: placeType
+      in: query
+      required: false
+      description: Code du type de lieu (ADR-034).
+      schema:
+        type: string
+        pattern: ^[a-z][a-z0-9_]{1,49}$
+    CleaningServiceCodeFilter:
+      name: serviceCode
+      in: query
+      required: false
+      description: Code de la prestation.
+      schema:
+        type: string
+        pattern: ^[a-z][a-z0-9_]{1,49}$
     OptionalIdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -7504,7 +8087,6 @@ components:
         Les deux formats ne se mélangent pas.
       required:
         - serviceCode
-        - commune
       properties:
         serviceCode:
           type: string
@@ -7524,6 +8106,7 @@ components:
           type: string
           minLength: 1
           maxLength: 100
+          description: Facultative (ADR-034) ; sans elle, coefficient de commune neutre, `communeApplied` faux, prix indicatif.
         frequency:
           type: string
           pattern: ^[a-z][a-z0-9_]{1,49}$
@@ -7774,7 +8357,11 @@ components:
         - covered
         - reason
         - calculation
+        - communeApplied
       properties:
+        communeApplied:
+          type: boolean
+          description: Faux si la simulation est faite sans commune (ADR-034) ; coefficient neutre, prix indicatif.
         reason:
           $ref: '#/components/schemas/CleaningPricingReason'
         calculation:
@@ -7944,6 +8531,15 @@ components:
         - frequency
         - pricingVersion
         - calculation
+        - groupId
+        - groupSize
+        - placeType
+        - placeTypeLabel
+        - serviceName
+        - location
+        - landmark
+        - geocodingProvider
+        - geocodedAddress
       properties:
         id:
           type: string
@@ -8082,6 +8678,57 @@ components:
             - string
             - 'null'
           description: Back-office — raison sociale de l'organisation ; null pour un particulier, dans l'espace client ou si identity est indisponible (ADR-029).
+        groupId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Groupe des demandes créées ensemble pour un même lieu (ADR-034) ; null pour une demande seule.
+        groupSize:
+          type: integer
+          minimum: 1
+          description: Nombre de demandes du groupe, 1 pour une demande seule.
+        placeType:
+          type:
+            - string
+            - 'null'
+          description: Code du type de lieu choisi, null pour une demande sans lieu.
+        placeTypeLabel:
+          type:
+            - string
+            - 'null'
+          description: Libellé du type de lieu, résolu au moment de la réponse (même s’il est désactivé).
+        serviceName:
+          type:
+            - string
+            - 'null'
+          description: Nom de la prestation, résolu au moment de la réponse (même si elle est désactivée).
+        location:
+          description: Position GPS du lieu, null sans position.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningGeoLocation'
+            - type: 'null'
+        landmark:
+          type:
+            - string
+            - 'null'
+          description: Point de repère donné par le client, null sans position.
+        geocodingProvider:
+          description: Fournisseur qui a trouvé la commune ; null si elle a été choisie par le client.
+          enum:
+            - nominatim
+            - google
+            - null
+        geocodedAddress:
+          type:
+            - string
+            - 'null'
+          description: Adresse lisible rendue par le géocodeur, null si aucune.
+        groupRequests:
+          type: array
+          description: Back-office, détail d’une demande seulement — autres demandes du même groupe (vide pour une demande seule).
+          items:
+            $ref: '#/components/schemas/CleaningGroupedRequest'
     CleaningQuoteRequestList:
       type: object
       additionalProperties: false
@@ -8331,7 +8978,32 @@ components:
         - suspension
         - createdAt
         - updatedAt
+        - location
+        - landmark
+        - groupId
+        - placeType
       properties:
+        location:
+          description: Position GPS copiée de la demande (ADR-034), pour aller sur place ; null sans position.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningGeoLocation'
+            - type: 'null'
+        landmark:
+          type:
+            - string
+            - 'null'
+          description: Point de repère copié de la demande, null sans position.
+        groupId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Groupe de la demande d’origine (ADR-034).
+        placeType:
+          type:
+            - string
+            - 'null'
+          description: Type de lieu de la demande d’origine.
         id:
           type: string
           format: uuid
@@ -8644,6 +9316,11 @@ components:
           description: Options (prestations complémentaires), dans l’ordre d’affichage, avec leurs prix et leurs champs.
           items:
             $ref: '#/components/schemas/CleaningOptionDefinition'
+        affectedPlaceTypes:
+          type: array
+          description: 'Réponse de l’enregistrement seulement (ADR-034) — prestation désactivée : types de lieu actifs qui la proposent encore (elle y est masquée).'
+          items:
+            $ref: '#/components/schemas/CleaningPlaceTypeRef'
     CleaningFieldChoice:
       type: object
       additionalProperties: false
@@ -8878,7 +9555,13 @@ components:
       required:
         - services
         - settings
+        - unplacedServiceCodes
       properties:
+        unplacedServiceCodes:
+          type: array
+          description: Prestations actives proposées par aucun type de lieu actif (ADR-034), invisibles dans le parcours par lieu.
+          items:
+            type: string
         services:
           type: array
           items:
@@ -10091,10 +10774,16 @@ components:
       required:
         - code
         - commune
+        - aliases
         - active
         - updatedBy
         - updatedAt
       properties:
+        aliases:
+          type: array
+          description: Autres noms de la commune (« Sèmè-Kpodji »), utilisés pour rattacher une position géocodée à la zone (ADR-034).
+          items:
+            type: string
         code:
           type: string
           description: Commune normalisée (minuscules, sans accents, tirets), clé des coefficients de commune.
@@ -10159,3 +10848,550 @@ components:
           type: string
           minLength: 1
           maxLength: 100
+        aliases:
+          type: array
+          maxItems: 20
+          description: Facultatif (ADR-034) — noms alternatifs ; absent, ceux en vigueur sont gardés ; présent, ils les remplacent.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+    CleaningGeoLocation:
+      type: object
+      additionalProperties: false
+      description: Position GPS du lieu d’intervention (degrés décimaux WGS 84, ADR-034). Donnée personnelle, jamais journalisée.
+      required:
+        - latitude
+        - longitude
+        - accuracyMeters
+      properties:
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+        accuracyMeters:
+          type:
+            - number
+            - 'null'
+          minimum: 0
+          description: Précision annoncée par le téléphone, en mètres ; null si inconnue.
+    CleaningGeoLocationInput:
+      type: object
+      additionalProperties: false
+      required:
+        - latitude
+        - longitude
+      properties:
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+        accuracyMeters:
+          type: number
+          minimum: 0
+          maximum: 100000
+          description: Précision annoncée par le téléphone, en mètres (facultative).
+    CleaningGroupedRequest:
+      type: object
+      additionalProperties: false
+      description: Demande sœur d’un groupe (back-office, ADR-034).
+      required:
+        - id
+        - serviceCode
+        - serviceName
+        - status
+        - visitScheduledAt
+        - quoteTotal
+        - missionId
+      properties:
+        id:
+          type: string
+          format: uuid
+        serviceCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        serviceName:
+          type:
+            - string
+            - 'null'
+        status:
+          type: string
+          description: Même valeurs que `CleaningQuoteRequest.status`.
+        visitScheduledAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Visite des lieux planifiée ou réalisée, null sinon.
+        quoteTotal:
+          description: Total du devis en vigueur, null sans devis.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        missionId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+    CleaningPublicPlaceType:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - description
+        - icon
+        - displayOrder
+        - serviceCodes
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        icon:
+          type: string
+          description: Nom d’icône libre (par exemple `house`), interprété par le front.
+        displayOrder:
+          type: integer
+          minimum: 0
+        serviceCodes:
+          type: array
+          description: Codes des prestations actives proposées, dans l’ordre d’affichage.
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{1,49}$
+    CleaningPlaceCatalog:
+      type: object
+      additionalProperties: false
+      required:
+        - placeTypes
+        - services
+      properties:
+        placeTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningPublicPlaceType'
+        services:
+          type: array
+          description: Prestations actives référencées par ces lieux, avec leur formulaire (sans prix).
+          items:
+            $ref: '#/components/schemas/CleaningServiceOffer'
+    CleaningPlaceItem:
+      type: object
+      additionalProperties: false
+      description: Une prestation choisie pour le lieu, au nouveau format (ADR-033) seulement.
+      required:
+        - serviceCode
+        - answers
+      properties:
+        serviceCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        answers:
+          $ref: '#/components/schemas/CleaningAnswers'
+        options:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CleaningOptionSelection'
+        frequency:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+          description: Code d’une fréquence active de la prestation, obligatoire si elle en a.
+    EstimateCleaningRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - placeType
+        - items
+      properties:
+        placeType:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        commune:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Facultative ; sans elle, coefficient de commune neutre et prix indicatif.
+        items:
+          type: array
+          minItems: 1
+          maxItems: 10
+          description: Prestations distinctes, toutes proposées par le type de lieu.
+          items:
+            $ref: '#/components/schemas/CleaningPlaceItem'
+    CleaningEstimateItem:
+      type: object
+      additionalProperties: false
+      required:
+        - serviceCode
+        - serviceName
+        - priced
+        - reason
+        - notice
+        - estimate
+        - computedPrice
+        - recommendedTeamSize
+        - missingPrices
+        - calculation
+      properties:
+        serviceCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        serviceName:
+          type: string
+        priced:
+          type: boolean
+        reason:
+          $ref: '#/components/schemas/CleaningPricingReason'
+        notice:
+          type: string
+        estimate:
+          oneOf:
+            - $ref: '#/components/schemas/CleaningPriceRange'
+            - type: 'null'
+        computedPrice:
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        recommendedTeamSize:
+          type: integer
+          minimum: 1
+        missingPrices:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningMissingPrice'
+        calculation:
+          $ref: '#/components/schemas/CleaningPriceCalculation'
+    CleaningEstimate:
+      type: object
+      additionalProperties: false
+      required:
+        - placeType
+        - commune
+        - communeApplied
+        - covered
+        - status
+        - total
+        - currency
+        - notice
+        - items
+      properties:
+        placeType:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        commune:
+          type:
+            - string
+            - 'null'
+        communeApplied:
+          type: boolean
+          description: 'Faux sans commune : coefficient neutre, prix indicatif.'
+        covered:
+          type: boolean
+          description: Vrai si la commune est dans une zone desservie ; faux sans commune.
+        status:
+          enum:
+            - priced
+            - partially_priced
+            - unpriced
+        total:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+          description: Somme des prix des prestations, en XOF ; null si une prestation n’a pas de prix.
+        currency:
+          const: XOF
+        notice:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningEstimateItem'
+    ResolveCleaningLocationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - latitude
+        - longitude
+      properties:
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+    CleaningLocationResolution:
+      type: object
+      additionalProperties: false
+      required:
+        - latitude
+        - longitude
+        - commune
+        - zoneCode
+        - served
+        - displayAddress
+        - provider
+      properties:
+        latitude:
+          type: number
+        longitude:
+          type: number
+        commune:
+          type:
+            - string
+            - 'null'
+          description: Nom de la zone desservie si elle l’est, sinon le nom trouvé ; null si aucun.
+        zoneCode:
+          type:
+            - string
+            - 'null'
+          description: Code de la zone desservie ; null si la commune n’est pas desservie ou inconnue.
+        served:
+          type: boolean
+        displayAddress:
+          type:
+            - string
+            - 'null'
+        provider:
+          enum:
+            - nominatim
+            - google
+            - null
+    CleaningQuoteGroupItem:
+      type: object
+      additionalProperties: false
+      required:
+        - serviceCode
+        - answers
+      properties:
+        serviceCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        answers:
+          $ref: '#/components/schemas/CleaningAnswers'
+        options:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CleaningOptionSelection'
+        frequency:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        requestedTeamSize:
+          type: integer
+          minimum: 1
+          maximum: 50
+    RequestCleaningQuoteGroupRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - placeType
+        - location
+        - landmark
+        - items
+        - preferredSlots
+      properties:
+        placeType:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        location:
+          $ref: '#/components/schemas/CleaningGeoLocationInput'
+        landmark:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Point de repère (« portail vert après la pharmacie ») ; il tient aussi lieu d’adresse d’intervention.
+        commune:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Repli seulement — commune choisie par le client, utilisée si aucun fournisseur ne rattache la position à une commune.
+        items:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/CleaningQuoteGroupItem'
+        preferredSlots:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+        comment:
+          type: string
+          maxLength: 2000
+        recurrence:
+          $ref: '#/components/schemas/CleaningRecurrence'
+    CleaningQuoteRequestGroup:
+      type: object
+      additionalProperties: false
+      required:
+        - groupId
+        - placeType
+        - commune
+        - zoneCode
+        - createdAt
+        - items
+      properties:
+        groupId:
+          type: string
+          format: uuid
+        placeType:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        commune:
+          type: string
+          description: Commune retenue (trouvée par géocodage, ou choisie par le client en repli).
+        zoneCode:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          description: Une demande par prestation, dans l’ordre envoyé (même présentation que `GET /api/v1/cleaning/quote-requests/{id}`).
+          items:
+            $ref: '#/components/schemas/CleaningQuoteRequest'
+    CleaningPlaceType:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - description
+        - icon
+        - displayOrder
+        - active
+        - serviceCodes
+        - unknownServiceCodes
+        - inactiveServiceCodes
+        - publiclyVisible
+        - visibilityReason
+        - updatedBy
+        - updatedByName
+        - updatedAt
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+        label:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        icon:
+          type: string
+        displayOrder:
+          type: integer
+          minimum: 0
+        active:
+          type: boolean
+        serviceCodes:
+          type: array
+          items:
+            type: string
+        unknownServiceCodes:
+          type: array
+          description: Prestations proposées qui n’existent pas (ou plus) au catalogue.
+          items:
+            type: string
+        inactiveServiceCodes:
+          type: array
+          description: Prestations proposées mais désactivées, masquées sous ce lieu côté public.
+          items:
+            type: string
+        publiclyVisible:
+          type: boolean
+        visibilityReason:
+          description: Raison d’un lieu absent du parcours public, null s’il est visible.
+          enum:
+            - inactive
+            - no_active_service
+            - null
+        updatedBy:
+          type:
+            - string
+            - 'null'
+        updatedByName:
+          type:
+            - string
+            - 'null'
+        updatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    CleaningPlaceTypeList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningPlaceType'
+    CleaningPlaceTypeRef:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+      properties:
+        code:
+          type: string
+        label:
+          type: string
+    SaveCleaningPlaceTypeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - label
+        - icon
+        - displayOrder
+        - active
+        - serviceCodes
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        icon:
+          type: string
+          minLength: 1
+          maxLength: 50
+        displayOrder:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        active:
+          type: boolean
+        serviceCodes:
+          type: array
+          maxItems: 30
+          description: Codes des prestations proposées, dans l’ordre d’affichage, sans doublon.
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{1,49}$

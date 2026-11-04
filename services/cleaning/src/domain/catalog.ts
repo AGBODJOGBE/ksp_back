@@ -172,7 +172,7 @@ export function teamSizeField(service: WithTeamSize): FormField | null {
 export function legacyUnit(service: WithTeamSize): LegacyUnit {
   const label = (teamSizeField(service)?.unitLabel ?? '').toLowerCase().replace(/\s/g, '');
   if (label === 'm³' || label === 'm3') return 'cubic_meter';
-  if (label.startsWith('pièce') || label.startsWith('piece')) return 'room';
+  if (label.startsWith('pièce') || label.startsWith('piece') || label.startsWith('chambre')) return 'room';
   if (label.startsWith('fosse')) return 'septic_tank';
   return 'square_meter';
 }

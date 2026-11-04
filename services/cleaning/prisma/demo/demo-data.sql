@@ -6,7 +6,7 @@
 -- En production, les prix restent vides (null) tant que l'équipe Nettoyage ne les a pas saisis
 -- au back-office (ADR-033).
 --
--- Les six prestations et leur formulaire sont créés par la migration 0007 (prix à null). Ce
+-- Les prestations et leur formulaire sont créés par les migrations 0007 et 0008 (prix à null). Ce
 -- script ajoute à cinq d'entre elles une version « demo » avec des prix ; la désinsectisation
 -- reste volontairement sans prix : le simulateur doit répondre proprement (priced: false).
 --
@@ -49,3 +49,133 @@ WHERE EXISTS (SELECT 1 FROM "cleaning_services" AS s WHERE s."code" = d."code")
 UPDATE "cleaning_services" SET "description" = '[DÉMO] ' || "description"
 WHERE "code" IN ('garden_maintenance', 'septic_emptying', 'home_cleaning', 'office_cleaning', 'post_construction', 'pest_control')
   AND "description" NOT LIKE '[DÉMO]%';
+
+-- --------------------------------------------------------------------------------------------
+-- Parcours par lieu (ADR-034) : de quoi essayer le back-office et le portail en local.
+-- Coordonnées FICTIVES, arrondies, autour de lieux publics de Cotonou ; client fictif.
+-- --------------------------------------------------------------------------------------------
+
+-- Prestation désactivée (pour un type de lieu qui la référence encore) : elle reste masquée.
+INSERT INTO "cleaning_services" ("code", "name", "description", "unit", "active")
+VALUES ('demo_sofa_cleaning', 'Nettoyage de canapés', '[DÉMO] Prestation désactivée.', 'square_meter', false)
+ON CONFLICT ("code") DO NOTHING;
+
+INSERT INTO "pricing_rules"
+  ("id", "service_code", "version", "unit_price", "minimum_price", "options", "commune_coefficients",
+   "default_coefficient_bp", "team_size", "checklist", "created_by", "created_at",
+   "fields", "option_definitions", "frequencies")
+VALUES (
+  '0192f1c4-de70-7000-8000-000000000021', 'demo_sofa_cleaning', 1, NULL, NULL, '[]'::jsonb, '{}'::jsonb, 10000,
+  '{"fieldCode":"seats","unitsPerAgent":10,"minAgents":1,"maxAgents":2}'::jsonb, '[]'::jsonb, 'demo-places', now(),
+  '[{"helpText":null,"unitLabel":"places","min":1,"max":50,"pricePerUnit":null,"choices":[],"supplementIfYes":null,"coefficientBpIfYes":null,"code":"seats","label":"Nombre de places","type":"number","required":true,"active":true}]'::jsonb,
+  '[]'::jsonb,
+  '[{"code":"once","label":"Une fois","coefficientBp":10000,"active":true}]'::jsonb
+)
+ON CONFLICT ("id") DO NOTHING;
+
+-- Un type de lieu désactivé, et un type qui référence une prestation désactivée.
+INSERT INTO "place_types" ("code", "label", "description", "icon", "display_order", "active", "service_codes", "updated_by", "updated_at") VALUES
+  ('demo_shop', 'Boutique', '[DÉMO] Type de lieu désactivé.', 'shop', 60, false,
+   ARRAY['office_cleaning', 'window_cleaning'], 'demo', now()),
+  ('demo_lounge', 'Salon de réception', '[DÉMO] Référence une prestation désactivée.', 'sofa', 70, true,
+   ARRAY['demo_sofa_cleaning', 'window_cleaning'], 'demo', now())
+ON CONFLICT ("code") DO NOTHING;
+
+-- Groupe de 3 demandes (Maison, près de la place de l'Étoile rouge) : reçue, visite planifiée,
+-- acceptée (mission avec position). Commune trouvée par Nominatim.
+INSERT INTO "quote_request_groups" ("id", "customer_id", "idempotency_key", "place_type", "commune", "created_at")
+VALUES ('0192f1c4-de70-7000-8000-0000000a0001', '0192f1c4-de70-7000-8000-0000000c0001', 'demo-group-1', 'house', 'Cotonou', '2026-11-02T09:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+INSERT INTO "quote_requests"
+  ("id", "customer_id", "idempotency_key", "status", "customer_kind", "service_code", "premises_type", "quantity",
+   "options", "commune", "commune_code", "address", "preferred_slots", "recommended_team_size",
+   "answers", "option_selections", "frequency", "pricing_version",
+   "group_id", "place_type", "latitude", "longitude", "location_accuracy_m", "landmark", "geocoding_provider",
+   "geocoded_address", "created_at", "updated_at")
+VALUES
+  ('0192f1c4-de70-7000-8000-0000000b0001', '0192f1c4-de70-7000-8000-0000000c0001', 'group:0192f1c4-de70-7000-8000-0000000a0001:0',
+   'received', 'individual', 'house_cleaning', 'other', 4, '{}', 'Cotonou', 'cotonou',
+   'Près de la place de l''Étoile rouge, portail vert (repère fictif)',
+   '[{"start":"2026-11-20T08:00:00.000Z","end":"2026-11-20T11:00:00.000Z"}]'::jsonb, 2,
+   '{"surface":180,"bedrooms":4,"bathrooms":2,"front_yard":true,"back_yard":false,"condition":"normal"}'::jsonb, '[]'::jsonb, 'once', 1,
+   '0192f1c4-de70-7000-8000-0000000a0001', 'house', 6.3654, 2.4183, 12, 'Près de la place de l''Étoile rouge, portail vert (repère fictif)', 'nominatim',
+   'Place de l''Étoile rouge, Cotonou, Littoral, Bénin', '2026-11-02T09:00:00Z', '2026-11-02T09:00:00Z'),
+  ('0192f1c4-de70-7000-8000-0000000b0002', '0192f1c4-de70-7000-8000-0000000c0001', 'group:0192f1c4-de70-7000-8000-0000000a0001:1',
+   'visit_scheduled', 'individual', 'garden_maintenance', 'other', 250, '{}', 'Cotonou', 'cotonou',
+   'Près de la place de l''Étoile rouge, portail vert (repère fictif)',
+   '[{"start":"2026-11-20T08:00:00.000Z","end":"2026-11-20T11:00:00.000Z"}]'::jsonb, 1,
+   '{"surface":250,"condition":"overgrown"}'::jsonb, '[]'::jsonb, 'once', 1,
+   '0192f1c4-de70-7000-8000-0000000a0001', 'house', 6.3654, 2.4183, 12, 'Près de la place de l''Étoile rouge, portail vert (repère fictif)', 'nominatim',
+   'Place de l''Étoile rouge, Cotonou, Littoral, Bénin', '2026-11-02T09:00:00Z', '2026-11-03T10:00:00Z'),
+  ('0192f1c4-de70-7000-8000-0000000b0003', '0192f1c4-de70-7000-8000-0000000c0001', 'group:0192f1c4-de70-7000-8000-0000000a0001:2',
+   'accepted', 'individual', 'septic_emptying', 'other', 6, '{}', 'Cotonou', 'cotonou',
+   'Près de la place de l''Étoile rouge, portail vert (repère fictif)',
+   '[{"start":"2026-11-20T08:00:00.000Z","end":"2026-11-20T11:00:00.000Z"}]'::jsonb, 2,
+   '{"tank_volume":6,"tank_type":"septic_tank","truck_access":"easy"}'::jsonb, '[]'::jsonb, 'once', 1,
+   '0192f1c4-de70-7000-8000-0000000a0001', 'house', 6.3654, 2.4183, 12, 'Près de la place de l''Étoile rouge, portail vert (repère fictif)', 'nominatim',
+   'Place de l''Étoile rouge, Cotonou, Littoral, Bénin', '2026-11-02T09:00:00Z', '2026-11-04T08:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+INSERT INTO "site_visits" ("id", "request_id", "status", "scheduled_at", "agent_id")
+VALUES ('0192f1c4-de70-7000-8000-0000000d0001', '0192f1c4-de70-7000-8000-0000000b0002', 'scheduled', '2026-11-10T09:00:00Z', '0192f1c4-de70-7000-8000-0000000f0001')
+ON CONFLICT ("id") DO NOTHING;
+
+INSERT INTO "quotes"
+  ("id", "request_id", "lines", "subtotal", "intervention_count", "total", "proposed_slots", "valid_until",
+   "deposit_percent", "deposit_amount", "team_size", "duration_minutes", "sent_at")
+VALUES ('0192f1c4-de70-7000-8000-0000000d0002', '0192f1c4-de70-7000-8000-0000000b0003',
+  '[{"label":"Volume de la fosse","quantity":6,"unitPrice":9000,"amount":54000}]'::jsonb, 54000, 1, 54000,
+  '[{"start":"2026-11-20T08:00:00.000Z","end":"2026-11-20T11:00:00.000Z"}]'::jsonb, '2026-11-18T08:00:00Z',
+  30, 16200, 2, 180, '2026-11-03T08:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+INSERT INTO "missions"
+  ("id", "request_id", "quote_id", "acceptance_key", "customer_id", "status", "service_code", "commune", "address",
+   "chosen_slot_start", "chosen_slot_end", "planned_interventions", "payment_plan", "payment_total",
+   "deposit_percent", "deposit_amount", "latitude", "longitude", "location_accuracy_m", "landmark", "group_id",
+   "place_type", "created_at", "updated_at")
+VALUES ('0192f1c4-de70-7000-8000-0000000e0001', '0192f1c4-de70-7000-8000-0000000b0003', '0192f1c4-de70-7000-8000-0000000d0002',
+  'demo-accept-1', '0192f1c4-de70-7000-8000-0000000c0001', 'to_schedule', 'septic_emptying', 'Cotonou',
+  'Près de la place de l''Étoile rouge, portail vert (repère fictif)', '2026-11-20T08:00:00Z', '2026-11-20T11:00:00Z', 1,
+  '{"option":"full","timing":"after","method":"cash"}'::jsonb, 54000, 30, 16200, 6.3654, 2.4183, 12,
+  'Près de la place de l''Étoile rouge, portail vert (repère fictif)', '0192f1c4-de70-7000-8000-0000000a0001', 'house',
+  '2026-11-04T08:00:00Z', '2026-11-04T08:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+UPDATE "quote_requests"
+SET "current_quote_id" = '0192f1c4-de70-7000-8000-0000000d0002', "mission_id" = '0192f1c4-de70-7000-8000-0000000e0001'
+WHERE "id" = '0192f1c4-de70-7000-8000-0000000b0003' AND "mission_id" IS NULL;
+
+-- Demande dont la commune a été choisie à la main (aucun fournisseur n'a répondu), près du
+-- stade de l'Amitié.
+INSERT INTO "quote_request_groups" ("id", "customer_id", "idempotency_key", "place_type", "commune", "created_at")
+VALUES ('0192f1c4-de70-7000-8000-0000000a0002', '0192f1c4-de70-7000-8000-0000000c0001', 'demo-group-2', 'apartment', 'Cotonou', '2026-11-03T15:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+INSERT INTO "quote_requests"
+  ("id", "customer_id", "idempotency_key", "status", "customer_kind", "service_code", "premises_type", "quantity",
+   "options", "commune", "commune_code", "address", "preferred_slots", "recommended_team_size",
+   "answers", "option_selections", "frequency", "pricing_version",
+   "group_id", "place_type", "latitude", "longitude", "landmark", "geocoding_provider", "geocoded_address",
+   "created_at", "updated_at")
+VALUES ('0192f1c4-de70-7000-8000-0000000b0004', '0192f1c4-de70-7000-8000-0000000c0001', 'group:0192f1c4-de70-7000-8000-0000000a0002:0',
+  'received', 'individual', 'window_cleaning', 'other', 12, '{}', 'Cotonou', 'cotonou',
+  'Immeuble face au stade de l''Amitié, 3e étage (repère fictif)',
+  '[{"start":"2026-11-21T08:00:00.000Z","end":"2026-11-21T10:00:00.000Z"}]'::jsonb, 1,
+  '{"window_count":12,"access":"at_height"}'::jsonb, '[]'::jsonb, 'once', 1,
+  '0192f1c4-de70-7000-8000-0000000a0002', 'apartment', 6.3790, 2.3790,
+  'Immeuble face au stade de l''Amitié, 3e étage (repère fictif)', NULL, NULL,
+  '2026-11-03T15:00:00Z', '2026-11-03T15:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+-- Demande ancienne, antérieure au parcours par lieu : ni groupe, ni lieu, ni position.
+INSERT INTO "quote_requests"
+  ("id", "customer_id", "idempotency_key", "status", "customer_kind", "service_code", "premises_type", "quantity",
+   "options", "commune", "commune_code", "address", "preferred_slots", "recommended_team_size", "created_at", "updated_at")
+VALUES ('0192f1c4-de70-7000-8000-0000000b0005', '0192f1c4-de70-7000-8000-0000000c0001', 'demo-old-1',
+  'received', 'individual', 'home_cleaning', 'apartment', 3, '{}', 'Abomey-Calavi', 'abomey-calavi',
+  'Lot 12, Abomey-Calavi (adresse fictive)',
+  '[{"start":"2026-11-22T08:00:00.000Z","end":"2026-11-22T11:00:00.000Z"}]'::jsonb, 1,
+  '2026-10-20T09:00:00Z', '2026-10-20T09:00:00Z')
+ON CONFLICT ("id") DO NOTHING;

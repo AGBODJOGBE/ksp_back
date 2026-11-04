@@ -26,6 +26,20 @@ import {
 } from './missions/customer-missions.use-cases';
 import { DeactivateZoneUseCase, ListZonesUseCase, SaveZoneUseCase } from './catalog/zones.use-cases';
 import { HasPendingObligationsUseCase } from './obligations/has-pending-obligations.use-case';
+import { ResolveLocationUseCase } from './places/location.use-cases';
+import { DescribeRequestsUseCase } from './places/request-labels.use-case';
+import {
+  CatalogConsistencyUseCase,
+  EstimateUseCase,
+  GetPlaceCatalogUseCase,
+  ListPlaceTypesUseCase,
+  SavePlaceTypeUseCase,
+} from './places/place-catalog.use-cases';
+import {
+  GetMyRequestGroupUseCase,
+  ListGroupSiblingsUseCase,
+  RequestQuoteGroupUseCase,
+} from './places/request-groups.use-cases';
 import { GetMissionAmountDueUseCase, RecordOnlinePaymentUseCase } from './payments/online-payments.use-cases';
 import {
   HandleOrganizationEventUseCase,
@@ -71,6 +85,16 @@ export function createUseCases(deps: CleaningDeps) {
     listServices: new ListServicesUseCase(deps),
     simulate: new SimulateUseCase(deps),
     listServedZones: new ListServedZonesUseCase(deps),
+    getPlaceCatalog: new GetPlaceCatalogUseCase(deps),
+    estimate: new EstimateUseCase(deps),
+    resolveLocation: new ResolveLocationUseCase(deps),
+    requestQuoteGroup: new RequestQuoteGroupUseCase(deps),
+    getMyRequestGroup: new GetMyRequestGroupUseCase(deps),
+    listGroupSiblings: new ListGroupSiblingsUseCase(deps),
+    listPlaceTypes: new ListPlaceTypesUseCase(deps),
+    savePlaceType: new SavePlaceTypeUseCase(deps),
+    catalogConsistency: new CatalogConsistencyUseCase(deps),
+    describeRequests: new DescribeRequestsUseCase(deps),
     requestQuote: new RequestQuoteUseCase(deps),
     listMyRequests: new ListMyRequestsUseCase(deps),
     getMyRequest: new GetMyRequestUseCase(deps),

@@ -7,6 +7,7 @@ export type RateLimitCategory =
   | 'mfa_verify'
   | 'refresh'
   | 'cleaning_simulation'
+  | 'cleaning_geocoding'
   | 'email_code_request'
   | 'email_code_verify'
   | 'account_lookup'
@@ -33,6 +34,8 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   refresh: { limit: 60, windowSeconds: 60, key: 'ip' },
   // Simulateur public du Nettoyage (cahier des charges Nettoyage, partie 5).
   cleaning_simulation: { limit: 20, windowSeconds: 60, key: 'ip' },
+  // Position du lieu (ADR-034) : chaque appel peut interroger un géocodeur payant (Google).
+  cleaning_geocoding: { limit: 10, windowSeconds: 60, key: 'user' },
   // Code de confirmation de l'e-mail du profil : identity limite aussi par adresse et par compte.
   email_code_request: { limit: 3, windowSeconds: 60, key: 'user' },
   email_code_verify: { limit: 10, windowSeconds: 60, key: 'user' },

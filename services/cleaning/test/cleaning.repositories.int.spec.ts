@@ -10,10 +10,12 @@ import {
   asSupervisor,
   CUSTOMER_ID,
   definitionInput,
+  FakeGeocoder,
   FixedClock,
   OTHER_AGENT_ID,
 } from '../src/application/testing/fakes';
 import { createUseCases } from '../src/application/use-cases';
+import { type RequestQuoteGroupInput } from '../src/application/places/request-groups.use-cases';
 import { definitionProblems, isFullyPriced } from '../src/domain/catalog';
 import { DEFAULT_FIELD_DATE_POLICY } from '../src/domain/schedule';
 import { homeCleaningService } from '../src/domain/testing';
@@ -70,6 +72,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       agents: new PrismaAgentRepository(prisma),
       invoices: new PrismaContractInvoiceRepository(prisma),
       organizations: new PrismaOrganizationStandingRepository(prisma),
+      geocoder: new FakeGeocoder(),
       people: { userNames: async () => new Map(), organizationNames: async () => new Map() },
       fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
       clock,
@@ -89,7 +92,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       (row) => row.event_type,
     );
 
-  it('la migration crée les réglages par défaut et les six prestations, prix à null (ADR-033)', async () => {
+  it('les migrations créent les réglages, les huit prestations (prix à null) et les types de lieu (ADR-033, 034)', async () => {
     expect(await deps.catalog.getSettings()).toMatchObject({
       quoteValidityDays: 15,
       depositPercent: 30,
@@ -101,10 +104,51 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     ).toEqual([
       ['garden_maintenance', 'square_meter', true, 1],
       ['home_cleaning', 'room', true, 1],
+      ['house_cleaning', 'room', true, 1],
       ['office_cleaning', 'square_meter', true, 1],
       ['pest_control', 'square_meter', true, 1],
       ['post_construction', 'square_meter', true, 1],
       ['septic_emptying', 'cubic_meter', true, 1],
+      ['window_cleaning', 'square_meter', true, 1],
+    ]);
+    const house = services.find((service) => service.code === 'house_cleaning')!;
+    expect(house.fields.map((field) => [field.code, field.required])).toEqual([
+      ['surface', true],
+      ['bedrooms', true],
+      ['bathrooms', true],
+      ['front_yard', true],
+      ['back_yard', true],
+      ['condition', true],
+      ['pets', false],
+    ]);
+    expect(house.pricing.teamSize).toEqual({
+      fieldCode: 'bedrooms',
+      unitsPerAgent: 3,
+      minAgents: 1,
+      maxAgents: 6,
+    });
+    expect(house.options.map((option) => option.code)).toEqual(['windows']);
+    const windows = services.find((service) => service.code === 'window_cleaning')!;
+    expect(windows.pricing.teamSize).toEqual({
+      fieldCode: 'window_count',
+      unitsPerAgent: 20,
+      minAgents: 1,
+      maxAgents: 4,
+    });
+    expect((await deps.catalog.listPlaceTypes()).map((p) => [p.code, p.icon, p.serviceCodes])).toEqual([
+      [
+        'house',
+        'house',
+        ['house_cleaning', 'garden_maintenance', 'window_cleaning', 'septic_emptying', 'pest_control'],
+      ],
+      [
+        'villa',
+        'villa',
+        ['house_cleaning', 'garden_maintenance', 'window_cleaning', 'septic_emptying', 'pest_control'],
+      ],
+      ['apartment', 'apartment', ['home_cleaning', 'window_cleaning', 'pest_control']],
+      ['office', 'office', ['office_cleaning', 'window_cleaning', 'pest_control', 'septic_emptying']],
+      ['construction_site', 'construction', ['post_construction', 'window_cleaning']],
     ]);
     for (const service of services) {
       // Chaque définition de départ est valide et n'a aucun prix.
@@ -742,6 +786,104 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     expect(await deps.missions.listActiveForOrganization(suspendedOrganization)).toEqual([]);
   });
 
+  it('parcours par lieu : groupe idempotent en une transaction, ordre, filtres, types de lieu, zones (ADR-034)', async () => {
+    const customer = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e77';
+    const input: RequestQuoteGroupInput = {
+      idempotencyKey: 'int-group-1',
+      placeType: 'house',
+      location: { latitude: 6.4489, longitude: 2.3556, accuracyMeters: 20 },
+      landmark: 'Portail bleu',
+      items: [
+        {
+          serviceCode: 'window_cleaning',
+          answers: { window_count: 12, access: 'at_height' },
+          optionSelections: [],
+          frequency: 'once',
+        },
+        {
+          serviceCode: 'house_cleaning',
+          answers: {
+            surface: 180,
+            bedrooms: 4,
+            bathrooms: 2,
+            front_yard: true,
+            back_yard: false,
+            condition: 'normal',
+          },
+          optionSelections: [{ code: 'windows', answers: { window_count: 6 } }],
+          frequency: 'monthly',
+        },
+      ],
+      preferredSlots: [SLOT],
+      comment: '',
+    };
+    const before = (await outbox()).length;
+    // Deux appels simultanés avec la même clé : un seul groupe, deux demandes, deux événements.
+    const [a, b] = await Promise.all([
+      asCustomer(() => useCases.requestQuoteGroup.execute(input), customer),
+      asCustomer(() => useCases.requestQuoteGroup.execute(input), customer),
+    ]);
+    expect(b.group.id).toBe(a.group.id);
+    expect(a.requests.map((request) => request.serviceCode)).toEqual(['window_cleaning', 'house_cleaning']);
+    expect(
+      (await pool.query('SELECT count(*)::int AS n FROM quote_requests WHERE group_id = $1', [a.group.id]))
+        .rows[0].n,
+    ).toBe(2);
+    expect((await outbox()).length - before).toBe(2);
+    const stored = await deps.requests.findGroup(a.group.id);
+    expect(stored?.requests[1]).toMatchObject({
+      placeType: 'house',
+      location: { latitude: 6.4489, longitude: 2.3556, accuracyMeters: 20 },
+      landmark: 'Portail bleu',
+      geocodingProvider: 'nominatim',
+      geocodedAddress: 'Zogbadjè, Abomey-Calavi, Atlantique, Bénin',
+      commune: 'Abomey-Calavi',
+      calculation: { priced: false, reason: 'price_not_set' },
+    });
+    expect((await deps.requests.groupSizes([a.group.id])).get(a.group.id)).toBe(2);
+    const listed = await asSupervisor(() =>
+      useCases.listQuoteRequests.execute({
+        page: { limit: 10, cursor: null },
+        status: '',
+        groupId: a.group.id,
+        placeType: 'house',
+        serviceCode: 'house_cleaning',
+      }),
+    );
+    expect(listed.items.map((request) => request.id)).toEqual([a.requests[1]!.id]);
+    const { rows } = await pool.query(
+      "SELECT payload FROM outbox WHERE payload->'payload'->>'groupId' = $1",
+      [a.group.id],
+    );
+    expect(rows).toHaveLength(2);
+    expect(JSON.stringify(rows)).not.toContain('Portail bleu');
+    expect(JSON.stringify(rows)).not.toContain('6.4489');
+
+    const saved = await asAdmin(() =>
+      useCases.savePlaceType.execute({
+        code: 'garage',
+        label: 'Garage',
+        description: '',
+        icon: 'garage',
+        displayOrder: 80,
+        active: true,
+        serviceCodes: ['window_cleaning'],
+      }),
+    );
+    expect(saved.placeType).toMatchObject({ code: 'garage', serviceCodes: ['window_cleaning'] });
+    expect((await deps.catalog.listPlaceTypes()).find((p) => p.code === 'garage')).toMatchObject({
+      label: 'Garage',
+      updatedBy: expect.any(String),
+    });
+    const zone = await asAdmin(() =>
+      useCases.saveZone.execute({ commune: 'Sèmè-Podji', aliases: ['Sèmè-Kpodji'] }),
+    );
+    expect(zone.aliases).toEqual(['Sèmè-Kpodji']);
+    expect((await deps.catalog.listZones()).find((z) => z.code === 'seme-podji')?.aliases).toEqual([
+      'Sèmè-Kpodji',
+    ]);
+  });
+
   it('données de démonstration : chargées après les migrations, rejouables, désinsectisation sans prix', async () => {
     const demo = readFileSync(join(__dirname, '..', 'prisma', 'demo', 'demo-data.sql'), 'utf8');
     const client = await pool.connect();
@@ -757,10 +899,34 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     expect(priced).toEqual({
       garden_maintenance: true,
       home_cleaning: true,
+      house_cleaning: false,
       office_cleaning: true,
       pest_control: false,
       post_construction: true,
       septic_emptying: true,
+      window_cleaning: false,
+      demo_sofa_cleaning: false,
+    });
+    // Parcours par lieu (ADR-034) : groupe de 3 demandes, commune choisie à la main, demande ancienne.
+    const group = await deps.requests.findGroup('0192f1c4-de70-7000-8000-0000000a0001');
+    expect(group?.requests.map((request) => [request.serviceCode, request.status])).toEqual([
+      ['house_cleaning', 'received'],
+      ['garden_maintenance', 'visit_scheduled'],
+      ['septic_emptying', 'accepted'],
+    ]);
+    expect(group?.requests[0]).toMatchObject({
+      geocodingProvider: 'nominatim',
+      location: { latitude: 6.3654 },
+    });
+    const manual = await deps.requests.findById('0192f1c4-de70-7000-8000-0000000b0004');
+    expect(manual).toMatchObject({ geocodingProvider: null, placeType: 'apartment' });
+    expect(await deps.requests.findById('0192f1c4-de70-7000-8000-0000000b0005')).toMatchObject({
+      location: null,
+      groupId: null,
+    });
+    expect((await deps.missions.findById('0192f1c4-de70-7000-8000-0000000e0001'))?.location).toMatchObject({
+      latitude: 6.3654,
+      longitude: 2.4183,
     });
     for (const service of services) expect(definitionProblems(service)).toEqual([]);
     const versions = await pool.query(

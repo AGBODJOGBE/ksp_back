@@ -43,7 +43,55 @@ export interface FormAnswersInput {
 
 export interface SimulationInput extends FormAnswersInput {
   serviceCode: string;
-  commune: string;
+  /** Facultative (ADR-034) : absente, coefficient de commune neutre. */
+  commune?: string | undefined;
+}
+
+/** Une prestation d'un lieu (ADR-034) : réponses au nouveau format seulement. */
+export interface PlaceItemInput {
+  serviceCode: string;
+  answers: Answers;
+  options?: OptionSelectionInput[] | undefined;
+  frequency?: string | undefined;
+}
+
+export interface EstimateInput {
+  placeType: string;
+  commune?: string | undefined;
+  items: PlaceItemInput[];
+}
+
+export interface LocationInput {
+  latitude: number;
+  longitude: number;
+}
+
+export interface QuoteGroupInput {
+  placeType: string;
+  location: LocationInput & { accuracyMeters?: number | undefined };
+  landmark: string;
+  /** Repli si le géocodage ne trouve pas la commune. */
+  commune?: string | undefined;
+  items: (PlaceItemInput & { requestedTeamSize?: number | undefined })[];
+  preferredSlots: Slot[];
+  comment?: string | undefined;
+  recurrence?: RecurrenceInput | undefined;
+}
+
+export interface PlaceTypeInput {
+  label: string;
+  description?: string | undefined;
+  icon: string;
+  displayOrder: number;
+  active: boolean;
+  serviceCodes: string[];
+}
+
+/** Filtres facultatifs et cumulables de la liste des missions du back-office. */
+export interface MissionFilters {
+  status?: string | undefined;
+  groupId?: string | undefined;
+  serviceCode?: string | undefined;
 }
 
 export interface QuoteRequestInput extends FormAnswersInput {
@@ -155,6 +203,10 @@ export interface QuoteRequestFilters {
   /** Code de zone, par exemple « abomey-calavi ». */
   commune?: string | undefined;
   customerKind?: 'individual' | 'business' | undefined;
+  /** Parcours par lieu (ADR-034). */
+  groupId?: string | undefined;
+  placeType?: string | undefined;
+  serviceCode?: string | undefined;
 }
 
 /** Un appel par méthode du contrat ksp.cleaning.v1 exposée en REST. */
@@ -162,6 +214,11 @@ export interface CleaningApi {
   listServices(): Promise<Json>;
   simulate(input: SimulationInput): Promise<Json>;
   listServedZones(): Promise<Json>;
+  getPlaceCatalog(): Promise<Json>;
+  estimate(input: EstimateInput): Promise<Json>;
+  resolveLocation(input: LocationInput): Promise<Json>;
+  requestQuoteGroup(input: QuoteGroupInput, idempotencyKey: string): Promise<Json>;
+  getMyQuoteRequestGroup(id: string): Promise<Json>;
   requestQuote(input: QuoteRequestInput, idempotencyKey: string): Promise<Json>;
   listMyRequests(page: Page): Promise<Json>;
   getMyRequest(id: string): Promise<Json>;
@@ -178,7 +235,7 @@ export interface CleaningApi {
   scheduleVisit(id: string, input: { scheduledAt: string; agentId: string }): Promise<Json>;
   completeVisit(visitId: string, report: string): Promise<Json>;
   sendQuote(id: string, input: QuoteInput): Promise<Json>;
-  listMissions(page: Page, status: string | undefined): Promise<Json>;
+  listMissions(page: Page, filters: MissionFilters): Promise<Json>;
   getMission(id: string): Promise<Json>;
   scheduleIntervention(
     id: string,
@@ -206,7 +263,10 @@ export interface CleaningApi {
   previewService(code: string, input: PreviewInput): Promise<Json>;
   updateSettings(input: SettingsInput): Promise<Json>;
   listZones(): Promise<Json>;
-  saveZone(commune: string): Promise<Json>;
+  /** Noms alternatifs : absents, ceux en vigueur sont gardés (ADR-034). */
+  saveZone(commune: string, aliases?: string[] | undefined): Promise<Json>;
+  listPlaceTypes(): Promise<Json>;
+  savePlaceType(code: string, input: PlaceTypeInput): Promise<Json>;
   deactivateZone(code: string): Promise<Json>;
   listAgents(): Promise<Json>;
   registerAgent(input: { agentId: string; displayName: string }): Promise<Json>;

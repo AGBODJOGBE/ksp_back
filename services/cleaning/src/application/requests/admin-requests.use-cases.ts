@@ -1,5 +1,6 @@
+import { eventSubject } from '../shared/event-subject';
 import { checkAnswers, convertLegacy } from '../../domain/answers';
-import { type ServiceDefinition } from '../../domain/catalog';
+import { isCode, type ServiceDefinition } from '../../domain/catalog';
 import {
   buildQuote,
   isValidLine,
@@ -63,6 +64,10 @@ export interface ListQuoteRequestsInput {
   /** Code de zone (« abomey-calavi ») ; un nom de commune est accepté et normalisé. */
   commune?: string;
   customerKind?: string;
+  /** Parcours par lieu (ADR-034) : groupe, type de lieu, prestation. */
+  groupId?: string;
+  placeType?: string;
+  serviceCode?: string;
 }
 
 /** UC-CL-06 : liste des demandes (superviseur, admin), filtrable par état, zone et type de client. */
@@ -86,6 +91,15 @@ export class ListQuoteRequestsUseCase {
         throw CleaningErrors.invalid('customerKind');
       }
       filter.customerKind = input.customerKind as CustomerKind;
+    }
+    if (input.groupId) filter.groupId = requireUuid('groupId', input.groupId);
+    if (input.placeType) {
+      if (!isCode(input.placeType)) throw CleaningErrors.invalid('placeType');
+      filter.placeType = input.placeType;
+    }
+    if (input.serviceCode) {
+      if (!isCode(input.serviceCode)) throw CleaningErrors.invalid('serviceCode');
+      filter.serviceCode = input.serviceCode;
     }
     const now = this.deps.clock.now();
     const result = await this.deps.requests.list(filter, input.page);
@@ -113,6 +127,7 @@ export class RejectQuoteRequestUseCase {
     const now = this.deps.clock.now();
     assertRequestTransition(request, 'rejected', now);
     const reason = requiredText('reason', input.reason, 500);
+    const subject = await eventSubject(this.deps, request);
     const saved = await saveRequest(
       this.deps,
       { ...request, status: 'rejected', closingReason: reason },
@@ -121,6 +136,7 @@ export class RejectQuoteRequestUseCase {
           {
             type: 'cleaning.request.cancelled',
             payload: {
+              ...subject,
               requestId: request.id,
               missionId: null,
               customerId: request.customerId,
@@ -168,6 +184,7 @@ export class ScheduleVisitUseCase {
       report: null,
       completedAt: null,
     };
+    const subject = await eventSubject(this.deps, request);
     const saved = await saveRequest(
       this.deps,
       { ...request, status: 'visit_scheduled', visit },
@@ -176,6 +193,7 @@ export class ScheduleVisitUseCase {
           {
             type: 'cleaning.visit.scheduled',
             payload: {
+              ...subject,
               requestId: request.id,
               visitId: visit.id,
               customerId: request.customerId,
@@ -302,6 +320,7 @@ export class SendQuoteUseCase {
       durationMinutes,
       now,
     });
+    const subject = await eventSubject(this.deps, request);
     const saved = await saveRequest(
       this.deps,
       { ...request, status: 'quote_sent', quote },
@@ -310,6 +329,7 @@ export class SendQuoteUseCase {
           {
             type: 'cleaning.quote.sent',
             payload: {
+              ...subject,
               requestId: request.id,
               quoteId: quote.id,
               customerId: request.customerId,

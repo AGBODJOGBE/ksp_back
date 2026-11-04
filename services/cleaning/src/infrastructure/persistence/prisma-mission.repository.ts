@@ -42,6 +42,8 @@ export class PrismaMissionRepository implements MissionRepository {
       where: {
         ...(filter.customerId ? { customerId: filter.customerId } : {}),
         ...(filter.status ? { status: filter.status } : {}),
+        ...(filter.groupId ? { groupId: filter.groupId } : {}),
+        ...(filter.serviceCode ? { serviceCode: filter.serviceCode } : {}),
         ...(filter.agentId ? { interventions: { some: { agentIds: { has: filter.agentId } } } } : {}),
         ...cursorFilter(page),
       },

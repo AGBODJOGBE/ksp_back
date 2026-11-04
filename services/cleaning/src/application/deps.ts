@@ -9,6 +9,7 @@ import {
   type OrganizationStandingRepository,
   type PeopleDirectory,
   type QuoteRequestRepository,
+  type ReverseGeocoder,
 } from './ports';
 import { type Clock, type IdGenerator } from './shared/system.ports';
 
@@ -23,6 +24,8 @@ export interface CleaningDeps {
   organizations: OrganizationStandingRepository;
   /** Noms affichés au back-office, lus dans identity (ADR-029). */
   people: PeopleDirectory;
+  /** Commune d'un point GPS (ADR-034) : Nominatim auto-hébergé, puis Google en secours. */
+  geocoder: ReverseGeocoder;
   /** Contrôles de dates du terrain, réglables par configuration. */
   fieldDates: FieldDatePolicy;
   clock: Clock;

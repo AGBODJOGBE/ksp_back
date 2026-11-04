@@ -280,6 +280,33 @@ describe('Contrats des événements cleaning', () => {
     },
   );
 
+  it('demande reçue : groupe facultatif (ADR-034), identifiant UUID, sans position ni repère', () => {
+    const validate = ajv.compile(schemas.get('cleaning.quote.requested')!);
+    const base = cleaningExamples['cleaning.quote.requested'];
+    expect(validate(base)).toBe(true);
+    expect(validate({ ...base, groupId: uuid })).toBe(true);
+    expect(validate({ ...base, groupId: 'groupe-1' })).toBe(false);
+    expect(validate({ ...base, latitude: 6.45 })).toBe(false);
+    expect(validate({ ...base, landmark: 'Portail bleu' })).toBe(false);
+  });
+
+  it.each([
+    'cleaning.booking.confirmed',
+    'cleaning.quote.sent',
+    'cleaning.visit.scheduled',
+    'cleaning.request.cancelled',
+    'cleaning.mission.scheduled',
+  ] as const)('%s : prestation, son nom et groupe facultatifs (ADR-034)', (type) => {
+    const validate = ajv.compile(schemas.get(type)!);
+    const base = cleaningExamples[type];
+    const subject = { serviceCode: 'house_cleaning', serviceName: 'Nettoyage de maison', groupId: uuid };
+    expect(validate(base)).toBe(true);
+    expect(validate({ ...base, ...subject })).toBe(true);
+    expect(validate({ ...base, groupId: 'groupe-1' })).toBe(false);
+    expect(validate({ ...base, serviceName: '' })).toBe(false);
+    expect(validate({ ...base, landmark: 'Portail vert' })).toBe(false);
+  });
+
   it('annulation : organisation ajoutée (ADR-032), les événements antérieurs sans elle restent valides', () => {
     const validate = ajv.compile(schemas.get('cleaning.request.cancelled')!);
     const { organizationId: _organizationId, ...before } = cleaningExamples['cleaning.request.cancelled'];

@@ -8,6 +8,9 @@ const flag = (fallback: boolean) =>
     .default(fallback ? 'true' : 'false')
     .transform((value) => value === 'true');
 
+/** Variable vide (ligne « NOM= » d'un fichier .env) : considérée comme absente. */
+const unset = (value: unknown) => (value === '' ? undefined : value);
+
 /** Configuration du service : variables communes, plus celles propres à cleaning. */
 export const configSchema = baseServiceConfigSchema
   .safeExtend({
@@ -25,6 +28,15 @@ export const configSchema = baseServiceConfigSchema
     CLEANING_BLOCK_EARLY_INTERVENTION_START: flag(true),
     /** Refuser le compte rendu d'une visite avant l'heure prévue (proposition à valider). */
     CLEANING_BLOCK_EARLY_VISIT_REPORT: flag(true),
+    /**
+     * Géocodage inverse (ADR-034), facultatif : Nominatim auto-hébergé d'abord, Google en secours.
+     * Un fournisseur sans sa variable est désactivé ; sans aucun, le client choisit sa commune.
+     */
+    NOMINATIM_URL: z.preprocess(unset, z.url().optional()),
+    /** Clé Google Maps Geocoding (coffre) ; jamais journalisée. */
+    GOOGLE_MAPS_API_KEY: z.preprocess(unset, z.string().min(1).optional()),
+    /** Délai maximal d'un appel de géocodage, par fournisseur (3 secondes). */
+    GEOCODING_TIMEOUT_MS: z.coerce.number().int().min(200).max(30_000).default(3_000),
   })
   .refine(
     (cfg) =>

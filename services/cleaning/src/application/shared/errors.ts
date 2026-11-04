@@ -44,6 +44,23 @@ export const CleaningErrors = {
       { commune },
     ),
   zoneNotFound: () => AppError.notFound('CLEANING_ZONE_NOT_FOUND', 'Cette zone est introuvable.'),
+  placeTypeNotFound: () =>
+    AppError.notFound('CLEANING_PLACE_TYPE_NOT_FOUND', 'Ce type de lieu est introuvable.'),
+  /** Prestation non proposée pour le type de lieu choisi (ADR-034). */
+  serviceNotOffered: (field: string, placeType: string, serviceCode: string) =>
+    AppError.invalid(
+      'CLEANING_SERVICE_NOT_OFFERED',
+      "Cette prestation n'est pas proposée pour ce type de lieu.",
+      { field, placeType, serviceCode },
+    ),
+  /** Position non rattachée à une commune, et aucune commune choisie par le client (ADR-034). */
+  locationUnresolved: () =>
+    AppError.precondition(
+      'CLEANING_LOCATION_UNRESOLVED',
+      "Nous n'avons pas pu retrouver la commune de cette position : choisissez votre commune dans la liste des zones desservies.",
+    ),
+  requestGroupNotFound: () =>
+    AppError.notFound('CLEANING_REQUEST_GROUP_NOT_FOUND', 'Ce groupe de demandes est introuvable.'),
   paymentViaInvoice: () =>
     AppError.precondition(
       'CLEANING_PAYMENT_VIA_INVOICE',

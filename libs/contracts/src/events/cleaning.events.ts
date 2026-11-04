@@ -23,6 +23,8 @@ export interface CleaningEventPayloads {
     customerKind: 'individual' | 'business';
     serviceCode: string;
     visitRequired: boolean;
+    /** Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu. */
+    groupId?: string;
   };
   'cleaning.visit.scheduled': {
     requestId: string;
@@ -30,6 +32,10 @@ export interface CleaningEventPayloads {
     customerId: string;
     agentId: string;
     scheduledAt: string;
+    /** Facultatifs (ADR-034) : prestation, son nom et groupe de la demande. */
+    serviceCode?: string;
+    serviceName?: string;
+    groupId?: string;
   };
   'cleaning.quote.sent': {
     requestId: string;
@@ -37,6 +43,10 @@ export interface CleaningEventPayloads {
     customerId: string;
     total: CleaningMoney;
     validUntil: string;
+    /** Facultatifs (ADR-034) : prestation, son nom et groupe de la demande. */
+    serviceCode?: string;
+    serviceName?: string;
+    groupId?: string;
   };
   'cleaning.booking.confirmed': {
     requestId: string;
@@ -55,6 +65,10 @@ export interface CleaningEventPayloads {
     depositAmount: CleaningMoney;
     /** Début du créneau choisi : départ des mois de facturation d'un contrat d'entreprise. */
     startsAt?: string;
+    /** Facultatifs (ADR-034) : prestation, son nom et groupe de la demande. */
+    serviceCode?: string;
+    serviceName?: string;
+    groupId?: string;
   };
   'cleaning.mission.scheduled': {
     missionId: string;
@@ -63,6 +77,10 @@ export interface CleaningEventPayloads {
     scheduledStart: string;
     durationMinutes: number;
     agentIds: string[];
+    /** Facultatifs (ADR-034) : prestation, son nom et groupe de la demande. */
+    serviceCode?: string;
+    serviceName?: string;
+    groupId?: string;
   };
   'cleaning.mission.completed': {
     missionId: string;
@@ -81,6 +99,10 @@ export interface CleaningEventPayloads {
     organizationId?: string | null;
     cancelledBy: 'customer' | 'supervisor';
     outcome: 'cancelled' | 'rejected' | 'declined';
+    /** Facultatifs (ADR-034) : prestation, son nom et groupe de la demande. */
+    serviceCode?: string;
+    serviceName?: string;
+    groupId?: string;
   };
   'cleaning.contract.suspension_warning': {
     missionId: string;

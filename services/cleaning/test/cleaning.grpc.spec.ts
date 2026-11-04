@@ -292,7 +292,18 @@ describe('cleaning en gRPC', () => {
     const list = (commune: string, customerKind: string) =>
       call(
         (m) =>
-          admin.listQuoteRequests({ page: { limit: 10, cursor: '' }, status: '', commune, customerKind }, m),
+          admin.listQuoteRequests(
+            {
+              page: { limit: 10, cursor: '' },
+              status: '',
+              commune,
+              customerKind,
+              groupId: '',
+              placeType: '',
+              serviceCode: '',
+            },
+            m,
+          ),
         superAdmin,
       );
     const { requests } = await list('cotonou', 'individual');
@@ -314,6 +325,10 @@ describe('cleaning en gRPC', () => {
       serviceCode: 'home_cleaning',
       commune: 'Cotonou',
       address: 'Lot 12',
+      location: null,
+      landmark: null,
+      groupId: null,
+      placeType: null,
       chosenSlot: { start: new Date(SLOT.start), end: new Date(SLOT.end) },
       recurrence: null,
       plannedInterventions: 1,
@@ -465,5 +480,126 @@ describe('cleaning en gRPC', () => {
       (error: AppError) => [error.code, error.details],
     );
     expect(refused).toEqual(['CLEANING_VALIDATION_FAILED', { field: 'fields', reason: 'required' }]);
+  });
+
+  it('parcours par lieu : catalogue, estimation, position, groupe, demandes sœurs (ADR-034)', async () => {
+    world.catalog.placeTypes.set('house', {
+      code: 'house',
+      label: 'Maison',
+      description: '',
+      icon: 'house',
+      displayOrder: 10,
+      active: true,
+      serviceCodes: ['home_cleaning', 'missing_service'],
+      updatedBy: null,
+      updatedAt: null,
+    });
+    const place = await call((m) => catalog.getPlaceCatalog({}, m));
+    expect(place.placeTypes).toEqual([
+      expect.objectContaining({ code: 'house', serviceCodes: ['home_cleaning'], displayOrder: 10 }),
+    ]);
+    expect(place.services.map((service) => service.code)).toEqual(['home_cleaning']);
+
+    const item = {
+      serviceCode: 'home_cleaning',
+      answers: ANSWERS,
+      optionSelections: WINDOWS,
+      frequency: 'once',
+    };
+    const estimate = await call((m) =>
+      catalog.estimate({ placeType: 'house', commune: '', items: [item] }, m),
+    );
+    expect(estimate).toMatchObject({
+      placeType: 'house',
+      commune: '',
+      communeApplied: false,
+      status: 'priced',
+      total: { amount: 34000, currency: 'XOF' },
+      items: [{ serviceCode: 'home_cleaning', serviceName: 'Nettoyage à domicile', priced: true }],
+    });
+
+    const resolved = await call(
+      (m) => quotes.resolveLocation({ latitude: 6.4489, longitude: 2.3556 }, m),
+      asCustomer,
+    );
+    expect(resolved).toMatchObject({
+      commune: 'Abomey-Calavi',
+      zoneCode: 'abomey-calavi',
+      served: true,
+      provider: 'nominatim',
+    });
+
+    const { group } = await call(
+      (m) =>
+        quotes.requestQuoteGroup(
+          {
+            idempotencyKey: 'grpc-group-1',
+            placeType: 'house',
+            location: { latitude: 6.4489, longitude: 2.3556, accuracyMeters: 0 },
+            landmark: 'Portail bleu',
+            commune: '',
+            items: [{ ...item, requestedTeamSize: 0 }],
+            preferredSlots: [SLOT],
+            comment: '',
+          },
+          m,
+        ),
+      asCustomer,
+    );
+    expect(group).toMatchObject({ placeType: 'house', commune: 'Abomey-Calavi', zoneCode: 'abomey-calavi' });
+    expect(group?.requests[0]).toMatchObject({
+      groupId: group?.id,
+      placeType: 'house',
+      landmark: 'Portail bleu',
+      geocodingProvider: 'nominatim',
+      geocodedAddress: 'Zogbadjè, Abomey-Calavi, Atlantique, Bénin',
+      groupSize: 1,
+      serviceName: 'Nettoyage à domicile',
+      placeTypeLabel: 'Maison',
+      location: { latitude: 6.4489, longitude: 2.3556, accuracyMeters: 0 },
+    });
+    const again = await call((m) => quotes.getRequestGroup({ groupId: group!.id }, m), asCustomer);
+    expect(again.group?.requests.map((r) => r.id)).toEqual(group?.requests.map((r) => r.id));
+
+    const staff = { userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001', roles: ['cleaning_admin'], mfa: true };
+    const detail = await call((m) => admin.getQuoteRequest({ requestId: group!.requests[0]!.id }, m), staff);
+    expect(detail.groupRequests).toEqual([]);
+    const { placeTypes } = await call((m) => admin.listPlaceTypes({}, m), staff);
+    expect(placeTypes[0]).toMatchObject({
+      code: 'house',
+      unknownServiceCodes: ['missing_service'],
+      publiclyVisible: true,
+      visibilityReason: '',
+    });
+    const saved = await call(
+      (m) =>
+        admin.savePlaceType(
+          {
+            placeType: {
+              code: 'office',
+              label: 'Bureau',
+              description: '',
+              icon: 'office',
+              displayOrder: 40,
+              active: false,
+              serviceCodes: ['home_cleaning'],
+              updatedBy: '',
+              updatedAt: '',
+              updatedByName: '',
+              unknownServiceCodes: [],
+              inactiveServiceCodes: [],
+              publiclyVisible: true,
+              visibilityReason: '',
+            },
+          },
+          m,
+        ),
+      staff,
+    );
+    expect(saved.placeType).toMatchObject({
+      code: 'office',
+      publiclyVisible: false,
+      visibilityReason: 'inactive',
+    });
   });
 });

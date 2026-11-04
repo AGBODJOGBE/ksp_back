@@ -194,7 +194,45 @@ export interface QuoteRequest {
    * Détail du calcul au moment de la demande, absent pour une demande antérieure ; le devis est
    * prérempli à partir de lui.
    */
-  calculation?: PriceCalculation | undefined;
+  calculation?:
+    | PriceCalculation
+    | undefined;
+  /** Groupe de demandes créées ensemble pour un même lieu (ADR-034), vide pour une demande seule. */
+  groupId: string;
+  /** Code du type de lieu choisi par le client, vide pour une demande sans lieu. */
+  placeType: string;
+  /**
+   * Position GPS du lieu, absente pour une demande sans position. Jamais dans les journaux ni
+   * dans les événements.
+   */
+  location?:
+    | GeoLocation
+    | undefined;
+  /** Point de repère donné par le client, vide sans position. */
+  landmark: string;
+  /**
+   * Fournisseur qui a trouvé la commune : "nominatim" ou "google" ; vide si la commune est celle
+   * choisie par le client (aucun fournisseur n'a répondu) ou pour une demande sans position.
+   */
+  geocodingProvider: string;
+  /** Nombre de demandes du groupe (1 pour une demande seule). */
+  groupSize: number;
+  /**
+   * Nom de la prestation et libellé du type de lieu, résolus par cleaning au moment de la réponse
+   * (même pour une prestation ou un lieu désactivé) ; vides s'ils sont inconnus.
+   */
+  serviceName: string;
+  placeTypeLabel: string;
+  /** Adresse lisible rendue par le géocodeur pour la position, vide si aucune. */
+  geocodedAddress: string;
+}
+
+/** Position GPS d'un lieu d'intervention (ADR-034). */
+export interface GeoLocation {
+  latitude: number;
+  longitude: number;
+  /** Précision annoncée par le téléphone, en mètres ; 0 si inconnue. */
+  accuracyMeters: number;
 }
 
 export interface ChecklistItem {
@@ -267,6 +305,15 @@ export interface Mission {
   customerName: string;
   /** Back-office : raison sociale de l'organisation, vide pour un particulier (ADR-029). */
   organizationName: string;
+  /**
+   * Position GPS et point de repère copiés de la demande à l'acceptation (ADR-034), pour que les
+   * agents aillent sur place ; absents pour une mission sans position.
+   */
+  location?: GeoLocation | undefined;
+  landmark: string;
+  /** Groupe et type de lieu de la demande d'origine (ADR-034), vides sinon. */
+  groupId: string;
+  placeType: string;
 }
 
 export interface Suspension {
@@ -576,6 +623,7 @@ export interface SimulateRequest {
    * @deprecated
    */
   options: string[];
+  /** Facultative (ADR-034) : vide, coefficient de commune neutre (10000) et commune_applied = false. */
   commune: string;
   /**
    * Nouveau format : code d'une fréquence de la prestation (coefficient sur le prix d'un passage).
@@ -608,7 +656,14 @@ export interface SimulateResponse {
   /** Raison de l'absence de prix (voir PriceCalculation.reason), vide si priced. */
   reason: string;
   /** Détail complet du calcul (ADR-033) ; breakdown reprend ses lignes. */
-  calculation?: PriceCalculation | undefined;
+  calculation?:
+    | PriceCalculation
+    | undefined;
+  /**
+   * Faux si la simulation est faite sans commune (ADR-034) : coefficient neutre, prix indicatif,
+   * recalculé avec la vraie commune à la demande de devis.
+   */
+  communeApplied: boolean;
 }
 
 /** Zone desservie vue du public. */
@@ -624,6 +679,72 @@ export interface ListServedZonesRequest {
 
 export interface ListServedZonesResponse {
   zones: ServedZone[];
+}
+
+/** Type de lieu vu du public (ADR-034). */
+export interface PublicPlaceType {
+  /** Code stable, par exemple "house". */
+  code: string;
+  label: string;
+  description: string;
+  /** Nom d'icône libre, interprété par le front (par exemple "house"). */
+  icon: string;
+  displayOrder: number;
+  /** Codes des prestations actives proposées pour ce lieu, dans l'ordre choisi au back-office. */
+  serviceCodes: string[];
+}
+
+export interface GetPlaceCatalogRequest {
+}
+
+export interface GetPlaceCatalogResponse {
+  /** Types de lieu actifs proposant au moins une prestation active, par ordre d'affichage puis code. */
+  placeTypes: PublicPlaceType[];
+  /** Prestations actives référencées par ces types de lieu, avec leur formulaire (sans prix). */
+  services: ServiceOffer[];
+}
+
+/** Une prestation d'une estimation : réponses au nouveau format seulement (ADR-033). */
+export interface EstimateItemRequest {
+  serviceCode: string;
+  answers?: AnswerSet | undefined;
+  optionSelections: OptionSelection[];
+  frequency: string;
+}
+
+export interface EstimateRequest {
+  /** Type de lieu actif ; chaque prestation doit être proposée par lui (CLEANING_SERVICE_NOT_OFFERED). */
+  placeType: string;
+  /** Facultative : vide, coefficient de commune neutre (10000) et commune_applied = false. */
+  commune: string;
+  /** 1 à 10 prestations distinctes ; erreurs de réponse : details.field préfixé par "items[i].". */
+  items: EstimateItemRequest[];
+}
+
+export interface EstimateItem {
+  serviceCode: string;
+  serviceName: string;
+  priced: boolean;
+  /** Voir PriceCalculation.reason ; vide si priced. */
+  reason: string;
+  /** Mention « estimation non contractuelle », ou raison de l'absence de prix. */
+  notice: string;
+  calculation?: PriceCalculation | undefined;
+}
+
+export interface EstimateResponse {
+  placeType: string;
+  /** Commune envoyée, vide si aucune. */
+  commune: string;
+  communeApplied: boolean;
+  /** Vrai si la commune est dans une zone desservie ; faux sans commune. */
+  covered: boolean;
+  /** "priced" (toutes les prestations ont un prix), "partially_priced" ou "unpriced". */
+  status: string;
+  /** Somme des prix des prestations, absente si une seule n'a pas de prix. */
+  total?: Money | undefined;
+  notice: string;
+  items: EstimateItem[];
 }
 
 export interface Page {
@@ -731,6 +852,80 @@ export interface CancelRequestResponse {
   request?: QuoteRequest | undefined;
 }
 
+export interface ResolveLocationRequest {
+  /** Degrés décimaux (WGS 84) : latitude entre -90 et 90, longitude entre -180 et 180. */
+  latitude: number;
+  longitude: number;
+}
+
+export interface ResolveLocationResponse {
+  latitude: number;
+  longitude: number;
+  /** Commune trouvée (nom de la zone desservie si elle l'est), vide si aucune. */
+  commune: string;
+  /** Code de la zone desservie, vide si la commune n'est pas desservie ou inconnue. */
+  zoneCode: string;
+  served: boolean;
+  /** Adresse lisible rendue par le fournisseur, vide si aucune. */
+  displayAddress: string;
+  /** "nominatim", "google", ou vide si aucun fournisseur n'a trouvé de commune. */
+  provider: string;
+}
+
+/** Une prestation d'un groupe : réponses au nouveau format seulement (ADR-033). */
+export interface QuoteGroupItem {
+  serviceCode: string;
+  answers?: AnswerSet | undefined;
+  optionSelections: OptionSelection[];
+  frequency: string;
+  /** 0 : taille recommandée par la règle de la prestation. */
+  requestedTeamSize: number;
+}
+
+export interface RequestQuoteGroupRequest {
+  idempotencyKey: string;
+  placeType: string;
+  location?:
+    | GeoLocation
+    | undefined;
+  /** Point de repère (obligatoire, 500 caractères au plus) : il sert aussi d'adresse d'intervention. */
+  landmark: string;
+  /**
+   * Repli : commune choisie par le client, utilisée seulement si aucun fournisseur de géocodage ne
+   * rattache la position à une commune. Ignorée sinon (le serveur ne lui fait pas confiance).
+   */
+  commune: string;
+  /** 1 à 10 prestations distinctes, toutes proposées par le type de lieu. */
+  items: QuoteGroupItem[];
+  preferredSlots: TimeSlot[];
+  comment: string;
+  recurrence?: Recurrence | undefined;
+}
+
+/** Groupe de demandes créées ensemble pour un même lieu (ADR-034). */
+export interface QuoteRequestGroup {
+  id: string;
+  placeType: string;
+  /** Commune retenue (trouvée par géocodage, ou choisie par le client en repli). */
+  commune: string;
+  zoneCode: string;
+  createdAt: string;
+  /** Demandes du groupe, dans l'ordre des prestations envoyées. */
+  requests: QuoteRequest[];
+}
+
+export interface RequestQuoteGroupResponse {
+  group?: QuoteRequestGroup | undefined;
+}
+
+export interface GetRequestGroupRequest {
+  groupId: string;
+}
+
+export interface GetRequestGroupResponse {
+  group?: QuoteRequestGroup | undefined;
+}
+
 export interface ListMyMissionsRequest {
   page?: Page | undefined;
 }
@@ -770,6 +965,12 @@ export interface ListQuoteRequestsRequest {
   commune: string;
   /** "individual" ou "business". */
   customerKind: string;
+  /** Groupe de demandes (ADR-034). */
+  groupId: string;
+  /** Code du type de lieu. */
+  placeType: string;
+  /** Code de la prestation. */
+  serviceCode: string;
 }
 
 export interface ListQuoteRequestsResponse {
@@ -782,7 +983,28 @@ export interface GetQuoteRequestRequest {
 }
 
 export interface GetQuoteRequestResponse {
-  request?: QuoteRequest | undefined;
+  request?:
+    | QuoteRequest
+    | undefined;
+  /** Autres demandes du même groupe (ADR-034), vide pour une demande seule. */
+  groupRequests: GroupedRequestSummary[];
+}
+
+/** Demande sœur d'un groupe, vue du back-office. */
+export interface GroupedRequestSummary {
+  id: string;
+  serviceCode: string;
+  /** Même valeurs que QuoteRequest.status. */
+  status: string;
+  serviceName: string;
+  /** Date de la visite des lieux planifiée ou réalisée, vide si aucune. */
+  visitScheduledAt: string;
+  /** Total du devis en vigueur, absent sans devis. */
+  quoteTotal?:
+    | Money
+    | undefined;
+  /** Mission créée à l'acceptation, vide sinon. */
+  missionId: string;
 }
 
 export interface RejectQuoteRequestRequest {
@@ -840,6 +1062,9 @@ export interface SendQuoteResponse {
 export interface ListMissionsRequest {
   page?: Page | undefined;
   status: string;
+  /** Filtres facultatifs, cumulables (ADR-034) : groupe de la demande d'origine, prestation. */
+  groupId: string;
+  serviceCode: string;
 }
 
 export interface ListMissionsResponse {
@@ -1059,7 +1284,14 @@ export interface GetCatalogRequest {
 
 export interface GetCatalogResponse {
   services: ServiceDefinition[];
-  settings?: Settings | undefined;
+  settings?:
+    | Settings
+    | undefined;
+  /**
+   * Prestations actives proposées par aucun type de lieu actif (ADR-034) : invisibles dans le
+   * parcours par lieu.
+   */
+  unplacedServiceCodes: string[];
 }
 
 export interface SaveServiceRequest {
@@ -1067,7 +1299,14 @@ export interface SaveServiceRequest {
 }
 
 export interface SaveServiceResponse {
-  service?: ServiceDefinition | undefined;
+  service?:
+    | ServiceDefinition
+    | undefined;
+  /**
+   * Prestation enregistrée inactive (ADR-034) : types de lieu actifs qui la proposent encore (elle
+   * y est masquée côté public) ; vide sinon.
+   */
+  affectedPlaceTypes: PlaceTypeRef[];
 }
 
 export interface PreviewServiceRequest {
@@ -1121,6 +1360,16 @@ export interface Zone {
   updatedAt: string;
   /** Back-office : nom affiché de l'auteur de la dernière modification (ADR-029). */
   updatedByName: string;
+  /**
+   * Autres noms de la commune (« Sèmè-Kpodji » pour « Sèmè-Podji »), utilisés pour rattacher une
+   * position géocodée à la zone (ADR-034).
+   */
+  aliases: string[];
+}
+
+/** Noms alternatifs d'une zone : message présent = liste remplacée ; absent = inchangée. */
+export interface ZoneAliases {
+  names: string[];
 }
 
 export interface ListZonesRequest {
@@ -1132,6 +1381,8 @@ export interface ListZonesResponse {
 
 export interface SaveZoneRequest {
   commune: string;
+  /** Facultatif (ADR-034) : absent, les noms alternatifs en vigueur sont gardés. */
+  aliases?: ZoneAliases | undefined;
 }
 
 export interface SaveZoneResponse {
@@ -1144,6 +1395,59 @@ export interface DeactivateZoneRequest {
 
 export interface DeactivateZoneResponse {
   zone?: Zone | undefined;
+}
+
+/** Type de lieu du parcours client (ADR-034), défini au back-office. */
+export interface PlaceType {
+  /** Code stable : ^[a-z][a-z0-9_]{1,49}$. */
+  code: string;
+  label: string;
+  description: string;
+  /** Nom d'icône libre (par exemple "house"), interprété par le front. */
+  icon: string;
+  /** Ordre d'affichage croissant. */
+  displayOrder: number;
+  active: boolean;
+  /**
+   * Codes des prestations proposées, dans l'ordre d'affichage ; une prestation inactive y reste
+   * mais est masquée côté public.
+   */
+  serviceCodes: string[];
+  updatedBy: string;
+  updatedAt: string;
+  /** Back-office : nom affiché de l'auteur de la dernière modification (ADR-029). */
+  updatedByName: string;
+  /**
+   * Cohérence du catalogue (back-office, ListPlaceTypes) : prestations proposées inconnues ou
+   * inactives, et visibilité publique du lieu.
+   */
+  unknownServiceCodes: string[];
+  inactiveServiceCodes: string[];
+  publiclyVisible: boolean;
+  /** Raison d'un lieu non visible : "inactive" ou "no_active_service" ; vide s'il est visible. */
+  visibilityReason: string;
+}
+
+/** Type de lieu cité dans une réponse (code et libellé). */
+export interface PlaceTypeRef {
+  code: string;
+  label: string;
+}
+
+export interface ListPlaceTypesRequest {
+}
+
+export interface ListPlaceTypesResponse {
+  placeTypes: PlaceType[];
+}
+
+export interface SavePlaceTypeRequest {
+  /** updated_by, updated_at et updated_by_name sont ignorés. */
+  placeType?: PlaceType | undefined;
+}
+
+export interface SavePlaceTypeResponse {
+  placeType?: PlaceType | undefined;
 }
 
 export interface Unavailability {
@@ -1282,6 +1586,20 @@ export interface CatalogServiceClient {
    */
 
   listServedZones(request: ListServedZonesRequest, metadata?: Metadata): Observable<ListServedZonesResponse>;
+
+  /**
+   * Parcours par lieu (ADR-034) : types de lieu actifs, triés, avec les codes de leurs prestations
+   * actives, et ces prestations avec leur formulaire (comme ListServices), en un seul appel.
+   */
+
+  getPlaceCatalog(request: GetPlaceCatalogRequest, metadata?: Metadata): Observable<GetPlaceCatalogResponse>;
+
+  /**
+   * Estimation de plusieurs prestations d'un même lieu (ADR-034), avec le simulateur de l'ADR-033 ;
+   * rien n'est enregistré. Commune facultative : sans elle, coefficient neutre.
+   */
+
+  estimate(request: EstimateRequest, metadata?: Metadata): Observable<EstimateResponse>;
 }
 
 /**
@@ -1320,11 +1638,31 @@ export interface CatalogServiceController {
     request: ListServedZonesRequest,
     metadata?: Metadata,
   ): Promise<ListServedZonesResponse> | Observable<ListServedZonesResponse> | ListServedZonesResponse;
+
+  /**
+   * Parcours par lieu (ADR-034) : types de lieu actifs, triés, avec les codes de leurs prestations
+   * actives, et ces prestations avec leur formulaire (comme ListServices), en un seul appel.
+   */
+
+  getPlaceCatalog(
+    request: GetPlaceCatalogRequest,
+    metadata?: Metadata,
+  ): Promise<GetPlaceCatalogResponse> | Observable<GetPlaceCatalogResponse> | GetPlaceCatalogResponse;
+
+  /**
+   * Estimation de plusieurs prestations d'un même lieu (ADR-034), avec le simulateur de l'ADR-033 ;
+   * rien n'est enregistré. Commune facultative : sans elle, coefficient neutre.
+   */
+
+  estimate(
+    request: EstimateRequest,
+    metadata?: Metadata,
+  ): Promise<EstimateResponse> | Observable<EstimateResponse> | EstimateResponse;
 }
 
 export function CatalogServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["listServices", "simulate", "listServedZones"];
+    const grpcMethods: string[] = ["listServices", "simulate", "listServedZones", "getPlaceCatalog", "estimate"];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("CatalogService", method)(constructor.prototype[method], method, descriptor);
@@ -1370,6 +1708,26 @@ export interface QuoteServiceClient {
   declineQuote(request: DeclineQuoteRequest, metadata?: Metadata): Observable<DeclineQuoteResponse>;
 
   cancelRequest(request: CancelRequestRequest, metadata?: Metadata): Observable<CancelRequestResponse>;
+
+  /**
+   * Commune d'un point GPS (géocodage inverse, ADR-034), rapprochée des zones desservies. Client
+   * connecté seulement (un des fournisseurs est payant). Aucun fournisseur ne répond : réponse vide
+   * (provider vide), le client choisit sa commune dans la liste des zones desservies.
+   */
+
+  resolveLocation(request: ResolveLocationRequest, metadata?: Metadata): Observable<ResolveLocationResponse>;
+
+  /**
+   * Plusieurs prestations d'un même lieu : une demande de devis par prestation, liées par un groupe
+   * et créées dans une seule transaction (ADR-034). Profil complet exigé (contrôlé par la gateway).
+   * Idempotent par idempotency_key et par client : le rejeu rend le même groupe.
+   */
+
+  requestQuoteGroup(request: RequestQuoteGroupRequest, metadata?: Metadata): Observable<RequestQuoteGroupResponse>;
+
+  /** Groupe du client et ses demandes ; celui d'un autre client : CLEANING_REQUEST_GROUP_NOT_FOUND. */
+
+  getRequestGroup(request: GetRequestGroupRequest, metadata?: Metadata): Observable<GetRequestGroupResponse>;
 }
 
 /**
@@ -1419,6 +1777,35 @@ export interface QuoteServiceController {
     request: CancelRequestRequest,
     metadata?: Metadata,
   ): Promise<CancelRequestResponse> | Observable<CancelRequestResponse> | CancelRequestResponse;
+
+  /**
+   * Commune d'un point GPS (géocodage inverse, ADR-034), rapprochée des zones desservies. Client
+   * connecté seulement (un des fournisseurs est payant). Aucun fournisseur ne répond : réponse vide
+   * (provider vide), le client choisit sa commune dans la liste des zones desservies.
+   */
+
+  resolveLocation(
+    request: ResolveLocationRequest,
+    metadata?: Metadata,
+  ): Promise<ResolveLocationResponse> | Observable<ResolveLocationResponse> | ResolveLocationResponse;
+
+  /**
+   * Plusieurs prestations d'un même lieu : une demande de devis par prestation, liées par un groupe
+   * et créées dans une seule transaction (ADR-034). Profil complet exigé (contrôlé par la gateway).
+   * Idempotent par idempotency_key et par client : le rejeu rend le même groupe.
+   */
+
+  requestQuoteGroup(
+    request: RequestQuoteGroupRequest,
+    metadata?: Metadata,
+  ): Promise<RequestQuoteGroupResponse> | Observable<RequestQuoteGroupResponse> | RequestQuoteGroupResponse;
+
+  /** Groupe du client et ses demandes ; celui d'un autre client : CLEANING_REQUEST_GROUP_NOT_FOUND. */
+
+  getRequestGroup(
+    request: GetRequestGroupRequest,
+    metadata?: Metadata,
+  ): Promise<GetRequestGroupResponse> | Observable<GetRequestGroupResponse> | GetRequestGroupResponse;
 }
 
 export function QuoteServiceControllerMethods() {
@@ -1430,6 +1817,9 @@ export function QuoteServiceControllerMethods() {
       "acceptQuote",
       "declineQuote",
       "cancelRequest",
+      "resolveLocation",
+      "requestQuoteGroup",
+      "getRequestGroup",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
@@ -1605,6 +1995,17 @@ export interface CleaningAdminServiceClient {
   saveZone(request: SaveZoneRequest, metadata?: Metadata): Observable<SaveZoneResponse>;
 
   deactivateZone(request: DeactivateZoneRequest, metadata?: Metadata): Observable<DeactivateZoneResponse>;
+
+  /** Types de lieu du parcours client (cleaning_admin, super_admin ; ADR-034) : tous, actifs ou non. */
+
+  listPlaceTypes(request: ListPlaceTypesRequest, metadata?: Metadata): Observable<ListPlaceTypesResponse>;
+
+  /**
+   * Crée ou modifie un type de lieu (pas de suppression : active = false). Une prestation inconnue
+   * est refusée ; une prestation inactive est acceptée mais masquée côté public.
+   */
+
+  savePlaceType(request: SavePlaceTypeRequest, metadata?: Metadata): Observable<SavePlaceTypeResponse>;
 
   /** Agents et équipes (cleaning_admin, super_admin ; listes : aussi cleaning_supervisor). */
 
@@ -1786,6 +2187,23 @@ export interface CleaningAdminServiceController {
     metadata?: Metadata,
   ): Promise<DeactivateZoneResponse> | Observable<DeactivateZoneResponse> | DeactivateZoneResponse;
 
+  /** Types de lieu du parcours client (cleaning_admin, super_admin ; ADR-034) : tous, actifs ou non. */
+
+  listPlaceTypes(
+    request: ListPlaceTypesRequest,
+    metadata?: Metadata,
+  ): Promise<ListPlaceTypesResponse> | Observable<ListPlaceTypesResponse> | ListPlaceTypesResponse;
+
+  /**
+   * Crée ou modifie un type de lieu (pas de suppression : active = false). Une prestation inconnue
+   * est refusée ; une prestation inactive est acceptée mais masquée côté public.
+   */
+
+  savePlaceType(
+    request: SavePlaceTypeRequest,
+    metadata?: Metadata,
+  ): Promise<SavePlaceTypeResponse> | Observable<SavePlaceTypeResponse> | SavePlaceTypeResponse;
+
   /** Agents et équipes (cleaning_admin, super_admin ; listes : aussi cleaning_supervisor). */
 
   listAgents(
@@ -1845,6 +2263,8 @@ export function CleaningAdminServiceControllerMethods() {
       "listZones",
       "saveZone",
       "deactivateZone",
+      "listPlaceTypes",
+      "savePlaceType",
       "listAgents",
       "registerAgent",
       "declareUnavailability",

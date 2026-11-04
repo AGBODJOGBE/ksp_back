@@ -648,4 +648,326 @@ describe('gateway → cleaning', () => {
       .send({ answers: {}, commune: 'Cotonou' });
     expect(forbidden.status).toBe(403);
   });
+
+  // --- Parcours par lieu (ADR-034) ---------------------------------------------------------------
+
+  const HOUSE_ITEM = {
+    serviceCode: 'house_cleaning',
+    answers: {
+      surface: 180,
+      bedrooms: 4,
+      bathrooms: 2,
+      front_yard: true,
+      back_yard: false,
+      condition: 'normal',
+    },
+    options: [{ code: 'windows', answers: { window_count: 6 } }],
+    frequency: 'once',
+  };
+  const GROUP_BODY = {
+    placeType: 'house',
+    location: { latitude: 6.3654, longitude: 2.4183, accuracyMeters: 12 },
+    landmark: 'Portail vert',
+    items: [
+      HOUSE_ITEM,
+      { serviceCode: 'garden_maintenance', answers: { surface: 250, condition: 'overgrown' } },
+    ],
+    preferredSlots: [{ start: '2026-11-20T08:00:00Z', end: '2026-11-20T11:00:00Z' }],
+  };
+
+  it('catalogue par lieu : public, lieux et prestations présentés', async () => {
+    const res = await http().get('/api/v1/cleaning/catalog');
+    expect(res.status).toBe(200);
+    expect(res.body.placeTypes).toEqual([
+      {
+        code: 'house',
+        label: 'Maison',
+        description: 'Maison individuelle, avec ou sans cour.',
+        icon: 'house',
+        displayOrder: 10,
+        serviceCodes: ['home_cleaning'],
+      },
+    ]);
+    expect(res.body.services[0]).toMatchObject({
+      code: 'home_cleaning',
+      form: { fields: expect.any(Array) },
+    });
+    expect(cleaning.stub.last('getPlaceCatalog')!.context?.user).toBeUndefined();
+  });
+
+  it('estimation : public, prestations transmises au nouveau format, total en entier XOF', async () => {
+    const res = await http()
+      .post('/api/v1/cleaning/estimates')
+      .send({ placeType: 'house', items: [HOUSE_ITEM] });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      placeType: 'house',
+      commune: null,
+      communeApplied: false,
+      status: 'priced',
+      total: 31000,
+      currency: 'XOF',
+      items: [
+        {
+          serviceCode: 'home_cleaning',
+          serviceName: 'Nettoyage à domicile',
+          computedPrice: xof(31000),
+          recommendedTeamSize: 2,
+          missingPrices: [],
+        },
+      ],
+    });
+    const call = cleaning.stub.last('estimate')!;
+    expect(call.request).toMatchObject({ placeType: 'house', commune: '' });
+    expect((call.request['items'] as { answers: unknown; optionSelections: unknown[] }[])[0]).toMatchObject({
+      serviceCode: 'house_cleaning',
+      answers: { values: { surface: { numberValue: 180 }, front_yard: { booleanValue: true } } },
+      optionSelections: [{ code: 'windows' }],
+      frequency: 'once',
+    });
+  });
+
+  it('estimation : corps refusés (ancien format, aucune prestation, plus de 10, champ inconnu)', async () => {
+    const send = (body: object) => http().post('/api/v1/cleaning/estimates').send(body);
+    expect((await send({ placeType: 'house', items: [] })).status).toBe(400);
+    expect((await send({ placeType: 'house', items: Array(11).fill(HOUSE_ITEM) })).status).toBe(400);
+    expect(
+      (
+        await send({
+          placeType: 'house',
+          items: [{ serviceCode: 'home_cleaning', premisesType: 'house', quantity: 3 }],
+        })
+      ).status,
+    ).toBe(400);
+    expect((await send({ placeType: 'House', items: [HOUSE_ITEM] })).status).toBe(400);
+    expect((await send({ placeType: 'house', items: [HOUSE_ITEM], surprise: 1 })).status).toBe(400);
+    expect(cleaning.stub.last('estimate')).toBeUndefined();
+  });
+
+  it('simulation sans commune : acceptée, communeApplied présenté', async () => {
+    const res = await http()
+      .post('/api/v1/cleaning/simulations')
+      .send({ serviceCode: 'home_cleaning', answers: { rooms: 6 }, frequency: 'once' });
+    expect(res.status).toBe(200);
+    expect(res.body.communeApplied).toBe(true);
+    expect(cleaning.stub.last('simulate')!.request).toMatchObject({ commune: '' });
+  });
+
+  it('position : connecté seulement, coordonnées dans le corps, bornes contrôlées', async () => {
+    const resolve = (body: object, token: string | null = customer) => {
+      const req = http().post('/api/v1/cleaning/locations/resolve');
+      return (token ? req.set('Authorization', `Bearer ${token}`) : req).send(body);
+    };
+    expect((await resolve({ latitude: 6.3654, longitude: 2.4183 }, null)).status).toBe(401);
+    expect((await resolve({ latitude: 91, longitude: 2.4183 })).status).toBe(400);
+    expect((await resolve({ latitude: 6.3654, longitude: -181 })).status).toBe(400);
+    expect((await resolve({ latitude: '6.36', longitude: 2.4 })).status).toBe(400);
+    expect(cleaning.stub.last('resolveLocation')).toBeUndefined();
+    const res = await resolve({ latitude: 6.3654, longitude: 2.4183 });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      latitude: 6.4489,
+      longitude: 2.3556,
+      commune: 'Abomey-Calavi',
+      zoneCode: 'abomey-calavi',
+      served: true,
+      displayAddress: 'Zogbadjè, Abomey-Calavi, Bénin',
+      provider: 'nominatim',
+    });
+    const call = cleaning.stub.last('resolveLocation')!;
+    expect(call.request).toEqual({ latitude: 6.3654, longitude: 2.4183 });
+    expect(call.context?.user?.userId).toBe(USER_ID);
+  });
+
+  it('groupe de demandes : profil vérifié, clé obligatoire, position et prestations transmises', async () => {
+    const post = (body: object, key?: string) => {
+      const req = http()
+        .post('/api/v1/cleaning/quote-request-groups')
+        .set('Origin', ORIGINS.web)
+        .set('Authorization', `Bearer ${customer}`);
+      return (key ? req.set('Idempotency-Key', key) : req).send(body);
+    };
+    expect((await post(GROUP_BODY)).status).toBe(400);
+    expect((await post({ ...GROUP_BODY, landmark: '' }, 'groupe-0001')).status).toBe(400);
+    expect((await post({ ...GROUP_BODY, location: { latitude: 6.36 } }, 'groupe-0001')).status).toBe(400);
+    const res = await post(GROUP_BODY, 'groupe-0001');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      groupId: IDS.group,
+      placeType: 'house',
+      commune: 'Abomey-Calavi',
+      zoneCode: 'abomey-calavi',
+    });
+    expect(res.body.items).toHaveLength(2);
+    expect(res.body.items[0]).toMatchObject({
+      groupId: IDS.group,
+      groupSize: 2,
+      placeType: 'house',
+      placeTypeLabel: 'Maison',
+      serviceName: 'Nettoyage à domicile',
+      location: { latitude: 6.4489, longitude: 2.3556, accuracyMeters: 15 },
+      landmark: 'Portail bleu',
+      geocodingProvider: 'nominatim',
+      geocodedAddress: 'Zogbadjè, Abomey-Calavi, Bénin',
+    });
+    const call = cleaning.stub.last('requestQuoteGroup')!;
+    expect(call.request).toMatchObject({
+      idempotencyKey: 'groupe-0001',
+      placeType: 'house',
+      location: { latitude: 6.3654, longitude: 2.4183, accuracyMeters: 12 },
+      landmark: 'Portail vert',
+      commune: '',
+      comment: '',
+    });
+    expect((call.request['items'] as object[])[1]).toMatchObject({
+      serviceCode: 'garden_maintenance',
+      optionSelections: [],
+      frequency: '',
+      requestedTeamSize: 0,
+    });
+
+    identity.stub.on('getMe', async () => ({
+      user: protoUser,
+      profileIncomplete: true,
+      activeContext: protoIndividual,
+    }));
+    cleaning.stub.reset();
+    const incomplete = await post(GROUP_BODY, 'groupe-0002');
+    expect(incomplete.status).toBe(422);
+    expect(incomplete.body.error.code).toBe('IDENTITY_PROFILE_INCOMPLETE');
+    expect(cleaning.stub.last('requestQuoteGroup')).toBeUndefined();
+  });
+
+  it('groupe : lecture par le propriétaire, identifiant contrôlé', async () => {
+    const get = (id: string) =>
+      http().get(`/api/v1/cleaning/quote-request-groups/${id}`).set('Authorization', `Bearer ${customer}`);
+    expect((await get('pas-un-uuid')).status).toBe(400);
+    const res = await get(IDS.group);
+    expect(res.status).toBe(200);
+    expect(res.body.items.map((item: { id: string }) => item.id)).toEqual([IDS.request, IDS.sibling]);
+    expect(cleaning.stub.last('getRequestGroup')!.request).toEqual({ groupId: IDS.group });
+  });
+
+  it('back-office : demandes sœurs, filtres de groupe, de lieu et de prestation transmis', async () => {
+    const detail = await http()
+      .get(`/api/v1/admin/cleaning/quote-requests/${IDS.request}`)
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${staff}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.groupRequests).toEqual([
+      {
+        id: IDS.sibling,
+        serviceCode: 'garden_maintenance',
+        serviceName: 'Entretien de jardin',
+        status: 'visit_scheduled',
+        visitScheduledAt: '2026-10-26T09:00:00.000Z',
+        quoteTotal: null,
+        missionId: null,
+      },
+    ]);
+    const list = await http()
+      .get('/api/v1/admin/cleaning/quote-requests')
+      .query({ groupId: IDS.group, placeType: 'house', serviceCode: 'home_cleaning' })
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${staff}`);
+    expect(list.status).toBe(200);
+    expect(cleaning.stub.last('listQuoteRequests')!.request).toMatchObject({
+      groupId: IDS.group,
+      placeType: 'house',
+      serviceCode: 'home_cleaning',
+    });
+    const missions = await http()
+      .get('/api/v1/admin/cleaning/missions')
+      .query({ groupId: IDS.group, serviceCode: 'septic_emptying' })
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${staff}`);
+    expect(missions.status).toBe(200);
+    expect(missions.body.data[0]).toMatchObject({
+      location: { latitude: 6.4489, longitude: 2.3556, accuracyMeters: 15 },
+      landmark: 'Portail bleu',
+      groupId: IDS.group,
+      placeType: 'house',
+    });
+    expect(cleaning.stub.last('listMissions')!.request).toMatchObject({
+      groupId: IDS.group,
+      serviceCode: 'septic_emptying',
+    });
+    const refused = await http()
+      .get('/api/v1/admin/cleaning/quote-requests')
+      .query({ groupId: 'groupe-1' })
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${staff}`);
+    expect(refused.status).toBe(400);
+  });
+
+  it('types de lieu : administration et double authentification, corps contrôlé, cohérence présentée', async () => {
+    const list = (token: string) =>
+      http()
+        .get('/api/v1/admin/cleaning/place-types')
+        .set('Origin', ORIGINS.backoffice)
+        .set('Authorization', `Bearer ${token}`);
+    expect((await list(staff)).status).toBe(403);
+    const res = await list(admin);
+    expect(res.status).toBe(200);
+    expect(res.body.data[0]).toMatchObject({
+      code: 'house',
+      unknownServiceCodes: ['old_service'],
+      inactiveServiceCodes: ['garden_maintenance'],
+      publiclyVisible: true,
+      visibilityReason: null,
+      updatedByName: 'Afi Superviseure',
+    });
+    const save = (code: string, body: object) =>
+      http()
+        .put(`/api/v1/admin/cleaning/place-types/${code}`)
+        .set('Origin', ORIGINS.backoffice)
+        .set('Authorization', `Bearer ${admin}`)
+        .send(body);
+    const body = {
+      label: 'Villa',
+      icon: 'villa',
+      displayOrder: 20,
+      active: true,
+      serviceCodes: ['house_cleaning'],
+    };
+    expect((await save('Villa', body)).status).toBe(400);
+    expect((await save('villa', { ...body, displayOrder: -1 })).status).toBe(400);
+    expect((await save('villa', { ...body, serviceCodes: ['House'] })).status).toBe(400);
+    expect((await save('villa', body)).status).toBe(200);
+    expect(cleaning.stub.last('savePlaceType')!.request).toMatchObject({
+      placeType: {
+        code: 'villa',
+        label: 'Villa',
+        description: '',
+        icon: 'villa',
+        serviceCodes: ['house_cleaning'],
+      },
+    });
+  });
+
+  it('catalogue du back-office et zones : prestations sans lieu, lieux touchés, noms alternatifs', async () => {
+    const catalog = await http()
+      .get('/api/v1/admin/cleaning/catalog')
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${admin}`);
+    expect(catalog.body.unplacedServiceCodes).toEqual(['pest_control']);
+    const zone = await http()
+      .post('/api/v1/admin/cleaning/zones')
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${admin}`)
+      .send({ commune: 'Sèmè-Podji', aliases: ['Sèmè-Kpodji'] });
+    expect(zone.status).toBe(200);
+    expect(zone.body.aliases).toEqual(['Abomey Calavi']);
+    expect(cleaning.stub.last('saveZone')!.request).toEqual({
+      commune: 'Sèmè-Podji',
+      aliases: { names: ['Sèmè-Kpodji'] },
+    });
+    await http()
+      .post('/api/v1/admin/cleaning/zones')
+      .set('Origin', ORIGINS.backoffice)
+      .set('Authorization', `Bearer ${admin}`)
+      .send({ commune: 'Cotonou' });
+    // Message absent : noms alternatifs en vigueur gardés par cleaning.
+    expect(cleaning.stub.last('saveZone')!.request['aliases'] ?? null).toBeNull();
+  });
 });

@@ -1,3 +1,4 @@
+import { eventSubject } from '../shared/event-subject';
 import { isCancellableByCustomer, type Mission, nextStart } from '../../domain/mission';
 import { isFreeCancellation } from '../../domain/schedule';
 import { type CleaningDeps, missionView, type MissionView } from '../deps';
@@ -77,11 +78,13 @@ export class CancelMyMissionUseCase {
       throw CleaningErrors.cancellationTooLate(settings.freeCancellationHours);
     }
     const reason = optionalText('reason', input.reason, 500);
+    const subject = await eventSubject(this.deps, mission);
     return saveMission(this.deps, cancelled(mission, reason, this.deps.clock.now()), {
       events: [
         {
           type: 'cleaning.request.cancelled',
           payload: {
+            ...subject,
             requestId: mission.requestId,
             missionId: mission.id,
             customerId: mission.customerId,

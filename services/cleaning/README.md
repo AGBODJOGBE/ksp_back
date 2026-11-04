@@ -6,7 +6,7 @@ Nettoyage & assainissement (lot 2) : simulateur public, demandes de devis, devis
 
 ```bash
 cp .env.example .env
-pnpm --filter @ksp/cleaning-service prisma:deploy   # crée les tables et les six prestations (prix vides)
+pnpm --filter @ksp/cleaning-service prisma:deploy   # crée les tables, les huit prestations (prix vides) et les types de lieu
 pnpm --filter @ksp/cleaning-service build && node --env-file=.env dist/main.js
 ```
 
@@ -16,12 +16,36 @@ pnpm --filter @ksp/cleaning-service build && node --env-file=.env dist/main.js
 
 ### Données de démonstration (développement uniquement)
 
-Les six prestations de départ (formulaire, options, fréquences) sont créées par la migration 0007, prix vides tant que l'équipe Nettoyage ne les a pas saisis au back-office : le simulateur répond alors `priced: false` (ADR-033). Pour essayer le simulateur en local, `prisma/demo/demo-data.sql` ajoute des **prix inventés** à cinq d'entre elles (la désinsectisation reste sans prix) ; le script refuse de s'exécuter sans l'accord explicite `ksp.demo=on` :
+Les prestations de départ (formulaire, options, fréquences) sont créées par les migrations 0007 et 0008 (« Nettoyage de maison », « Nettoyage de vitres »), prix vides tant que l'équipe Nettoyage ne les a pas saisis au back-office : le simulateur répond alors `priced: false` (ADR-033). Pour essayer le simulateur en local, `prisma/demo/demo-data.sql` ajoute des **prix inventés** à cinq d'entre elles (la désinsectisation reste sans prix) ; le script refuse de s'exécuter sans l'accord explicite `ksp.demo=on` :
 
 ```bash
 PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cleaning \
   -f services/cleaning/prisma/demo/demo-data.sql
 ```
+
+Le même script ajoute, pour le parcours par lieu (ADR-034) : un type de lieu désactivé, un type qui référence une prestation désactivée, un groupe de trois demandes à des états différents (positions fictives dans Cotonou, repère, fournisseur `nominatim`), une demande dont la commune a été choisie à la main, une demande ancienne sans position et une mission avec position.
+
+## Parcours par lieu et position GPS (ADR-034)
+
+- **Types de lieu** (Maison, Villa, Appartement, Bureau, Chantier…) gérés au back-office
+  (`/api/v1/admin/cleaning/place-types`) : libellé, icône, ordre, état, liste ordonnée des
+  prestations proposées. `GET /api/v1/cleaning/catalog` rend, en un appel, les lieux actifs et
+  leurs prestations actives avec leur formulaire.
+- **Estimation** de 1 à 10 prestations d'un lieu (`POST /api/v1/cleaning/estimates`) : simulateur
+  de l'ADR-033 pour chacune, total si toutes ont un prix. Commune facultative (coefficient neutre,
+  `communeApplied: false`), comme pour `POST /api/v1/cleaning/simulations`.
+- **Demandes groupées** (`POST /api/v1/cleaning/quote-request-groups`) : une demande par
+  prestation, liées par un groupe, créées dans une transaction ; même position, repère, créneaux et
+  commentaire ; un événement `cleaning.quote.requested` par demande, avec `groupId`. Chaque demande
+  suit ensuite son circuit habituel.
+- **Commune retrouvée par géocodage inverse** depuis la position (`ReverseGeocoder`) : Nominatim
+  auto-hébergé d'abord (`NOMINATIM_URL`), Google en secours (`GOOGLE_MAPS_API_KEY`), délai
+  `GEOCODING_TIMEOUT_MS` (3 s) ; un fournisseur sans sa variable est désactivé. La commune trouvée
+  remplace celle du client ; sans résultat, celle du client sert de repli
+  (`CLEANING_LOCATION_UNRESOLVED` si elle manque). Rapprochement avec les zones par leur clé et
+  leurs **noms alternatifs** (`aliases`).
+- **Confidentialité** : coordonnées, repère et adresses jamais dans les journaux, les traces, le
+  journal d'audit ni les événements ; appels vers les géocodeurs non tracés.
 
 ## Règles (cahier des charges, parties 4 et 9)
 
@@ -35,7 +59,7 @@ PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cl
 | Conflits   | Un agent ne peut être affecté à deux passages qui se chevauchent, ni pendant une indisponibilité (`CLEANING_TEAM_UNAVAILABLE`) ; agents verrouillés pendant la planification.                                                                                                                                 |
 | Paiement   | Option choisie à l'acceptation (acompte ou totalité, avant ou après, espèces ou Mobile Money) ; état dû / acompte reçu / payé ; paiements manuels cochés par le superviseur ; paiement en ligne : port prévu (`payment`).                                                                                     |
 | Droits     | Client : ses demandes et missions (404 sinon) ; agent : les missions où il est affecté ; superviseur et admin : rôle et double authentification revérifiés par le service.                                                                                                                                    |
-| Traces     | Événements par l'outbox dans la transaction de l'état (identifiants seulement, jamais d'adresse) ; table `audit_log` pour les prix, devis, affectations et paiements.                                                                                                                                         |
+| Traces     | Événements par l'outbox dans la transaction de l'état (identifiants seulement, jamais d'adresse ni de position) ; table `audit_log` pour les prix, devis, affectations, paiements, types de lieu et groupes de demandes.                                                                                      |
 
 ## Zones desservies et visite des lieux (décisions du 2026-10-23)
 

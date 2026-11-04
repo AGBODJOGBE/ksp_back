@@ -24,7 +24,12 @@ export const IDS = {
   intervention: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d4001',
   agent: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002',
   team: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6001',
+  group: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7001',
+  sibling: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1002',
 };
+
+/** Position fictive (ADR-034). */
+export const LOCATION = { latitude: 6.4489, longitude: 2.3556, accuracyMeters: 15 };
 
 const xof = (amount: number) => ({ amount, currency: 'XOF' });
 const SLOT = { start: '2026-11-05T08:00:00.000Z', end: '2026-11-05T11:00:00.000Z' };
@@ -128,6 +133,15 @@ export const protoRequest: cleaningV1.QuoteRequest = {
   frequency: 'once',
   pricingVersion: 3,
   calculation: protoCalculation,
+  groupId: IDS.group,
+  placeType: 'house',
+  location: LOCATION,
+  landmark: 'Portail bleu',
+  geocodingProvider: 'nominatim',
+  groupSize: 2,
+  serviceName: 'Nettoyage à domicile',
+  placeTypeLabel: 'Maison',
+  geocodedAddress: 'Zogbadjè, Abomey-Calavi, Bénin',
 };
 
 export const protoMission: cleaningV1.Mission = {
@@ -184,6 +198,10 @@ export const protoMission: cleaningV1.Mission = {
   organizationId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000',
   customerName: 'Koffi Adjovi',
   organizationName: 'SARL Bénin Propre',
+  location: LOCATION,
+  landmark: 'Portail bleu',
+  groupId: IDS.group,
+  placeType: 'house',
 };
 
 const definition: cleaningV1.ServiceDefinition = {
@@ -293,6 +311,7 @@ const settings: cleaningV1.Settings = {
 const zone: cleaningV1.Zone = {
   code: 'abomey-calavi',
   commune: 'Abomey-Calavi',
+  aliases: ['Abomey Calavi'],
   active: true,
   updatedBy: '',
   updatedAt: '',
@@ -317,6 +336,40 @@ type Method =
   | keyof cleaningV1.CleaningAdminServiceController;
 
 const withRequest = () => ({ request: protoRequest });
+const placeType: cleaningV1.PlaceType = {
+  code: 'house',
+  label: 'Maison',
+  description: 'Maison individuelle, avec ou sans cour.',
+  icon: 'house',
+  displayOrder: 10,
+  active: true,
+  serviceCodes: ['home_cleaning', 'garden_maintenance', 'old_service'],
+  updatedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001',
+  updatedAt: '2026-11-03T08:00:00.000Z',
+  updatedByName: 'Afi Superviseure',
+  unknownServiceCodes: ['old_service'],
+  inactiveServiceCodes: ['garden_maintenance'],
+  publiclyVisible: true,
+  visibilityReason: '',
+};
+const protoGroup: cleaningV1.QuoteRequestGroup = {
+  id: IDS.group,
+  placeType: 'house',
+  commune: 'Abomey-Calavi',
+  zoneCode: 'abomey-calavi',
+  createdAt: '2026-10-22T10:00:00.000Z',
+  requests: [
+    protoRequest,
+    {
+      ...protoRequest,
+      id: IDS.sibling,
+      serviceCode: 'garden_maintenance',
+      serviceName: 'Entretien de jardin',
+      quote: undefined,
+      status: 'received',
+    },
+  ],
+};
 const withMission = () => ({ mission: protoMission });
 
 const DEFAULTS: Record<Method, () => unknown> = {
@@ -376,7 +429,58 @@ const DEFAULTS: Record<Method, () => unknown> = {
     covered: true,
     reason: '',
     calculation: protoCalculation,
+    communeApplied: true,
   }),
+  getPlaceCatalog: () => ({
+    placeTypes: [
+      {
+        code: 'house',
+        label: 'Maison',
+        description: 'Maison individuelle, avec ou sans cour.',
+        icon: 'house',
+        displayOrder: 10,
+        serviceCodes: ['home_cleaning'],
+      },
+    ],
+    services: (DEFAULTS.listServices() as { services: unknown[] }).services,
+  }),
+  estimate: () => ({
+    placeType: 'house',
+    commune: '',
+    communeApplied: false,
+    covered: false,
+    status: 'priced',
+    total: xof(31000),
+    notice: 'Estimation indicative, sans commune.',
+    items: [
+      {
+        serviceCode: 'home_cleaning',
+        serviceName: 'Nettoyage à domicile',
+        priced: true,
+        reason: '',
+        notice: 'Estimation indicative, sans commune.',
+        calculation: {
+          ...protoCalculation,
+          coefficients: [],
+          subtotal: xof(31000),
+          computedPrice: xof(31000),
+        },
+      },
+    ],
+  }),
+  resolveLocation: () => ({
+    latitude: LOCATION.latitude,
+    longitude: LOCATION.longitude,
+    commune: 'Abomey-Calavi',
+    zoneCode: 'abomey-calavi',
+    served: true,
+    displayAddress: 'Zogbadjè, Abomey-Calavi, Bénin',
+    provider: 'nominatim',
+  }),
+  requestQuoteGroup: () => ({ group: protoGroup }),
+  getRequestGroup: () => ({ group: protoGroup }),
+  listPlaceTypes: () => ({ placeTypes: [placeType] }),
+  savePlaceType: () => ({ placeType }),
   listServedZones: () => ({
     zones: [
       { code: 'abomey-calavi', commune: 'Abomey-Calavi' },
@@ -396,7 +500,19 @@ const DEFAULTS: Record<Method, () => unknown> = {
   getMission: withMission,
   cancelMission: withMission,
   listQuoteRequests: () => ({ requests: [protoRequest], nextCursor: '' }),
-  getQuoteRequest: withRequest,
+  getQuoteRequest: () => ({
+    request: protoRequest,
+    groupRequests: [
+      {
+        id: IDS.sibling,
+        serviceCode: 'garden_maintenance',
+        status: 'visit_scheduled',
+        serviceName: 'Entretien de jardin',
+        visitScheduledAt: '2026-10-26T09:00:00.000Z',
+        missionId: '',
+      },
+    ],
+  }),
   rejectQuoteRequest: withRequest,
   scheduleVisit: withRequest,
   completeVisit: withRequest,
@@ -411,8 +527,8 @@ const DEFAULTS: Record<Method, () => unknown> = {
   completeIntervention: withMission,
   recordPayment: withMission,
   cancelMissionAsSupervisor: withMission,
-  getCatalog: () => ({ services: [definition], settings }),
-  saveService: () => ({ service: definition }),
+  getCatalog: () => ({ services: [definition], settings, unplacedServiceCodes: ['pest_control'] }),
+  saveService: () => ({ service: definition, affectedPlaceTypes: [] }),
   previewService: () => ({ serviceCode: 'home_cleaning', calculation: protoCalculation, covered: true }),
   updateSettings: () => ({ settings }),
   listZones: () => ({ zones: [zone] }),
@@ -488,7 +604,7 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
   @Module({
     controllers: [
       stubController(
-        pick(['listServices', 'simulate', 'listServedZones']),
+        pick(['listServices', 'simulate', 'listServedZones', 'getPlaceCatalog', 'estimate']),
         cleaningV1.CatalogServiceControllerMethods,
       ),
       stubController(
@@ -499,6 +615,9 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
           'acceptQuote',
           'declineQuote',
           'cancelRequest',
+          'resolveLocation',
+          'requestQuoteGroup',
+          'getRequestGroup',
         ]),
         cleaningV1.QuoteServiceControllerMethods,
       ),
@@ -513,6 +632,11 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
               'listServices',
               'simulate',
               'listServedZones',
+              'getPlaceCatalog',
+              'estimate',
+              'resolveLocation',
+              'requestQuoteGroup',
+              'getRequestGroup',
               'requestQuote',
               'listMyRequests',
               'getRequest',

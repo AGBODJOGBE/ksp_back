@@ -1,8 +1,12 @@
-import { type Zone } from '../../domain/zone';
+import { type Zone, zoneCode } from '../../domain/zone';
 import { type cleaningV1 } from '@ksp/contracts';
 import { type NameBook, NO_NAMES } from '../../application/backoffice/backoffice-names.use-case';
 import { type MissionView } from '../../application/deps';
-import { type StoredSettings } from '../../application/ports';
+import { type PlaceTypeView } from '../../application/places/place-catalog.use-cases';
+import { NO_LABELS, type RequestLabels } from '../../application/places/request-labels.use-case';
+import { type QuoteRequestGroupView, type StoredSettings } from '../../application/ports';
+import { type GeoLocation } from '../../domain/location';
+import { type PlaceType } from '../../domain/place-type';
 import { type Agent, type Team } from '../../domain/agent';
 import { isFullyPriced, type ServiceDefinition, teamSizeField } from '../../domain/catalog';
 import { CURRENCY } from '../../domain/money';
@@ -39,6 +43,16 @@ export const presentSlot = (slot: Slot): cleaningV1.TimeSlot => ({
 const presentRecurrence = (recurrence: Recurrence | null): cleaningV1.Recurrence | undefined =>
   recurrence ? { ...recurrence } : undefined;
 
+/** Position (ADR-034) ; précision inconnue : 0. */
+const presentLocation = (location: GeoLocation | null): cleaningV1.GeoLocation | undefined =>
+  location
+    ? {
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracyMeters: location.accuracyMeters ?? 0,
+      }
+    : undefined;
+
 export const presentLine = (line: PriceLine): cleaningV1.PriceLine => ({
   label: line.label,
   quantity: line.quantity,
@@ -64,8 +78,15 @@ function presentQuote(quote: Quote): cleaningV1.Quote {
   };
 }
 
-/** Demande ; les noms (back-office) restent vides sans annuaire, par exemple dans l'espace client. */
-export function presentRequest(request: QuoteRequest, names: NameBook = NO_NAMES): cleaningV1.QuoteRequest {
+/**
+ * Demande ; les noms (back-office) restent vides sans annuaire, par exemple dans l'espace client ;
+ * les libellés de prestation et de lieu et la taille du groupe viennent de `labels` (ADR-034).
+ */
+export function presentRequest(
+  request: QuoteRequest,
+  names: NameBook = NO_NAMES,
+  labels: RequestLabels = NO_LABELS,
+): cleaningV1.QuoteRequest {
   return {
     id: request.id,
     status: request.status,
@@ -110,6 +131,83 @@ export function presentRequest(request: QuoteRequest, names: NameBook = NO_NAMES
     frequency: text(request.frequency),
     pricingVersion: request.pricingVersion ?? 0,
     calculation: request.calculation ? calculationToProto(request.calculation) : undefined,
+    groupId: text(request.groupId),
+    placeType: text(request.placeType),
+    location: presentLocation(request.location),
+    landmark: text(request.landmark),
+    geocodingProvider: text(request.geocodingProvider),
+    groupSize: request.groupId ? (labels.groupSizes.get(request.groupId) ?? 1) : 1,
+    serviceName: labels.serviceNames.get(request.serviceCode) ?? '',
+    placeTypeLabel: (request.placeType && labels.placeTypeLabels.get(request.placeType)) || '',
+    geocodedAddress: text(request.geocodedAddress),
+  };
+}
+
+/** Demande sœur d'un groupe, vue du back-office (ADR-034). */
+export function presentSibling(
+  request: QuoteRequest,
+  labels: RequestLabels,
+): cleaningV1.GroupedRequestSummary {
+  return {
+    id: request.id,
+    serviceCode: request.serviceCode,
+    status: request.status,
+    serviceName: labels.serviceNames.get(request.serviceCode) ?? '',
+    visitScheduledAt: iso(
+      request.visit && request.visit.status !== 'cancelled' ? request.visit.scheduledAt : null,
+    ),
+    quoteTotal: request.quote ? money(request.quote.total) : undefined,
+    missionId: text(request.missionId),
+  };
+}
+
+/** Groupe de demandes du client (ADR-034). */
+export function presentGroup(
+  view: QuoteRequestGroupView,
+  labels: RequestLabels = NO_LABELS,
+): cleaningV1.QuoteRequestGroup {
+  return {
+    id: view.group.id,
+    placeType: view.group.placeType,
+    commune: view.group.commune,
+    zoneCode: zoneCode(view.group.commune),
+    createdAt: iso(view.group.createdAt),
+    requests: view.requests.map((request) => presentRequest(request, NO_NAMES, labels)),
+  };
+}
+
+/** Type de lieu vu du public : ses prestations actives seulement (déjà filtrées). */
+export function presentPublicPlaceType(placeType: PlaceType): cleaningV1.PublicPlaceType {
+  return {
+    code: placeType.code,
+    label: placeType.label,
+    description: placeType.description,
+    icon: placeType.icon,
+    displayOrder: placeType.displayOrder,
+    serviceCodes: placeType.serviceCodes,
+  };
+}
+
+/** Type de lieu vu du back-office, avec la cohérence de ses prestations. */
+export function presentPlaceType(
+  { placeType, health }: PlaceTypeView,
+  names: NameBook = NO_NAMES,
+): cleaningV1.PlaceType {
+  return {
+    code: placeType.code,
+    label: placeType.label,
+    description: placeType.description,
+    icon: placeType.icon,
+    displayOrder: placeType.displayOrder,
+    active: placeType.active,
+    serviceCodes: placeType.serviceCodes,
+    updatedBy: text(placeType.updatedBy),
+    updatedAt: iso(placeType.updatedAt),
+    updatedByName: userName(names, placeType.updatedBy),
+    unknownServiceCodes: health.unknownServiceCodes,
+    inactiveServiceCodes: health.inactiveServiceCodes,
+    publiclyVisible: health.publiclyVisible,
+    visibilityReason: health.visibilityReason ?? '',
   };
 }
 
@@ -180,6 +278,10 @@ export function presentMission(
     organizationId: text(mission.organizationId),
     customerName: userName(names, mission.customerId),
     organizationName: organizationName(names, mission.organizationId),
+    location: presentLocation(mission.location),
+    landmark: text(mission.landmark),
+    groupId: text(mission.groupId),
+    placeType: text(mission.placeType),
   };
 }
 
@@ -293,6 +395,7 @@ export function presentZone(zone: Zone, names: NameBook = NO_NAMES): cleaningV1.
   return {
     code: zone.code,
     commune: zone.commune,
+    aliases: zone.aliases,
     active: zone.active,
     updatedBy: text(zone.updatedBy),
     updatedAt: iso(zone.updatedAt),

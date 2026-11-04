@@ -819,7 +819,8 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
             op.operationId,
             200,
             () => {
-              if (op.operationId === 'requestCleaningQuote') completeProfile();
+              if (['requestCleaningQuote', 'requestCleaningQuoteGroup'].includes(op.operationId))
+                completeProfile();
               return call(op.operationId);
             },
           ] as (typeof scenarios)[number],
@@ -886,6 +887,94 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         'listPayments',
         403,
         () => call('listPayments', { auth: 'staff_no_mfa' }),
+      ],
+      [
+        'estimation : prestation non proposée par le lieu',
+        'estimateCleaning',
+        400,
+        () => {
+          cleaningFails(
+            'estimate',
+            AppError.invalid('CLEANING_SERVICE_NOT_OFFERED', 'Non proposée.', {
+              field: 'items[0].serviceCode',
+              placeType: 'apartment',
+              serviceCode: 'garden_maintenance',
+            }),
+          );
+          return call('estimateCleaning');
+        },
+      ],
+      [
+        'estimation : type de lieu inconnu',
+        'estimateCleaning',
+        404,
+        () => {
+          cleaningFails('estimate', AppError.notFound('CLEANING_PLACE_TYPE_NOT_FOUND', 'Introuvable.'));
+          return call('estimateCleaning');
+        },
+      ],
+      [
+        'position sans connexion',
+        'resolveCleaningLocation',
+        401,
+        () => call('resolveCleaningLocation', { auth: 'none' }),
+      ],
+      [
+        'position hors bornes',
+        'resolveCleaningLocation',
+        400,
+        () => call('resolveCleaningLocation', { body: { latitude: 120, longitude: 2 } }),
+      ],
+      [
+        'groupe : profil incomplet',
+        'requestCleaningQuoteGroup',
+        422,
+        () => call('requestCleaningQuoteGroup'),
+      ],
+      [
+        'groupe : commune introuvable, à demander au client',
+        'requestCleaningQuoteGroup',
+        422,
+        () => {
+          completeProfile();
+          cleaningFails(
+            'requestQuoteGroup',
+            AppError.precondition('CLEANING_LOCATION_UNRESOLVED', 'Choisissez votre commune.'),
+          );
+          return call('requestCleaningQuoteGroup');
+        },
+      ],
+      [
+        'groupe d’un autre client',
+        'getMyCleaningQuoteRequestGroup',
+        404,
+        () => {
+          cleaningFails(
+            'getRequestGroup',
+            AppError.notFound('CLEANING_REQUEST_GROUP_NOT_FOUND', 'Introuvable.'),
+          );
+          return call('getMyCleaningQuoteRequestGroup');
+        },
+      ],
+      [
+        'types de lieu sans double authentification',
+        'listCleaningPlaceTypes',
+        403,
+        () => call('listCleaningPlaceTypes', { auth: 'staff_no_mfa' }),
+      ],
+      [
+        'type de lieu : prestation inconnue',
+        'saveCleaningPlaceType',
+        400,
+        () => {
+          cleaningFails(
+            'savePlaceType',
+            AppError.invalid('CLEANING_VALIDATION_FAILED', 'Prestation inconnue.', {
+              field: 'serviceCodes[0]',
+            }),
+          );
+          return call('saveCleaningPlaceType');
+        },
       ],
       [
         'simulateur : champ inconnu',

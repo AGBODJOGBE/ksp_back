@@ -10,6 +10,11 @@ import { normalizeCommune } from './catalog';
 export interface Zone {
   code: string;
   commune: string;
+  /**
+   * Autres noms de la commune (« Sèmè-Kpodji » pour « Sèmè-Podji »), pour rattacher le nom rendu
+   * par un géocodeur à la zone (ADR-034).
+   */
+  aliases: string[];
   active: boolean;
   updatedBy: string | null;
   updatedAt: Date | null;
@@ -24,8 +29,19 @@ export function isValidZoneCode(code: string): boolean {
   return /^[a-z][a-z0-9-]{1,99}$/.test(code);
 }
 
-/** La commune est-elle dans une zone active ? */
+export const MAX_ZONE_ALIASES = 20;
+
+/** Clés sous lesquelles une zone est reconnue : son code et ceux de ses noms alternatifs. */
+export function zoneKeys(zone: Pick<Zone, 'code' | 'aliases'>): string[] {
+  return [zone.code, ...zone.aliases.map(zoneCode)];
+}
+
+/** Zone active reconnue sous cette clé (code ou nom alternatif normalisé), sinon undefined. */
+export function findActiveZone(zones: readonly Zone[], key: string): Zone | undefined {
+  return zones.find((zone) => zone.active && zoneKeys(zone).includes(key));
+}
+
+/** La commune est-elle dans une zone active (par son nom ou un nom alternatif) ? */
 export function isCovered(zones: readonly Zone[], commune: string): boolean {
-  const code = zoneCode(commune);
-  return zones.some((zone) => zone.active && zone.code === code);
+  return findActiveZone(zones, zoneCode(commune)) !== undefined;
 }
