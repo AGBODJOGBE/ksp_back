@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../../../prisma/generated';
-import { type Changes, type MissionFilter, type MissionRepository } from '../../application/ports';
+import {
+  type Changes,
+  type GroupOperationRecord,
+  type MissionFilter,
+  type MissionRepository,
+} from '../../application/ports';
 import { type PageRequest, type PageResult } from '../../application/shared/validation';
 import {
   ACTIVE_INTERVENTION_STATUSES,
@@ -14,6 +19,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UuidV7Generator } from '../system/system';
 import { cursorFilter, json, pageArgs, toPage, type Tx, writeChanges } from './changes';
 import { interventionColumns, MISSION_INCLUDE, suspensionColumns, toMission } from './mission.mapper';
+import { locationColumns } from './quote-request.mapper';
+import { recordGroupOperation } from './group-operations';
 
 const ids = new UuidV7Generator();
 
@@ -56,7 +63,7 @@ export class PrismaMissionRepository implements MissionRepository {
 
   async save(mission: Mission, changes: Changes): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
-      if (!(await this.update(tx, mission))) return false;
+      if (!(await updateMission(tx, mission))) return false;
       await writeChanges(tx, changes, () => ids.next());
       return true;
     });
@@ -77,7 +84,7 @@ export class PrismaMissionRepository implements MissionRepository {
         );
         if (inserted === 0) return 'duplicate' as const;
         // Version changée : annule aussi la marque de l'inbox (le message sera retraité).
-        if (!(await this.update(tx, mission))) throw new ConcurrentMissionUpdate();
+        if (!(await updateMission(tx, mission))) throw new ConcurrentMissionUpdate();
         await writeChanges(tx, changes, () => ids.next());
         return 'saved' as const;
       });
@@ -101,7 +108,7 @@ export class PrismaMissionRepository implements MissionRepository {
       );
       const found = conflicts(await this.busyPeriods(tx, intervention.agentIds, intervention.id));
       if (found.length) return { conflicts: found, saved: false };
-      if (!(await this.update(tx, mission))) return { conflicts: [], saved: false };
+      if (!(await updateMission(tx, mission))) return { conflicts: [], saved: false };
       await writeChanges(tx, changes, () => ids.next());
       return { conflicts: [], saved: true };
     });
@@ -128,7 +135,7 @@ export class PrismaMissionRepository implements MissionRepository {
       );
       const busy = agentIds.length ? await this.busyPeriods(tx, agentIds, null) : [];
       const { mission, changes } = plan(busy.filter((period) => agentIds.includes(period.agentId)));
-      if (!(await this.update(tx, mission))) return false;
+      if (!(await updateMission(tx, mission))) return false;
       await writeChanges(tx, changes, () => ids.next());
       return true;
     });
@@ -145,6 +152,45 @@ export class PrismaMissionRepository implements MissionRepository {
       orderBy: { id: 'asc' },
     });
     return rows.map(toMission);
+  }
+
+  async listForGroup(groupId: string): Promise<Mission[]> {
+    const rows = await this.prisma.mission.findMany({
+      where: { groupId },
+      include: MISSION_INCLUDE,
+      orderBy: { id: 'asc' },
+    });
+    return rows.map(toMission);
+  }
+
+  async scheduleGroup(input: {
+    missions: Mission[];
+    agentIds: string[];
+    conflicts: (busy: BusyPeriod[]) => string[];
+    changes: Changes;
+    operation?: GroupOperationRecord | null;
+  }): Promise<{ conflicts: string[]; outcome: 'saved' | 'conflict' | 'replayed' }> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRawUnsafe(
+          'SELECT user_id FROM agents WHERE user_id = ANY($1::uuid[]) ORDER BY user_id FOR UPDATE',
+          input.agentIds,
+        );
+        const found = input.conflicts(await this.busyPeriods(tx, input.agentIds, null));
+        if (found.length) return { conflicts: found, outcome: 'conflict' as const };
+        if (input.operation && !(await recordGroupOperation(tx, input.operation))) {
+          return { conflicts: [], outcome: 'replayed' as const };
+        }
+        for (const mission of input.missions) {
+          if (!(await updateMission(tx, mission))) throw new ConcurrentMissionUpdate();
+        }
+        await writeChanges(tx, input.changes, () => ids.next());
+        return { conflicts: [], outcome: 'saved' as const };
+      });
+    } catch (error) {
+      if (error instanceof ConcurrentMissionUpdate) return { conflicts: [], outcome: 'conflict' };
+      throw error;
+    }
   }
 
   async listActiveForOrganization(organizationId: string): Promise<Mission[]> {
@@ -165,7 +211,12 @@ export class PrismaMissionRepository implements MissionRepository {
           status: { in: [...ACTIVE_INTERVENTION_STATUSES] },
           agentIds: { hasSome: agentIds },
         },
-        select: { agentIds: true, scheduledStart: true, scheduledEnd: true },
+        select: {
+          agentIds: true,
+          scheduledStart: true,
+          scheduledEnd: true,
+          mission: { select: { groupId: true } },
+        },
       }),
       tx.agentUnavailability.findMany({
         where: { agentId: { in: agentIds } },
@@ -177,6 +228,7 @@ export class PrismaMissionRepository implements MissionRepository {
         row.agentIds.map((agentId) => ({
           agentId,
           slot: { start: row.scheduledStart, end: row.scheduledEnd },
+          groupId: row.mission.groupId,
         })),
       ),
       ...unavailabilities.map((row) => ({
@@ -185,33 +237,40 @@ export class PrismaMissionRepository implements MissionRepository {
       })),
     ];
   }
+}
 
-  /** Mission, passages et nouveaux paiements, conditionnés à la version lue. */
-  private async update(tx: Tx, mission: Mission): Promise<boolean> {
-    const { count } = await tx.mission.updateMany({
-      where: { id: mission.id, version: mission.version },
-      data: {
-        status: mission.status,
-        cancellationReason: mission.cancellationReason,
-        ...suspensionColumns(mission),
-        updatedAt: mission.updatedAt,
-        version: { increment: 1 },
-      },
+/**
+ * Mission, passages et nouveaux paiements, conditionnés à la version lue ; le lieu (commune, adresse,
+ * position, repère) suit la correction de position et la purge (ADR-035).
+ */
+export async function updateMission(tx: Tx, mission: Mission): Promise<boolean> {
+  const { count } = await tx.mission.updateMany({
+    where: { id: mission.id, version: mission.version },
+    data: {
+      status: mission.status,
+      cancellationReason: mission.cancellationReason,
+      commune: mission.commune,
+      address: mission.address,
+      ...locationColumns(mission.location),
+      landmark: mission.landmark,
+      ...suspensionColumns(mission),
+      updatedAt: mission.updatedAt,
+      version: { increment: 1 },
+    },
+  });
+  if (count === 0) return false;
+  for (const intervention of mission.interventions) {
+    const columns = interventionColumns(mission.id, intervention);
+    await tx.intervention.upsert({
+      where: { id: intervention.id },
+      create: columns,
+      update: { ...columns, checklist: json(intervention.checklist) },
     });
-    if (count === 0) return false;
-    for (const intervention of mission.interventions) {
-      const columns = interventionColumns(mission.id, intervention);
-      await tx.intervention.upsert({
-        where: { id: intervention.id },
-        create: columns,
-        update: { ...columns, checklist: json(intervention.checklist) },
-      });
-    }
-    // Un paiement enregistré n'est jamais modifié : seuls les nouveaux sont insérés.
-    await tx.missionPayment.createMany({
-      data: mission.payment.payments.map((payment) => ({ ...payment, missionId: mission.id })),
-      skipDuplicates: true,
-    });
-    return true;
   }
+  // Un paiement enregistré n'est jamais modifié : seuls les nouveaux sont insérés.
+  await tx.missionPayment.createMany({
+    data: mission.payment.payments.map((payment) => ({ ...payment, missionId: mission.id })),
+    skipDuplicates: true,
+  });
+  return true;
 }

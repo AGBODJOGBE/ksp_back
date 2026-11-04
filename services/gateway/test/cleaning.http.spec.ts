@@ -1,3 +1,4 @@
+import { AppError } from '@ksp/platform';
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
 import { type CleaningServer, IDS, protoMission, startCleaningStub } from './support/cleaning-stub';
@@ -279,7 +280,7 @@ describe('gateway → cleaning', () => {
       .set('Authorization', `Bearer ${admin}`);
     expect(zone.status).toBe(200);
     expect(zone.body).toMatchObject({ code: 'abomey-calavi', active: false, updatedBy: null });
-    expect(cleaning.stub.last('deactivateZone')!.request).toEqual({ code: 'abomey-calavi' });
+    expect(cleaning.stub.last('deactivateZone')!.request).toEqual({ code: 'abomey-calavi', confirm: false });
     const supervisorZone = await http()
       .get('/api/v1/admin/cleaning/zones')
       .set('Origin', ORIGINS.backoffice)
@@ -969,5 +970,251 @@ describe('gateway → cleaning', () => {
       .send({ commune: 'Cotonou' });
     // Message absent : noms alternatifs en vigueur gardés par cleaning.
     expect(cleaning.stub.last('saveZone')!.request['aliases'] ?? null).toBeNull();
+  });
+
+  // --- ADR-035 : demandes groupées, visites, position, zones ---------------------------------------
+
+  const agentToken = () =>
+    keys.accessToken({
+      claims: {
+        client_id: 'backoffice',
+        mfa: true,
+        roles: [{ role: 'cleaning_agent', scopeType: 'global' }],
+      },
+    });
+  const backoffice = (req: request.Test, bearer: string) =>
+    req.set('Origin', ORIGINS.backoffice).set('Authorization', `Bearer ${bearer}`);
+  const GROUP = `/api/v1/admin/cleaning/quote-request-groups/${IDS.group}`;
+
+  it('client : annulation et acceptation du groupe, clé obligatoire, totaux présentés', async () => {
+    const cancel = () =>
+      http()
+        .post(`/api/v1/cleaning/quote-request-groups/${IDS.group}/cancel`)
+        .set('Authorization', `Bearer ${customer}`);
+    expect((await cancel().send({})).status).toBe(400);
+    const res = await cancel().set('Idempotency-Key', 'annul-0001').send({ reason: 'Plus besoin' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      groupId: IDS.group,
+      affectedRequestIds: [IDS.request],
+      skipped: [{ requestId: IDS.sibling, status: 'accepted', reason: 'not_open' }],
+      group: { groupId: IDS.group, quotesTotal: null, remainingDue: null },
+    });
+    expect(cleaning.stub.last('cancelRequestGroup')!.request).toMatchObject({
+      groupId: IDS.group,
+      reason: 'Plus besoin',
+      idempotencyKey: 'annul-0001',
+    });
+    // Corps facultatif.
+    expect((await cancel().set('Idempotency-Key', 'annul-0002')).status).toBe(200);
+
+    const accept = await http()
+      .post(`/api/v1/cleaning/quote-request-groups/${IDS.group}/accept`)
+      .set('Authorization', `Bearer ${customer}`)
+      .set('Idempotency-Key', 'accept-0001')
+      .send({
+        slotStart: '2026-11-05T08:00:00Z',
+        paymentPlan: { option: 'full', timing: 'after', method: 'cash' },
+      });
+    expect(accept.status).toBe(200);
+    expect(accept.body).toMatchObject({ missionIds: [IDS.mission], group: { quotesTotal: xof(30000) } });
+    const bad = await http()
+      .post(`/api/v1/cleaning/quote-request-groups/${IDS.group}/accept`)
+      .set('Authorization', `Bearer ${customer}`)
+      .set('Idempotency-Key', 'accept-0002')
+      .send({ slotStart: 'demain' });
+    expect(bad.status).toBe(400);
+    expect(cleaning.stub.calls.filter((call) => call.method === 'acceptGroupQuotes')).toHaveLength(1);
+  });
+
+  it('back-office : visite commune, refus et devis du groupe ; supervision exigée, clé facultative transmise', async () => {
+    const visit = await backoffice(http().post(`${GROUP}/visits`), staff)
+      .set('Idempotency-Key', 'visite-0001')
+      .send({ scheduledAt: '2026-10-27T09:00:00Z', agentId: IDS.agent, excludeRequestIds: [IDS.sibling] });
+    expect(visit.status).toBe(200);
+    expect(visit.body).toMatchObject({
+      groupVisitId: IDS.groupVisit,
+      requests: [{ id: IDS.request }, { id: IDS.sibling }],
+    });
+    expect(cleaning.stub.last('scheduleGroupVisit')!.request).toMatchObject({
+      groupId: IDS.group,
+      excludeRequestIds: [IDS.sibling],
+      idempotencyKey: 'visite-0001',
+    });
+    const agent = await agentToken();
+    expect(
+      (
+        await backoffice(http().post(`${GROUP}/visits`), agent).send({
+          scheduledAt: '2026-10-27T09:00:00Z',
+          agentId: IDS.agent,
+        })
+      ).status,
+    ).toBe(403);
+    const reject = await backoffice(http().post(`${GROUP}/reject`), staff).send({ reason: 'Hors zone' });
+    expect(reject.status).toBe(200);
+    expect(cleaning.stub.last('rejectRequestGroup')!.request).toMatchObject({
+      reason: 'Hors zone',
+      idempotencyKey: '',
+    });
+    expect((await backoffice(http().post(`${GROUP}/reject`), staff).send({})).status).toBe(400);
+
+    const quotes = await backoffice(http().post(`${GROUP}/quotes`), staff).send({
+      proposedSlots: [{ start: '2026-11-05T08:00:00Z', end: '2026-11-05T11:00:00Z' }],
+      quotes: [
+        { requestId: IDS.request, durationMinutes: 180 },
+        {
+          requestId: IDS.sibling,
+          lines: [{ label: 'Jardin', quantity: 1, unitPrice: 20000 }],
+          durationMinutes: 60,
+        },
+      ],
+    });
+    expect(quotes.status).toBe(200);
+    expect(cleaning.stub.last('sendGroupQuotes')!.request).toMatchObject({
+      quotes: [
+        { requestId: IDS.request, lines: [], teamSize: 0 },
+        { requestId: IDS.sibling, lines: [{ unitPrice: xof(20000), amount: xof(20000) }] },
+      ],
+    });
+    expect(
+      (await backoffice(http().post(`${GROUP}/quotes`), staff).send({ proposedSlots: [], quotes: [] }))
+        .status,
+    ).toBe(400);
+  });
+
+  it('agent : compte rendu commun et par demande, liste de ses visites, correction de position', async () => {
+    const agent = await agentToken();
+    expect(
+      (await backoffice(http().post(`${GROUP}/visits/complete`), agent).send({ report: 'Vu' })).status,
+    ).toBe(200);
+    expect(
+      (
+        await backoffice(http().post(`/api/v1/admin/cleaning/visits/${IDS.visit}/complete`), agent).send({
+          report: 'Vu',
+        })
+      ).status,
+    ).toBe(200);
+    expect(cleaning.stub.last('completeVisit')!.context?.user?.roles).toMatchObject([
+      { role: 'cleaning_agent', scopeType: 'global' },
+    ]);
+
+    const visits = await backoffice(http().get('/api/v1/admin/cleaning/visits'), agent).query({
+      status: 'scheduled',
+      from: '2026-10-26T00:00:00Z',
+      groupId: IDS.group,
+    });
+    expect(visits.status).toBe(200);
+    expect(visits.body.data[0]).toMatchObject({
+      id: IDS.groupVisit,
+      landmark: 'Portail bleu',
+      requests: [{ requestId: IDS.request, visitId: IDS.visit, serviceName: 'Nettoyage à domicile' }],
+    });
+    expect(cleaning.stub.last('listVisits')!.request).toMatchObject({
+      status: 'scheduled',
+      groupId: IDS.group,
+      agentId: '',
+    });
+    expect(
+      (await backoffice(http().get('/api/v1/admin/cleaning/visits'), agent).query({ status: 'done' })).status,
+    ).toBe(400);
+    expect(
+      (await http().get('/api/v1/admin/cleaning/visits').set('Authorization', `Bearer ${customer}`)).status,
+    ).toBe(403);
+
+    const location = await backoffice(
+      http().put(`/api/v1/admin/cleaning/quote-requests/${IDS.request}/location`),
+      agent,
+    ).send({
+      latitude: 6.37,
+      longitude: 2.39,
+      landmark: 'Portail vert',
+    });
+    expect(location.status).toBe(200);
+    expect(location.body).toMatchObject({
+      updatedRequestIds: [IDS.request, IDS.sibling],
+      updatedMissionIds: [IDS.mission],
+    });
+    expect(cleaning.stub.last('correctRequestLocation')!.request).toMatchObject({
+      location: { latitude: 6.37, longitude: 2.39, accuracyMeters: 0 },
+      landmark: 'Portail vert',
+      commune: '',
+    });
+    expect(
+      (
+        await backoffice(
+          http().put(`/api/v1/admin/cleaning/quote-requests/${IDS.request}/location`),
+          agent,
+        ).send({ latitude: 95, longitude: 2 })
+      ).status,
+    ).toBe(400);
+  });
+
+  it('planification commune des missions d’un groupe ; conflit d’agenda en 409', async () => {
+    const url = `/api/v1/admin/cleaning/mission-groups/${IDS.group}/interventions`;
+    const body = { scheduledStart: '2026-11-05T08:00:00Z', durationMinutes: 180, agentIds: [IDS.agent] };
+    const res = await backoffice(http().post(url), staff).send(body);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ groupId: IDS.group, scheduledMissionIds: [IDS.mission], skipped: [] });
+    expect(cleaning.stub.last('scheduleGroupInterventions')!.request).toMatchObject({
+      missionIds: [],
+      teamId: '',
+    });
+    cleaning.stub.on('scheduleGroupInterventions', () =>
+      Promise.reject(AppError.conflict('CLEANING_TEAM_UNAVAILABLE', 'Pris.', { agentIds: [IDS.agent] })),
+    );
+    const conflict = await backoffice(http().post(url), staff).send(body);
+    expect(conflict.status).toBe(409);
+    expect(conflict.body.error.code).toBe('CLEANING_TEAM_UNAVAILABLE');
+  });
+
+  it('zones : activité présentée, confirmation transmise, 409 sans confirmation ; réglage de conservation', async () => {
+    const zones = await backoffice(http().get('/api/v1/admin/cleaning/zones'), admin);
+    expect(zones.body.data[0]).toMatchObject({ openRequests: 3, activeMissions: 1 });
+    expect(
+      (await backoffice(http().post('/api/v1/admin/cleaning/zones/abomey-calavi/deactivate'), admin)).status,
+    ).toBe(200);
+    expect(cleaning.stub.last('deactivateZone')!.request).toMatchObject({
+      code: 'abomey-calavi',
+      confirm: false,
+    });
+    await backoffice(http().post('/api/v1/admin/cleaning/zones/abomey-calavi/deactivate'), admin).send({
+      confirm: true,
+    });
+    expect(cleaning.stub.last('deactivateZone')!.request).toMatchObject({ confirm: true });
+    cleaning.stub.on('deactivateZone', () =>
+      Promise.reject(
+        AppError.conflict('CLEANING_ZONE_HAS_ACTIVITY', 'Confirmez.', { openRequests: 3, activeMissions: 1 }),
+      ),
+    );
+    const refused = await backoffice(
+      http().post('/api/v1/admin/cleaning/zones/abomey-calavi/deactivate'),
+      admin,
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.details).toMatchObject({ openRequests: 3, activeMissions: 1 });
+
+    await backoffice(http().put('/api/v1/admin/cleaning/catalog/settings'), admin).send({
+      quoteValidityDays: 15,
+      minimumLeadHours: 48,
+      freeCancellationHours: 24,
+      maxOpenRequests: 5,
+      depositPercent: 30,
+      locationRetentionMonths: 6,
+    });
+    expect(cleaning.stub.last('updateSettings')!.request).toMatchObject({
+      settings: { locationRetentionMonths: 6 },
+    });
+    expect(
+      (
+        await backoffice(http().put('/api/v1/admin/cleaning/catalog/settings'), admin).send({
+          quoteValidityDays: 15,
+          minimumLeadHours: 48,
+          freeCancellationHours: 24,
+          maxOpenRequests: 5,
+          depositPercent: 30,
+          locationRetentionMonths: 0,
+        })
+      ).status,
+    ).toBe(400);
   });
 });

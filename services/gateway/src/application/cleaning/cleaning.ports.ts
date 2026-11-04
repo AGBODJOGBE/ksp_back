@@ -195,6 +195,8 @@ export interface SettingsInput {
   businessSuspensionUnpaidInvoices?: number | undefined;
   individualSuspensionUnpaidInterventions?: number | undefined;
   individualPaymentGraceHours?: number | undefined;
+  /** Conservation de la position (ADR-035) : absente, valeur en vigueur gardée. */
+  locationRetentionMonths?: number | undefined;
 }
 
 /** Filtres facultatifs et cumulables de la liste des demandes du back-office. */
@@ -209,6 +211,38 @@ export interface QuoteRequestFilters {
   serviceCode?: string | undefined;
 }
 
+/** Devis d'une demande d'un groupe (ADR-035) : mêmes règles qu'un devis seul. */
+export interface GroupQuotesInput {
+  proposedSlots: Slot[];
+  validityDays?: number | undefined;
+  quotes: (Omit<QuoteInput, 'proposedSlots' | 'validityDays'> & { requestId: string })[];
+}
+
+export interface GroupInterventionsInput {
+  missionIds?: string[] | undefined;
+  scheduledStart: string;
+  durationMinutes: number;
+  agentIds?: string[] | undefined;
+  teamId?: string | undefined;
+}
+
+export interface LocationCorrectionInput {
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number | undefined;
+  landmark?: string | undefined;
+  commune?: string | undefined;
+}
+
+/** Filtres facultatifs de la liste des visites (ADR-035). */
+export interface VisitFilters {
+  agentId?: string | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
+  status?: string | undefined;
+  groupId?: string | undefined;
+}
+
 /** Un appel par méthode du contrat ksp.cleaning.v1 exposée en REST. */
 export interface CleaningApi {
   listServices(): Promise<Json>;
@@ -219,6 +253,8 @@ export interface CleaningApi {
   resolveLocation(input: LocationInput): Promise<Json>;
   requestQuoteGroup(input: QuoteGroupInput, idempotencyKey: string): Promise<Json>;
   getMyQuoteRequestGroup(id: string): Promise<Json>;
+  cancelQuoteRequestGroup(id: string, reason: string | undefined, idempotencyKey: string): Promise<Json>;
+  acceptQuoteGroup(id: string, input: AcceptQuoteInput, idempotencyKey: string): Promise<Json>;
   requestQuote(input: QuoteRequestInput, idempotencyKey: string): Promise<Json>;
   listMyRequests(page: Page): Promise<Json>;
   getMyRequest(id: string): Promise<Json>;
@@ -235,6 +271,22 @@ export interface CleaningApi {
   scheduleVisit(id: string, input: { scheduledAt: string; agentId: string }): Promise<Json>;
   completeVisit(visitId: string, report: string): Promise<Json>;
   sendQuote(id: string, input: QuoteInput): Promise<Json>;
+  /** Opérations de groupe (ADR-035) : Idempotency-Key facultative. */
+  scheduleGroupVisit(
+    id: string,
+    input: { scheduledAt: string; agentId: string; excludeRequestIds?: string[] | undefined },
+    idempotencyKey: string | undefined,
+  ): Promise<Json>;
+  completeGroupVisit(id: string, report: string, idempotencyKey: string | undefined): Promise<Json>;
+  rejectRequestGroup(id: string, reason: string, idempotencyKey: string | undefined): Promise<Json>;
+  sendGroupQuotes(id: string, input: GroupQuotesInput, idempotencyKey: string | undefined): Promise<Json>;
+  scheduleGroupInterventions(
+    id: string,
+    input: GroupInterventionsInput,
+    idempotencyKey: string | undefined,
+  ): Promise<Json>;
+  correctRequestLocation(id: string, input: LocationCorrectionInput): Promise<Json>;
+  listVisits(page: Page, filters: VisitFilters): Promise<Json>;
   listMissions(page: Page, filters: MissionFilters): Promise<Json>;
   getMission(id: string): Promise<Json>;
   scheduleIntervention(
@@ -267,7 +319,7 @@ export interface CleaningApi {
   saveZone(commune: string, aliases?: string[] | undefined): Promise<Json>;
   listPlaceTypes(): Promise<Json>;
   savePlaceType(code: string, input: PlaceTypeInput): Promise<Json>;
-  deactivateZone(code: string): Promise<Json>;
+  deactivateZone(code: string, confirm?: boolean | undefined): Promise<Json>;
   listAgents(): Promise<Json>;
   registerAgent(input: { agentId: string; displayName: string }): Promise<Json>;
   declareUnavailability(

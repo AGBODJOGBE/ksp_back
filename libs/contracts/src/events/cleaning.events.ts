@@ -36,6 +36,12 @@ export interface CleaningEventPayloads {
     serviceCode?: string;
     serviceName?: string;
     groupId?: string;
+    /**
+     * Facultatifs (ADR-035) : visite commune à plusieurs demandes du groupe, un seul événement pour
+     * toutes (requestId est la première de requestIds).
+     */
+    groupVisitId?: string;
+    requestIds?: string[];
   };
   'cleaning.quote.sent': {
     requestId: string;

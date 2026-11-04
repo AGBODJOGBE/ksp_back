@@ -80,3 +80,45 @@ export function matchCommune(candidates: readonly string[], zones: readonly Zone
   }
   return { commune: names[0]!, zone: null };
 }
+
+/**
+ * Conservation de la position (ADR-035) : date avant laquelle une demande ou une mission clôturée
+ * perd ses coordonnées, sa précision, son repère et son adresse géocodée (N mois civils, en UTC ; le
+ * jour est ramené au dernier jour du mois si besoin).
+ */
+export function locationRetentionCutoff(now: Date, months: number): Date {
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth() - months;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(
+    Date.UTC(
+      year,
+      month,
+      Math.min(now.getUTCDate(), lastDay),
+      now.getUTCHours(),
+      now.getUTCMinutes(),
+      now.getUTCSeconds(),
+      now.getUTCMilliseconds(),
+    ),
+  );
+}
+
+/** Lieu d'une demande ou d'une mission : ce qui se masque et s'efface (ADR-035). */
+export interface PlaceDetails {
+  address: string;
+  location: GeoLocation | null;
+  landmark: string | null;
+}
+
+/**
+ * Lieu sans position ni repère : l'adresse est vidée quand elle n'est que le repère (parcours par
+ * lieu, ADR-034), sinon gardée.
+ */
+export function withoutPosition<T extends PlaceDetails>(place: T): T {
+  return {
+    ...place,
+    address: place.landmark !== null && place.address === place.landmark ? '' : place.address,
+    location: null,
+    landmark: null,
+  };
+}

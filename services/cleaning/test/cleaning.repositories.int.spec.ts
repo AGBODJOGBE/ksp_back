@@ -877,7 +877,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     const zone = await asAdmin(() =>
       useCases.saveZone.execute({ commune: 'Sèmè-Podji', aliases: ['Sèmè-Kpodji'] }),
     );
-    expect(zone.aliases).toEqual(['Sèmè-Kpodji']);
+    expect(zone.zone.aliases).toEqual(['Sèmè-Kpodji']);
     expect((await deps.catalog.listZones()).find((z) => z.code === 'seme-podji')?.aliases).toEqual([
       'Sèmè-Kpodji',
     ]);

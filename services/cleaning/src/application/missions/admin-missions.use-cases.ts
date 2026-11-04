@@ -36,6 +36,7 @@ import {
 import { isBusinessContract } from '../../domain/standing';
 import { EvaluateStandingUseCase } from '../standing/standing.use-cases';
 import { cancelled, saveMission } from './customer-missions.use-cases';
+import { missionForStaff } from '../groups/group-support';
 
 const MISSION_STATUSES: readonly MissionStatus[] = [
   'to_schedule',
@@ -81,7 +82,9 @@ export class ListMissionsUseCase {
       input.page,
     );
     return {
-      items: await Promise.all(result.items.map((mission) => missionView(this.deps, mission))),
+      items: await Promise.all(
+        result.items.map(async (mission) => missionForStaff(staff, await missionView(this.deps, mission))),
+      ),
       nextCursor: result.nextCursor,
     };
   }
@@ -92,7 +95,10 @@ export class GetMissionDetailUseCase {
 
   async execute(missionId: string): Promise<MissionView> {
     const staff = requireStaff(FIELD_WORK);
-    return missionView(this.deps, await visibleMission(this.deps, staff, missionId));
+    return missionForStaff(
+      staff,
+      await missionView(this.deps, await visibleMission(this.deps, staff, missionId)),
+    );
   }
 }
 
@@ -122,84 +128,127 @@ export class ScheduleInterventionUseCase {
     const start = parseDate('scheduledStart', input.scheduledStart);
     if (start <= now) throw CleaningErrors.slotInvalid('Le passage doit être planifié dans le futur.');
     const durationMinutes = requirePositiveInt('durationMinutes', input.durationMinutes, 24 * 60);
+    const unique = await resolveAgents(this.deps, input.agentIds, input.teamId);
 
-    const agentIds = input.agentIds.map((id, index) => requireUuid(`agentIds[${index}]`, id));
-    if (input.teamId) {
-      const team = await this.deps.agents.findTeam(requireUuid('teamId', input.teamId));
-      if (!team) throw CleaningErrors.teamNotFound();
-      agentIds.push(...team.memberIds);
-    }
-    const unique = [...new Set(agentIds)];
-    if (!unique.length) throw CleaningErrors.invalid('agentIds', 'Affectez au moins un agent.');
-    const agents = await this.deps.agents.findAgents(unique);
-    const missing = unique.filter((id) => !agents.some((agent) => agent.agentId === id && agent.active));
-    if (missing.length) throw CleaningErrors.agentNotFound(missing);
-
-    const service = await this.deps.catalog.findService(mission.serviceCode);
-    const template = service?.pricing.checklist.length ? service.pricing.checklist : DEFAULT_CHECKLIST;
-    const intervention: Intervention = {
-      id: this.deps.ids.next(),
-      status: 'planned',
-      scheduledStart: start,
+    const { mission: updated, intervention } = await withNewIntervention(
+      this.deps,
+      mission,
+      start,
       durationMinutes,
-      agentIds: unique,
-      checklist: template.map((item) => ({ ...item, done: false })),
-      incidentNote: null,
-      beforePhotoFileIds: [],
-      afterPhotoFileIds: [],
-      startedAt: null,
-      completedAt: null,
-      cancellationCause: null,
-      cancelledAt: null,
-    };
-    const updated: Mission = {
-      ...mission,
-      interventions: [...mission.interventions, intervention],
-      updatedAt: now,
-    };
-    updated.status = deriveMissionStatus(updated);
-
+      unique,
+      now,
+    );
     const slot = slotFrom(start, durationMinutes);
-    const subject = await eventSubject(this.deps, mission);
     const result = await this.deps.missions.scheduleIntervention(
       updated,
       intervention,
-      (busy) => conflictingAgents(unique, slot, busy),
-      {
-        events: [
-          {
-            type: 'cleaning.mission.scheduled',
-            payload: {
-              ...subject,
-              missionId: mission.id,
-              interventionId: intervention.id,
-              customerId: mission.customerId,
-              scheduledStart: start.toISOString(),
-              durationMinutes,
-              agentIds: unique,
-            },
-          },
-        ],
-        audit: [
-          {
-            actorId: staff.userId,
-            action: 'intervention.scheduled',
-            entityType: 'mission',
-            entityId: mission.id,
-            at: now,
-            details: {
-              interventionId: intervention.id,
-              agentIds: unique,
-              scheduledStart: start.toISOString(),
-            },
-          },
-        ],
-      },
+      // Missions du même groupe (même lieu) : la même équipe peut y enchaîner (ADR-035).
+      (busy) => conflictingAgents(unique, slot, busy, mission.groupId),
+      await scheduledChanges(this.deps, staff.userId, mission, intervention, now),
     );
     if (result.conflicts.length) throw CleaningErrors.teamUnavailable(result.conflicts);
     if (!result.saved) throw CleaningErrors.concurrentUpdate();
     return missionView(this.deps, { ...updated, version: updated.version + 1 });
   }
+}
+
+/** Agents d'un passage : agents choisis et membres de l'équipe, distincts, tous actifs. */
+export async function resolveAgents(
+  deps: CleaningDeps,
+  agentIdsInput: string[],
+  teamId: string,
+): Promise<string[]> {
+  const agentIds = agentIdsInput.map((id, index) => requireUuid(`agentIds[${index}]`, id));
+  if (teamId) {
+    const team = await deps.agents.findTeam(requireUuid('teamId', teamId));
+    if (!team) throw CleaningErrors.teamNotFound();
+    agentIds.push(...team.memberIds);
+  }
+  const unique = [...new Set(agentIds)];
+  if (!unique.length) throw CleaningErrors.invalid('agentIds', 'Affectez au moins un agent.');
+  const agents = await deps.agents.findAgents(unique);
+  const missing = unique.filter((id) => !agents.some((agent) => agent.agentId === id && agent.active));
+  if (missing.length) throw CleaningErrors.agentNotFound(missing);
+  return unique;
+}
+
+/** Mission avec un nouveau passage planifié (liste de contrôle de la prestation). */
+export async function withNewIntervention(
+  deps: CleaningDeps,
+  mission: Mission,
+  start: Date,
+  durationMinutes: number,
+  agentIds: string[],
+  now: Date,
+): Promise<{ mission: Mission; intervention: Intervention }> {
+  const service = await deps.catalog.findService(mission.serviceCode);
+  const template = service?.pricing.checklist.length ? service.pricing.checklist : DEFAULT_CHECKLIST;
+  const intervention: Intervention = {
+    id: deps.ids.next(),
+    status: 'planned',
+    scheduledStart: start,
+    durationMinutes,
+    agentIds,
+    checklist: template.map((item) => ({ ...item, done: false })),
+    incidentNote: null,
+    beforePhotoFileIds: [],
+    afterPhotoFileIds: [],
+    startedAt: null,
+    completedAt: null,
+    cancellationCause: null,
+    cancelledAt: null,
+  };
+  const updated: Mission = {
+    ...mission,
+    interventions: [...mission.interventions, intervention],
+    updatedAt: now,
+  };
+  updated.status = deriveMissionStatus(updated);
+  return { mission: updated, intervention };
+}
+
+/** Événement cleaning.mission.scheduled et trace d'un passage planifié. */
+export async function scheduledChanges(
+  deps: CleaningDeps,
+  actorId: string,
+  mission: Mission,
+  intervention: Intervention,
+  now: Date,
+  extra: Record<string, unknown> = {},
+): Promise<Changes> {
+  const subject = await eventSubject(deps, mission);
+  const scheduledStart = intervention.scheduledStart.toISOString();
+  return {
+    events: [
+      {
+        type: 'cleaning.mission.scheduled',
+        payload: {
+          ...subject,
+          missionId: mission.id,
+          interventionId: intervention.id,
+          customerId: mission.customerId,
+          scheduledStart,
+          durationMinutes: intervention.durationMinutes,
+          agentIds: intervention.agentIds,
+        },
+      },
+    ],
+    audit: [
+      {
+        actorId,
+        action: 'intervention.scheduled',
+        entityType: 'mission',
+        entityId: mission.id,
+        at: now,
+        details: {
+          interventionId: intervention.id,
+          agentIds: intervention.agentIds,
+          scheduledStart,
+          ...extra,
+        },
+      },
+    ],
+  };
 }
 
 /** Action d'un agent (ou de la supervision) sur un passage : transition contrôlée, mission recalculée. */
@@ -248,7 +297,7 @@ abstract class InterventionAction {
         },
       });
     }
-    return saveMission(this.deps, updated, {
+    const view = await saveMission(this.deps, updated, {
       events,
       audit: [
         {
@@ -261,6 +310,7 @@ abstract class InterventionAction {
         },
       ],
     });
+    return missionForStaff(staff, view);
   }
 }
 

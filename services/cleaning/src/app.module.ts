@@ -27,6 +27,10 @@ import {
   PAYMENT_WATCH_INTERVAL_MS,
   PaymentWatchService,
 } from './infrastructure/scheduling/payment-watch.service';
+import {
+  LOCATION_PURGE_INTERVAL_MS,
+  LocationPurgeService,
+} from './infrastructure/scheduling/location-purge.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { CleaningAdminGrpcController } from './interfaces/grpc/admin.controller';
 import {
@@ -71,6 +75,8 @@ export class AppModule {
         PaymentEventsConsumer,
         PaymentWatchService,
         { provide: PAYMENT_WATCH_INTERVAL_MS, useValue: config.CLEANING_PAYMENT_WATCH_INTERVAL_MS },
+        LocationPurgeService,
+        { provide: LOCATION_PURGE_INTERVAL_MS, useValue: config.CLEANING_LOCATION_PURGE_INTERVAL_MS },
         {
           provide: CLEANING_USE_CASES,
           inject: [

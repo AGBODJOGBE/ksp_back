@@ -111,6 +111,7 @@ export function toRequest(row: RequestWithRelations): QuoteRequest {
           agentId: row.visit.agentId,
           report: row.visit.report,
           completedAt: row.visit.completedAt,
+          groupVisitId: row.visit.groupVisitId,
         }
       : null,
     quote: quote ? toQuote(quote) : null,

@@ -13,6 +13,9 @@ partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/bill
   peuvent arriver dans le désordre (ADR-032) : une annulation, suspension ou reprise d'une mission
   d'organisation reçue avant sa confirmation n'est pas marquée traitée et repasse par la file
   `.retry` jusqu'à ce que le contrat existe.
+- **Libellé** : le nom de la prestation reçu dans `cleaning.booking.confirmed` (`serviceName`, ADR-035)
+  est gardé sur le contrat et repris dans la ligne (« Nettoyage de bureaux — novembre 2026 : … ») ;
+  sans lui, « Prestation de nettoyage — … ».
 - **Une facture par mois civil** (heure du Bénin, UTC+1), émise à la fin du mois : le 1er du
   mois suivant à 00:00, heure du Bénin (au premier passage de la tâche planifiée).
 - **Prorata des jours** : montant mensuel (`total / durée`) × jours facturables / jours du mois,

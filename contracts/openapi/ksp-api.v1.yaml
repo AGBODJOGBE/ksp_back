@@ -2416,6 +2416,130 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/quote-request-groups/{id}/cancel:
+    post:
+      tags:
+        - Nettoyage
+      operationId: cancelCleaningRequestGroup
+      summary: Annuler un groupe de demandes
+      description: |
+        ADR-035. Annule d’un coup les demandes encore ouvertes du groupe (mêmes règles et mêmes événements que
+        `cancelCleaningRequest` pour chacune) ; les demandes acceptées ou closes ne changent pas et sont listées dans
+        `skipped`. Propriétaire seulement. Idempotent par `Idempotency-Key` (obligatoire).
+
+        Erreurs : `CLEANING_REQUEST_GROUP_NOT_FOUND` (404), `CLEANING_GROUP_NO_ELIGIBLE_REQUEST` (422, `details.skipped`),
+        `CLEANING_IDEMPOTENCY_KEY_REUSED` (409, clé déjà utilisée pour un autre groupe).
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/CancelRequestGroup
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningOptionalReasonRequest'
+            example:
+              reason: Je n’en ai plus besoin.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningClientGroupOutcome'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/quote-request-groups/{id}/accept:
+    post:
+      tags:
+        - Nettoyage
+      operationId: acceptCleaningQuoteGroup
+      summary: Accepter les devis d’un groupe en une fois
+      description: |
+        ADR-035. Un créneau et un plan de paiement communs, appliqués à chaque devis envoyé du groupe qui propose ce
+        créneau : une mission par devis, créées dans une transaction (un événement `cleaning.booking.confirmed` par
+        mission). Les autres demandes sont listées dans `skipped` (`slot_not_proposed`, `quote_expired`, `no_quote`,
+        `not_open`) ; l’acceptation par demande reste possible. Idempotent par `Idempotency-Key` (obligatoire).
+
+        Erreurs : `CLEANING_GROUP_NO_ELIGIBLE_REQUEST` (422), `CLEANING_LEAD_TIME_TOO_SHORT` (422),
+        `CLEANING_VALIDATION_FAILED` (400, `paymentPlan` manquant pour un particulier), `CLEANING_ORGANIZATION_SUSPENDED`
+        (422), `CLEANING_IDEMPOTENCY_KEY_REUSED` (409), `CLEANING_CONCURRENT_UPDATE` (409).
+      x-ksp-grpc: ksp.cleaning.v1.QuoteService/AcceptGroupQuotes
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptCleaningQuoteRequest'
+            example:
+              slotStart: 2026-11-05T08:00:00Z
+              paymentPlan:
+                option: full
+                timing: after
+                method: cash
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningClientGroupOutcome'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/cleaning/quote-requests:
     post:
       tags:
@@ -3990,12 +4114,15 @@ paths:
       description: |
         UC-CL-07. Refusé avant l’heure prévue de la visite (`CLEANING_VISIT_TOO_EARLY`, 422, `details.scheduledAt`), règle réglable par la configuration du service.
 
-        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+        Ouvert à l’agent affecté à la visite (ADR-035) ; la visite d’un autre agent : `CLEANING_VISIT_NOT_FOUND`. Pour un agent, la demande renvoyée n’a plus de position (visite close).
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CompleteVisit
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - cleaning_supervisor
+        - cleaning_agent
         - cleaning_admin
         - super_admin
       x-ksp-mfa-max-age: 43200
@@ -4095,6 +4222,481 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-request-groups/{id}/visits:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: scheduleCleaningGroupVisit
+      summary: Planifier la visite commune d’un groupe
+      description: |
+        ADR-035. Toutes les demandes ouvertes du groupe dont l’état admet une visite, à la même heure, avec le même
+        agent ; un seul événement `cleaning.visit.scheduled` (`groupVisitId`, `requestIds`). Rappeler la route replanifie
+        la visite commune. `excludeRequestIds` détache des demandes : elles gardent leur visite, qui devient la leur
+        (`POST /quote-requests/{id}/visits` sur une demande la détache de même). Une demande avec sa propre visite
+        (`own_visit`) ou déjà visitée (`visit_completed`) est laissée de côté. `Idempotency-Key` facultative.
+
+        Erreurs : `CLEANING_GROUP_NO_ELIGIBLE_REQUEST` (422), `CLEANING_AGENT_NOT_FOUND` (404), `CLEANING_SLOT_INVALID` (400).
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ScheduleGroupVisit
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleCleaningGroupVisitRequest'
+            example:
+              scheduledAt: 2026-10-27T09:00:00Z
+              agentId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+              excludeRequestIds: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningGroupOutcome'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-request-groups/{id}/visits/complete:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: completeCleaningGroupVisit
+      summary: Compte rendu commun de la visite de groupe
+      description: |
+        ADR-035. Complète toutes les visites encore planifiées de la visite commune, avec le même compte rendu. Ouvert à
+        l’agent de cette visite (un autre agent : `CLEANING_VISIT_NOT_FOUND`). Refusé avant l’heure prévue
+        (`CLEANING_VISIT_TOO_EARLY`). `Idempotency-Key` facultative. Pour un agent, `requests` ne contient que ses
+        demandes, sans position (visite close).
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CompleteGroupVisit
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteCleaningVisitRequest'
+            example:
+              report: Maison et jardin vus, accès facile.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningGroupOutcome'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-request-groups/{id}/reject:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: rejectCleaningRequestGroup
+      summary: Refuser un groupe de demandes
+      description: |
+        ADR-035. Refuse les demandes encore refusables du groupe (motif commun, un événement `cleaning.request.cancelled`
+        par demande) ; les demandes acceptées, closes ou au devis envoyé ne changent pas et sont listées dans `skipped`.
+        `Idempotency-Key` facultative.
+
+        Erreurs : `CLEANING_REQUEST_GROUP_NOT_FOUND` (404), `CLEANING_GROUP_NO_ELIGIBLE_REQUEST` (422).
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RejectRequestGroup
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningRequiredReasonRequest'
+            example:
+              reason: Zone non desservie pour le moment.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningGroupOutcome'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-request-groups/{id}/quotes:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: sendCleaningGroupQuotes
+      summary: Envoyer les devis d’un groupe ensemble
+      description: |
+        ADR-035. Un devis par demande listée, chiffré séparément (lignes vides : préremplies depuis le calcul de la
+        demande, comme `sendCleaningQuote`), avec les mêmes créneaux proposés ; tout ou rien (une erreur porte
+        `details.requestId`). Le client peut ensuite tout accepter en une fois. `Idempotency-Key` facultative.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SendGroupQuotes
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendCleaningGroupQuotesRequest'
+            example:
+              proposedSlots:
+                - start: 2026-11-05T08:00:00Z
+                  end: 2026-11-05T11:00:00Z
+              quotes:
+                - requestId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                  durationMinutes: 180
+                - requestId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1002
+                  lines:
+                    - label: Entretien du jardin
+                      quantity: 1
+                      unitPrice: 20000
+                  durationMinutes: 60
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningGroupOutcome'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-requests/{id}/location:
+    put:
+      tags:
+        - Nettoyage (back-office)
+      operationId: correctCleaningRequestLocation
+      summary: Corriger la position d’une demande
+      description: |
+        ADR-035. Supervision, ou agent de la visite encore planifiée de cette demande (sinon
+        `CLEANING_REQUEST_NOT_FOUND`). La commune est recalculée (géocodeur, `commune` en repli) et doit être desservie
+        (`CLEANING_ZONE_NOT_COVERED`) ; la correction s’applique à toutes les demandes du groupe et aux missions non
+        terminées. Tracée dans le journal d’audit, sans les coordonnées. Les devis déjà envoyés ne changent pas.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CorrectRequestLocation
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CorrectCleaningRequestLocationRequest'
+            example:
+              latitude: 6.3703
+              longitude: 2.3912
+              accuracyMeters: 8
+              landmark: Portail vert, face à l’école
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningLocationCorrection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/visits:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: listCleaningVisits
+      summary: Visites techniques
+      description: |
+        ADR-035. Un agent ne voit que les visites qui lui sont affectées (le filtre `agentId` est alors ignoré) ; la
+        supervision voit tout. Une visite commune est une seule entrée avec ses demandes. Pour un agent, position, repère
+        et adresse d’une visite terminée ou annulée sont `null`.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListVisits
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/CleaningAgentIdFilter'
+        - $ref: '#/components/parameters/CleaningFromFilter'
+        - $ref: '#/components/parameters/CleaningToFilter'
+        - $ref: '#/components/parameters/CleaningVisitStatus'
+        - $ref: '#/components/parameters/CleaningGroupIdFilter'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningVisitList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/mission-groups/{id}/interventions:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: scheduleCleaningGroupInterventions
+      summary: Planifier ensemble les missions d’un groupe
+      description: |
+        ADR-035. Un passage pour chaque mission du groupe (ou celles de `missionIds`) qui a un passage à planifier, même
+        créneau, mêmes agents, dans une transaction. La même équipe sur des créneaux qui se chevauchent dans un même groupe
+        (même lieu) n’est pas un conflit ; les autres passages et les indisponibilités le restent
+        (`CLEANING_TEAM_UNAVAILABLE`, 409). Missions terminées, suspendues ou complètes : `skipped`. `Idempotency-Key`
+        facultative.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ScheduleGroupInterventions
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleCleaningGroupInterventionsRequest'
+            example:
+              scheduledStart: 2026-11-05T08:00:00Z
+              durationMinutes: 180
+              agentIds:
+                - 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningGroupInterventions'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
@@ -5190,12 +5792,16 @@ paths:
                     active: true
                     updatedBy: null
                     updatedAt: null
+                    openRequests: 2
+                    activeMissions: 1
                   - code: cotonou
                     commune: Cotonou
                     aliases: []
                     active: true
                     updatedBy: null
                     updatedAt: null
+                    openRequests: 2
+                    activeMissions: 1
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5273,7 +5879,11 @@ paths:
 
         Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
-        Erreurs : `CLEANING_ZONE_NOT_FOUND` (404).
+        Zone avec des demandes ouvertes ou des missions actives (ADR-035) : elles continuent, mais la désactivation exige
+        `{ "confirm": true }` ; sans lui, `CLEANING_ZONE_HAS_ACTIVITY` (409, `details.openRequests`,
+        `details.activeMissions`). Corps facultatif.
+
+        Erreurs : `CLEANING_ZONE_NOT_FOUND` (404), `CLEANING_ZONE_HAS_ACTIVITY` (409).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/DeactivateZone
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -5285,6 +5895,14 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/CleaningZoneCode'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeactivateCleaningZoneRequest'
+            example:
+              confirm: true
       responses:
         '200':
           description: Succès
@@ -5303,6 +5921,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -6756,6 +7376,39 @@ components:
       schema:
         type: string
         pattern: ^[a-z][a-z0-9_]{1,49}$
+    CleaningAgentIdFilter:
+      name: agentId
+      in: query
+      required: false
+      description: Agent de la visite (supervision seulement ; ignoré pour un agent).
+      schema:
+        type: string
+        format: uuid
+    CleaningFromFilter:
+      name: from
+      in: query
+      required: false
+      description: Visites prévues à partir de cette date (incluse).
+      schema:
+        type: string
+        format: date-time
+    CleaningToFilter:
+      name: to
+      in: query
+      required: false
+      description: Visites prévues avant cette date (exclue).
+      schema:
+        type: string
+        format: date-time
+    CleaningVisitStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        enum:
+          - scheduled
+          - completed
+          - cancelled
     OptionalIdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -8438,6 +9091,12 @@ components:
             - string
             - 'null'
           description: Back-office — nom affiché de l'agent de la visite (fiche agent) ; null s'il est inconnu (ADR-029).
+        groupVisitId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Visite commune à plusieurs demandes du groupe (ADR-035) ; null pour une visite propre à la demande.
     CleaningQuote:
       type: object
       additionalProperties: false
@@ -9486,6 +10145,7 @@ components:
         - businessSuspensionUnpaidInvoices
         - individualSuspensionUnpaidInterventions
         - individualPaymentGraceHours
+        - locationRetentionMonths
         - updatedBy
         - updatedAt
       properties:
@@ -9535,6 +10195,11 @@ components:
           minimum: 1
           maximum: 720
           description: Heures laissées après un passage pour enregistrer son paiement (24 par défaut).
+        locationRetentionMonths:
+          type: integer
+          minimum: 1
+          maximum: 120
+          description: Mois de conservation de la position GPS des demandes et missions clôturées (12 par défaut, ADR-035).
         updatedBy:
           type:
             - string
@@ -10275,6 +10940,11 @@ components:
           minimum: 1
           maximum: 720
           description: Heures laissées après un passage pour enregistrer son paiement Si absent, la valeur en vigueur est conservée.
+        locationRetentionMonths:
+          type: integer
+          minimum: 1
+          maximum: 120
+          description: Mois de conservation de la position GPS (ADR-035). Si absent, la valeur en vigueur est conservée.
     RegisterCleaningAgentRequest:
       type: object
       additionalProperties: false
@@ -10778,7 +11448,17 @@ components:
         - active
         - updatedBy
         - updatedAt
+        - openRequests
+        - activeMissions
       properties:
+        openRequests:
+          type: integer
+          minimum: 0
+          description: Demandes ouvertes dans la zone (ADR-035).
+        activeMissions:
+          type: integer
+          minimum: 0
+          description: Missions non terminées dans la zone (ADR-035).
         aliases:
           type: array
           description: Autres noms de la commune (« Sèmè-Kpodji »), utilisés pour rattacher une position géocodée à la zone (ADR-034).
@@ -11240,6 +11920,441 @@ components:
           maxLength: 2000
         recurrence:
           $ref: '#/components/schemas/CleaningRecurrence'
+    DeactivateCleaningZoneRequest:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        confirm:
+          type: boolean
+          description: Obligatoire (true) quand la zone a des demandes ouvertes ou des missions actives (ADR-035).
+    ScheduleCleaningGroupVisitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - scheduledAt
+        - agentId
+      properties:
+        scheduledAt:
+          type: string
+          format: date-time
+        agentId:
+          type: string
+          format: uuid
+        excludeRequestIds:
+          type: array
+          maxItems: 10
+          description: Demandes laissées hors de la visite commune (détachées).
+          items:
+            type: string
+            format: uuid
+    SendCleaningGroupQuotesRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - proposedSlots
+        - quotes
+      properties:
+        proposedSlots:
+          type: array
+          minItems: 1
+          maxItems: 3
+          description: Créneaux communs proposés pour tous les devis.
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+        validityDays:
+          type: integer
+          minimum: 1
+          maximum: 90
+        quotes:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - requestId
+              - durationMinutes
+            properties:
+              requestId:
+                type: string
+                format: uuid
+              lines:
+                type: array
+                maxItems: 50
+                description: Vide ou absent — lignes préremplies depuis le calcul de la demande.
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - label
+                    - quantity
+                    - unitPrice
+                  properties:
+                    label:
+                      type: string
+                      minLength: 1
+                      maxLength: 200
+                    quantity:
+                      type: integer
+                      minimum: 1
+                      maximum: 1000000
+                    unitPrice:
+                      type: integer
+              recurrence:
+                $ref: '#/components/schemas/CleaningRecurrence'
+              teamSize:
+                type: integer
+                minimum: 1
+                maximum: 50
+              durationMinutes:
+                type: integer
+                minimum: 1
+                maximum: 1440
+    ScheduleCleaningGroupInterventionsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - scheduledStart
+        - durationMinutes
+      properties:
+        missionIds:
+          type: array
+          maxItems: 10
+          description: Missions du groupe à planifier ; absent, toutes celles qui ont un passage à planifier.
+          items:
+            type: string
+            format: uuid
+        scheduledStart:
+          type: string
+          format: date-time
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+        agentIds:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+        teamId:
+          type: string
+          format: uuid
+    CorrectCleaningRequestLocationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - latitude
+        - longitude
+      properties:
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+        accuracyMeters:
+          type: number
+          minimum: 0
+          maximum: 100000
+        landmark:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Absent — repère en vigueur gardé.
+        commune:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Repli si le géocodage ne trouve pas la commune.
+    CleaningSkippedRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - status
+        - reason
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        reason:
+          enum:
+            - not_open
+            - transition_not_allowed
+            - excluded
+            - own_visit
+            - visit_completed
+            - no_quote
+            - quote_expired
+            - slot_not_proposed
+    CleaningGroupOutcomeFields:
+      type: object
+      required:
+        - groupId
+        - affectedRequestIds
+        - skipped
+        - groupVisitId
+        - missionIds
+      properties:
+        groupId:
+          type: string
+          format: uuid
+        affectedRequestIds:
+          type: array
+          description: Demandes modifiées par l’opération.
+          items:
+            type: string
+            format: uuid
+        skipped:
+          type: array
+          description: Demandes laissées de côté, avec leur raison.
+          items:
+            $ref: '#/components/schemas/CleaningSkippedRequest'
+        groupVisitId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        missionIds:
+          type: array
+          description: Missions créées (acceptation commune).
+          items:
+            type: string
+            format: uuid
+    CleaningGroupOutcome:
+      description: Résultat d’une opération de groupe au back-office (ADR-035), avec toutes les demandes du groupe.
+      allOf:
+        - $ref: '#/components/schemas/CleaningGroupOutcomeFields'
+        - type: object
+          required:
+            - requests
+          properties:
+            requests:
+              type: array
+              items:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+    CleaningClientGroupOutcome:
+      description: Résultat d’une opération de groupe du client (ADR-035), avec le groupe à jour et ses totaux.
+      allOf:
+        - $ref: '#/components/schemas/CleaningGroupOutcomeFields'
+        - type: object
+          required:
+            - group
+          properties:
+            group:
+              $ref: '#/components/schemas/CleaningQuoteRequestGroup'
+    CleaningLocationCorrection:
+      type: object
+      additionalProperties: false
+      required:
+        - request
+        - updatedRequestIds
+        - updatedMissionIds
+      properties:
+        request:
+          $ref: '#/components/schemas/CleaningQuoteRequest'
+        updatedRequestIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        updatedMissionIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+    CleaningVisit:
+      type: object
+      additionalProperties: false
+      description: Visite technique (ADR-035) ; une visite commune est une seule entrée.
+      required:
+        - id
+        - groupVisitId
+        - groupId
+        - status
+        - scheduledAt
+        - completedAt
+        - report
+        - agentId
+        - agentName
+        - customerId
+        - customerName
+        - organizationName
+        - commune
+        - address
+        - location
+        - landmark
+        - geocodedAddress
+        - placeType
+        - placeTypeLabel
+        - requests
+      properties:
+        id:
+          type: string
+          format: uuid
+        groupVisitId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        groupId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        status:
+          enum:
+            - scheduled
+            - completed
+            - cancelled
+        scheduledAt:
+          type: string
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        report:
+          type:
+            - string
+            - 'null'
+        agentId:
+          type: string
+          format: uuid
+        agentName:
+          type:
+            - string
+            - 'null'
+        customerId:
+          type: string
+          format: uuid
+        customerName:
+          type:
+            - string
+            - 'null'
+          description: Nom du client lu dans identity (ADR-029) ; le téléphone n’est pas transmis à cleaning.
+        organizationName:
+          type:
+            - string
+            - 'null'
+        commune:
+          type: string
+        address:
+          type:
+            - string
+            - 'null'
+        location:
+          description: Position GPS ; null sans position, ou pour un agent quand la visite est terminée ou annulée.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningGeoLocation'
+            - type: 'null'
+        landmark:
+          type:
+            - string
+            - 'null'
+        geocodedAddress:
+          type:
+            - string
+            - 'null'
+        placeType:
+          type:
+            - string
+            - 'null'
+        placeTypeLabel:
+          type:
+            - string
+            - 'null'
+        requests:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - requestId
+              - visitId
+              - serviceCode
+              - serviceName
+              - status
+            properties:
+              requestId:
+                type: string
+                format: uuid
+              visitId:
+                type: string
+                format: uuid
+                description: Visite de cette demande (compte rendu par demande).
+              serviceCode:
+                type: string
+              serviceName:
+                type:
+                  - string
+                  - 'null'
+              status:
+                type: string
+    CleaningVisitList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningVisit'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    CleaningGroupInterventions:
+      type: object
+      additionalProperties: false
+      required:
+        - groupId
+        - scheduledMissionIds
+        - skipped
+        - missions
+      properties:
+        groupId:
+          type: string
+          format: uuid
+        scheduledMissionIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        skipped:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - missionId
+              - status
+              - reason
+            properties:
+              missionId:
+                type: string
+                format: uuid
+              status:
+                type: string
+              reason:
+                enum:
+                  - terminated
+                  - suspended
+                  - no_intervention_left
+        missions:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningMission'
     CleaningQuoteRequestGroup:
       type: object
       additionalProperties: false
@@ -11270,6 +12385,16 @@ components:
           description: Une demande par prestation, dans l’ordre envoyé (même présentation que `GET /api/v1/cleaning/quote-requests/{id}`).
           items:
             $ref: '#/components/schemas/CleaningQuoteRequest'
+        quotesTotal:
+          description: Total des devis envoyés du groupe (encore valables ou acceptés), null si aucun (ADR-035).
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        remainingDue:
+          description: Reste dû des missions du groupe (hors annulées) ; null sans mission ou pour une entreprise (factures). Pas de paiement groupé (ADR-035).
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
     CleaningPlaceType:
       type: object
       additionalProperties: false

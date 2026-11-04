@@ -32,14 +32,33 @@ export function isFreeCancellation(start: Date | null, now: Date, freeCancellati
 export interface BusyPeriod {
   agentId: string;
   slot: Slot;
+  /**
+   * Groupe de demandes de la mission du passage (ADR-035), null ou absent pour une indisponibilité
+   * ou une mission hors groupe.
+   */
+  groupId?: string | null;
 }
 
 /**
  * Agents déjà pris sur le créneau : un autre passage ou une indisponibilité déclarée.
  * Renvoie les agents en conflit, sans doublon, dans l'ordre demandé.
+ *
+ * Missions d'un même groupe (ADR-035) : même lieu, une même équipe peut y enchaîner les prestations ;
+ * un passage d'une mission du groupe `sameGroupId` ne compte donc pas comme un conflit. Les autres
+ * passages et les indisponibilités restent contrôlés.
  */
-export function conflictingAgents(agentIds: string[], slot: Slot, busy: BusyPeriod[]): string[] {
-  const taken = new Set(busy.filter((period) => overlaps(period.slot, slot)).map((period) => period.agentId));
+export function conflictingAgents(
+  agentIds: string[],
+  slot: Slot,
+  busy: BusyPeriod[],
+  sameGroupId: string | null = null,
+): string[] {
+  const taken = new Set(
+    busy
+      .filter((period) => !(sameGroupId && period.groupId === sameGroupId))
+      .filter((period) => overlaps(period.slot, slot))
+      .map((period) => period.agentId),
+  );
   return [...new Set(agentIds)].filter((agentId) => taken.has(agentId));
 }
 

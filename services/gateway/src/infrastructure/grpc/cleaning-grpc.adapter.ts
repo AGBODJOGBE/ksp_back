@@ -7,6 +7,10 @@ import {
   type AcceptQuoteInput,
   type CleaningApi,
   type EstimateInput,
+  type GroupInterventionsInput,
+  type GroupQuotesInput,
+  type LocationCorrectionInput,
+  type VisitFilters,
   type Json,
   type LocationInput,
   type MissionFilters,
@@ -30,6 +34,7 @@ import {
   presentLocationResolution,
   presentMission,
   presentOffer,
+  presentOutcome,
   presentPlaceCatalog,
   presentPlaceType,
   presentRequest,
@@ -38,6 +43,7 @@ import {
   presentSibling,
   presentSimulation,
   presentTeam,
+  presentVisit,
   presentZone,
   xof,
 } from './cleaning-presenters';
@@ -161,6 +167,171 @@ export class CleaningGrpcAdapter implements CleaningApi {
       this.clients.quotes.getRequestGroup({ groupId: id }, m),
     );
     return presentGroup(res.group);
+  }
+
+  // --- Demandes groupées (ADR-035) ---------------------------------------------------------------
+
+  async cancelQuoteRequestGroup(
+    id: string,
+    reason: string | undefined,
+    idempotencyKey: string,
+  ): Promise<Json> {
+    const res = await this.write('cancelRequestGroup', (m) =>
+      this.clients.quotes.cancelRequestGroup({ groupId: id, reason: reason ?? '', idempotencyKey }, m),
+    );
+    return { ...presentOutcome(res.outcome), group: presentGroup(res.group) };
+  }
+
+  async acceptQuoteGroup(id: string, input: AcceptQuoteInput, idempotencyKey: string): Promise<Json> {
+    const res = await this.write('acceptGroupQuotes', (m) =>
+      this.clients.quotes.acceptGroupQuotes(
+        {
+          groupId: id,
+          idempotencyKey,
+          slotStart: input.slotStart,
+          ...(input.paymentPlan ? { paymentPlan: input.paymentPlan } : {}),
+        },
+        m,
+      ),
+    );
+    return { ...presentOutcome(res.outcome), group: presentGroup(res.group) };
+  }
+
+  async scheduleGroupVisit(
+    id: string,
+    input: { scheduledAt: string; agentId: string; excludeRequestIds?: string[] | undefined },
+    idempotencyKey: string | undefined,
+  ): Promise<Json> {
+    const res = await this.write('scheduleGroupVisit', (m) =>
+      this.clients.admin.scheduleGroupVisit(
+        {
+          groupId: id,
+          scheduledAt: input.scheduledAt,
+          agentId: input.agentId,
+          excludeRequestIds: input.excludeRequestIds ?? [],
+          idempotencyKey: idempotencyKey ?? '',
+        },
+        m,
+      ),
+    );
+    return { ...presentOutcome(res.outcome), requests: res.requests.map(presentRequest) };
+  }
+
+  async completeGroupVisit(id: string, report: string, idempotencyKey: string | undefined): Promise<Json> {
+    const res = await this.write('completeGroupVisit', (m) =>
+      this.clients.admin.completeGroupVisit({ groupId: id, report, idempotencyKey: idempotencyKey ?? '' }, m),
+    );
+    return { ...presentOutcome(res.outcome), requests: res.requests.map(presentRequest) };
+  }
+
+  async rejectRequestGroup(id: string, reason: string, idempotencyKey: string | undefined): Promise<Json> {
+    const res = await this.write('rejectRequestGroup', (m) =>
+      this.clients.admin.rejectRequestGroup({ groupId: id, reason, idempotencyKey: idempotencyKey ?? '' }, m),
+    );
+    return { ...presentOutcome(res.outcome), requests: res.requests.map(presentRequest) };
+  }
+
+  async sendGroupQuotes(
+    id: string,
+    input: GroupQuotesInput,
+    idempotencyKey: string | undefined,
+  ): Promise<Json> {
+    const res = await this.write('sendGroupQuotes', (m) =>
+      this.clients.admin.sendGroupQuotes(
+        {
+          groupId: id,
+          proposedSlots: input.proposedSlots,
+          validityDays: input.validityDays ?? 0,
+          quotes: input.quotes.map((quote) => ({
+            requestId: quote.requestId,
+            lines: (quote.lines ?? []).map((l) => ({
+              label: l.label,
+              quantity: l.quantity,
+              unitPrice: xof(l.unitPrice),
+              amount: xof(l.quantity * l.unitPrice),
+            })),
+            ...(quote.recurrence ? { recurrence: quote.recurrence } : {}),
+            teamSize: quote.teamSize ?? 0,
+            durationMinutes: quote.durationMinutes,
+          })),
+          idempotencyKey: idempotencyKey ?? '',
+        },
+        m,
+      ),
+    );
+    return { ...presentOutcome(res.outcome), requests: res.requests.map(presentRequest) };
+  }
+
+  async scheduleGroupInterventions(
+    id: string,
+    input: GroupInterventionsInput,
+    idempotencyKey: string | undefined,
+  ): Promise<Json> {
+    const res = await this.write('scheduleGroupInterventions', (m) =>
+      this.clients.admin.scheduleGroupInterventions(
+        {
+          groupId: id,
+          missionIds: input.missionIds ?? [],
+          scheduledStart: input.scheduledStart,
+          durationMinutes: input.durationMinutes,
+          agentIds: input.agentIds ?? [],
+          teamId: input.teamId ?? '',
+          idempotencyKey: idempotencyKey ?? '',
+        },
+        m,
+      ),
+    );
+    return {
+      groupId: res.groupId,
+      scheduledMissionIds: res.scheduledMissionIds,
+      skipped: res.skipped.map((entry) => ({
+        missionId: entry.missionId,
+        status: entry.status,
+        reason: entry.reason,
+      })),
+      missions: res.missions.map(presentMission),
+    };
+  }
+
+  async correctRequestLocation(id: string, input: LocationCorrectionInput): Promise<Json> {
+    // PUT : la même correction rejouée donne le même état ; jamais rejouée par la gateway (géocodeur).
+    const res = await this.write('correctRequestLocation', (m) =>
+      this.clients.admin.correctRequestLocation(
+        {
+          requestId: id,
+          location: {
+            latitude: input.latitude,
+            longitude: input.longitude,
+            accuracyMeters: input.accuracyMeters ?? 0,
+          },
+          landmark: input.landmark ?? '',
+          commune: input.commune ?? '',
+        },
+        m,
+      ),
+    );
+    return {
+      request: presentRequest(res.request),
+      updatedRequestIds: res.updatedRequestIds,
+      updatedMissionIds: res.updatedMissionIds,
+    };
+  }
+
+  async listVisits(value: Page, filters: VisitFilters): Promise<Json> {
+    const res = await this.read('listVisits', (m) =>
+      this.clients.admin.listVisits(
+        {
+          page: page(value),
+          agentId: filters.agentId ?? '',
+          from: filters.from ?? '',
+          to: filters.to ?? '',
+          status: filters.status ?? '',
+          groupId: filters.groupId ?? '',
+        },
+        m,
+      ),
+    );
+    return list(res.visits.map(presentVisit), res.nextCursor);
   }
 
   async listPlaceTypes(): Promise<Json> {
@@ -540,6 +711,7 @@ export class CleaningGrpcAdapter implements CleaningApi {
             businessSuspensionUnpaidInvoices: input.businessSuspensionUnpaidInvoices ?? 0,
             individualSuspensionUnpaidInterventions: input.individualSuspensionUnpaidInterventions ?? 0,
             individualPaymentGraceHours: input.individualPaymentGraceHours ?? 0,
+            locationRetentionMonths: input.locationRetentionMonths ?? 0,
             updatedBy: '',
             updatedAt: '',
             updatedByName: '',
@@ -566,9 +738,13 @@ export class CleaningGrpcAdapter implements CleaningApi {
     );
   }
 
-  async deactivateZone(code: string): Promise<Json> {
+  async deactivateZone(code: string, confirm?: boolean | undefined): Promise<Json> {
     return presentZone(
-      (await this.write('deactivateZone', (m) => this.clients.admin.deactivateZone({ code }, m))).zone,
+      (
+        await this.write('deactivateZone', (m) =>
+          this.clients.admin.deactivateZone({ code, confirm: confirm ?? false }, m),
+        )
+      ).zone,
     );
   }
 

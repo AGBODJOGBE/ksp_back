@@ -241,11 +241,11 @@ describe('impayés, suspension et reprise (CDC Nettoyage, partie 10)', () => {
 
   it('zones desservies : ajout, réactivation et désactivation par l’admin seulement', async () => {
     const zones = () => asAdmin(() => new ListZonesUseCase(world).execute());
-    expect((await zones()).map((zone) => zone.code)).toEqual(['abomey-calavi', 'cotonou', 'porto-novo']);
+    expect((await zones()).map((zone) => zone.zone.code)).toEqual(['abomey-calavi', 'cotonou', 'porto-novo']);
     const added = await asAdmin(() => new SaveZoneUseCase(world).execute({ commune: 'Sèmè-Podji' }));
-    expect(added).toMatchObject({ code: 'seme-podji', commune: 'Sèmè-Podji', active: true });
+    expect(added.zone).toMatchObject({ code: 'seme-podji', commune: 'Sèmè-Podji', active: true });
     const off = await asAdmin(() => new DeactivateZoneUseCase(world).execute({ code: 'seme-podji' }));
-    expect(off.active).toBe(false);
+    expect(off.zone.active).toBe(false);
     expect(await code(asAdmin(() => new DeactivateZoneUseCase(world).execute({ code: 'parakou' })))).toBe(
       'CLEANING_ZONE_NOT_FOUND',
     );

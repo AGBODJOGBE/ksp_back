@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.visit.scheduled.v1.schema.json",
   "title": "cleaning.visit.scheduled",
-  "description": "Visite technique planifiée (UC-CL-07) : le client est prévenu.",
+  "description": "Visite technique planifiée (UC-CL-07) : le client est prévenu. Une visite commune à plusieurs demandes d'un groupe (ADR-035) ne publie qu'un événement, avec groupVisitId et requestIds.",
   "x-event-type": "cleaning.visit.scheduled",
   "x-event-version": 1,
   "type": "object",
@@ -28,6 +28,19 @@
       "type": "string",
       "format": "uuid",
       "description": "Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu"
+    },
+    "groupVisitId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Facultatif (ADR-035) : visite technique commune à plusieurs demandes du groupe (un seul événement pour toutes)"
+    },
+    "requestIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": { "type": "string", "format": "uuid" },
+      "description": "Facultatif (ADR-035) : demandes concernées par la visite commune, requestId compris"
     }
   }
 }

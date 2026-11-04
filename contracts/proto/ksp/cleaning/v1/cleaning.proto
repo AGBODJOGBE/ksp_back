@@ -69,6 +69,12 @@ import "ksp/common/v1/money.proto";
 //                                                           details.timeZone) ; règle réglable par configuration
 //   CLEANING_VISIT_TOO_EARLY            FAILED_PRECONDITION compte rendu de visite avant l'heure prévue
 //                                                           (details.scheduledAt) ; règle réglable par configuration
+//   CLEANING_GROUP_NO_ELIGIBLE_REQUEST  FAILED_PRECONDITION opération de groupe (ADR-035) sans aucune demande ou mission
+//                                                           concernée (details.skipped : identifiant, état, raison)
+//   CLEANING_IDEMPOTENCY_KEY_REUSED     ALREADY_EXISTS      clé d'idempotence déjà utilisée pour un autre groupe (ADR-035)
+//   CLEANING_ZONE_HAS_ACTIVITY          ALREADY_EXISTS      désactivation d'une zone avec des demandes ouvertes ou des
+//                                                           missions actives sans confirm = true (details.openRequests,
+//                                                           details.activeMissions ; ADR-035)
 //   CLEANING_CALLER_FORBIDDEN           PERMISSION_DENIED   HasPendingObligations appelé par un autre service qu'identity
 //   AUTH_REQUIRED                       UNAUTHENTICATED
 //   AUTH_FORBIDDEN                      PERMISSION_DENIED   rôle du back-office manquant
@@ -120,6 +126,14 @@ service QuoteService {
   rpc RequestQuoteGroup(RequestQuoteGroupRequest) returns (RequestQuoteGroupResponse);
   // Groupe du client et ses demandes ; celui d'un autre client : CLEANING_REQUEST_GROUP_NOT_FOUND.
   rpc GetRequestGroup(GetRequestGroupRequest) returns (GetRequestGroupResponse);
+  // Annule d'un coup les demandes encore ouvertes du groupe (ADR-035), mêmes règles et mêmes
+  // événements que CancelRequest pour chacune ; les demandes acceptées ou closes sont ignorées.
+  // Idempotent par idempotency_key (obligatoire).
+  rpc CancelRequestGroup(CancelRequestGroupRequest) returns (CancelRequestGroupResponse);
+  // Accepte d'un coup les devis envoyés du groupe qui proposent le créneau choisi (ADR-035) : un
+  // créneau et un plan de paiement communs, une mission par devis, dans une seule transaction.
+  // Idempotent par idempotency_key (obligatoire).
+  rpc AcceptGroupQuotes(AcceptGroupQuotesRequest) returns (AcceptGroupQuotesResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -147,8 +161,27 @@ service CleaningAdminService {
   rpc GetQuoteRequest(GetQuoteRequestRequest) returns (GetQuoteRequestResponse);
   rpc RejectQuoteRequest(RejectQuoteRequestRequest) returns (RejectQuoteRequestResponse);
   rpc ScheduleVisit(ScheduleVisitRequest) returns (ScheduleVisitResponse);
+  // Aussi ouvert à cleaning_agent pour les visites qui lui sont affectées (ADR-035).
   rpc CompleteVisit(CompleteVisitRequest) returns (CompleteVisitResponse);
   rpc SendQuote(SendQuoteRequest) returns (SendQuoteResponse);
+
+  // Demandes groupées (ADR-035). idempotency_key facultative : un second envoi avec la même clé
+  // rend le résultat du premier sans rien réécrire.
+  // Visite technique commune : toutes les demandes ouvertes du groupe, même heure, même agent, un
+  // seul événement cleaning.visit.scheduled (request_ids). Une demande exclue est détachée.
+  rpc ScheduleGroupVisit(ScheduleGroupVisitRequest) returns (ScheduleGroupVisitResponse);
+  // Compte rendu commun : complète toutes les visites encore planifiées de la visite de groupe
+  // (cleaning_agent : seulement s'il en est l'agent).
+  rpc CompleteGroupVisit(CompleteGroupVisitRequest) returns (CompleteGroupVisitResponse);
+  // Refus du groupe : demandes encore refusables ; les autres sont ignorées.
+  rpc RejectRequestGroup(RejectRequestGroupRequest) returns (RejectRequestGroupResponse);
+  // Devis du groupe envoyés ensemble, chiffrés séparément, avec les mêmes créneaux proposés.
+  rpc SendGroupQuotes(SendGroupQuotesRequest) returns (SendGroupQuotesResponse);
+  // Correction de la position d'une demande (supervision, ou agent de la visite planifiée) :
+  // commune recalculée, appliquée à tout le groupe et aux missions non terminées.
+  rpc CorrectRequestLocation(CorrectRequestLocationRequest) returns (CorrectRequestLocationResponse);
+  // Visites techniques (cleaning_agent : les siennes seulement).
+  rpc ListVisits(ListVisitsRequest) returns (ListVisitsResponse);
 
   // Missions et passages (cleaning_supervisor, cleaning_admin, super_admin ; cleaning_agent : ses passages).
   rpc ListMissions(ListMissionsRequest) returns (ListMissionsResponse);
@@ -156,6 +189,9 @@ service CleaningAdminService {
   // Planifie un passage avec ses agents ; un passage d'une mission récurrente peut avoir
   // d'autres agents que le précédent.
   rpc ScheduleIntervention(ScheduleInterventionRequest) returns (ScheduleInterventionResponse);
+  // Planifie ensemble un passage de chaque mission d'un groupe (ADR-035), dans une transaction : la
+  // même équipe sur des créneaux qui se chevauchent dans un même groupe n'est pas un conflit.
+  rpc ScheduleGroupInterventions(ScheduleGroupInterventionsRequest) returns (ScheduleGroupInterventionsResponse);
   rpc StartIntervention(StartInterventionRequest) returns (StartInterventionResponse);
   rpc UpdateChecklist(UpdateChecklistRequest) returns (UpdateChecklistResponse);
   rpc ReportIncident(ReportIncidentRequest) returns (ReportIncidentResponse);
@@ -290,6 +326,9 @@ message SiteVisit {
   string completed_at = 6;
   // Back-office : nom affiché de l'agent de la visite (fiche agent du Nettoyage).
   string agent_name = 7;
+  // Visite technique commune à plusieurs demandes d'un groupe (ADR-035) : même identifiant pour
+  // toutes ; vide pour une visite propre à la demande (ou détachée de la visite de groupe).
+  string group_visit_id = 8;
 }
 
 message Quote {
@@ -980,6 +1019,12 @@ message QuoteRequestGroup {
   string created_at = 5;
   // Demandes du groupe, dans l'ordre des prestations envoyées.
   repeated QuoteRequest requests = 6;
+  // Total des devis envoyés du groupe (devis en vigueur, encore valables ou acceptés), absent si aucun
+  // (ADR-035).
+  ksp.common.v1.Money quotes_total = 7;
+  // Reste dû des missions du groupe (hors missions annulées), absent sans mission ou pour une
+  // entreprise (réglée par ses factures, ADR-035). Pas de paiement groupé.
+  ksp.common.v1.Money remaining_due = 8;
 }
 
 message RequestQuoteGroupResponse {
@@ -992,6 +1037,54 @@ message GetRequestGroupRequest {
 
 message GetRequestGroupResponse {
   QuoteRequestGroup group = 1;
+}
+
+// Demande laissée de côté par une opération de groupe (ADR-035).
+message SkippedRequest {
+  string request_id = 1;
+  // État affiché de la demande (mêmes valeurs que QuoteRequest.status).
+  string status = 2;
+  // "not_open" (acceptée ou close), "transition_not_allowed" (état incompatible), "excluded",
+  // "own_visit" (visite propre à la demande), "visit_completed", "no_quote", "quote_expired",
+  // "slot_not_proposed".
+  string reason = 3;
+}
+
+// Résultat d'une opération de groupe (ADR-035).
+message RequestGroupOutcome {
+  string group_id = 1;
+  // Demandes modifiées par l'opération (refusées, annulées, acceptées, visitées…).
+  repeated string affected_request_ids = 2;
+  repeated SkippedRequest skipped = 3;
+  // Visite technique commune (planification, compte rendu) ; vide sinon.
+  string group_visit_id = 4;
+  // Missions créées (acceptation de groupe) ; vide sinon.
+  repeated string mission_ids = 5;
+}
+
+message CancelRequestGroupRequest {
+  string group_id = 1;
+  string idempotency_key = 2;
+  string reason = 3;
+}
+
+message CancelRequestGroupResponse {
+  RequestGroupOutcome outcome = 1;
+  QuoteRequestGroup group = 2;
+}
+
+message AcceptGroupQuotesRequest {
+  string group_id = 1;
+  string idempotency_key = 2;
+  // Début d'un créneau proposé par les devis à accepter.
+  string slot_start = 3;
+  // Obligatoire pour un particulier, appliqué à chaque devis ; ignoré pour une entreprise.
+  PaymentPlan payment_plan = 4;
+}
+
+message AcceptGroupQuotesResponse {
+  RequestGroupOutcome outcome = 1;
+  QuoteRequestGroup group = 2;
 }
 
 // ===========================================================================
@@ -1124,6 +1217,143 @@ message SendQuoteResponse {
 }
 
 // ===========================================================================
+// CleaningAdminService — demandes groupées et visites (ADR-035)
+// ===========================================================================
+
+message ScheduleGroupVisitRequest {
+  string group_id = 1;
+  string scheduled_at = 2;
+  string agent_id = 3;
+  // Demandes laissées hors de la visite commune : détachées, elles gardent leur propre visite.
+  repeated string exclude_request_ids = 4;
+  string idempotency_key = 5;
+}
+
+message ScheduleGroupVisitResponse {
+  RequestGroupOutcome outcome = 1;
+  // Toutes les demandes du groupe, après l'opération.
+  repeated QuoteRequest requests = 2;
+}
+
+message CompleteGroupVisitRequest {
+  string group_id = 1;
+  string report = 2;
+  string idempotency_key = 3;
+}
+
+message CompleteGroupVisitResponse {
+  RequestGroupOutcome outcome = 1;
+  repeated QuoteRequest requests = 2;
+}
+
+message RejectRequestGroupRequest {
+  string group_id = 1;
+  string reason = 2;
+  string idempotency_key = 3;
+}
+
+message RejectRequestGroupResponse {
+  RequestGroupOutcome outcome = 1;
+  repeated QuoteRequest requests = 2;
+}
+
+// Devis d'une demande du groupe : mêmes règles que SendQuoteRequest (lignes préremplies si vides).
+message GroupQuoteItem {
+  string request_id = 1;
+  repeated PriceLine lines = 2;
+  Recurrence recurrence = 3;
+  int32 team_size = 4;
+  int32 duration_minutes = 5;
+}
+
+message SendGroupQuotesRequest {
+  string group_id = 1;
+  // Créneaux communs proposés pour tous les devis (1 à 3).
+  repeated TimeSlot proposed_slots = 2;
+  // 0 : validité par défaut (réglages).
+  int32 validity_days = 3;
+  // Une entrée par demande à chiffrer, chacune une seule fois.
+  repeated GroupQuoteItem quotes = 4;
+  string idempotency_key = 5;
+}
+
+message SendGroupQuotesResponse {
+  RequestGroupOutcome outcome = 1;
+  repeated QuoteRequest requests = 2;
+}
+
+message CorrectRequestLocationRequest {
+  string request_id = 1;
+  GeoLocation location = 2;
+  // Facultatif : vide, le repère en vigueur est gardé.
+  string landmark = 3;
+  // Repli si le géocodage ne trouve pas la commune ; ignorée sinon.
+  string commune = 4;
+}
+
+message CorrectRequestLocationResponse {
+  QuoteRequest request = 1;
+  // Demandes (le groupe entier) et missions non terminées mises à jour.
+  repeated string updated_request_ids = 2;
+  repeated string updated_mission_ids = 3;
+}
+
+message ListVisitsRequest {
+  Page page = 1;
+  // Filtres facultatifs, cumulables. agent_id : ignoré pour cleaning_agent (ses visites seulement).
+  string agent_id = 2;
+  // Bornes de scheduled_at (ISO 8601), incluse et exclue.
+  string from = 3;
+  string to = 4;
+  // "scheduled", "completed" ou "cancelled".
+  string status = 5;
+  string group_id = 6;
+}
+
+// Demande concernée par une visite.
+message VisitedRequest {
+  string request_id = 1;
+  // Identifiant de la visite de cette demande (compte rendu par demande : CompleteVisit).
+  string visit_id = 2;
+  string service_code = 3;
+  string service_name = 4;
+  // Même valeurs que QuoteRequest.status.
+  string status = 5;
+}
+
+// Visite technique telle qu'un agent la voit : une ligne par visite commune ou par visite seule.
+message VisitSummary {
+  // group_visit_id pour une visite commune, identifiant de la visite sinon.
+  string id = 1;
+  string group_visit_id = 2;
+  string group_id = 3;
+  // "scheduled", "completed" ou "cancelled".
+  string status = 4;
+  string scheduled_at = 5;
+  string completed_at = 6;
+  string report = 7;
+  string agent_id = 8;
+  string agent_name = 9;
+  string customer_id = 10;
+  string customer_name = 11;
+  string organization_name = 12;
+  string commune = 13;
+  // Position, repère, adresse : vides pour cleaning_agent quand la visite est terminée ou annulée.
+  string address = 14;
+  GeoLocation location = 15;
+  string landmark = 16;
+  string geocoded_address = 17;
+  string place_type = 18;
+  string place_type_label = 19;
+  repeated VisitedRequest requests = 20;
+}
+
+message ListVisitsResponse {
+  repeated VisitSummary visits = 1;
+  string next_cursor = 2;
+}
+
+// ===========================================================================
 // CleaningAdminService — missions et passages
 // ===========================================================================
 
@@ -1159,6 +1389,34 @@ message ScheduleInterventionRequest {
 
 message ScheduleInterventionResponse {
   Mission mission = 1;
+}
+
+message ScheduleGroupInterventionsRequest {
+  string group_id = 1;
+  // Facultatif : missions du groupe à planifier ; vide, toutes celles qui ont un passage à planifier.
+  repeated string mission_ids = 2;
+  string scheduled_start = 3;
+  int32 duration_minutes = 4;
+  repeated string agent_ids = 5;
+  string team_id = 6;
+  string idempotency_key = 7;
+}
+
+// Mission laissée de côté par la planification de groupe (ADR-035).
+message SkippedMission {
+  string mission_id = 1;
+  // Même valeurs que Mission.status.
+  string status = 2;
+  // "terminated", "suspended" ou "no_intervention_left".
+  string reason = 3;
+}
+
+message ScheduleGroupInterventionsResponse {
+  string group_id = 1;
+  repeated string scheduled_mission_ids = 2;
+  repeated SkippedMission skipped = 3;
+  // Missions planifiées, après l'opération.
+  repeated Mission missions = 4;
 }
 
 message StartInterventionRequest {
@@ -1315,6 +1573,10 @@ message Settings {
   int32 individual_payment_grace_hours = 12;
   // Back-office : nom affiché de l'auteur de la dernière modification (ADR-029), ignoré à l'écriture.
   string updated_by_name = 13;
+  // Mois de conservation de la position GPS (ADR-035) : coordonnées, précision, repère et adresse
+  // géocodée sont effacés des demandes et missions clôturées depuis plus longtemps (12 par défaut, 1 à
+  // 120). À l'écriture, 0 laisse la valeur en vigueur.
+  int32 location_retention_months = 14;
 }
 
 message GetCatalogRequest {}
@@ -1384,6 +1646,9 @@ message Zone {
   // Autres noms de la commune (« Sèmè-Kpodji » pour « Sèmè-Podji »), utilisés pour rattacher une
   // position géocodée à la zone (ADR-034).
   repeated string aliases = 7;
+  // Demandes ouvertes et missions actives dans la zone (ADR-035), au moment de la réponse.
+  int32 open_requests = 8;
+  int32 active_missions = 9;
 }
 
 // Noms alternatifs d'une zone : message présent = liste remplacée ; absent = inchangée.
@@ -1409,6 +1674,9 @@ message SaveZoneResponse {
 
 message DeactivateZoneRequest {
   string code = 1;
+  // Obligatoire quand la zone a des demandes ouvertes ou des missions actives (ADR-035) ; sinon
+  // CLEANING_ZONE_HAS_ACTIVITY. Elles continuent : seules les nouvelles demandes sont refusées.
+  bool confirm = 2;
 }
 
 message DeactivateZoneResponse {

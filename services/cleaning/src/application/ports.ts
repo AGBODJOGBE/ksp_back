@@ -9,7 +9,9 @@ import {
   type QuoteRequest,
   type QuoteRequestGroup,
   type RequestStatus,
+  type VisitStatus,
 } from '../domain/quote-request';
+import { type SkippedMission, type SkippedRequest } from '../domain/request-group';
 import { type BusyPeriod } from '../domain/schedule';
 import { type CleaningSettings } from '../domain/settings';
 import { type Zone } from '../domain/zone';
@@ -36,7 +38,8 @@ export interface AuditEntry {
     | 'team'
     | 'zone'
     | 'place_type'
-    | 'request_group';
+    | 'request_group'
+    | 'mission_group';
   entityId: string;
   at: Date;
   /** Identifiants et montants seulement : jamais d'adresse ni de commentaire. */
@@ -82,6 +85,76 @@ export interface CatalogRepository {
 export interface QuoteRequestGroupView {
   group: QuoteRequestGroup;
   requests: QuoteRequest[];
+}
+
+/** Opérations de groupe idempotentes (ADR-035). */
+export type GroupOperation =
+  | 'visit.scheduled'
+  | 'visit.completed'
+  | 'group.rejected'
+  | 'group.cancelled'
+  | 'quotes.sent'
+  | 'quotes.accepted'
+  | 'interventions.scheduled';
+
+/** Résultat d'une opération de groupe, gardé pour la rejouer à l'identique. */
+export interface GroupOutcome {
+  groupId: string;
+  /** Demandes (ou missions, pour la planification) modifiées. */
+  affectedIds: string[];
+  skippedRequests: SkippedRequest[];
+  skippedMissions: SkippedMission[];
+  groupVisitId: string | null;
+  missionIds: string[];
+}
+
+/** Trace d'une opération de groupe : (auteur, opération, clé) unique. */
+export interface GroupOperationRecord {
+  actorId: string;
+  operation: GroupOperation;
+  idempotencyKey: string;
+  outcome: GroupOutcome;
+}
+
+/**
+ * Écriture d'une opération de groupe dans une seule transaction (ADR-035) : demandes et missions
+ * modifiées (contrôle de version de chacune), missions créées, événements et traces, et la trace
+ * d'idempotence. Une version changée annule tout (`conflict`) ; une clé déjà enregistrée par un
+ * appel concurrent aussi (`replayed`).
+ */
+export interface GroupWrite {
+  requests: QuoteRequest[];
+  missions?: Mission[];
+  newMissions?: { mission: Mission; acceptanceKey: string }[];
+  changes: Changes;
+  operation?: GroupOperationRecord | null;
+  /** Acceptation : état de l'organisation lu sous verrou, comme l'acceptation seule (ADR-030). */
+  organizationId?: string | null;
+}
+
+export type GroupWriteOutcome = 'saved' | 'conflict' | 'replayed' | 'organization_suspended';
+
+/** Filtres cumulables de la liste des visites (ADR-035). */
+export interface VisitFilter {
+  agentId?: string;
+  /** Bornes de la date prévue : incluse, exclue. */
+  from?: Date;
+  to?: Date;
+  status?: VisitStatus;
+  groupId?: string;
+}
+
+/** Une visite telle qu'elle se liste : la visite commune d'un groupe et ses demandes, ou une visite seule. */
+export interface VisitEntry {
+  /** Visite commune, ou identifiant de la visite seule. */
+  id: string;
+  requests: QuoteRequest[];
+}
+
+/** Activité d'une commune (code de zone) : demandes ouvertes, missions actives (ADR-035). */
+export interface ZoneActivity {
+  openRequests: number;
+  activeMissions: number;
 }
 
 export type CreateResult<T> = { created: true; value: T } | { created: false; value: T };
@@ -130,8 +203,40 @@ export interface QuoteRequestRepository {
   findAcceptance(requestId: string, idempotencyKey: string): Promise<string | null>;
   findByVisitId(visitId: string): Promise<QuoteRequest | null>;
   list(filter: QuoteRequestFilter, page: PageRequest): Promise<PageResult<QuoteRequest>>;
-  /** Demandes du client à l'état reçue, visite planifiée ou devis envoyé encore valide. */
+  /**
+   * Envois ouverts du client (ADR-035) : chaque demande seule et chaque groupe comptent pour 1 ;
+   * ouverte = reçue, visite planifiée ou devis envoyé encore valide ; un groupe est ouvert tant
+   * qu'une de ses demandes l'est.
+   */
   countOpen(customerId: string, now: Date): Promise<number>;
+  /** Opération de groupe déjà faite avec cette clé par cet auteur, ou null (ADR-035). */
+  findGroupOperation(
+    actorId: string,
+    operation: GroupOperation,
+    idempotencyKey: string,
+  ): Promise<GroupOperationRecord | null>;
+  saveGroup(write: GroupWrite): Promise<GroupWriteOutcome>;
+  /**
+   * Visites (ADR-035), les plus récentes d'abord (curseur : identifiant de la visite commune ou de
+   * la visite seule) ; une visite commune est une seule entrée avec toutes ses demandes.
+   */
+  listVisits(filter: VisitFilter, page: PageRequest): Promise<PageResult<VisitEntry>>;
+  /** Demandes ouvertes et missions actives par code de commune (ADR-035). */
+  zoneActivity(now: Date): Promise<Map<string, ZoneActivity>>;
+  /**
+   * Efface coordonnées, précision, repère et adresse géocodée des demandes et missions clôturées
+   * avant `cutoff` (ADR-035), par lots ; l'adresse qui n'est que le repère est vidée. Idempotent :
+   * une ligne déjà effacée n'est plus touchée.
+   */
+  purgeLocations(cutoff: Date, batchSize: number): Promise<{ requests: number; missions: number }>;
+  /**
+   * Compte client anonymisé (identity.user.deleted) : même effacement pour toutes ses demandes et
+   * missions, inbox dans la même transaction.
+   */
+  eraseCustomerLocations(
+    customerId: string,
+    inbox: { eventId: string; consumer: string },
+  ): Promise<'processed' | 'duplicate'>;
   /** Enregistre la demande si sa version n'a pas changé depuis la lecture ; sinon false. */
   save(request: QuoteRequest, changes: Changes): Promise<boolean>;
   /**
@@ -205,6 +310,20 @@ export interface MissionRepository {
   listIndividualRecurring(): Promise<Mission[]>;
   /** Missions non terminées d'une organisation : suspension ou reprise avec elle (ADR-030). */
   listActiveForOrganization(organizationId: string): Promise<Mission[]>;
+  /** Toutes les missions d'un groupe de demandes (ADR-035), les plus anciennes d'abord. */
+  listForGroup(groupId: string): Promise<Mission[]>;
+  /**
+   * Planification commune (ADR-035) : verrouille les agents, lit leurs périodes occupées (avec le
+   * groupe de chaque passage), demande les conflits ; s'il n'y en a aucun, enregistre toutes les
+   * missions (contrôle de version) et la trace d'idempotence dans une transaction.
+   */
+  scheduleGroup(input: {
+    missions: Mission[];
+    agentIds: string[];
+    conflicts: (busy: BusyPeriod[]) => string[];
+    changes: Changes;
+    operation?: GroupOperationRecord | null;
+  }): Promise<{ conflicts: string[]; outcome: 'saved' | 'conflict' | 'replayed' }>;
 }
 
 export type ContractInvoiceStatus = 'overdue' | 'paid';

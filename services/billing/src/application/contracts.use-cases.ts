@@ -55,6 +55,7 @@ export class RegisterContractUseCase {
       suspendedSince: null,
       suspensions: [],
       lastResumedAt: null,
+      serviceName: payload.serviceName ?? null,
       createdAt: this.deps.clock.now(),
     };
     const outcome = await this.deps.contracts.apply(

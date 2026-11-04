@@ -61,6 +61,26 @@ export const CleaningErrors = {
     ),
   requestGroupNotFound: () =>
     AppError.notFound('CLEANING_REQUEST_GROUP_NOT_FOUND', 'Ce groupe de demandes est introuvable.'),
+  /** Opération de groupe sans aucune demande ou mission concernée (ADR-035). */
+  groupNothingEligible: (skipped: readonly object[]) =>
+    AppError.precondition(
+      'CLEANING_GROUP_NO_ELIGIBLE_REQUEST',
+      "Aucune demande du groupe n'est concernée par cette action dans son état actuel.",
+      { skipped: skipped.map((entry) => ({ ...entry })) },
+    ),
+  /** Clé d'idempotence déjà utilisée pour un autre groupe (ADR-035). */
+  idempotencyKeyReused: () =>
+    AppError.conflict(
+      'CLEANING_IDEMPOTENCY_KEY_REUSED',
+      'Cette clé a déjà servi pour une autre opération : utilisez une nouvelle clé.',
+    ),
+  /** Zone avec des demandes ouvertes ou des missions actives, désactivée sans confirmation (ADR-035). */
+  zoneHasActivity: (openRequests: number, activeMissions: number) =>
+    AppError.conflict(
+      'CLEANING_ZONE_HAS_ACTIVITY',
+      `Cette zone a ${openRequests} demande(s) ouverte(s) et ${activeMissions} mission(s) active(s) : elles continueront. Confirmez la désactivation.`,
+      { openRequests, activeMissions },
+    ),
   paymentViaInvoice: () =>
     AppError.precondition(
       'CLEANING_PAYMENT_VIA_INVOICE',

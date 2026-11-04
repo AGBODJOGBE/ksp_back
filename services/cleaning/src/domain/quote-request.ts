@@ -50,6 +50,11 @@ export interface SiteVisit {
   agentId: string;
   report: string | null;
   completedAt: Date | null;
+  /**
+   * Visite commune à plusieurs demandes d'un groupe (ADR-035) : même identifiant pour toutes ;
+   * absent ou null pour une visite propre à la demande (ou détachée de la visite de groupe).
+   */
+  groupVisitId?: string | null;
 }
 
 export interface QuoteRequest {

@@ -47,6 +47,25 @@ Le même script ajoute, pour le parcours par lieu (ADR-034) : un type de lieu d�
 - **Confidentialité** : coordonnées, repère et adresses jamais dans les journaux, les traces, le
   journal d'audit ni les événements ; appels vers les géocodeurs non tracés.
 
+## Demandes groupées, visites des agents et position (ADR-035)
+
+- **Plafond** : un groupe compte pour 1 dans `maxOpenRequests`, ouvert tant qu'une de ses demandes l'est.
+- **Opérations de groupe** (une transaction chacune, rejouables par `Idempotency-Key`, table
+  `request_group_operations`) : visite commune (`groupVisitId`, un seul `cleaning.visit.scheduled`,
+  exclusion = détachement), compte rendu commun, refus (back-office) et annulation (client) du groupe,
+  devis envoyés ensemble avec des créneaux communs, acceptation commune (une mission par devis),
+  planification commune des missions. Les demandes qui ne s'y prêtent pas sont renvoyées dans `skipped`.
+- **Conflits d'agenda** : les passages des missions d'un même groupe (même lieu) ne se gênent pas.
+- **Agents** : `GET /admin/cleaning/visits` (leurs visites seulement), compte rendu de leurs visites,
+  correction de position tant que la visite est planifiée ; position, repère et adresse géocodée masqués
+  pour eux une fois la visite ou la mission terminée ou annulée.
+- **Zones** : nombre de demandes ouvertes et de missions actives ; désactivation avec `confirm: true` si
+  ces nombres ne sont pas nuls.
+- **Conservation de la position** : réglage `locationRetentionMonths` (12 mois) ; tâche
+  `CLEANING_LOCATION_PURGE_INTERVAL_MS` (6 h, 0 : désactivée) qui efface coordonnées, précision, repère
+  et adresse géocodée des dossiers clôturés, par lots ; effacement de tous les dossiers d'un client à
+  `identity.user.deleted` (événement du contrat, pas encore publié par identity).
+
 ## Règles (cahier des charges, parties 4 et 9)
 
 | Sujet      | Fonctionnement                                                                                                                                                                                                                                                                                                |

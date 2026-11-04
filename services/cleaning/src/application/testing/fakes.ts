@@ -12,6 +12,8 @@ import {
 import { type GeocodedPlace, type GeoPoint } from '../../domain/location';
 import { type PlaceType } from '../../domain/place-type';
 import { isOpenRequest, type QuoteRequest, type QuoteRequestGroup } from '../../domain/quote-request';
+import { openSubmissions } from '../../domain/request-group';
+import { withoutPosition } from '../../domain/location';
 import {
   type BusyPeriod,
   DEFAULT_FIELD_DATE_POLICY,
@@ -28,6 +30,12 @@ import {
   type ContractInvoiceRepository,
   type ContractInvoiceStatus,
   type CreateResult,
+  type GroupOperation,
+  type GroupOperationRecord,
+  type GroupWrite,
+  type VisitEntry,
+  type VisitFilter,
+  type ZoneActivity,
   type MissionFilter,
   type MissionRepository,
   type NewServiceVersion,
@@ -221,7 +229,7 @@ export class InMemoryMissions implements MissionRepository {
       for (const i of other.interventions) {
         if (i.id === excludedId || !ACTIVE_INTERVENTION_STATUSES.includes(i.status)) continue;
         for (const agentId of i.agentIds)
-          busy.push({ agentId, slot: slotFrom(i.scheduledStart, i.durationMinutes) });
+          busy.push({ agentId, slot: slotFrom(i.scheduledStart, i.durationMinutes), groupId: other.groupId });
       }
     }
     return busy;
@@ -259,6 +267,34 @@ export class InMemoryMissions implements MissionRepository {
     return [...this.missions.values()].filter(
       (m) => m.organizationId === organizationId && !isTerminalMission(m.status),
     );
+  }
+  async listForGroup(groupId: string) {
+    return [...this.missions.values()]
+      .filter((m) => m.groupId === groupId)
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
+  /** Opérations de groupe enregistrées (partagées avec les demandes). */
+  readonly operations = new Map<string, GroupOperationRecord>();
+  async scheduleGroup(input: {
+    missions: Mission[];
+    agentIds: string[];
+    conflicts: (busy: BusyPeriod[]) => string[];
+    changes: Changes;
+    operation?: GroupOperationRecord | null;
+  }) {
+    const busy = this.busyPeriods(null).filter((period) => input.agentIds.includes(period.agentId));
+    const found = input.conflicts(busy);
+    if (found.length) return { conflicts: found, outcome: 'conflict' as const };
+    const op = input.operation;
+    const opKey = op ? `${op.actorId}:${op.operation}:${op.idempotencyKey}` : null;
+    if (opKey && this.operations.has(opKey)) return { conflicts: [], outcome: 'replayed' as const };
+    if (input.missions.some((m) => this.missions.get(m.id)?.version !== m.version)) {
+      return { conflicts: [], outcome: 'conflict' as const };
+    }
+    for (const m of input.missions) this.missions.set(m.id, { ...m, version: m.version + 1 });
+    if (opKey) this.operations.set(opKey, op!);
+    this.recorder.record(input.changes);
+    return { conflicts: [], outcome: 'saved' as const };
   }
 }
 
@@ -409,8 +445,93 @@ export class InMemoryRequests implements QuoteRequestRepository {
     return paginate(items, page);
   }
   async countOpen(customerId: string, now: Date) {
-    return [...this.requests.values()].filter((r) => r.customerId === customerId && isOpenRequest(r, now))
-      .length;
+    return openSubmissions(
+      [...this.requests.values()].filter((r) => r.customerId === customerId),
+      now,
+    );
+  }
+  async findGroupOperation(actorId: string, operation: GroupOperation, idempotencyKey: string) {
+    return this.missions.operations.get(`${actorId}:${operation}:${idempotencyKey}`) ?? null;
+  }
+  async saveGroup(write: GroupWrite) {
+    const op = write.operation;
+    const opKey = op ? `${op.actorId}:${op.operation}:${op.idempotencyKey}` : null;
+    if (opKey && this.missions.operations.has(opKey)) return 'replayed' as const;
+    if (write.organizationId && (await this.organizations.isSuspended(write.organizationId))) {
+      return 'organization_suspended' as const;
+    }
+    if (this.failGroupWrites) throw new Error('transaction annulée');
+    if (write.requests.some((r) => this.requests.get(r.id)?.version !== r.version))
+      return 'conflict' as const;
+    if ((write.missions ?? []).some((m) => this.missions.missions.get(m.id)?.version !== m.version)) {
+      return 'conflict' as const;
+    }
+    for (const r of write.requests) this.requests.set(r.id, { ...r, version: r.version + 1 });
+    for (const m of write.missions ?? []) this.missions.missions.set(m.id, { ...m, version: m.version + 1 });
+    for (const { mission } of write.newMissions ?? []) this.missions.missions.set(mission.id, mission);
+    if (opKey) this.missions.operations.set(opKey, op!);
+    this.recorder.record(write.changes);
+    return 'saved' as const;
+  }
+  async listVisits(filter: VisitFilter, page: PageRequest) {
+    const entries = new Map<string, QuoteRequest[]>();
+    for (const r of this.requests.values()) {
+      const v = r.visit;
+      if (!v) continue;
+      if (filter.agentId && v.agentId !== filter.agentId) continue;
+      if (filter.status && v.status !== filter.status) continue;
+      if (filter.from && v.scheduledAt < filter.from) continue;
+      if (filter.to && v.scheduledAt >= filter.to) continue;
+      if (filter.groupId && r.groupId !== filter.groupId) continue;
+      const key = v.groupVisitId ?? v.id;
+      entries.set(key, [...(entries.get(key) ?? []), r]);
+    }
+    return paginate(
+      [...entries].map(([id, requests]): VisitEntry => ({ id, requests })),
+      page,
+    );
+  }
+  async zoneActivity(now: Date) {
+    const activity = new Map<string, ZoneActivity>();
+    const add = (code: string, key: keyof ZoneActivity) => {
+      const current = activity.get(code) ?? { openRequests: 0, activeMissions: 0 };
+      activity.set(code, { ...current, [key]: current[key] + 1 });
+    };
+    for (const r of this.requests.values())
+      if (isOpenRequest(r, now)) add(zoneCode(r.commune), 'openRequests');
+    for (const m of this.missions.missions.values())
+      if (!isTerminalMission(m.status)) add(zoneCode(m.commune), 'activeMissions');
+    return activity;
+  }
+  async purgeLocations(cutoff: Date) {
+    const closed = ['accepted', 'declined', 'rejected', 'expired', 'cancelled'];
+    let requests = 0;
+    let missions = 0;
+    for (const r of this.requests.values()) {
+      const hasPlace = r.location || r.landmark || r.geocodedAddress;
+      if (!hasPlace || !closed.includes(r.status) || r.updatedAt >= cutoff) continue;
+      this.requests.set(r.id, { ...withoutPosition(r), geocodedAddress: null, version: r.version + 1 });
+      requests += 1;
+    }
+    for (const m of this.missions.missions.values()) {
+      if (!(m.location || m.landmark) || !isTerminalMission(m.status) || m.updatedAt >= cutoff) continue;
+      this.missions.missions.set(m.id, { ...withoutPosition(m), version: m.version + 1 });
+      missions += 1;
+    }
+    return { requests, missions };
+  }
+  readonly processedErasures = new Set<string>();
+  async eraseCustomerLocations(customerId: string, inbox: { eventId: string; consumer: string }) {
+    const key = `${inbox.eventId}/${inbox.consumer}`;
+    if (this.processedErasures.has(key)) return 'duplicate' as const;
+    this.processedErasures.add(key);
+    for (const r of this.requests.values())
+      if (r.customerId === customerId)
+        this.requests.set(r.id, { ...withoutPosition(r), geocodedAddress: null, version: r.version + 1 });
+    for (const m of this.missions.missions.values())
+      if (m.customerId === customerId)
+        this.missions.missions.set(m.id, { ...withoutPosition(m), version: m.version + 1 });
+    return 'processed' as const;
   }
   async save(request: QuoteRequest, changes: Changes) {
     if (this.requests.get(request.id)?.version !== request.version) return false;

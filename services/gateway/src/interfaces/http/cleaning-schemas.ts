@@ -240,6 +240,61 @@ export const cleaningBodies = {
       })
       .optional(),
   }),
+  // Demandes groupées (ADR-035).
+  cancelCleaningRequestGroup: optionalReason,
+  acceptCleaningQuoteGroup: z.strictObject({
+    slotStart: dateTime,
+    paymentPlan: z
+      .strictObject({
+        option: z.enum(['deposit', 'full']),
+        timing: z.enum(['before', 'after']),
+        method: z.enum(['cash', 'mobile_money_offline', 'mobile_money_online']),
+      })
+      .optional(),
+  }),
+  scheduleCleaningGroupVisit: z.strictObject({
+    scheduledAt: dateTime,
+    agentId: uuid,
+    excludeRequestIds: z.array(uuid).max(10).optional(),
+  }),
+  completeCleaningGroupVisit: z.strictObject({ report: text(5000) }),
+  rejectCleaningRequestGroup: requiredReason,
+  sendCleaningGroupQuotes: z.strictObject({
+    proposedSlots: z.array(slot).min(1).max(3),
+    validityDays: int(1, 90).optional(),
+    quotes: z
+      .array(
+        z.strictObject({
+          requestId: uuid,
+          lines: z
+            .array(
+              z.strictObject({ label: text(200), quantity: int(1, 1_000_000), unitPrice: z.number().int() }),
+            )
+            .max(50)
+            .optional(),
+          recurrence: recurrence.optional(),
+          teamSize: int(1, 50).optional(),
+          durationMinutes: int(1, 1440),
+        }),
+      )
+      .min(1)
+      .max(10),
+  }),
+  scheduleCleaningGroupInterventions: z.strictObject({
+    missionIds: z.array(uuid).max(10).optional(),
+    scheduledStart: dateTime,
+    durationMinutes: int(1, 1440),
+    agentIds: z.array(uuid).max(50).optional(),
+    teamId: uuid.optional(),
+  }),
+  correctCleaningRequestLocation: z.strictObject({
+    latitude,
+    longitude,
+    accuracyMeters: z.number().min(0).max(100_000).optional(),
+    landmark: text(500).optional(),
+    commune: text(100).optional(),
+  }),
+  deactivateCleaningZone: z.strictObject({ confirm: z.boolean().optional() }),
   declineCleaningQuote: optionalReason,
   cancelCleaningRequest: optionalReason,
   cancelMyCleaningMission: optionalReason,
@@ -292,6 +347,8 @@ export const cleaningBodies = {
     businessSuspensionUnpaidInvoices: int(1, 24).optional(),
     individualSuspensionUnpaidInterventions: int(1, 50).optional(),
     individualPaymentGraceHours: int(1, 720).optional(),
+    // Conservation de la position (ADR-035) : absente, valeur en vigueur gardée.
+    locationRetentionMonths: int(1, 120).optional(),
   }),
   saveCleaningZone: z.strictObject({
     commune: text(100),
@@ -343,6 +400,10 @@ export const cleaningParams = {
     .regex(/^[a-z][a-z0-9-]{1,99}$/)
     .optional(),
   customerKind: z.enum(['individual', 'business']).optional(),
+  /** Liste des visites (ADR-035). */
+  visitStatus: z.enum(['scheduled', 'completed', 'cancelled']).optional(),
+  optionalId: uuid.optional(),
+  optionalDateTime: dateTime.optional(),
   /** Filtres du parcours par lieu (ADR-034). */
   groupId: uuid.optional(),
   optionalCode: code.optional(),
