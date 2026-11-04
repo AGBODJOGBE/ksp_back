@@ -307,6 +307,16 @@ describe('Contrats des événements cleaning', () => {
     expect(validate({ ...base, landmark: 'Portail vert' })).toBe(false);
   });
 
+  it('cleaning.visit.scheduled : visite commune d’un groupe, demandes listées (ADR-035)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.visit.scheduled')!);
+    const base = cleaningExamples['cleaning.visit.scheduled'];
+    const other = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0e';
+    expect(validate({ ...base, groupId: uuid, groupVisitId: uuid, requestIds: [uuid, other] })).toBe(true);
+    expect(validate({ ...base, requestIds: [] })).toBe(false);
+    expect(validate({ ...base, requestIds: [uuid, uuid] })).toBe(false);
+    expect(validate({ ...base, requestIds: ['demande-1'] })).toBe(false);
+  });
+
   it('annulation : organisation ajoutée (ADR-032), les événements antérieurs sans elle restent valides', () => {
     const validate = ajv.compile(schemas.get('cleaning.request.cancelled')!);
     const { organizationId: _organizationId, ...before } = cleaningExamples['cleaning.request.cancelled'];

@@ -171,6 +171,16 @@ describe('factures', () => {
     ]);
   });
 
+  it('ligne : nom de la prestation repris quand il est connu (ADR-035)', () => {
+    const period = contractPeriods(contract({ total: 300_000 }))[1]!;
+    expect(periodLines(period, 'Nettoyage de bureaux')[0]!.label).toBe(
+      'Nettoyage de bureaux — décembre 2026 : 31 jours sur 31',
+    );
+    expect(periodLines(period, null)[0]!.label).toBe(
+      'Prestation de nettoyage — décembre 2026 : 31 jours sur 31',
+    );
+  });
+
   it('numéro continu par année sur 6 chiffres', () => {
     expect(formatInvoiceNumber(2026, 42)).toBe('FAC-2026-000042');
   });

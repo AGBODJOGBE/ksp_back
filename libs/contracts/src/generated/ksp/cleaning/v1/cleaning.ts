@@ -100,6 +100,11 @@ export interface SiteVisit {
   completedAt: string;
   /** Back-office : nom affiché de l'agent de la visite (fiche agent du Nettoyage). */
   agentName: string;
+  /**
+   * Visite technique commune à plusieurs demandes d'un groupe (ADR-035) : même identifiant pour
+   * toutes ; vide pour une visite propre à la demande (ou détachée de la visite de groupe).
+   */
+  groupVisitId: string;
 }
 
 export interface Quote {
@@ -912,6 +917,18 @@ export interface QuoteRequestGroup {
   createdAt: string;
   /** Demandes du groupe, dans l'ordre des prestations envoyées. */
   requests: QuoteRequest[];
+  /**
+   * Total des devis envoyés du groupe (devis en vigueur, encore valables ou acceptés), absent si aucun
+   * (ADR-035).
+   */
+  quotesTotal?:
+    | Money
+    | undefined;
+  /**
+   * Reste dû des missions du groupe (hors missions annulées), absent sans mission ou pour une
+   * entreprise (réglée par ses factures, ADR-035). Pas de paiement groupé.
+   */
+  remainingDue?: Money | undefined;
 }
 
 export interface RequestQuoteGroupResponse {
@@ -923,6 +940,56 @@ export interface GetRequestGroupRequest {
 }
 
 export interface GetRequestGroupResponse {
+  group?: QuoteRequestGroup | undefined;
+}
+
+/** Demande laissée de côté par une opération de groupe (ADR-035). */
+export interface SkippedRequest {
+  requestId: string;
+  /** État affiché de la demande (mêmes valeurs que QuoteRequest.status). */
+  status: string;
+  /**
+   * "not_open" (acceptée ou close), "transition_not_allowed" (état incompatible), "excluded",
+   * "own_visit" (visite propre à la demande), "visit_completed", "no_quote", "quote_expired",
+   * "slot_not_proposed".
+   */
+  reason: string;
+}
+
+/** Résultat d'une opération de groupe (ADR-035). */
+export interface RequestGroupOutcome {
+  groupId: string;
+  /** Demandes modifiées par l'opération (refusées, annulées, acceptées, visitées…). */
+  affectedRequestIds: string[];
+  skipped: SkippedRequest[];
+  /** Visite technique commune (planification, compte rendu) ; vide sinon. */
+  groupVisitId: string;
+  /** Missions créées (acceptation de groupe) ; vide sinon. */
+  missionIds: string[];
+}
+
+export interface CancelRequestGroupRequest {
+  groupId: string;
+  idempotencyKey: string;
+  reason: string;
+}
+
+export interface CancelRequestGroupResponse {
+  outcome?: RequestGroupOutcome | undefined;
+  group?: QuoteRequestGroup | undefined;
+}
+
+export interface AcceptGroupQuotesRequest {
+  groupId: string;
+  idempotencyKey: string;
+  /** Début d'un créneau proposé par les devis à accepter. */
+  slotStart: string;
+  /** Obligatoire pour un particulier, appliqué à chaque devis ; ignoré pour une entreprise. */
+  paymentPlan?: PaymentPlan | undefined;
+}
+
+export interface AcceptGroupQuotesResponse {
+  outcome?: RequestGroupOutcome | undefined;
   group?: QuoteRequestGroup | undefined;
 }
 
@@ -1059,6 +1126,147 @@ export interface SendQuoteResponse {
   request?: QuoteRequest | undefined;
 }
 
+export interface ScheduleGroupVisitRequest {
+  groupId: string;
+  scheduledAt: string;
+  agentId: string;
+  /** Demandes laissées hors de la visite commune : détachées, elles gardent leur propre visite. */
+  excludeRequestIds: string[];
+  idempotencyKey: string;
+}
+
+export interface ScheduleGroupVisitResponse {
+  outcome?:
+    | RequestGroupOutcome
+    | undefined;
+  /** Toutes les demandes du groupe, après l'opération. */
+  requests: QuoteRequest[];
+}
+
+export interface CompleteGroupVisitRequest {
+  groupId: string;
+  report: string;
+  idempotencyKey: string;
+}
+
+export interface CompleteGroupVisitResponse {
+  outcome?: RequestGroupOutcome | undefined;
+  requests: QuoteRequest[];
+}
+
+export interface RejectRequestGroupRequest {
+  groupId: string;
+  reason: string;
+  idempotencyKey: string;
+}
+
+export interface RejectRequestGroupResponse {
+  outcome?: RequestGroupOutcome | undefined;
+  requests: QuoteRequest[];
+}
+
+/** Devis d'une demande du groupe : mêmes règles que SendQuoteRequest (lignes préremplies si vides). */
+export interface GroupQuoteItem {
+  requestId: string;
+  lines: PriceLine[];
+  recurrence?: Recurrence | undefined;
+  teamSize: number;
+  durationMinutes: number;
+}
+
+export interface SendGroupQuotesRequest {
+  groupId: string;
+  /** Créneaux communs proposés pour tous les devis (1 à 3). */
+  proposedSlots: TimeSlot[];
+  /** 0 : validité par défaut (réglages). */
+  validityDays: number;
+  /** Une entrée par demande à chiffrer, chacune une seule fois. */
+  quotes: GroupQuoteItem[];
+  idempotencyKey: string;
+}
+
+export interface SendGroupQuotesResponse {
+  outcome?: RequestGroupOutcome | undefined;
+  requests: QuoteRequest[];
+}
+
+export interface CorrectRequestLocationRequest {
+  requestId: string;
+  location?:
+    | GeoLocation
+    | undefined;
+  /** Facultatif : vide, le repère en vigueur est gardé. */
+  landmark: string;
+  /** Repli si le géocodage ne trouve pas la commune ; ignorée sinon. */
+  commune: string;
+}
+
+export interface CorrectRequestLocationResponse {
+  request?:
+    | QuoteRequest
+    | undefined;
+  /** Demandes (le groupe entier) et missions non terminées mises à jour. */
+  updatedRequestIds: string[];
+  updatedMissionIds: string[];
+}
+
+export interface ListVisitsRequest {
+  page?:
+    | Page
+    | undefined;
+  /** Filtres facultatifs, cumulables. agent_id : ignoré pour cleaning_agent (ses visites seulement). */
+  agentId: string;
+  /** Bornes de scheduled_at (ISO 8601), incluse et exclue. */
+  from: string;
+  to: string;
+  /** "scheduled", "completed" ou "cancelled". */
+  status: string;
+  groupId: string;
+}
+
+/** Demande concernée par une visite. */
+export interface VisitedRequest {
+  requestId: string;
+  /** Identifiant de la visite de cette demande (compte rendu par demande : CompleteVisit). */
+  visitId: string;
+  serviceCode: string;
+  serviceName: string;
+  /** Même valeurs que QuoteRequest.status. */
+  status: string;
+}
+
+/** Visite technique telle qu'un agent la voit : une ligne par visite commune ou par visite seule. */
+export interface VisitSummary {
+  /** group_visit_id pour une visite commune, identifiant de la visite sinon. */
+  id: string;
+  groupVisitId: string;
+  groupId: string;
+  /** "scheduled", "completed" ou "cancelled". */
+  status: string;
+  scheduledAt: string;
+  completedAt: string;
+  report: string;
+  agentId: string;
+  agentName: string;
+  customerId: string;
+  customerName: string;
+  organizationName: string;
+  commune: string;
+  /** Position, repère, adresse : vides pour cleaning_agent quand la visite est terminée ou annulée. */
+  address: string;
+  location?: GeoLocation | undefined;
+  landmark: string;
+  geocodedAddress: string;
+  placeType: string;
+  placeTypeLabel: string;
+  requests: VisitedRequest[];
+}
+
+export interface ListVisitsResponse {
+  visits: VisitSummary[];
+  nextCursor: string;
+}
+
 export interface ListMissionsRequest {
   page?: Page | undefined;
   status: string;
@@ -1091,6 +1299,34 @@ export interface ScheduleInterventionRequest {
 
 export interface ScheduleInterventionResponse {
   mission?: Mission | undefined;
+}
+
+export interface ScheduleGroupInterventionsRequest {
+  groupId: string;
+  /** Facultatif : missions du groupe à planifier ; vide, toutes celles qui ont un passage à planifier. */
+  missionIds: string[];
+  scheduledStart: string;
+  durationMinutes: number;
+  agentIds: string[];
+  teamId: string;
+  idempotencyKey: string;
+}
+
+/** Mission laissée de côté par la planification de groupe (ADR-035). */
+export interface SkippedMission {
+  missionId: string;
+  /** Même valeurs que Mission.status. */
+  status: string;
+  /** "terminated", "suspended" ou "no_intervention_left". */
+  reason: string;
+}
+
+export interface ScheduleGroupInterventionsResponse {
+  groupId: string;
+  scheduledMissionIds: string[];
+  skipped: SkippedMission[];
+  /** Missions planifiées, après l'opération. */
+  missions: Mission[];
 }
 
 export interface StartInterventionRequest {
@@ -1277,6 +1513,12 @@ export interface Settings {
   individualPaymentGraceHours: number;
   /** Back-office : nom affiché de l'auteur de la dernière modification (ADR-029), ignoré à l'écriture. */
   updatedByName: string;
+  /**
+   * Mois de conservation de la position GPS (ADR-035) : coordonnées, précision, repère et adresse
+   * géocodée sont effacés des demandes et missions clôturées depuis plus longtemps (12 par défaut, 1 à
+   * 120). À l'écriture, 0 laisse la valeur en vigueur.
+   */
+  locationRetentionMonths: number;
 }
 
 export interface GetCatalogRequest {
@@ -1365,6 +1607,9 @@ export interface Zone {
    * position géocodée à la zone (ADR-034).
    */
   aliases: string[];
+  /** Demandes ouvertes et missions actives dans la zone (ADR-035), au moment de la réponse. */
+  openRequests: number;
+  activeMissions: number;
 }
 
 /** Noms alternatifs d'une zone : message présent = liste remplacée ; absent = inchangée. */
@@ -1391,6 +1636,11 @@ export interface SaveZoneResponse {
 
 export interface DeactivateZoneRequest {
   code: string;
+  /**
+   * Obligatoire quand la zone a des demandes ouvertes ou des missions actives (ADR-035) ; sinon
+   * CLEANING_ZONE_HAS_ACTIVITY. Elles continuent : seules les nouvelles demandes sont refusées.
+   */
+  confirm: boolean;
 }
 
 export interface DeactivateZoneResponse {
@@ -1728,6 +1978,22 @@ export interface QuoteServiceClient {
   /** Groupe du client et ses demandes ; celui d'un autre client : CLEANING_REQUEST_GROUP_NOT_FOUND. */
 
   getRequestGroup(request: GetRequestGroupRequest, metadata?: Metadata): Observable<GetRequestGroupResponse>;
+
+  /**
+   * Annule d'un coup les demandes encore ouvertes du groupe (ADR-035), mêmes règles et mêmes
+   * événements que CancelRequest pour chacune ; les demandes acceptées ou closes sont ignorées.
+   * Idempotent par idempotency_key (obligatoire).
+   */
+
+  cancelRequestGroup(request: CancelRequestGroupRequest, metadata?: Metadata): Observable<CancelRequestGroupResponse>;
+
+  /**
+   * Accepte d'un coup les devis envoyés du groupe qui proposent le créneau choisi (ADR-035) : un
+   * créneau et un plan de paiement communs, une mission par devis, dans une seule transaction.
+   * Idempotent par idempotency_key (obligatoire).
+   */
+
+  acceptGroupQuotes(request: AcceptGroupQuotesRequest, metadata?: Metadata): Observable<AcceptGroupQuotesResponse>;
 }
 
 /**
@@ -1806,6 +2072,28 @@ export interface QuoteServiceController {
     request: GetRequestGroupRequest,
     metadata?: Metadata,
   ): Promise<GetRequestGroupResponse> | Observable<GetRequestGroupResponse> | GetRequestGroupResponse;
+
+  /**
+   * Annule d'un coup les demandes encore ouvertes du groupe (ADR-035), mêmes règles et mêmes
+   * événements que CancelRequest pour chacune ; les demandes acceptées ou closes sont ignorées.
+   * Idempotent par idempotency_key (obligatoire).
+   */
+
+  cancelRequestGroup(
+    request: CancelRequestGroupRequest,
+    metadata?: Metadata,
+  ): Promise<CancelRequestGroupResponse> | Observable<CancelRequestGroupResponse> | CancelRequestGroupResponse;
+
+  /**
+   * Accepte d'un coup les devis envoyés du groupe qui proposent le créneau choisi (ADR-035) : un
+   * créneau et un plan de paiement communs, une mission par devis, dans une seule transaction.
+   * Idempotent par idempotency_key (obligatoire).
+   */
+
+  acceptGroupQuotes(
+    request: AcceptGroupQuotesRequest,
+    metadata?: Metadata,
+  ): Promise<AcceptGroupQuotesResponse> | Observable<AcceptGroupQuotesResponse> | AcceptGroupQuotesResponse;
 }
 
 export function QuoteServiceControllerMethods() {
@@ -1820,6 +2108,8 @@ export function QuoteServiceControllerMethods() {
       "resolveLocation",
       "requestQuoteGroup",
       "getRequestGroup",
+      "cancelRequestGroup",
+      "acceptGroupQuotes",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
@@ -1920,9 +2210,49 @@ export interface CleaningAdminServiceClient {
 
   scheduleVisit(request: ScheduleVisitRequest, metadata?: Metadata): Observable<ScheduleVisitResponse>;
 
+  /** Aussi ouvert à cleaning_agent pour les visites qui lui sont affectées (ADR-035). */
+
   completeVisit(request: CompleteVisitRequest, metadata?: Metadata): Observable<CompleteVisitResponse>;
 
   sendQuote(request: SendQuoteRequest, metadata?: Metadata): Observable<SendQuoteResponse>;
+
+  /**
+   * Demandes groupées (ADR-035). idempotency_key facultative : un second envoi avec la même clé
+   * rend le résultat du premier sans rien réécrire.
+   * Visite technique commune : toutes les demandes ouvertes du groupe, même heure, même agent, un
+   * seul événement cleaning.visit.scheduled (request_ids). Une demande exclue est détachée.
+   */
+
+  scheduleGroupVisit(request: ScheduleGroupVisitRequest, metadata?: Metadata): Observable<ScheduleGroupVisitResponse>;
+
+  /**
+   * Compte rendu commun : complète toutes les visites encore planifiées de la visite de groupe
+   * (cleaning_agent : seulement s'il en est l'agent).
+   */
+
+  completeGroupVisit(request: CompleteGroupVisitRequest, metadata?: Metadata): Observable<CompleteGroupVisitResponse>;
+
+  /** Refus du groupe : demandes encore refusables ; les autres sont ignorées. */
+
+  rejectRequestGroup(request: RejectRequestGroupRequest, metadata?: Metadata): Observable<RejectRequestGroupResponse>;
+
+  /** Devis du groupe envoyés ensemble, chiffrés séparément, avec les mêmes créneaux proposés. */
+
+  sendGroupQuotes(request: SendGroupQuotesRequest, metadata?: Metadata): Observable<SendGroupQuotesResponse>;
+
+  /**
+   * Correction de la position d'une demande (supervision, ou agent de la visite planifiée) :
+   * commune recalculée, appliquée à tout le groupe et aux missions non terminées.
+   */
+
+  correctRequestLocation(
+    request: CorrectRequestLocationRequest,
+    metadata?: Metadata,
+  ): Observable<CorrectRequestLocationResponse>;
+
+  /** Visites techniques (cleaning_agent : les siennes seulement). */
+
+  listVisits(request: ListVisitsRequest, metadata?: Metadata): Observable<ListVisitsResponse>;
 
   /** Missions et passages (cleaning_supervisor, cleaning_admin, super_admin ; cleaning_agent : ses passages). */
 
@@ -1939,6 +2269,16 @@ export interface CleaningAdminServiceClient {
     request: ScheduleInterventionRequest,
     metadata?: Metadata,
   ): Observable<ScheduleInterventionResponse>;
+
+  /**
+   * Planifie ensemble un passage de chaque mission d'un groupe (ADR-035), dans une transaction : la
+   * même équipe sur des créneaux qui se chevauchent dans un même groupe n'est pas un conflit.
+   */
+
+  scheduleGroupInterventions(
+    request: ScheduleGroupInterventionsRequest,
+    metadata?: Metadata,
+  ): Observable<ScheduleGroupInterventionsResponse>;
 
   startIntervention(request: StartInterventionRequest, metadata?: Metadata): Observable<StartInterventionResponse>;
 
@@ -2060,6 +2400,8 @@ export interface CleaningAdminServiceController {
     metadata?: Metadata,
   ): Promise<ScheduleVisitResponse> | Observable<ScheduleVisitResponse> | ScheduleVisitResponse;
 
+  /** Aussi ouvert à cleaning_agent pour les visites qui lui sont affectées (ADR-035). */
+
   completeVisit(
     request: CompleteVisitRequest,
     metadata?: Metadata,
@@ -2069,6 +2411,62 @@ export interface CleaningAdminServiceController {
     request: SendQuoteRequest,
     metadata?: Metadata,
   ): Promise<SendQuoteResponse> | Observable<SendQuoteResponse> | SendQuoteResponse;
+
+  /**
+   * Demandes groupées (ADR-035). idempotency_key facultative : un second envoi avec la même clé
+   * rend le résultat du premier sans rien réécrire.
+   * Visite technique commune : toutes les demandes ouvertes du groupe, même heure, même agent, un
+   * seul événement cleaning.visit.scheduled (request_ids). Une demande exclue est détachée.
+   */
+
+  scheduleGroupVisit(
+    request: ScheduleGroupVisitRequest,
+    metadata?: Metadata,
+  ): Promise<ScheduleGroupVisitResponse> | Observable<ScheduleGroupVisitResponse> | ScheduleGroupVisitResponse;
+
+  /**
+   * Compte rendu commun : complète toutes les visites encore planifiées de la visite de groupe
+   * (cleaning_agent : seulement s'il en est l'agent).
+   */
+
+  completeGroupVisit(
+    request: CompleteGroupVisitRequest,
+    metadata?: Metadata,
+  ): Promise<CompleteGroupVisitResponse> | Observable<CompleteGroupVisitResponse> | CompleteGroupVisitResponse;
+
+  /** Refus du groupe : demandes encore refusables ; les autres sont ignorées. */
+
+  rejectRequestGroup(
+    request: RejectRequestGroupRequest,
+    metadata?: Metadata,
+  ): Promise<RejectRequestGroupResponse> | Observable<RejectRequestGroupResponse> | RejectRequestGroupResponse;
+
+  /** Devis du groupe envoyés ensemble, chiffrés séparément, avec les mêmes créneaux proposés. */
+
+  sendGroupQuotes(
+    request: SendGroupQuotesRequest,
+    metadata?: Metadata,
+  ): Promise<SendGroupQuotesResponse> | Observable<SendGroupQuotesResponse> | SendGroupQuotesResponse;
+
+  /**
+   * Correction de la position d'une demande (supervision, ou agent de la visite planifiée) :
+   * commune recalculée, appliquée à tout le groupe et aux missions non terminées.
+   */
+
+  correctRequestLocation(
+    request: CorrectRequestLocationRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<CorrectRequestLocationResponse>
+    | Observable<CorrectRequestLocationResponse>
+    | CorrectRequestLocationResponse;
+
+  /** Visites techniques (cleaning_agent : les siennes seulement). */
+
+  listVisits(
+    request: ListVisitsRequest,
+    metadata?: Metadata,
+  ): Promise<ListVisitsResponse> | Observable<ListVisitsResponse> | ListVisitsResponse;
 
   /** Missions et passages (cleaning_supervisor, cleaning_admin, super_admin ; cleaning_agent : ses passages). */
 
@@ -2091,6 +2489,19 @@ export interface CleaningAdminServiceController {
     request: ScheduleInterventionRequest,
     metadata?: Metadata,
   ): Promise<ScheduleInterventionResponse> | Observable<ScheduleInterventionResponse> | ScheduleInterventionResponse;
+
+  /**
+   * Planifie ensemble un passage de chaque mission d'un groupe (ADR-035), dans une transaction : la
+   * même équipe sur des créneaux qui se chevauchent dans un même groupe n'est pas un conflit.
+   */
+
+  scheduleGroupInterventions(
+    request: ScheduleGroupInterventionsRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ScheduleGroupInterventionsResponse>
+    | Observable<ScheduleGroupInterventionsResponse>
+    | ScheduleGroupInterventionsResponse;
 
   startIntervention(
     request: StartInterventionRequest,
@@ -2246,9 +2657,16 @@ export function CleaningAdminServiceControllerMethods() {
       "scheduleVisit",
       "completeVisit",
       "sendQuote",
+      "scheduleGroupVisit",
+      "completeGroupVisit",
+      "rejectRequestGroup",
+      "sendGroupQuotes",
+      "correctRequestLocation",
+      "listVisits",
       "listMissions",
       "getMissionDetail",
       "scheduleIntervention",
+      "scheduleGroupInterventions",
       "startIntervention",
       "updateChecklist",
       "reportIncident",

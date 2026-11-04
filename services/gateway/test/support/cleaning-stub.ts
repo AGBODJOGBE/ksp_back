@@ -26,6 +26,8 @@ export const IDS = {
   team: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6001',
   group: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7001',
   sibling: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1002',
+  groupVisit: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d8001',
+  visit: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d8002',
 };
 
 /** Position fictive (ADR-034). */
@@ -304,6 +306,7 @@ const settings: cleaningV1.Settings = {
   businessSuspensionUnpaidInvoices: 2,
   individualSuspensionUnpaidInterventions: 1,
   individualPaymentGraceHours: 24,
+  locationRetentionMonths: 12,
   updatedBy: '',
   updatedAt: '',
   updatedByName: '',
@@ -313,6 +316,8 @@ const zone: cleaningV1.Zone = {
   commune: 'Abomey-Calavi',
   aliases: ['Abomey Calavi'],
   active: true,
+  openRequests: 3,
+  activeMissions: 1,
   updatedBy: '',
   updatedAt: '',
   updatedByName: '',
@@ -371,6 +376,16 @@ const protoGroup: cleaningV1.QuoteRequestGroup = {
   ],
 };
 const withMission = () => ({ mission: protoMission });
+/** Résultat d'une opération de groupe (ADR-035). */
+export const protoOutcome: cleaningV1.RequestGroupOutcome = {
+  groupId: IDS.group,
+  affectedRequestIds: [IDS.request],
+  skipped: [{ requestId: IDS.sibling, status: 'accepted', reason: 'not_open' }],
+  groupVisitId: '',
+  missionIds: [],
+};
+const withOutcome = () => ({ outcome: protoOutcome, requests: protoGroup.requests });
+const withGroupOutcome = () => ({ outcome: protoOutcome, group: protoGroup });
 
 const DEFAULTS: Record<Method, () => unknown> = {
   listServices: () => ({
@@ -479,6 +494,64 @@ const DEFAULTS: Record<Method, () => unknown> = {
   }),
   requestQuoteGroup: () => ({ group: protoGroup }),
   getRequestGroup: () => ({ group: protoGroup }),
+  cancelRequestGroup: withGroupOutcome,
+  acceptGroupQuotes: () => ({
+    outcome: { ...protoOutcome, missionIds: [IDS.mission] },
+    group: { ...protoGroup, quotesTotal: xof(30000), remainingDue: xof(30000) },
+  }),
+  scheduleGroupVisit: () => ({
+    outcome: { ...protoOutcome, groupVisitId: IDS.groupVisit },
+    requests: protoGroup.requests,
+  }),
+  completeGroupVisit: withOutcome,
+  rejectRequestGroup: withOutcome,
+  sendGroupQuotes: withOutcome,
+  correctRequestLocation: () => ({
+    request: protoRequest,
+    updatedRequestIds: [IDS.request, IDS.sibling],
+    updatedMissionIds: [IDS.mission],
+  }),
+  listVisits: () => ({
+    visits: [
+      {
+        id: IDS.groupVisit,
+        groupVisitId: IDS.groupVisit,
+        groupId: IDS.group,
+        status: 'scheduled',
+        scheduledAt: '2026-10-26T09:00:00.000Z',
+        completedAt: '',
+        report: '',
+        agentId: IDS.agent,
+        agentName: 'Awa Agent',
+        customerId: USER_ID,
+        customerName: 'Koffi Adjovi',
+        organizationName: '',
+        commune: 'Abomey-Calavi',
+        address: 'Portail bleu',
+        location: LOCATION,
+        landmark: 'Portail bleu',
+        geocodedAddress: 'Zogbadjè, Abomey-Calavi, Bénin',
+        placeType: 'house',
+        placeTypeLabel: 'Maison',
+        requests: [
+          {
+            requestId: IDS.request,
+            visitId: IDS.visit,
+            serviceCode: 'home_cleaning',
+            serviceName: 'Nettoyage à domicile',
+            status: 'visit_scheduled',
+          },
+        ],
+      },
+    ],
+    nextCursor: '',
+  }),
+  scheduleGroupInterventions: () => ({
+    groupId: IDS.group,
+    scheduledMissionIds: [IDS.mission],
+    skipped: [],
+    missions: [protoMission],
+  }),
   listPlaceTypes: () => ({ placeTypes: [placeType] }),
   savePlaceType: () => ({ placeType }),
   listServedZones: () => ({
@@ -618,6 +691,8 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
           'resolveLocation',
           'requestQuoteGroup',
           'getRequestGroup',
+          'cancelRequestGroup',
+          'acceptGroupQuotes',
         ]),
         cleaningV1.QuoteServiceControllerMethods,
       ),
@@ -637,6 +712,8 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
               'resolveLocation',
               'requestQuoteGroup',
               'getRequestGroup',
+              'cancelRequestGroup',
+              'acceptGroupQuotes',
               'requestQuote',
               'listMyRequests',
               'getRequest',

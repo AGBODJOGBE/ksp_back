@@ -1,12 +1,16 @@
 import { Body, Controller, Headers, Inject, Param, Query } from '@nestjs/common';
 import { type CleaningApi } from '../../application/cleaning/cleaning.ports';
 import { CLEANING_API } from '../../tokens';
-import { idFrom, pageFrom } from './cleaning.controller';
+import { idFrom, optionalBody, pageFrom } from './cleaning.controller';
 import { cleaningParams, parseParam } from './cleaning-schemas';
 import { Route } from './route.decorator';
 import { parseBody, requestBodies } from './schemas';
 
 type Query = Record<string, unknown>;
+
+/** Idempotency-Key facultative du back-office (ADR-035), comme le paiement manuel. */
+const optionalKey = (key: unknown) =>
+  parseParam(cleaningParams.optionalIdempotencyKey, key, 'Idempotency-Key');
 
 /**
  * Routes /api/v1/admin/cleaning/* (back-office, UC-CL-06 à 12). Rôles et double authentification
@@ -67,6 +71,93 @@ export class CleaningAdminHttpController {
   sendQuote(@Param('id') id: unknown, @Body() body: unknown) {
     const requestId = idFrom(id);
     return this.cleaning.sendQuote(requestId, parseBody(requestBodies.sendCleaningQuote, body));
+  }
+
+  // --- Demandes groupées, visites, position (ADR-035) ----------------------------------------------
+
+  @Route('scheduleCleaningGroupVisit')
+  scheduleGroupVisit(
+    @Param('id') id: unknown,
+    @Body() body: unknown,
+    @Headers('idempotency-key') key: unknown,
+  ) {
+    const groupId = idFrom(id);
+    const idempotencyKey = optionalKey(key);
+    return this.cleaning.scheduleGroupVisit(
+      groupId,
+      parseBody(requestBodies.scheduleCleaningGroupVisit, body),
+      idempotencyKey,
+    );
+  }
+
+  @Route('completeCleaningGroupVisit')
+  completeGroupVisit(
+    @Param('id') id: unknown,
+    @Body() body: unknown,
+    @Headers('idempotency-key') key: unknown,
+  ) {
+    const groupId = idFrom(id);
+    const idempotencyKey = optionalKey(key);
+    const { report } = parseBody(requestBodies.completeCleaningGroupVisit, body);
+    return this.cleaning.completeGroupVisit(groupId, report, idempotencyKey);
+  }
+
+  @Route('rejectCleaningRequestGroup')
+  rejectRequestGroup(
+    @Param('id') id: unknown,
+    @Body() body: unknown,
+    @Headers('idempotency-key') key: unknown,
+  ) {
+    const groupId = idFrom(id);
+    const idempotencyKey = optionalKey(key);
+    const { reason } = parseBody(requestBodies.rejectCleaningRequestGroup, body);
+    return this.cleaning.rejectRequestGroup(groupId, reason, idempotencyKey);
+  }
+
+  @Route('sendCleaningGroupQuotes')
+  sendGroupQuotes(@Param('id') id: unknown, @Body() body: unknown, @Headers('idempotency-key') key: unknown) {
+    const groupId = idFrom(id);
+    const idempotencyKey = optionalKey(key);
+    return this.cleaning.sendGroupQuotes(
+      groupId,
+      parseBody(requestBodies.sendCleaningGroupQuotes, body),
+      idempotencyKey,
+    );
+  }
+
+  @Route('scheduleCleaningGroupInterventions')
+  scheduleGroupInterventions(
+    @Param('id') id: unknown,
+    @Body() body: unknown,
+    @Headers('idempotency-key') key: unknown,
+  ) {
+    const groupId = idFrom(id);
+    const idempotencyKey = optionalKey(key);
+    return this.cleaning.scheduleGroupInterventions(
+      groupId,
+      parseBody(requestBodies.scheduleCleaningGroupInterventions, body),
+      idempotencyKey,
+    );
+  }
+
+  @Route('correctCleaningRequestLocation')
+  correctRequestLocation(@Param('id') id: unknown, @Body() body: unknown) {
+    const requestId = idFrom(id);
+    return this.cleaning.correctRequestLocation(
+      requestId,
+      parseBody(requestBodies.correctCleaningRequestLocation, body),
+    );
+  }
+
+  @Route('listCleaningVisits')
+  listVisits(@Query() query: Query) {
+    return this.cleaning.listVisits(pageFrom(query), {
+      agentId: parseParam(cleaningParams.optionalId, query['agentId'], 'agentId'),
+      from: parseParam(cleaningParams.optionalDateTime, query['from'], 'from'),
+      to: parseParam(cleaningParams.optionalDateTime, query['to'], 'to'),
+      status: parseParam(cleaningParams.visitStatus, query['status'], 'status'),
+      groupId: parseParam(cleaningParams.groupId, query['groupId'], 'groupId'),
+    });
   }
 
   // --- Missions et passages --------------------------------------------------------------------
@@ -198,8 +289,11 @@ export class CleaningAdminHttpController {
   }
 
   @Route('deactivateCleaningZone')
-  deactivateZone(@Param('code') code: unknown) {
-    return this.cleaning.deactivateZone(parseParam(cleaningParams.zoneCode, code, 'code'));
+  deactivateZone(@Param('code') code: unknown, @Body() body: unknown) {
+    const zone = parseParam(cleaningParams.zoneCode, code, 'code');
+    // Corps facultatif (ADR-035) : confirm = true exigé si la zone a des demandes ou missions en cours.
+    const input = optionalBody<{ confirm?: boolean }>(requestBodies.deactivateCleaningZone, body);
+    return this.cleaning.deactivateZone(zone, input.confirm);
   }
 
   @Route('listCleaningAgents')

@@ -175,6 +175,9 @@ export function presentGroup(value: cleaningV1.QuoteRequestGroup | undefined) {
     zoneCode: value.zoneCode,
     createdAt: value.createdAt,
     items: value.requests.map(presentRequest),
+    // Totaux du groupe (ADR-035) : null quand inconnus ; pas de paiement groupé.
+    quotesTotal: money(value.quotesTotal),
+    remainingDue: money(value.remainingDue),
   };
 }
 
@@ -240,6 +243,7 @@ export function presentRequest(value: cleaningV1.QuoteRequest | undefined) {
           report: orNull(visit.report),
           completedAt: orNull(visit.completedAt),
           agentName: orNull(visit.agentName),
+          groupVisitId: orNull(visit.groupVisitId),
         }
       : null,
     quote: value.quote ? presentQuote(value.quote) : null,
@@ -405,6 +409,7 @@ export function presentSettings(value: cleaningV1.Settings | undefined) {
     businessSuspensionUnpaidInvoices: value.businessSuspensionUnpaidInvoices,
     individualSuspensionUnpaidInterventions: value.individualSuspensionUnpaidInterventions,
     individualPaymentGraceHours: value.individualPaymentGraceHours,
+    locationRetentionMonths: value.locationRetentionMonths || 12,
     updatedBy: orNull(value.updatedBy),
     updatedByName: orNull(value.updatedByName),
     updatedAt: orNull(value.updatedAt),
@@ -446,8 +451,59 @@ export function presentZone(value: cleaningV1.Zone | undefined) {
     commune: value.commune,
     aliases: value.aliases ?? [],
     active: value.active,
+    // Activité de la zone (ADR-035).
+    openRequests: value.openRequests ?? 0,
+    activeMissions: value.activeMissions ?? 0,
     updatedBy: orNull(value.updatedBy),
     updatedByName: orNull(value.updatedByName),
     updatedAt: orNull(value.updatedAt),
+  };
+}
+
+/** Résultat d'une opération de groupe (ADR-035). */
+export function presentOutcome(value: cleaningV1.RequestGroupOutcome | undefined) {
+  if (!value) throw malformed('opération de groupe');
+  return {
+    groupId: value.groupId,
+    affectedRequestIds: value.affectedRequestIds,
+    skipped: value.skipped.map((entry) => ({
+      requestId: entry.requestId,
+      status: entry.status,
+      reason: entry.reason,
+    })),
+    groupVisitId: orNull(value.groupVisitId),
+    missionIds: value.missionIds,
+  };
+}
+
+/** Visite d'un agent ou de la supervision (ADR-035) : position nulle quand elle est masquée. */
+export function presentVisit(value: cleaningV1.VisitSummary) {
+  return {
+    id: value.id,
+    groupVisitId: orNull(value.groupVisitId),
+    groupId: orNull(value.groupId),
+    status: value.status,
+    scheduledAt: value.scheduledAt,
+    completedAt: orNull(value.completedAt),
+    report: orNull(value.report),
+    agentId: value.agentId,
+    agentName: orNull(value.agentName),
+    customerId: value.customerId,
+    customerName: orNull(value.customerName),
+    organizationName: orNull(value.organizationName),
+    commune: value.commune,
+    address: orNull(value.address),
+    location: location(value.location),
+    landmark: orNull(value.landmark),
+    geocodedAddress: orNull(value.geocodedAddress),
+    placeType: orNull(value.placeType),
+    placeTypeLabel: orNull(value.placeTypeLabel),
+    requests: value.requests.map((request) => ({
+      requestId: request.requestId,
+      visitId: request.visitId,
+      serviceCode: request.serviceCode,
+      serviceName: orNull(request.serviceName),
+      status: request.status,
+    })),
   };
 }

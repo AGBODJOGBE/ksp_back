@@ -7,16 +7,18 @@ import { CLEANING_USE_CASES, type CleaningUseCases } from '../../application/use
 import { type ServiceDefinition } from '../../domain/catalog';
 import { type QuoteRequest } from '../../domain/quote-request';
 import { type PriceLine } from '../../domain/simulator';
-import { type Zone } from '../../domain/zone';
+import { type ZoneView } from '../../application/catalog/zones.use-cases';
 import {
   presentAgent,
   presentDefinition,
   presentMission,
+  presentOutcome,
   presentPlaceType,
   presentRequest,
   presentSettings,
   presentSibling,
   presentTeam,
+  presentVisit,
   presentZone,
 } from './presenters';
 import {
@@ -97,6 +99,87 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
   async sendQuote(request: cleaningV1.SendQuoteRequest): Promise<cleaningV1.SendQuoteResponse> {
     const result = await this.useCases.sendQuote.execute({ ...request, lines: request.lines.map(toLine) });
     return { request: await this.request(result) };
+  }
+
+  // --- Demandes groupées, visites, position (ADR-035) ---------------------------------------------
+
+  async scheduleGroupVisit(
+    request: cleaningV1.ScheduleGroupVisitRequest,
+  ): Promise<cleaningV1.ScheduleGroupVisitResponse> {
+    const outcome = await this.useCases.scheduleGroupVisit.execute(request);
+    return { outcome: presentOutcome(outcome), requests: await this.groupRequests(outcome.groupId) };
+  }
+
+  async completeGroupVisit(
+    request: cleaningV1.CompleteGroupVisitRequest,
+  ): Promise<cleaningV1.CompleteGroupVisitResponse> {
+    const outcome = await this.useCases.completeGroupVisit.execute(request);
+    // Un agent ne voit que les demandes dont il a la visite, sans leur position une fois close.
+    return { outcome: presentOutcome(outcome), requests: await this.groupRequests(outcome.groupId) };
+  }
+
+  async rejectRequestGroup(
+    request: cleaningV1.RejectRequestGroupRequest,
+  ): Promise<cleaningV1.RejectRequestGroupResponse> {
+    const outcome = await this.useCases.rejectRequestGroup.execute(request);
+    return { outcome: presentOutcome(outcome), requests: await this.groupRequests(outcome.groupId) };
+  }
+
+  async sendGroupQuotes(
+    request: cleaningV1.SendGroupQuotesRequest,
+  ): Promise<cleaningV1.SendGroupQuotesResponse> {
+    const outcome = await this.useCases.sendGroupQuotes.execute({
+      ...request,
+      quotes: request.quotes.map((item) => ({ ...item, lines: item.lines.map(toLine) })),
+    });
+    return { outcome: presentOutcome(outcome), requests: await this.groupRequests(outcome.groupId) };
+  }
+
+  async correctRequestLocation(
+    request: cleaningV1.CorrectRequestLocationRequest,
+  ): Promise<cleaningV1.CorrectRequestLocationResponse> {
+    const result = await this.useCases.correctLocation.execute(request);
+    return {
+      request: await this.request(result.request),
+      updatedRequestIds: result.requestIds,
+      updatedMissionIds: result.missionIds,
+    };
+  }
+
+  async listVisits(request: cleaningV1.ListVisitsRequest): Promise<cleaningV1.ListVisitsResponse> {
+    const page = await this.useCases.listVisits.execute({
+      page: parsePage(request.page),
+      agentId: request.agentId,
+      from: request.from,
+      to: request.to,
+      status: request.status,
+      groupId: request.groupId,
+    });
+    const requests = page.items.flatMap((entry) => entry.requests);
+    const [names, labels] = await Promise.all([
+      this.useCases.resolveNames.forRequests(requests),
+      this.useCases.describeRequests.execute(requests),
+    ]);
+    return {
+      visits: page.items.map((entry) => presentVisit(entry, names, labels)),
+      nextCursor: page.nextCursor ?? '',
+    };
+  }
+
+  async scheduleGroupInterventions(
+    request: cleaningV1.ScheduleGroupInterventionsRequest,
+  ): Promise<cleaningV1.ScheduleGroupInterventionsResponse> {
+    const { outcome, missions } = await this.useCases.scheduleGroupInterventions.execute(request);
+    const views = await Promise.all(
+      missions.map((mission) => this.useCases.getMissionDetail.execute(mission.id)),
+    );
+    const names = await this.useCases.resolveNames.forMissions(missions);
+    return {
+      groupId: outcome.groupId,
+      scheduledMissionIds: outcome.missionIds,
+      skipped: outcome.skippedMissions.map((entry) => ({ ...entry })),
+      missions: views.map((view) => presentMission(view, names)),
+    };
   }
 
   // --- Missions et passages ------------------------------------------------------------------
@@ -245,6 +328,7 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
       businessSuspensionUnpaidInvoices: s?.businessSuspensionUnpaidInvoices ?? 0,
       individualSuspensionUnpaidInterventions: s?.individualSuspensionUnpaidInterventions ?? 0,
       individualPaymentGraceHours: s?.individualPaymentGraceHours ?? 0,
+      locationRetentionMonths: s?.locationRetentionMonths ?? 0,
     });
     return { settings: await this.settings(saved) };
   }
@@ -253,8 +337,8 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
 
   async listZones(): Promise<cleaningV1.ListZonesResponse> {
     const zones = await this.useCases.listZones.execute();
-    const names = await this.useCases.resolveNames.forAuthors(zones.map((zone) => zone.updatedBy));
-    return { zones: zones.map((zone) => presentZone(zone, names)) };
+    const names = await this.useCases.resolveNames.forAuthors(zones.map((view) => view.zone.updatedBy));
+    return { zones: zones.map((view) => presentZone(view, names)) };
   }
 
   async saveZone(request: cleaningV1.SaveZoneRequest): Promise<cleaningV1.SaveZoneResponse> {
@@ -269,7 +353,8 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
   async deactivateZone(
     request: cleaningV1.DeactivateZoneRequest,
   ): Promise<cleaningV1.DeactivateZoneResponse> {
-    return { zone: await this.zone(await this.useCases.deactivateZone.execute({ code: request.code })) };
+    const view = await this.useCases.deactivateZone.execute({ code: request.code, confirm: request.confirm });
+    return { zone: await this.zone(view) };
   }
 
   // --- Types de lieu (ADR-034) -----------------------------------------------------------------
@@ -354,7 +439,17 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
     return presentSettings(settings, await this.useCases.resolveNames.forAuthors([settings.updatedBy]));
   }
 
-  private async zone(zone: Zone): Promise<cleaningV1.Zone> {
-    return presentZone(zone, await this.useCases.resolveNames.forAuthors([zone.updatedBy]));
+  private async zone(view: ZoneView): Promise<cleaningV1.Zone> {
+    return presentZone(view, await this.useCases.resolveNames.forAuthors([view.zone.updatedBy]));
+  }
+
+  /** Demandes d'un groupe après une opération (ADR-035), avec noms et libellés. */
+  private async groupRequests(groupId: string): Promise<cleaningV1.QuoteRequest[]> {
+    const view = await this.useCases.getRequestGroup.execute(groupId);
+    const [names, labels] = await Promise.all([
+      this.useCases.resolveNames.forRequests(view.requests),
+      this.useCases.describeRequests.execute(view.requests),
+    ]);
+    return view.requests.map((item) => presentRequest(item, names, labels));
   }
 }

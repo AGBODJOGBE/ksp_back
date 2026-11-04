@@ -27,6 +27,7 @@ describe('IdentityEventsConsumer (ADR-030)', () => {
     expect([...handlers.keys()]).toEqual([
       'identity.organization.suspended',
       'identity.organization.reactivated',
+      'identity.user.deleted',
     ]);
     const organizationId = '0192f1c4-7a2b-7c3d-8e4f-000000000777';
     for (const [type, suspended] of [
@@ -73,5 +74,34 @@ describe('IdentityEventsConsumer (ADR-030)', () => {
         payload: { organizationId: '0192f1c4-7a2b-7c3d-8e4f-000000000777' },
       }),
     ).rejects.toThrow('base indisponible');
+  });
+
+  it('compte anonymisé (ADR-035) : effacement des positions demandé, sans donnée de plus', async () => {
+    const handlers = new Map<string, (envelope: object) => Promise<void>>();
+    const consumer = {
+      subscribe: jest.fn(async (type: string, handler: (envelope: object) => Promise<void>) => {
+        handlers.set(type, handler);
+      }),
+    };
+    const execute = jest.fn(async () => 'processed');
+    const useCases = {
+      handleOrganizationEvent: { execute: jest.fn() },
+      eraseCustomerLocations: { execute },
+    } as unknown as CleaningUseCases;
+    await new IdentityEventsConsumer(
+      consumer as unknown as RabbitMqConsumer,
+      useCases,
+    ).onApplicationBootstrap();
+    await handlers.get('identity.user.deleted')!({
+      eventId: '0192f1c4-7a2b-7c3d-8e4f-000000000003',
+      type: 'identity.user.deleted',
+      occurredAt: '2026-11-04T09:00:00.000Z',
+      payload: { userId: '0192f1c4-7a2b-7c3d-8e4f-000000000888' },
+    });
+    expect(execute).toHaveBeenCalledWith({
+      eventId: '0192f1c4-7a2b-7c3d-8e4f-000000000003',
+      eventType: 'identity.user.deleted',
+      userId: '0192f1c4-7a2b-7c3d-8e4f-000000000888',
+    });
   });
 });

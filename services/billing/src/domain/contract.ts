@@ -31,6 +31,11 @@ export interface BillingContract {
   suspendedSince: Date | null;
   suspensions: SuspensionInterval[];
   lastResumedAt: Date | null;
+  /**
+   * Nom de la prestation au moment de la confirmation (cleaning.booking.confirmed, ADR-035), repris
+   * dans le libellé des lignes ; null ou absent : libellé générique.
+   */
+  serviceName?: string | null;
   createdAt: Date;
 }
 

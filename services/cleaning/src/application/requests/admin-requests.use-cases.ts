@@ -24,7 +24,12 @@ import {
   quoteLinesFrom,
 } from '../../domain/simulator';
 import { type CleaningDeps, presentRequest } from '../deps';
-import { requireStaff, SUPERVISION } from '../shared/access';
+import { FIELD_WORK, requireStaff, seesEverything, SUPERVISION } from '../shared/access';
+import { requestForStaff } from '../groups/group-support';
+import { type Quote } from '../../domain/quote';
+import { type Slot } from '../../domain/schedule';
+import { type CleaningSettings } from '../../domain/settings';
+import { type Changes } from '../ports';
 import { CleaningErrors } from '../shared/errors';
 import {
   type PageRequest,
@@ -49,7 +54,7 @@ const REQUEST_STATUSES: readonly RequestStatus[] = [
   'cancelled',
 ];
 
-async function anyRequest(deps: CleaningDeps, requestId: string): Promise<QuoteRequest> {
+export async function anyRequest(deps: CleaningDeps, requestId: string): Promise<QuoteRequest> {
   const request = await deps.requests.findById(requestId);
   if (!request) throw CleaningErrors.requestNotFound();
   return request;
@@ -176,6 +181,8 @@ export class ScheduleVisitUseCase {
     const [agent] = await this.deps.agents.findAgents([agentId]);
     if (!agent?.active) throw CleaningErrors.agentNotFound([agentId]);
 
+    // Une demande de la visite commune de son groupe en est détachée : elle reçoit sa propre visite (ADR-035).
+    const detachedFrom = request.visit?.status === 'scheduled' ? (request.visit.groupVisitId ?? null) : null;
     const visit = {
       id: request.visit?.status === 'scheduled' ? request.visit.id : this.deps.ids.next(),
       status: 'scheduled' as const,
@@ -183,6 +190,7 @@ export class ScheduleVisitUseCase {
       agentId,
       report: null,
       completedAt: null,
+      groupVisitId: null,
     };
     const subject = await eventSubject(this.deps, request);
     const saved = await saveRequest(
@@ -209,7 +217,7 @@ export class ScheduleVisitUseCase {
             entityType: 'quote_request',
             entityId: request.id,
             at: now,
-            details: { visitId: visit.id, agentId },
+            details: { visitId: visit.id, agentId, ...(detachedFrom ? { detachedFrom } : {}) },
           },
         ],
       },
@@ -226,9 +234,12 @@ export class CompleteVisitUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
   async execute(input: { visitId: string; report: string }): Promise<QuoteRequest> {
-    const staff = requireStaff(SUPERVISION);
+    // Ouvert à l'agent affecté à la visite (ADR-035) ; la visite d'un autre agent est introuvable.
+    const staff = requireStaff(FIELD_WORK);
     const request = await this.deps.requests.findByVisitId(requireUuid('visitId', input.visitId));
     if (!request?.visit) throw CleaningErrors.visitNotFound();
+    if (!seesEverything(staff) && request.visit.agentId !== staff.userId)
+      throw CleaningErrors.visitNotFound();
     if (request.visit.status !== 'scheduled')
       throw CleaningErrors.invalidTransition(request.visit.status, 'completed');
     const now = this.deps.clock.now();
@@ -254,7 +265,7 @@ export class CompleteVisitUseCase {
         ],
       },
     );
-    return presentRequest(saved, now);
+    return requestForStaff(staff, presentRequest(saved, now));
   }
 }
 
@@ -279,96 +290,140 @@ export class SendQuoteUseCase {
     const staff = requireStaff(SUPERVISION);
     const request = await anyRequest(this.deps, input.requestId);
     const now = this.deps.clock.now();
+    const settings = await this.deps.catalog.getSettings();
     assertRequestTransition(request, 'quote_sent', now);
-    const [service, settings] = await Promise.all([
-      this.deps.catalog.findService(request.serviceCode),
-      this.deps.catalog.getSettings(),
-    ]);
-    if (!service) throw CleaningErrors.serviceNotFound();
-    // Visite des lieux réalisée obligatoire avant tout devis (décision du 2026-10-23).
-    if (!canSendQuote(request)) throw CleaningErrors.visitRequired();
-
-    const lines = input.lines.length ? input.lines : this.prefill(request, service);
-    if (!lines.every(isValidLine) || linesSubtotal(lines) < 0) throw CleaningErrors.invalid('lines');
-    const count = input.proposedSlots.length;
-    if (count < MIN_PROPOSED_SLOTS || count > MAX_PROPOSED_SLOTS) {
-      throw CleaningErrors.slotInvalid(`Proposez de ${MIN_PROPOSED_SLOTS} à ${MAX_PROPOSED_SLOTS} créneaux.`);
-    }
-    const proposedSlots = input.proposedSlots.map((slot, index) =>
-      parseSlot(`proposedSlots[${index}]`, slot),
-    );
-    if (proposedSlots.some((slot) => !respectsLeadTime(slot.start, now, settings.minimumLeadHours))) {
-      throw CleaningErrors.leadTimeTooShort(settings.minimumLeadHours);
-    }
-    const validityDays = input.validityDays
-      ? requirePositiveInt('validityDays', input.validityDays, 90)
-      : settings.quoteValidityDays;
-    const teamSize = input.teamSize
-      ? requirePositiveInt('teamSize', input.teamSize, 50)
-      : request.recommendedTeamSize;
-    const durationMinutes = requirePositiveInt('durationMinutes', input.durationMinutes, 24 * 60);
-    const recurrence = input.recurrence?.period ? parseRecurrence(input.recurrence) : request.recurrence;
-
-    const quote = buildQuote({
-      id: this.deps.ids.next(),
-      lines,
-      proposedSlots,
-      validityDays,
-      depositPercent: settings.depositPercent,
-      recurrence,
-      teamSize,
-      durationMinutes,
-      now,
-    });
-    const subject = await eventSubject(this.deps, request);
+    const proposedSlots = parseProposedSlots(input.proposedSlots, settings, now);
+    const prepared = await prepareQuote(this.deps, request, input, proposedSlots, settings, now);
     const saved = await saveRequest(
       this.deps,
-      { ...request, status: 'quote_sent', quote },
-      {
-        events: [
-          {
-            type: 'cleaning.quote.sent',
-            payload: {
-              ...subject,
-              requestId: request.id,
-              quoteId: quote.id,
-              customerId: request.customerId,
-              total: { amount: quote.total, currency: 'XOF' },
-              validUntil: quote.validUntil.toISOString(),
-            },
-          },
-        ],
-        audit: [
-          {
-            actorId: staff.userId,
-            action: 'quote.sent',
-            entityType: 'quote_request',
-            entityId: request.id,
-            at: now,
-            details: {
-              quoteId: quote.id,
-              subtotal: quote.subtotal,
-              total: quote.total,
-              pricingVersion: service.pricing.version,
-            },
-          },
-        ],
-      },
+      prepared.request,
+      await quoteSentChanges(this.deps, staff.userId, prepared, now),
     );
     return presentRequest(saved, now);
   }
+}
 
-  /**
-   * Lignes préremplies depuis le détail du calcul de la demande (ADR-033), avec une ligne
-   * d'ajustement pour les coefficients ou le minimum. Calcul sans prix : nouveau calcul avec la
-   * grille en vigueur et les réponses enregistrées ; toujours sans prix : CLEANING_PRICE_NOT_SET.
-   */
-  private prefill(request: QuoteRequest, service: ServiceDefinition): PriceLine[] {
-    const calculation = request.calculation?.priced ? request.calculation : recalculate(request, service);
-    const lines = calculation ? quoteLinesFrom(calculation) : null;
-    if (!lines) throw CleaningErrors.priceNotSet();
-    return lines;
+/** Créneaux proposés d'un devis : 1 à 3, bien formés, au-delà du délai minimum. */
+export function parseProposedSlots(
+  slots: { start: string; end: string }[],
+  settings: Pick<CleaningSettings, 'minimumLeadHours'>,
+  now: Date,
+): Slot[] {
+  if (slots.length < MIN_PROPOSED_SLOTS || slots.length > MAX_PROPOSED_SLOTS) {
+    throw CleaningErrors.slotInvalid(`Proposez de ${MIN_PROPOSED_SLOTS} à ${MAX_PROPOSED_SLOTS} créneaux.`);
   }
+  const proposed = slots.map((slot, index) => parseSlot(`proposedSlots[${index}]`, slot));
+  if (proposed.some((slot) => !respectsLeadTime(slot.start, now, settings.minimumLeadHours))) {
+    throw CleaningErrors.leadTimeTooShort(settings.minimumLeadHours);
+  }
+  return proposed;
+}
+
+export interface PreparedQuote {
+  request: QuoteRequest;
+  quote: Quote;
+  pricingVersion: number;
+}
+
+/**
+ * UC-CL-08 : devis d'une demande, contrôlé et chiffré, pour une demande seule ou pour les devis
+ * d'un groupe (ADR-035) ; rien n'est enregistré ici.
+ */
+export async function prepareQuote(
+  deps: CleaningDeps,
+  request: QuoteRequest,
+  input: Omit<SendQuoteInput, 'requestId' | 'proposedSlots'>,
+  proposedSlots: Slot[],
+  settings: CleaningSettings,
+  now: Date,
+): Promise<PreparedQuote> {
+  assertRequestTransition(request, 'quote_sent', now);
+  const service = await deps.catalog.findService(request.serviceCode);
+  if (!service) throw CleaningErrors.serviceNotFound();
+  // Visite des lieux réalisée obligatoire avant tout devis (décision du 2026-10-23).
+  if (!canSendQuote(request)) throw CleaningErrors.visitRequired();
+
+  const lines = input.lines.length ? input.lines : prefill(request, service);
+  if (!lines.every(isValidLine) || linesSubtotal(lines) < 0) throw CleaningErrors.invalid('lines');
+  const validityDays = input.validityDays
+    ? requirePositiveInt('validityDays', input.validityDays, 90)
+    : settings.quoteValidityDays;
+  const teamSize = input.teamSize
+    ? requirePositiveInt('teamSize', input.teamSize, 50)
+    : request.recommendedTeamSize;
+  const durationMinutes = requirePositiveInt('durationMinutes', input.durationMinutes, 24 * 60);
+  const recurrence = input.recurrence?.period ? parseRecurrence(input.recurrence) : request.recurrence;
+
+  const quote = buildQuote({
+    id: deps.ids.next(),
+    lines,
+    proposedSlots,
+    validityDays,
+    depositPercent: settings.depositPercent,
+    recurrence,
+    teamSize,
+    durationMinutes,
+    now,
+  });
+  return {
+    request: { ...request, status: 'quote_sent', quote },
+    quote,
+    pricingVersion: service.pricing.version,
+  };
+}
+
+/** Événement cleaning.quote.sent et trace d'un devis envoyé. */
+export async function quoteSentChanges(
+  deps: CleaningDeps,
+  actorId: string,
+  { request, quote, pricingVersion }: PreparedQuote,
+  now: Date,
+  extra: Record<string, unknown> = {},
+): Promise<Changes> {
+  const subject = await eventSubject(deps, request);
+  return {
+    events: [
+      {
+        type: 'cleaning.quote.sent',
+        payload: {
+          ...subject,
+          requestId: request.id,
+          quoteId: quote.id,
+          customerId: request.customerId,
+          total: { amount: quote.total, currency: 'XOF' },
+          validUntil: quote.validUntil.toISOString(),
+        },
+      },
+    ],
+    audit: [
+      {
+        actorId,
+        action: 'quote.sent',
+        entityType: 'quote_request',
+        entityId: request.id,
+        at: now,
+        details: {
+          quoteId: quote.id,
+          subtotal: quote.subtotal,
+          total: quote.total,
+          pricingVersion,
+          ...extra,
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Lignes préremplies depuis le détail du calcul de la demande (ADR-033), avec une ligne
+ * d'ajustement pour les coefficients ou le minimum. Calcul sans prix : nouveau calcul avec la
+ * grille en vigueur et les réponses enregistrées ; toujours sans prix : CLEANING_PRICE_NOT_SET.
+ */
+function prefill(request: QuoteRequest, service: ServiceDefinition): PriceLine[] {
+  const calculation = request.calculation?.priced ? request.calculation : recalculate(request, service);
+  const lines = calculation ? quoteLinesFrom(calculation) : null;
+  if (!lines) throw CleaningErrors.priceNotSet();
+  return lines;
 }
 
 /** Nouveau calcul d'une demande avec la grille en vigueur (réponses enregistrées ou ancien format). */

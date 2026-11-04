@@ -4,7 +4,14 @@ import { type NameBook, NO_NAMES } from '../../application/backoffice/backoffice
 import { type MissionView } from '../../application/deps';
 import { type PlaceTypeView } from '../../application/places/place-catalog.use-cases';
 import { NO_LABELS, type RequestLabels } from '../../application/places/request-labels.use-case';
-import { type QuoteRequestGroupView, type StoredSettings } from '../../application/ports';
+import {
+  type GroupOutcome,
+  type QuoteRequestGroupView,
+  type StoredSettings,
+  type VisitEntry,
+} from '../../application/ports';
+import { type ZoneView } from '../../application/catalog/zones.use-cases';
+import { type GroupTotals } from '../../application/groups/group-totals.use-case';
 import { type GeoLocation } from '../../domain/location';
 import { type PlaceType } from '../../domain/place-type';
 import { type Agent, type Team } from '../../domain/agent';
@@ -116,6 +123,7 @@ export function presentRequest(
           report: text(request.visit.report),
           completedAt: iso(request.visit.completedAt),
           agentName: userName(names, request.visit.agentId),
+          groupVisitId: text(request.visit.groupVisitId),
         }
       : undefined,
     quote: request.quote ? presentQuote(request.quote) : undefined,
@@ -165,8 +173,12 @@ export function presentSibling(
 export function presentGroup(
   view: QuoteRequestGroupView,
   labels: RequestLabels = NO_LABELS,
+  totals: GroupTotals = { quotesTotal: null, remainingDue: null },
 ): cleaningV1.QuoteRequestGroup {
   return {
+    // Totaux du groupe (ADR-035) : absents quand inconnus.
+    quotesTotal: optionalMoney(totals.quotesTotal),
+    remainingDue: optionalMoney(totals.remainingDue),
     id: view.group.id,
     placeType: view.group.placeType,
     commune: view.group.commune,
@@ -357,6 +369,7 @@ export function presentSettings(settings: StoredSettings, names: NameBook = NO_N
     businessSuspensionUnpaidInvoices: settings.businessSuspensionUnpaidInvoices,
     individualSuspensionUnpaidInterventions: settings.individualSuspensionUnpaidInterventions,
     individualPaymentGraceHours: settings.individualPaymentGraceHours,
+    locationRetentionMonths: settings.locationRetentionMonths,
     updatedBy: text(settings.updatedBy),
     updatedAt: iso(settings.updatedAt),
     updatedByName: userName(names, settings.updatedBy),
@@ -391,8 +404,11 @@ export function presentServedZone(zone: Zone): cleaningV1.ServedZone {
   return { code: zone.code, commune: zone.commune };
 }
 
-export function presentZone(zone: Zone, names: NameBook = NO_NAMES): cleaningV1.Zone {
+export function presentZone({ zone, activity }: ZoneView, names: NameBook = NO_NAMES): cleaningV1.Zone {
   return {
+    // Activité de la zone (ADR-035).
+    openRequests: activity.openRequests,
+    activeMissions: activity.activeMissions,
     code: zone.code,
     commune: zone.commune,
     aliases: zone.aliases,
@@ -400,5 +416,54 @@ export function presentZone(zone: Zone, names: NameBook = NO_NAMES): cleaningV1.
     updatedBy: text(zone.updatedBy),
     updatedAt: iso(zone.updatedAt),
     updatedByName: userName(names, zone.updatedBy),
+  };
+}
+
+/** Résultat d'une opération de groupe (ADR-035). */
+export function presentOutcome(outcome: GroupOutcome): cleaningV1.RequestGroupOutcome {
+  return {
+    groupId: outcome.groupId,
+    affectedRequestIds: outcome.affectedIds,
+    skipped: outcome.skippedRequests.map((entry) => ({ ...entry })),
+    groupVisitId: text(outcome.groupVisitId),
+    missionIds: outcome.missionIds,
+  };
+}
+
+/** Visite vue d'un agent ou de la supervision (ADR-035) : une entrée par visite commune ou seule. */
+export function presentVisit(
+  entry: VisitEntry,
+  names: NameBook = NO_NAMES,
+  labels: RequestLabels = NO_LABELS,
+): cleaningV1.VisitSummary {
+  const lead = entry.requests[0];
+  const visit = lead?.visit;
+  return {
+    id: entry.id,
+    groupVisitId: text(visit?.groupVisitId),
+    groupId: text(lead?.groupId),
+    status: visit?.status ?? '',
+    scheduledAt: iso(visit?.scheduledAt),
+    completedAt: iso(visit?.completedAt),
+    report: text(visit?.report),
+    agentId: visit?.agentId ?? '',
+    agentName: userName(names, visit?.agentId),
+    customerId: lead?.customerId ?? '',
+    customerName: userName(names, lead?.customerId),
+    organizationName: organizationName(names, lead?.organizationId),
+    commune: lead?.commune ?? '',
+    address: lead?.address ?? '',
+    location: presentLocation(lead?.location ?? null),
+    landmark: text(lead?.landmark),
+    geocodedAddress: text(lead?.geocodedAddress),
+    placeType: text(lead?.placeType),
+    placeTypeLabel: (lead?.placeType && labels.placeTypeLabels.get(lead.placeType)) || '',
+    requests: entry.requests.map((request) => ({
+      requestId: request.id,
+      visitId: request.visit?.id ?? '',
+      serviceCode: request.serviceCode,
+      serviceName: labels.serviceNames.get(request.serviceCode) ?? '',
+      status: request.status,
+    })),
   };
 }

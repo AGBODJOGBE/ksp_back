@@ -7,6 +7,7 @@ import { type QuoteRequest } from '../../domain/quote-request';
 import {
   money,
   presentGroup,
+  presentOutcome,
   presentLine,
   presentMission,
   presentOffer,
@@ -191,13 +192,37 @@ export class QuoteGrpcController implements cleaningV1.QuoteServiceController {
     return { group: await this.group(await this.useCases.getMyRequestGroup.execute(request.groupId)) };
   }
 
+  async cancelRequestGroup(
+    request: cleaningV1.CancelRequestGroupRequest,
+  ): Promise<cleaningV1.CancelRequestGroupResponse> {
+    const outcome = await this.useCases.cancelRequestGroup.execute(request);
+    return {
+      outcome: presentOutcome(outcome),
+      group: await this.group(await this.useCases.getMyRequestGroup.execute(outcome.groupId)),
+    };
+  }
+
+  async acceptGroupQuotes(
+    request: cleaningV1.AcceptGroupQuotesRequest,
+  ): Promise<cleaningV1.AcceptGroupQuotesResponse> {
+    const outcome = await this.useCases.acceptGroupQuotes.execute(request);
+    return {
+      outcome: presentOutcome(outcome),
+      group: await this.group(await this.useCases.getMyRequestGroup.execute(outcome.groupId)),
+    };
+  }
+
   /** Demande avec ses libellés (prestation, lieu, taille du groupe ; ADR-034). */
   private async request(request: QuoteRequest): Promise<cleaningV1.QuoteRequest> {
     return presentRequest(request, undefined, await this.useCases.describeRequests.execute([request]));
   }
 
   private async group(view: QuoteRequestGroupView): Promise<cleaningV1.QuoteRequestGroup> {
-    return presentGroup(view, await this.useCases.describeRequests.execute(view.requests));
+    const [labels, totals] = await Promise.all([
+      this.useCases.describeRequests.execute(view.requests),
+      this.useCases.groupTotals.execute(view),
+    ]);
+    return presentGroup(view, labels, totals);
   }
 }
 

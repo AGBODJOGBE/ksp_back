@@ -62,7 +62,7 @@ export class IssueDueInvoicesUseCase {
           periodIndex: period.index,
           periodStart: period.start,
           periodEnd: period.end,
-          lines: periodLines(period),
+          lines: periodLines(period, contract.serviceName ?? null),
           total: period.amount,
           issuedAt: now,
           dueAt: dueDate(now, paymentTermDays),

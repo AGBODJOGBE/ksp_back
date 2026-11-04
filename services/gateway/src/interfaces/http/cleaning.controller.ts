@@ -73,6 +73,33 @@ export class CleaningHttpController {
     return this.cleaning.getMyQuoteRequestGroup(idFrom(id));
   }
 
+  @Route('cancelCleaningRequestGroup')
+  cancelQuoteRequestGroup(
+    @Param('id') id: unknown,
+    @Body() body: unknown,
+    @Headers('idempotency-key') key: unknown,
+  ) {
+    const groupId = idFrom(id);
+    const idempotencyKey = keyFrom(key);
+    const input = optionalBody<{ reason?: string }>(requestBodies.cancelCleaningRequestGroup, body);
+    return this.cleaning.cancelQuoteRequestGroup(groupId, input.reason, idempotencyKey);
+  }
+
+  @Route('acceptCleaningQuoteGroup')
+  acceptQuoteGroup(
+    @Param('id') id: unknown,
+    @Body() body: unknown,
+    @Headers('idempotency-key') key: unknown,
+  ) {
+    const groupId = idFrom(id);
+    const idempotencyKey = keyFrom(key);
+    return this.cleaning.acceptQuoteGroup(
+      groupId,
+      parseBody(requestBodies.acceptCleaningQuoteGroup, body),
+      idempotencyKey,
+    );
+  }
+
   @Route('requestCleaningQuote')
   requestQuote(@Body() body: unknown, @Headers('idempotency-key') key: unknown) {
     const idempotencyKey = keyFrom(key);

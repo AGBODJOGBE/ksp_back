@@ -5,7 +5,8 @@ import { CLEANING_USE_CASES, type CleaningUseCases } from '../../application/use
 /**
  * Abonnement aux décisions de KSP sur les organisations (files
  * cleaning.identity.organization.suspended et cleaning.identity.organization.reactivated) :
- * suspension et reprise de leurs missions (ADR-030). Seul l'identifiant de l'organisation est
+ * suspension et reprise de leurs missions (ADR-030) ; comptes anonymisés (identity.user.deleted) :
+ * effacement de la position de leurs dossiers (ADR-035). Seul l'identifiant de l'organisation est
  * journalisé (ni raison sociale ni motif). Un échec renvoie le message en file de reprise ; le
  * traitement est idempotent (inbox).
  */
@@ -44,6 +45,16 @@ export class IdentityEventsConsumer implements OnApplicationBootstrap {
         `Organisation ${envelope.payload.organizationId} réactivée : ` +
           `cause levée sur ${outcome.changed} mission(s) en cours sur ${outcome.examined}`,
       );
+    });
+    // Compte anonymisé (UC-ID-11, ADR-035) : position effacée de ses demandes et missions. Événement
+    // du contrat, pas encore publié par identity : actif dès qu'il le sera. Aucun identifiant journalisé.
+    await this.consumer.subscribe('identity.user.deleted', async (envelope) => {
+      const outcome = await this.useCases.eraseCustomerLocations.execute({
+        eventId: envelope.eventId,
+        eventType: envelope.type,
+        userId: envelope.payload.userId,
+      });
+      if (outcome === 'processed') this.logger.log('Compte anonymisé : positions effacées');
     });
   }
 }

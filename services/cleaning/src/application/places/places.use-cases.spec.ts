@@ -492,9 +492,22 @@ describe('parcours par lieu : groupe de demandes (ADR-034)', () => {
     ).toEqual([]);
   });
 
-  it('plafond des demandes ouvertes appliqué au groupe entier', async () => {
+  it('plafond des demandes ouvertes : un groupe compte pour 1, ouvert tant qu’une demande l’est (ADR-035)', async () => {
     w.catalog.settings = { ...w.catalog.settings, maxOpenRequests: 1 };
-    expect(await code(create())).toBe('CLEANING_TOO_MANY_OPEN_REQUESTS');
+    const view = await create();
+    expect(view.requests).toHaveLength(2);
+    expect(await w.requests.countOpen(CUSTOMER_ID, w.clock.now())).toBe(1);
+    expect(await code(create({ idempotencyKey: 'grp-0002' }))).toBe('CLEANING_TOO_MANY_OPEN_REQUESTS');
+    // Une demande encore ouverte garde le groupe ouvert.
+    await asCustomer(() =>
+      new CancelRequestUseCase(w).execute({ requestId: view.requests[0]!.id, reason: '' }),
+    );
+    expect(await w.requests.countOpen(CUSTOMER_ID, w.clock.now())).toBe(1);
+    await asCustomer(() =>
+      new CancelRequestUseCase(w).execute({ requestId: view.requests[1]!.id, reason: '' }),
+    );
+    expect(await w.requests.countOpen(CUSTOMER_ID, w.clock.now())).toBe(0);
+    expect(await code(create({ idempotencyKey: 'grp-0003' }))).toBe('ok');
   });
 });
 
@@ -566,13 +579,13 @@ describe('types de lieu au back-office (ADR-034)', () => {
     const first = await asAdmin(() =>
       new SaveZoneUseCase(w).execute({ commune: 'Sèmè-Podji', aliases: ['Sèmè-Kpodji'] }),
     );
-    expect(first.aliases).toEqual(['Sèmè-Kpodji']);
+    expect(first.zone.aliases).toEqual(['Sèmè-Kpodji']);
     const kept = await asAdmin(() => new SaveZoneUseCase(w).execute({ commune: 'Sèmè-Podji' }));
-    expect(kept.aliases).toEqual(['Sèmè-Kpodji']);
+    expect(kept.zone.aliases).toEqual(['Sèmè-Kpodji']);
     const cleared = await asAdmin(() =>
       new SaveZoneUseCase(w).execute({ commune: 'Sèmè-Podji', aliases: [] }),
     );
-    expect(cleared.aliases).toEqual([]);
+    expect(cleared.zone.aliases).toEqual([]);
     expect(
       await details(
         asAdmin(() => new SaveZoneUseCase(w).execute({ commune: 'Sèmè-Podji', aliases: ['Sèmè Podji'] })),

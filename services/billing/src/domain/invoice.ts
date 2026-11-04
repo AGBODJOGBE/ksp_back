@@ -163,13 +163,14 @@ const days = (count: number) => `${count} jour${count > 1 ? 's' : ''}`;
  * Ligne d'une facture mensuelle : le mois civil, les jours facturés sur les jours du mois et,
  * s'il y en a, les jours de suspension déduits. Forfait (quantité 1) au montant proratisé.
  */
-export function periodLines(period: ContractPeriod): InvoiceLine[] {
+export function periodLines(period: ContractPeriod, serviceName: string | null = null): InvoiceLine[] {
   const billed = period.contractDays - period.suspendedDays;
   const suspension = period.suspendedDays ? `, ${days(period.suspendedDays)} de suspension déduits` : '';
   return [
     {
       label:
-        `Prestation de nettoyage — ${MONTHS[period.month - 1]} ${period.year} : ` +
+        // Nom de la prestation (ADR-035) : « Nettoyage de bureaux — novembre 2026 ».
+        `${serviceName?.trim() || 'Prestation de nettoyage'} — ${MONTHS[period.month - 1]} ${period.year} : ` +
         `${days(billed)} sur ${period.daysInMonth}${suspension}`,
       quantity: 1,
       unitPrice: period.amount,

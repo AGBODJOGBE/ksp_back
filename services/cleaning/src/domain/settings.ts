@@ -18,6 +18,11 @@ export interface CleaningSettings {
   individualSuspensionUnpaidInterventions: number;
   /** Heures laissées après la fin d'un passage pour enregistrer son paiement (24). */
   individualPaymentGraceHours: number;
+  /**
+   * Mois de conservation de la position GPS d'une demande ou d'une mission clôturée (ADR-035) :
+   * au-delà, coordonnées, précision, repère et adresse géocodée sont effacés (12).
+   */
+  locationRetentionMonths: number;
 }
 
 export const DEFAULT_SETTINGS: CleaningSettings = {
@@ -31,6 +36,7 @@ export const DEFAULT_SETTINGS: CleaningSettings = {
   businessSuspensionUnpaidInvoices: 2,
   individualSuspensionUnpaidInterventions: 1,
   individualPaymentGraceHours: 24,
+  locationRetentionMonths: 12,
 };
 
 const BOUNDS: Record<keyof CleaningSettings, [number, number]> = {
@@ -44,6 +50,7 @@ const BOUNDS: Record<keyof CleaningSettings, [number, number]> = {
   businessSuspensionUnpaidInvoices: [1, 24],
   individualSuspensionUnpaidInterventions: [1, 50],
   individualPaymentGraceHours: [1, 720],
+  locationRetentionMonths: [1, 120],
 };
 
 /**
@@ -65,12 +72,16 @@ export function settingsProblems(settings: CleaningSettings): string[] {
   return problems;
 }
 
-/** Réglages de la partie 10, ajoutés après coup : à l'écriture, 0 garde la valeur en vigueur. */
+/**
+ * Réglages ajoutés après coup (partie 10, puis conservation de la position, ADR-035) : à l'écriture,
+ * 0 garde la valeur en vigueur.
+ */
 export const STANDING_SETTING_KEYS = [
   'businessWarningUnpaidInvoices',
   'businessSuspensionUnpaidInvoices',
   'individualSuspensionUnpaidInterventions',
   'individualPaymentGraceHours',
+  'locationRetentionMonths',
 ] as const;
 
 /**

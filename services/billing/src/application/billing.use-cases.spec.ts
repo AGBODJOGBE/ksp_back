@@ -64,6 +64,23 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     });
   });
 
+  it('nom de la prestation repris dans le libellé de la facture (ADR-035)', async () => {
+    const named = booking(ORGANIZATION_ID, event(3));
+    named.payload.missionId = event(60);
+    await useCases.registerContract.execute({
+      ...named,
+      payload: { ...named.payload, serviceName: 'Nettoyage de bureaux' },
+    });
+    expect(world.contracts.contracts.get(event(60))!.serviceName).toBe('Nettoyage de bureaux');
+    world.clock.current = new Date('2026-12-01T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    const labels = [...world.invoices.invoices.values()].map((invoice) => invoice.lines[0]!.label);
+    expect(labels.sort()).toEqual([
+      'Nettoyage de bureaux — novembre 2026 : 30 jours sur 30',
+      'Prestation de nettoyage — novembre 2026 : 30 jours sur 30',
+    ]);
+  });
+
   it('émission à la fin du mois civil, idempotente, numérotée, échéance à 10 jours', async () => {
     world.clock.current = new Date('2026-11-30T22:59:00Z');
     expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 0, deferredContractIds: [] });

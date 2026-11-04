@@ -16,6 +16,8 @@ export const configSchema = baseServiceConfigSchema
   .safeExtend({
     /** Intervalle de la surveillance des passages impayés des particuliers (1 heure ; 0 : désactivée). */
     CLEANING_PAYMENT_WATCH_INTERVAL_MS: z.coerce.number().int().min(0).default(3_600_000),
+    /** Intervalle de la purge des positions GPS (ADR-035) : 6 heures ; 0 : désactivée. */
+    CLEANING_LOCATION_PURGE_INTERVAL_MS: z.coerce.number().int().min(0).default(21_600_000),
     /** Adresse gRPC d'identity : noms affichés au back-office (GetUsersByIds, GetOrganizationsByIds, ADR-029). */
     IDENTITY_GRPC_URL: z.string().min(1).default('localhost:50051'),
     /** Fuseau des contrôles de dates du terrain (Bénin). */

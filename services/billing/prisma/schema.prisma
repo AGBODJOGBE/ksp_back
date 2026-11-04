@@ -68,6 +68,8 @@ model BillingContract {
   /// Suspensions terminées : [{ from, to }] ; un mois qui finit pendant l'une d'elles n'est pas facturé.
   suspensions    Json      @default("[]")
   lastResumedAt  DateTime? @map("last_resumed_at") @db.Timestamptz(3)
+  /// Nom de la prestation à la confirmation (ADR-035), repris dans le libellé des lignes.
+  serviceName    String?   @map("service_name")
   createdAt      DateTime  @map("created_at") @db.Timestamptz(3)
   invoices       Invoice[]
 

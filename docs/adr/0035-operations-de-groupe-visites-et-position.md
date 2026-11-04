@@ -1,0 +1,47 @@
+# ADR-035 — Demandes groupées au back-office, visites des agents et conservation de la position
+
+**Statut** : Proposé (lot 2 ; décisions 1 à 9 et 11 à 13 validées par le responsable le 2026-11-04 ; la décision 10, messages regroupés, est hors de ce lot)
+
+## Contexte
+
+L'ADR-034 crée une demande de devis par prestation, liées par un groupe, et laisse ouvertes les opérations sur le groupe entier : plafond des demandes ouvertes, visite commune, refus ou annulation du groupe, créneaux communs, planification commune. Les agents ne voient pas la liste de leurs visites, la position ne peut pas être corrigée sur place, une zone se désactive sans prévenir des dossiers en cours, et la position GPS (donnée personnelle) est gardée sans limite. Contraintes inchangées : circuit d'une demande intact, contrats par ajout, outbox et audit, idempotence.
+
+## Décision
+
+1. **Plafond** : un groupe compte pour 1 dans `maxOpenRequests`, comme une demande seule ; il est ouvert tant qu'une de ses demandes l'est. 10 prestations au plus par groupe (inchangé).
+2. **Visite commune** : `POST /admin/cleaning/quote-request-groups/{id}/visits` planifie toutes les demandes ouvertes du groupe dont l'état admet une visite, à la même heure, avec le même agent ; les visites partagent `groupVisitId` (colonne `site_visits.group_visit_id`). Un seul `cleaning.visit.scheduled` (champs facultatifs `groupVisitId`, `requestIds`). `excludeRequestIds` **détache** une demande (elle garde sa visite, qui devient la sienne) ; planifier une demande par la route existante la détache de même. Demande avec sa propre visite (`own_visit`) ou déjà visitée (`visit_completed`) : laissée de côté. Compte rendu commun : `POST …/visits/complete`.
+3. **Refus du groupe** (`…/reject`, motif) et 4. **annulation par le client** (`POST /cleaning/quote-request-groups/{id}/cancel`) : la règle de la demande seule s'applique à chaque demande (mêmes événements `cleaning.request.cancelled`, même trace) ; les demandes acceptées ou closes ne changent pas et sont renvoyées dans `skipped` avec leur raison. Aucune demande concernée : `CLEANING_GROUP_NO_ELIGIBLE_REQUEST` (422).
+4. **Devis et acceptation communs** : `…/quotes` envoie un devis par demande listée, chiffré séparément (préremplissage inchangé), avec les mêmes créneaux, tout ou rien ; `POST /cleaning/quote-request-groups/{id}/accept` accepte en une transaction chaque devis envoyé qui propose le créneau choisi (un plan de paiement commun, une mission et un `cleaning.booking.confirmed` par devis) ; les autres sont dans `skipped`. L'acceptation par demande reste possible.
+5. **Planification commune** : `POST /admin/cleaning/mission-groups/{id}/interventions` planifie un passage par mission du groupe, dans une transaction. Les passages d'une mission du **même groupe** (même lieu) ne comptent pas comme conflit, aussi pour la planification d'une seule mission ; les autres passages et les indisponibilités restent contrôlés (`CLEANING_TEAM_UNAVAILABLE`).
+6. **Correction de position** : `PUT /admin/cleaning/quote-requests/{id}/location`, supervision ou agent de la visite **encore planifiée** de la demande ; commune recalculée par le géocodeur (repli sur la commune fournie, zone desservie exigée), appliquée à tout le groupe et aux missions non terminées dans une transaction, tracée dans l'audit sans coordonnées. Devis et calculs déjà faits inchangés.
+7. **Visites des agents** : `GET /admin/cleaning/visits` (rôles de terrain et supervision) ; un agent ne voit que ses visites, la supervision filtre par agent, période, état, groupe ; une visite commune est une seule entrée. `CompleteVisit` (par demande) et le compte rendu commun sont ouverts à l'agent affecté.
+8. **Zones** : `ListZones` et la désactivation rendent `openRequests` et `activeMissions` ; avec une activité non nulle, la désactivation exige `{ "confirm": true }`, sinon `CLEANING_ZONE_HAS_ACTIVITY` (409). Les dossiers en cours continuent.
+9. **Totaux du groupe** : `quotesTotal` (devis envoyés encore valables ou acceptés) et `remainingDue` (missions non annulées) en entiers XOF, `null` si inconnus (entreprise : réglée par ses factures). Pas de paiement groupé.
+10. **Factures d'entreprise** : billing garde `serviceName` de `cleaning.booking.confirmed` sur le contrat (`billing_contracts.service_name`) et l'écrit dans le libellé (« Nettoyage de bureaux — novembre 2026 : … ») ; sans lui, ancien libellé. Une facture par contrat.
+11. **Position** : (a) un agent seul ne voit plus la position, le repère ni l'adresse géocodée d'une mission ou d'une visite terminée ou annulée (`null` ; l'adresse qui n'est que le repère est vidée) ; la supervision garde l'accès ; (b) purge périodique (`CLEANING_LOCATION_PURGE_INTERVAL_MS`, 6 h) des demandes et missions clôturées depuis plus de `locationRetentionMonths` mois (réglage back-office, 12 par défaut), par lots, idempotente ; (c) effacement de toutes les positions d'un client à `identity.user.deleted`.
+12. **Idempotence** : chaque opération de groupe est enregistrée (`request_group_operations`, clé (auteur, opération, clé), résultat gardé) dans la transaction de l'opération : `Idempotency-Key` obligatoire côté client, facultative au back-office ; une clé réutilisée pour un autre groupe : `CLEANING_IDEMPOTENCY_KEY_REUSED` (409).
+13. **Contrats par ajout** : 9 RPC (`QuoteService/CancelRequestGroup`, `AcceptGroupQuotes`, `CleaningAdminService/ScheduleGroupVisit`, `CompleteGroupVisit`, `RejectRequestGroup`, `SendGroupQuotes`, `CorrectRequestLocation`, `ListVisits`, `ScheduleGroupInterventions`), champs ajoutés (`SiteVisit.group_visit_id`, totaux du groupe, activité des zones, `DeactivateZoneRequest.confirm`, `Settings.location_retention_months`) ; OpenAPI : 9 routes, `completeCleaningVisit` ouverte à `cleaning_agent`, corps facultatif de la désactivation. Migrations `cleaning/0009` et `billing/0006`, additives.
+
+## Alternatives écartées
+
+- **Une demande « mère » pour le groupe** : aurait changé tout le circuit aval ; les opérations de groupe appliquent la règle de chaque demande.
+- **Erreur dès qu'une demande du groupe ne s'y prête pas** : bloquerait le groupe pour une seule demande acceptée ; la liste `skipped` est plus utile au front.
+- **Garder la position tant que le compte existe** : donnée personnelle sans usage après la clôture.
+
+## Conséquences
+
+- `cleaning` : domaine `request-group.ts`, conflits par groupe (`conflictingAgents`), masquage et date limite (`location.ts`) ; cas d'usage dans `application/groups`, `places/location-correction`, `privacy` ; tâche `LocationPurgeService` ; abonnement à `identity.user.deleted`.
+- `gateway` : 9 routes, schémas zod, présentateurs. `billing` : colonne et libellé.
+- Déploiement : migrations, puis `cleaning`, puis `billing` et la `gateway`.
+
+## À valider
+
+- Une demande déjà visitée (`visit_completed`) n'entre pas dans une nouvelle visite commune (route par demande pour la revisiter).
+- Opération de groupe sans demande concernée : erreur 422 plutôt qu'une réponse vide.
+- Acceptation commune : les devis qui ne proposent pas le créneau sont ignorés (pas d'erreur).
+- « Même créneau » lu comme « créneaux qui se chevauchent » dans un même groupe, aussi pour la planification d'une seule mission.
+- Correction de position : refusée vers une commune non desservie ; devis et calculs non recalculés ; agent limité à une visite encore planifiée.
+- Liste des visites : nom du client seulement — cleaning ne reçoit pas le téléphone (ADR-029), comme les missions.
+- `remainingDue` à `null` pour une entreprise.
+- Purge : adresse vidée quand elle n'est que le repère ; demande au devis expiré purgée N mois après sa validité ; aucune trace d'audit par purge (nombres journalisés).
+- `identity.user.deleted` est défini dans les contrats mais pas encore publié par identity : l'effacement à la suppression du compte ne fonctionnera qu'une fois l'événement publié.

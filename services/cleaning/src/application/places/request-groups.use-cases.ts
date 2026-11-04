@@ -1,10 +1,8 @@
 import { legacyPremisesType, legacyQuantity } from '../../domain/answers';
-import { type GeocodingProvider } from '../../domain/location';
+
 import { type QuoteRequest, type QuoteRequestGroup, VISIT_REQUIRED } from '../../domain/quote-request';
 import { respectsLeadTime } from '../../domain/schedule';
 import { calculatePrice } from '../../domain/simulator';
-import { communeKey } from '../../domain/location';
-import { findActiveZone } from '../../domain/zone';
 import { type CleaningDeps, presentRequest } from '../deps';
 import { type AuditEntry, type OutboxMessage, type QuoteRequestGroupView } from '../ports';
 import { MAX_PREFERRED_SLOTS } from '../requests/customer-requests.use-cases';
@@ -18,7 +16,7 @@ import {
   requirePositiveInt,
   requireUuid,
 } from '../shared/validation';
-import { locate, parseLocation } from './location.use-cases';
+import { chooseCommune, parseLocation } from './location.use-cases';
 import { activePlaceType, type PlaceItemInput, resolvePlaceItems } from './place-items';
 
 /**
@@ -42,13 +40,6 @@ export interface RequestQuoteGroupInput {
   preferredSlots: { start: string; end: string }[];
   comment?: string | null | undefined;
   recurrence?: { period: string; visitsPerPeriod: number; durationMonths: number } | undefined;
-}
-
-/** Commune retenue pour le groupe : celle du géocodage, jamais celle du client quand il réussit. */
-interface ChosenCommune {
-  commune: string;
-  provider: GeocodingProvider | null;
-  displayAddress: string | null;
 }
 
 /** Groupe tel qu'il s'affiche : un devis dont la validité est dépassée apparaît expiré. */
@@ -96,10 +87,9 @@ export class RequestQuoteGroupUseCase {
     if (preferredSlots.some((slot) => !respectsLeadTime(slot.start, now, settings.minimumLeadHours))) {
       throw CleaningErrors.leadTimeTooShort(settings.minimumLeadHours);
     }
-    const { commune, provider, displayAddress } = await this.chooseCommune(location, fallbackCommune);
-    // Chaque prestation est une demande ouverte : le plafond s'applique au groupe entier.
-    const open = await this.deps.requests.countOpen(customer.userId, now);
-    if (open + items.length > settings.maxOpenRequests) {
+    const { commune, provider, displayAddress } = await chooseCommune(this.deps, location, fallbackCommune);
+    // Le groupe compte pour 1 dans le plafond, comme une demande seule (ADR-035).
+    if ((await this.deps.requests.countOpen(customer.userId, now)) >= settings.maxOpenRequests) {
       throw CleaningErrors.tooManyOpenRequests(settings.maxOpenRequests);
     }
 
@@ -192,25 +182,6 @@ export class RequestQuoteGroupUseCase {
     });
     const result = await this.deps.requests.createGroup(group, requests, key, { events, audit });
     return presentGroup(result.value, now);
-  }
-
-  /**
-   * Commune du groupe : celle trouvée par géocodage (la commune envoyée est alors ignorée), refusée
-   * si elle n'est pas desservie ; sans résultat, celle choisie par le client, contrôlée de même.
-   */
-  private async chooseCommune(
-    location: { latitude: number; longitude: number },
-    fallback: string | null,
-  ): Promise<ChosenCommune> {
-    const { place, match } = await locate(this.deps, location);
-    if (place && match) {
-      if (!match.zone) throw CleaningErrors.zoneNotCovered(match.commune);
-      return { commune: match.zone.commune, provider: place.provider, displayAddress: place.displayAddress };
-    }
-    if (!fallback) throw CleaningErrors.locationUnresolved();
-    const zone = findActiveZone(await this.deps.catalog.listZones(), communeKey(fallback));
-    if (!zone) throw CleaningErrors.zoneNotCovered(fallback);
-    return { commune: zone.commune, provider: null, displayAddress: place?.displayAddress ?? null };
   }
 }
 

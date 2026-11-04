@@ -179,3 +179,14 @@ VALUES ('0192f1c4-de70-7000-8000-0000000b0005', '0192f1c4-de70-7000-8000-0000000
   '[{"start":"2026-11-22T08:00:00.000Z","end":"2026-11-22T11:00:00.000Z"}]'::jsonb, 1,
   '2026-10-20T09:00:00Z', '2026-10-20T09:00:00Z')
 ON CONFLICT ("id") DO NOTHING;
+
+-- Visite technique commune (ADR-035) : la maison et le jardin du premier groupe sont visités ensemble,
+-- même heure, même agent (identifiant de visite commune partagé). Rejouable.
+INSERT INTO "site_visits" ("id", "request_id", "status", "scheduled_at", "agent_id", "group_visit_id")
+VALUES ('0192f1c4-de70-7000-8000-0000000d0003', '0192f1c4-de70-7000-8000-0000000b0001', 'scheduled', '2026-11-10T09:00:00Z',
+  '0192f1c4-de70-7000-8000-0000000f0001', '0192f1c4-de70-7000-8000-0000000e0001')
+ON CONFLICT ("id") DO NOTHING;
+UPDATE "site_visits" SET "group_visit_id" = '0192f1c4-de70-7000-8000-0000000e0001'
+WHERE "id" = '0192f1c4-de70-7000-8000-0000000d0001' AND "group_visit_id" IS NULL;
+UPDATE "quote_requests" SET "status" = 'visit_scheduled'
+WHERE "id" = '0192f1c4-de70-7000-8000-0000000b0001' AND "status" = 'received';

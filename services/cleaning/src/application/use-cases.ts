@@ -25,6 +25,17 @@ import {
   ListMyMissionsUseCase,
 } from './missions/customer-missions.use-cases';
 import { DeactivateZoneUseCase, ListZonesUseCase, SaveZoneUseCase } from './catalog/zones.use-cases';
+import { CancelRequestGroupUseCase, RejectRequestGroupUseCase } from './groups/group-decisions.use-cases';
+import { ScheduleGroupInterventionsUseCase } from './groups/group-interventions.use-case';
+import { AcceptGroupQuotesUseCase, SendGroupQuotesUseCase } from './groups/group-quotes.use-cases';
+import { GetRequestGroupUseCase, GroupTotalsUseCase } from './groups/group-totals.use-case';
+import {
+  CompleteGroupVisitUseCase,
+  ListVisitsUseCase,
+  ScheduleGroupVisitUseCase,
+} from './groups/group-visits.use-cases';
+import { CorrectLocationUseCase } from './places/location-correction.use-case';
+import { EraseCustomerLocationsUseCase, PurgeLocationsUseCase } from './privacy/location-privacy.use-cases';
 import { HasPendingObligationsUseCase } from './obligations/has-pending-obligations.use-case';
 import { ResolveLocationUseCase } from './places/location.use-cases';
 import { DescribeRequestsUseCase } from './places/request-labels.use-case';
@@ -142,6 +153,20 @@ export function createUseCases(deps: CleaningDeps) {
     handleOrganizationEvent: new HandleOrganizationEventUseCase(deps, reconcileOrganization),
     getMissionAmountDue: new GetMissionAmountDueUseCase(deps),
     recordOnlinePayment: new RecordOnlinePaymentUseCase(deps, evaluateStanding),
+    // Demandes groupées, visites, position (ADR-035).
+    rejectRequestGroup: new RejectRequestGroupUseCase(deps),
+    cancelRequestGroup: new CancelRequestGroupUseCase(deps),
+    scheduleGroupVisit: new ScheduleGroupVisitUseCase(deps),
+    completeGroupVisit: new CompleteGroupVisitUseCase(deps),
+    listVisits: new ListVisitsUseCase(deps),
+    sendGroupQuotes: new SendGroupQuotesUseCase(deps),
+    acceptGroupQuotes: new AcceptGroupQuotesUseCase(deps),
+    scheduleGroupInterventions: new ScheduleGroupInterventionsUseCase(deps),
+    groupTotals: new GroupTotalsUseCase(deps),
+    getRequestGroup: new GetRequestGroupUseCase(deps),
+    correctLocation: new CorrectLocationUseCase(deps),
+    purgeLocations: new PurgeLocationsUseCase(deps),
+    eraseCustomerLocations: new EraseCustomerLocationsUseCase(deps),
   };
 }
 

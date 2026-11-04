@@ -46,6 +46,7 @@ export function toContract(row: ContractRow): BillingContract {
       to: new Date(interval.to),
     })),
     lastResumedAt: row.lastResumedAt,
+    serviceName: row.serviceName,
     createdAt: row.createdAt,
   };
 }
@@ -67,6 +68,7 @@ export function contractColumns(contract: BillingContract) {
       })),
     ),
     lastResumedAt: contract.lastResumedAt,
+    serviceName: contract.serviceName ?? null,
   };
 }
 

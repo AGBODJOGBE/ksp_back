@@ -3,7 +3,7 @@ import { isCovered } from '../../domain/zone';
 import { legacyPremisesType, legacyQuantity } from '../../domain/answers';
 import { type Mission } from '../../domain/mission';
 import { isValidPlan, newPaymentState, type PaymentPlan } from '../../domain/payment';
-import { findProposedSlot, isQuoteExpired } from '../../domain/quote';
+import { findProposedSlot, isQuoteExpired, type Quote } from '../../domain/quote';
 import {
   canTransitionRequest,
   effectiveRequestStatus,
@@ -11,7 +11,7 @@ import {
   type QuoteRequest,
   type RequestStatus,
 } from '../../domain/quote-request';
-import { respectsLeadTime } from '../../domain/schedule';
+import { respectsLeadTime, type Slot } from '../../domain/schedule';
 import { calculatePrice } from '../../domain/simulator';
 import { activeService } from '../catalog/catalog.use-cases';
 import { type PricingInput, resolveAnswers } from '../catalog/pricing-input';
@@ -224,13 +224,106 @@ const PAYMENT_PLAN_REQUIRED_MESSAGE =
   'Choisissez votre option de paiement : acompte ou totalité, avant ou après la mission, et le moyen de paiement.';
 
 /** Plan de la mission : celui de l'entreprise, ou celui choisi par le particulier (obligatoire). */
-function paymentPlanFor(request: QuoteRequest, input: AcceptQuoteInput['paymentPlan']): PaymentPlan {
+export function paymentPlanFor(request: QuoteRequest, input: AcceptQuoteInput['paymentPlan']): PaymentPlan {
   if (request.customerKind === 'business') return BUSINESS_PAYMENT_PLAN;
   // Message protobuf absent : décodé à null par le serveur gRPC ; un plan vide est refusé de même.
   if (!input?.option) throw CleaningErrors.invalid('paymentPlan', PAYMENT_PLAN_REQUIRED_MESSAGE);
   const plan = input as PaymentPlan;
   if (!isValidPlan(plan)) throw CleaningErrors.invalid('paymentPlan', "L'option de paiement est invalide.");
   return plan;
+}
+
+/** Mission créée par l'acceptation d'un devis (demande seule ou acceptation de groupe, ADR-035). */
+export function newMission(
+  deps: CleaningDeps,
+  request: QuoteRequest,
+  quote: Quote,
+  slot: Slot,
+  plan: PaymentPlan,
+  now: Date,
+): Mission {
+  return {
+    id: deps.ids.next(),
+    requestId: request.id,
+    quoteId: quote.id,
+    customerId: request.customerId,
+    organizationId: request.organizationId,
+    status: 'to_schedule',
+    serviceCode: request.serviceCode,
+    commune: request.commune,
+    address: request.address,
+    // Position et repère copiés de la demande (ADR-034) : les agents vont sur place.
+    location: request.location,
+    landmark: request.landmark,
+    groupId: request.groupId,
+    placeType: request.placeType,
+    chosenSlot: slot,
+    recurrence: quote.recurrence,
+    plannedInterventions: quote.interventionCount,
+    interventions: [],
+    payment: newPaymentState(
+      { option: plan.option, timing: plan.timing, method: plan.method },
+      quote.total,
+      quote.depositPercent,
+    ),
+    cancellationReason: null,
+    daysPerWeek: request.daysPerWeek,
+    suspension: null,
+    warningLevel: 0,
+    createdAt: now,
+    updatedAt: now,
+    version: 0,
+  };
+}
+
+/** Événement cleaning.booking.confirmed et trace de l'acceptation d'un devis. */
+export async function bookingChanges(
+  deps: CleaningDeps,
+  actorId: string,
+  request: QuoteRequest,
+  quote: Quote,
+  mission: Mission,
+  now: Date,
+  extra: Record<string, unknown> = {},
+): Promise<Changes> {
+  const subject = await eventSubject(deps, request);
+  return {
+    events: [
+      {
+        type: 'cleaning.booking.confirmed',
+        payload: {
+          ...subject,
+          requestId: request.id,
+          quoteId: quote.id,
+          missionId: mission.id,
+          customerId: request.customerId,
+          organizationId: request.organizationId,
+          total: { amount: quote.total, currency: 'XOF' },
+          plannedInterventions: quote.interventionCount,
+          recurrence: quote.recurrence,
+          paymentPlan: mission.payment.plan,
+          depositAmount: { amount: mission.payment.depositAmount, currency: 'XOF' },
+          startsAt: mission.chosenSlot.start.toISOString(),
+        },
+      },
+    ],
+    audit: [
+      {
+        actorId,
+        action: 'quote.accepted',
+        entityType: 'quote_request',
+        entityId: request.id,
+        at: now,
+        details: {
+          missionId: mission.id,
+          quoteId: quote.id,
+          total: quote.total,
+          payment: mission.payment.plan,
+          ...extra,
+        },
+      },
+    ],
+  };
 }
 
 /** UC-CL-04 : accepter le devis ; la mission est créée avec l'option de paiement choisie. */
@@ -258,76 +351,14 @@ export class AcceptQuoteUseCase {
     }
     const plan = paymentPlanFor(request, input.paymentPlan);
 
-    const mission: Mission = {
-      id: this.deps.ids.next(),
-      requestId: request.id,
-      quoteId: quote.id,
-      customerId: request.customerId,
-      organizationId: request.organizationId,
-      status: 'to_schedule',
-      serviceCode: request.serviceCode,
-      commune: request.commune,
-      address: request.address,
-      // Position et repère copiés de la demande (ADR-034) : les agents vont sur place.
-      location: request.location,
-      landmark: request.landmark,
-      groupId: request.groupId,
-      placeType: request.placeType,
-      chosenSlot: slot,
-      recurrence: quote.recurrence,
-      plannedInterventions: quote.interventionCount,
-      interventions: [],
-      payment: newPaymentState(
-        { option: plan.option, timing: plan.timing, method: plan.method },
-        quote.total,
-        quote.depositPercent,
-      ),
-      cancellationReason: null,
-      daysPerWeek: request.daysPerWeek,
-      suspension: null,
-      warningLevel: 0,
-      createdAt: now,
-      updatedAt: now,
-      version: 0,
-    };
+    const mission = newMission(this.deps, request, quote, slot, plan, now);
     const accepted: QuoteRequest = { ...request, status: 'accepted', missionId: mission.id, updatedAt: now };
-    const subject = await eventSubject(this.deps, request);
-    const outcome = await this.deps.requests.accept(accepted, mission, key, {
-      events: [
-        {
-          type: 'cleaning.booking.confirmed',
-          payload: {
-            ...subject,
-            requestId: request.id,
-            quoteId: quote.id,
-            missionId: mission.id,
-            customerId: request.customerId,
-            organizationId: request.organizationId,
-            total: { amount: quote.total, currency: 'XOF' },
-            plannedInterventions: quote.interventionCount,
-            recurrence: quote.recurrence,
-            paymentPlan: mission.payment.plan,
-            depositAmount: { amount: mission.payment.depositAmount, currency: 'XOF' },
-            startsAt: slot.start.toISOString(),
-          },
-        },
-      ],
-      audit: [
-        {
-          actorId: customer.userId,
-          action: 'quote.accepted',
-          entityType: 'quote_request',
-          entityId: request.id,
-          at: now,
-          details: {
-            missionId: mission.id,
-            quoteId: quote.id,
-            total: quote.total,
-            payment: mission.payment.plan,
-          },
-        },
-      ],
-    });
+    const outcome = await this.deps.requests.accept(
+      accepted,
+      mission,
+      key,
+      await bookingChanges(this.deps, customer.userId, request, quote, mission, now),
+    );
     if (outcome.status === 'conflict') throw CleaningErrors.concurrentUpdate();
     // L'acceptation se fait au nom du titulaire, quel que soit son contexte actif : c'est la
     // demande qui porte l'organisation (ADR-030).
@@ -366,6 +397,47 @@ export class CancelRequestUseCase {
   }
 }
 
+/**
+ * Événement cleaning.request.cancelled et trace d'une demande close par le client ou refusée par
+ * la supervision (demande seule ou opération de groupe, ADR-035).
+ */
+export async function closingChanges(
+  deps: CleaningDeps,
+  actorId: string,
+  request: QuoteRequest,
+  to: 'declined' | 'cancelled' | 'rejected',
+  now: Date,
+  extra: Record<string, unknown> | null = null,
+): Promise<Changes> {
+  const subject = await eventSubject(deps, request);
+  return {
+    events: [
+      {
+        type: 'cleaning.request.cancelled',
+        payload: {
+          ...subject,
+          requestId: request.id,
+          missionId: null,
+          customerId: request.customerId,
+          organizationId: request.organizationId,
+          cancelledBy: to === 'rejected' ? 'supervisor' : 'customer',
+          outcome: to,
+        },
+      },
+    ],
+    audit: [
+      {
+        actorId,
+        action: `request.${to}`,
+        entityType: 'quote_request',
+        entityId: request.id,
+        at: now,
+        ...(extra ? { details: extra } : {}),
+      },
+    ],
+  };
+}
+
 async function closeByCustomer(
   deps: CleaningDeps,
   input: { requestId: string; reason: string },
@@ -376,35 +448,10 @@ async function closeByCustomer(
   const now = deps.clock.now();
   assertRequestTransition(request, to, now);
   const reason = optionalText('reason', input.reason, 500);
-  const subject = await eventSubject(deps, request);
   const saved = await saveRequest(
     deps,
     { ...request, status: to, closingReason: reason },
-    {
-      events: [
-        {
-          type: 'cleaning.request.cancelled',
-          payload: {
-            ...subject,
-            requestId: request.id,
-            missionId: null,
-            customerId: request.customerId,
-            organizationId: request.organizationId,
-            cancelledBy: 'customer',
-            outcome: to,
-          },
-        },
-      ],
-      audit: [
-        {
-          actorId: customer.userId,
-          action: `request.${to}`,
-          entityType: 'quote_request',
-          entityId: request.id,
-          at: now,
-        },
-      ],
-    },
+    await closingChanges(deps, customer.userId, request, to, now),
   );
   return presentRequest(saved, now);
 }

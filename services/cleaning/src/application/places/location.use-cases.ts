@@ -6,7 +6,9 @@ import {
   isValidAccuracy,
   isValidPoint,
   matchCommune,
+  communeKey,
 } from '../../domain/location';
+import { findActiveZone } from '../../domain/zone';
 import { type CleaningDeps } from '../deps';
 import { currentCustomer } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
@@ -81,4 +83,32 @@ export class ResolveLocationUseCase {
       provider: match && place ? place.provider : null,
     };
   }
+}
+
+/** Commune retenue : celle du géocodage, jamais celle du client quand il réussit (ADR-034). */
+export interface ChosenCommune {
+  commune: string;
+  provider: GeocodedPlace['provider'] | null;
+  displayAddress: string | null;
+}
+
+/**
+ * Commune d'une position : celle trouvée par géocodage (la commune envoyée est alors ignorée),
+ * refusée si elle n'est pas desservie ; sans résultat, celle choisie par le client, contrôlée de
+ * même (demande groupée, correction de position).
+ */
+export async function chooseCommune(
+  deps: CleaningDeps,
+  location: GeoPoint,
+  fallback: string | null,
+): Promise<ChosenCommune> {
+  const { place, match } = await locate(deps, location);
+  if (place && match) {
+    if (!match.zone) throw CleaningErrors.zoneNotCovered(match.commune);
+    return { commune: match.zone.commune, provider: place.provider, displayAddress: place.displayAddress };
+  }
+  if (!fallback) throw CleaningErrors.locationUnresolved();
+  const zone = findActiveZone(await deps.catalog.listZones(), communeKey(fallback));
+  if (!zone) throw CleaningErrors.zoneNotCovered(fallback);
+  return { commune: zone.commune, provider: null, displayAddress: place?.displayAddress ?? null };
 }
