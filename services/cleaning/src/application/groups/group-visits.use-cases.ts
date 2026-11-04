@@ -105,8 +105,10 @@ export class ScheduleGroupVisitUseCase {
       details: { groupVisitId, agentId, requestIds: outcome.affectedIds },
     });
     const lead = scheduled[0]!;
-    // Une seule notification pour la visite commune : un événement, les demandes listées.
-    const subject = await eventSubject(this.deps, lead);
+    // Une seule notification pour la visite commune : un événement, les demandes listées avec leur
+    // prestation (ADR-035 point 14).
+    const subjects = await Promise.all(scheduled.map((request) => eventSubject(this.deps, request)));
+    const subject = subjects[0]!;
     const written = await this.deps.requests.saveGroup({
       requests: [...scheduled, ...detached],
       changes: {
@@ -122,6 +124,11 @@ export class ScheduleGroupVisitUseCase {
               scheduledAt: scheduledAt.toISOString(),
               groupVisitId,
               requestIds: outcome.affectedIds,
+              requests: scheduled.map((request, index) => ({
+                requestId: request.id,
+                serviceCode: request.serviceCode,
+                ...(subjects[index]!.serviceName ? { serviceName: subjects[index]!.serviceName } : {}),
+              })),
             },
           },
         ],

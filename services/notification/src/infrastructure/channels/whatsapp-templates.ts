@@ -28,35 +28,88 @@ function spec(
   };
 }
 
+/**
+ * Message d'une demande qui cite sa prestation (ADR-035 point 14) : avec le nom, le modèle
+ * `<nom>_service` reçoit la prestation juste après le prénom ; sans lui (événement antérieur), le
+ * modèle d'avant, inchangé.
+ */
+function withService(
+  templateName: string | ((variables: Readonly<Record<string, string>>) => string),
+  keys: readonly string[],
+): WhatsAppTemplateSpec {
+  const base = typeof templateName === 'string' ? () => templateName : templateName;
+  const serviceOf = (variables: Readonly<Record<string, string>>) => variables['service_name']?.trim() ?? '';
+  return {
+    name: (variables) => (serviceOf(variables) ? `${base(variables)}_service` : base(variables)),
+    parameters: (variables) => [
+      name(variables),
+      ...(serviceOf(variables) ? [serviceOf(variables)] : []),
+      ...keys.map((key) => variables[key] ?? ''),
+    ],
+  };
+}
+
 export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateSpec>> = {
-  'cleaning.quote_requested.customer': spec(
+  'cleaning.quote_requested.customer': withService(
     (v) =>
       v['visit_required'] === 'true' ? 'ksp_cleaning_quote_requested_visit' : 'ksp_cleaning_quote_requested',
     ['link'],
   ),
-  'cleaning.visit_scheduled.customer': spec('ksp_cleaning_visit_scheduled', ['date', 'link']),
-  'cleaning.visit_scheduled.agent': spec('ksp_cleaning_visit_assigned', ['date']),
-  'cleaning.quote_sent.customer': spec('ksp_cleaning_quote_sent', ['total', 'valid_until', 'link']),
-  'cleaning.booking_confirmed.customer': spec('ksp_cleaning_booking_confirmed', [
+  'cleaning.visit_scheduled.customer': withService('ksp_cleaning_visit_scheduled', ['date', 'link']),
+  'cleaning.visit_scheduled.agent': withService('ksp_cleaning_visit_assigned', ['date']),
+  'cleaning.quote_sent.customer': withService('ksp_cleaning_quote_sent', ['total', 'valid_until', 'link']),
+  'cleaning.booking_confirmed.customer': withService('ksp_cleaning_booking_confirmed', [
     'planned_interventions',
     'total',
     'payment_note',
     'link',
   ]),
-  'cleaning.mission_scheduled.customer': spec('ksp_cleaning_mission_scheduled', ['date', 'duration', 'link']),
-  'cleaning.mission_scheduled.agent': spec('ksp_cleaning_mission_assigned', ['date', 'duration']),
+  'cleaning.mission_scheduled.customer': withService('ksp_cleaning_mission_scheduled', [
+    'date',
+    'duration',
+    'link',
+  ]),
+  'cleaning.mission_scheduled.agent': withService('ksp_cleaning_mission_assigned', ['date', 'duration']),
+  // Messages regroupés (ADR-035 point 14) : envoi groupé, visite commune, devis envoyés ensemble.
+  'cleaning.quote_group_requested.customer': spec(
+    (v) =>
+      v['visit_required'] === 'true'
+        ? 'ksp_cleaning_quote_group_requested_visit'
+        : 'ksp_cleaning_quote_group_requested',
+    ['request_count', 'services', 'link'],
+  ),
+  'cleaning.group_visit_scheduled.customer': spec('ksp_cleaning_group_visit_scheduled', [
+    'services',
+    'date',
+    'link',
+  ]),
+  'cleaning.group_visit_scheduled.agent': spec('ksp_cleaning_group_visit_assigned', [
+    'request_count',
+    'services',
+    'date',
+  ]),
+  'cleaning.quote_group_sent.customer': spec('ksp_cleaning_quote_group_sent', [
+    'quote_count',
+    'quotes',
+    'total',
+    'valid_until',
+    'link',
+  ]),
   'cleaning.mission_completed.customer': spec('ksp_cleaning_mission_completed', [
     'completed_interventions',
     'completed_on',
     'link',
   ]),
   // Un modèle par motif (annulation par le client ou par KSP, refus de KSP, devis refusé) ;
-  // `scope` distingue « votre demande » de « votre prestation ».
+  // `scope` distingue « votre demande » de « votre prestation ». Avec le nom de la prestation :
+  // modèle `<motif>_service`, la prestation après « votre demande » (ADR-035 point 14).
   'cleaning.request_cancelled.customer': {
-    name: (v) => `ksp_cleaning_${v['case'] ?? 'cancelled_by_customer'}`,
+    name: (v) =>
+      `ksp_cleaning_${v['case'] ?? 'cancelled_by_customer'}${v['service_name']?.trim() ? '_service' : ''}`,
     parameters: (v) => [
       name(v),
       v['scope'] === 'mission' ? 'votre prestation' : 'votre demande',
+      ...(v['service_name']?.trim() ? [v['service_name'].trim()] : []),
       v['link'] ?? '',
     ],
   },

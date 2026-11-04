@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.quote_group.sent.v1.schema.json",
+  "title": "cleaning.quote_group.sent",
+  "description": "Devis d'un groupe envoyés ensemble (ADR-035 points 4 et 14) : un devis par demande, chiffré séparément. Publié dans la même transaction que les cleaning.quote.sent des devis (marqués summarizedByGroup), pour un seul message au client.",
+  "x-event-type": "cleaning.quote_group.sent",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["groupId", "customerId", "total", "validUntil", "quotes"],
+  "properties": {
+    "groupId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "total": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "description": "Somme des devis envoyés, en entiers XOF",
+      "properties": {
+        "amount": { "type": "integer", "minimum": 0 },
+        "currency": { "const": "XOF" }
+      }
+    },
+    "validUntil": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Fin de validité commune des devis (la plus proche si elles diffèrent)"
+    },
+    "quotes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "description": "Devis envoyés, un par demande",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "quoteId", "serviceCode", "total"],
+        "properties": {
+          "requestId": { "type": "string", "format": "uuid" },
+          "quoteId": { "type": "string", "format": "uuid" },
+          "serviceCode": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "serviceName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Nom de la prestation au moment de l'événement ; absent si la prestation n'existe plus"
+          },
+          "total": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["amount", "currency"],
+            "properties": {
+              "amount": { "type": "integer", "minimum": 0 },
+              "currency": { "const": "XOF" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

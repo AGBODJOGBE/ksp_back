@@ -1,3 +1,4 @@
+import { type CleaningEventPayloads } from '@ksp/contracts';
 import { AppError } from '@ksp/platform';
 import { type Mission } from '../../domain/mission';
 import { findProposedSlot } from '../../domain/quote';
@@ -93,11 +94,43 @@ export class SendGroupQuotesUseCase {
     }
     const events: OutboxMessage[] = [];
     const audit: AuditEntry[] = [];
+    const summary: CleaningEventPayloads['cleaning.quote_group.sent']['quotes'] = [];
     for (const quote of prepared) {
-      const changes = await quoteSentChanges(this.deps, staff.userId, quote, now, { groupId: view.group.id });
+      const changes = await quoteSentChanges(
+        this.deps,
+        staff.userId,
+        quote,
+        now,
+        { groupId: view.group.id },
+        true,
+      );
       events.push(...changes.events);
       audit.push(...changes.audit);
+      for (const event of changes.events) {
+        if (event.type !== 'cleaning.quote.sent') continue;
+        const { requestId, quoteId, serviceName, total } = event.payload;
+        summary.push({
+          requestId,
+          quoteId,
+          serviceCode: quote.request.serviceCode,
+          ...(serviceName ? { serviceName } : {}),
+          total,
+        });
+      }
     }
+    // Un seul message au client pour l'envoi groupé (ADR-035 point 14) : total et validité communs.
+    events.push({
+      type: 'cleaning.quote_group.sent',
+      payload: {
+        groupId: view.group.id,
+        customerId: view.group.customerId,
+        total: { amount: prepared.reduce((sum, quote) => sum + quote.quote.total, 0), currency: 'XOF' },
+        validUntil: new Date(
+          Math.min(...prepared.map((quote) => quote.quote.validUntil.getTime())),
+        ).toISOString(),
+        quotes: summary,
+      },
+    });
     const outcome: GroupOutcome = {
       ...emptyOutcome(view.group.id),
       affectedIds: prepared.map((quote) => quote.request.id),

@@ -226,6 +226,52 @@ describe('MetaWhatsAppProvider', () => {
     ]);
   });
 
+  it('prestation citée (ADR-035 point 14) : modèle « _service », la prestation après le prénom', async () => {
+    const { calls, whatsapp } = provider(() => json(200, { messages: [{ id: 'wamid.s' }] }));
+    const send = (templateCode: string, variables: Record<string, string>) =>
+      whatsapp.send({ ...message, templateCode, variables });
+    await send('cleaning.quote_sent.customer', {
+      first_name: 'Awa',
+      service_name: 'Vitres',
+      total: 'montant',
+      valid_until: '15 novembre 2026',
+      link: 'https://ksp.bj/d',
+    });
+    await send('cleaning.request_cancelled.customer', {
+      first_name: 'Awa',
+      case: 'declined',
+      scope: 'request',
+      service_name: 'Vitres',
+      link: 'https://ksp.bj/d',
+    });
+    await send('cleaning.quote_group_sent.customer', {
+      first_name: 'Awa',
+      quote_count: '2',
+      quotes: '« Vitres » (1 FCFA) et « Jardin » (2 FCFA)',
+      total: '3 FCFA',
+      valid_until: '15 novembre 2026',
+      link: 'https://ksp.bj/g',
+    });
+    const templates = calls.map((call) => JSON.parse(call.init.body as string).template);
+    const texts = (index: number) =>
+      templates[index].components[0].parameters.map((p: { text: string }) => p.text);
+    expect(templates.map((template) => template.name)).toEqual([
+      'ksp_cleaning_quote_sent_service',
+      'ksp_cleaning_declined_service',
+      'ksp_cleaning_quote_group_sent',
+    ]);
+    expect(texts(0)).toEqual(['Awa', 'Vitres', 'montant', '15 novembre 2026', 'https://ksp.bj/d']);
+    expect(texts(1)).toEqual(['Awa', 'votre demande', 'Vitres', 'https://ksp.bj/d']);
+    expect(texts(2)).toEqual([
+      'Awa',
+      '2',
+      '« Vitres » (1 FCFA) et « Jardin » (2 FCFA)',
+      '3 FCFA',
+      '15 novembre 2026',
+      'https://ksp.bj/g',
+    ]);
+  });
+
   it.each([
     [
       '0',

@@ -173,6 +173,29 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     total: xof(45000),
     validUntil: '2026-11-17T09:00:00Z',
   },
+  'cleaning.quote_group.requested': {
+    groupId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    customerKind: 'individual',
+    visitRequired: true,
+    requests: [{ requestId: uuid, serviceCode: 'house_cleaning', serviceName: 'Nettoyage de maison' }],
+  },
+  'cleaning.quote_group.sent': {
+    groupId: uuid,
+    customerId: uuid,
+    total: xof(45000),
+    validUntil: '2026-11-17T09:00:00Z',
+    quotes: [
+      {
+        requestId: uuid,
+        quoteId: uuid,
+        serviceCode: 'house_cleaning',
+        serviceName: 'Nettoyage de maison',
+        total: xof(45000),
+      },
+    ],
+  },
   'cleaning.booking.confirmed': {
     requestId: uuid,
     quoteId: uuid,
@@ -315,6 +338,39 @@ describe('Contrats des événements cleaning', () => {
     expect(validate({ ...base, requestIds: [] })).toBe(false);
     expect(validate({ ...base, requestIds: [uuid, uuid] })).toBe(false);
     expect(validate({ ...base, requestIds: ['demande-1'] })).toBe(false);
+  });
+
+  it('messages regroupés (ADR-035 point 14) : champs facultatifs, les événements antérieurs restent valides', () => {
+    const requested = ajv.compile(schemas.get('cleaning.quote.requested')!);
+    const sent = ajv.compile(schemas.get('cleaning.quote.sent')!);
+    const visit = ajv.compile(schemas.get('cleaning.visit.scheduled')!);
+    const grouped = { groupId: uuid, summarizedByGroup: true };
+    expect(
+      requested({ ...cleaningExamples['cleaning.quote.requested'], ...grouped, serviceName: 'Vitres' }),
+    ).toBe(true);
+    expect(requested({ ...cleaningExamples['cleaning.quote.requested'], serviceName: '' })).toBe(false);
+    expect(sent({ ...cleaningExamples['cleaning.quote.sent'], ...grouped })).toBe(true);
+    expect(sent({ ...cleaningExamples['cleaning.quote.sent'], summarizedByGroup: 'oui' })).toBe(false);
+    const requests = [{ requestId: uuid, serviceCode: 'windows', serviceName: 'Vitres' }];
+    const base = cleaningExamples['cleaning.visit.scheduled'];
+    expect(visit({ ...base, groupVisitId: uuid, requestIds: [uuid], requests })).toBe(true);
+    expect(visit({ ...base, requests: [] })).toBe(false);
+    expect(visit({ ...base, requests: [{ requestId: uuid }] })).toBe(false);
+  });
+
+  it('événements de groupe : 1 à 10 demandes, montants entiers en XOF, sans adresse', () => {
+    const requested = ajv.compile(schemas.get('cleaning.quote_group.requested')!);
+    const sent = ajv.compile(schemas.get('cleaning.quote_group.sent')!);
+    const group = cleaningExamples['cleaning.quote_group.requested'];
+    const quotes = cleaningExamples['cleaning.quote_group.sent'];
+    const { serviceName: _serviceName, ...withoutName } = group.requests[0]!;
+    expect(requested({ ...group, requests: [withoutName] })).toBe(true);
+    expect(requested({ ...group, requests: [] })).toBe(false);
+    expect(requested({ ...group, requests: Array.from({ length: 11 }, () => withoutName) })).toBe(false);
+    expect(requested({ ...group, requests: [{ ...withoutName, landmark: 'Portail' }] })).toBe(false);
+    expect(sent({ ...quotes, total: xof(450.5) })).toBe(false);
+    expect(sent({ ...quotes, quotes: [{ ...quotes.quotes[0]!, total: xof(-1) }] })).toBe(false);
+    expect(sent({ ...quotes, quotes: [] })).toBe(false);
   });
 
   it('annulation : organisation ajoutée (ADR-032), les événements antérieurs sans elle restent valides', () => {

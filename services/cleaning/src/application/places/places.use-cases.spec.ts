@@ -255,7 +255,7 @@ describe('parcours par lieu : groupe de demandes (ADR-034)', () => {
   const create = (overrides: Partial<RequestQuoteGroupInput> = {}, userId = CUSTOMER_ID) =>
     asCustomer(() => new RequestQuoteGroupUseCase(w).execute(groupInput(overrides)), userId);
 
-  it('une demande par prestation, liées, dans une transaction ; un événement par demande', async () => {
+  it('une demande par prestation, liées, dans une transaction ; un événement par demande et un pour le groupe', async () => {
     const view = await create();
     expect(view.group).toMatchObject({
       placeType: 'house',
@@ -281,8 +281,9 @@ describe('parcours par lieu : groupe de demandes (ADR-034)', () => {
     // Prix recalculé avec la vraie commune (coefficient d'Abomey-Calavi : 1,05).
     expect(view.requests[0]!.calculation).toMatchObject({ priced: true, computedPrice: 35_700 });
     expect(w.recorder.changes).toHaveLength(1);
-    expect(w.recorder.events).toEqual(
-      view.requests.map((request) => ({
+    const serviceName = (code: string) => w.catalog.services.get(code)!.name;
+    expect(w.recorder.events).toEqual([
+      ...view.requests.map((request) => ({
         type: 'cleaning.quote.requested',
         payload: {
           requestId: request.id,
@@ -290,11 +291,29 @@ describe('parcours par lieu : groupe de demandes (ADR-034)', () => {
           organizationId: null,
           customerKind: 'individual',
           serviceCode: request.serviceCode,
+          serviceName: serviceName(request.serviceCode),
           visitRequired: true,
           groupId: view.group.id,
+          summarizedByGroup: true,
         },
       })),
-    );
+      // Un seul message au client pour l'envoi groupé (ADR-035 point 14).
+      {
+        type: 'cleaning.quote_group.requested',
+        payload: {
+          groupId: view.group.id,
+          customerId: CUSTOMER_ID,
+          organizationId: null,
+          customerKind: 'individual',
+          visitRequired: true,
+          requests: view.requests.map((request) => ({
+            requestId: request.id,
+            serviceCode: request.serviceCode,
+            serviceName: serviceName(request.serviceCode),
+          })),
+        },
+      },
+    ]);
     expect(w.recorder.audit.map((entry) => entry.action)).toEqual([
       'request.created',
       'request.created',
@@ -314,7 +333,7 @@ describe('parcours par lieu : groupe de demandes (ADR-034)', () => {
     expect(second.group.id).toBe(first.group.id);
     expect(second.requests).toHaveLength(2);
     expect(w.requests.requests.size).toBe(2);
-    expect(w.recorder.events).toHaveLength(2);
+    expect(w.recorder.events).toHaveLength(3);
   });
 
   it('transaction : un échec d’écriture ne laisse aucune demande', async () => {

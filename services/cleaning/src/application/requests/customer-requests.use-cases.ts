@@ -173,6 +173,7 @@ export class RequestQuoteUseCase {
             organizationId: customer.organizationId,
             customerKind: customer.kind,
             serviceCode: service.code,
+            ...(service.name ? { serviceName: service.name } : {}),
             visitRequired,
           },
         },

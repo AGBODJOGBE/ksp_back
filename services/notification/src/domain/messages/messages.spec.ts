@@ -106,6 +106,17 @@ describe('Modèles du Nettoyage', () => {
     ).toEqual(['link']);
   });
 
+  it('nom de la prestation facultatif (ADR-035 point 14) : contrôlé seulement quand il est fourni', () => {
+    const template = findTemplate('cleaning.quote_sent.customer')!;
+    const base = { first_name: '', total: '1 FCFA', valid_until: 'demain', link: 'https://ksp.bj/d' };
+    expect(invalidVariables(template, base)).toEqual([]);
+    expect(invalidVariables(template, { ...base, service_name: 'Vitres' })).toEqual([]);
+    expect(invalidVariables(template, { ...base, service_name: 'Vitres\nPortail bleu' })).toEqual([
+      'service_name',
+    ]);
+    expect(isEventTemplate(template) && template.render(base).subject).toBe('Votre devis de nettoyage');
+  });
+
   it('phrase du paiement choisi', () => {
     expect(
       paymentNote({ option: 'full', timing: 'after', method: 'cash', total: 20000, deposit: 6000 }),

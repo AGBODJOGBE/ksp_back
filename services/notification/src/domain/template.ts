@@ -22,6 +22,11 @@ export interface TemplateDefinition {
   /** Variables obligatoires et leur format. */
   variables: Readonly<Record<string, RegExp>>;
   /**
+   * Variables facultatives et leur format, contrôlé seulement quand elles sont fournies (par
+   * exemple le nom de la prestation, absent des événements antérieurs à son ajout).
+   */
+  optionalVariables?: Readonly<Record<string, RegExp>>;
+  /**
    * Texte écrit par notification (objet et corps), indispensable pour l'e-mail ; absent pour un
    * modèle rédigé chez le prestataire (identity.otp : modèle WhatsApp approuvé par Meta).
    */
@@ -78,10 +83,17 @@ export function invalidVariables(
   template: TemplateDefinition,
   variables: Readonly<Record<string, string>>,
 ): string[] {
-  return Object.entries(template.variables)
+  const missing = Object.entries(template.variables)
     .filter(([name, format]) => {
       const value = variables[name];
       return value === undefined || !format.test(value);
     })
     .map(([name]) => name);
+  const malformed = Object.entries(template.optionalVariables ?? {})
+    .filter(([name, format]) => {
+      const value = variables[name];
+      return value !== undefined && !format.test(value);
+    })
+    .map(([name]) => name);
+  return [...missing, ...malformed];
 }

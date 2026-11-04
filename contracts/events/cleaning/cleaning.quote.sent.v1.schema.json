@@ -36,6 +36,10 @@
       "type": "string",
       "format": "uuid",
       "description": "Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu"
+    },
+    "summarizedByGroup": {
+      "type": "boolean",
+      "description": "Facultatif (ADR-035 point 14) : true quand l'opération de groupe publie aussi, dans la même transaction, l'événement de groupe qui la résume (cleaning.quote_group.sent) ; absent sinon"
     }
   }
 }

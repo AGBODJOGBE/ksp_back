@@ -36,8 +36,9 @@ Le même script ajoute, pour le parcours par lieu (ADR-034) : un type de lieu d�
   `communeApplied: false`), comme pour `POST /api/v1/cleaning/simulations`.
 - **Demandes groupées** (`POST /api/v1/cleaning/quote-request-groups`) : une demande par
   prestation, liées par un groupe, créées dans une transaction ; même position, repère, créneaux et
-  commentaire ; un événement `cleaning.quote.requested` par demande, avec `groupId`. Chaque demande
-  suit ensuite son circuit habituel.
+  commentaire ; un événement `cleaning.quote.requested` par demande, avec `groupId`, plus
+  `cleaning.quote_group.requested` pour le groupe (ADR-035 point 14). Chaque demande suit ensuite
+  son circuit habituel.
 - **Commune retrouvée par géocodage inverse** depuis la position (`ReverseGeocoder`) : Nominatim
   auto-hébergé d'abord (`NOMINATIM_URL`), Google en secours (`GOOGLE_MAPS_API_KEY`), délai
   `GEOCODING_TIMEOUT_MS` (3 s) ; un fournisseur sans sa variable est désactivé. La commune trouvée
@@ -55,6 +56,11 @@ Le même script ajoute, pour le parcours par lieu (ADR-034) : un type de lieu d�
   exclusion = détachement), compte rendu commun, refus (back-office) et annulation (client) du groupe,
   devis envoyés ensemble avec des créneaux communs, acceptation commune (une mission par devis),
   planification commune des missions. Les demandes qui ne s'y prêtent pas sont renvoyées dans `skipped`.
+- **Messages regroupés** (point 14) : l'envoi groupé publie aussi `cleaning.quote_group.requested`, les
+  devis envoyés ensemble `cleaning.quote_group.sent` (devis, total, validité), dans la même
+  transaction ; leurs événements par demande portent `summarizedByGroup: true`. La visite commune
+  liste ses demandes et leur prestation (`requests`). `cleaning.quote.requested` porte aussi
+  `serviceName`.
 - **Conflits d'agenda** : les passages des missions d'un même groupe (même lieu) ne se gênent pas.
 - **Agents** : `GET /admin/cleaning/visits` (leurs visites seulement), compte rendu de leurs visites,
   correction de position tant que la visite est planifiée ; position, repère et adresse géocodée masqués

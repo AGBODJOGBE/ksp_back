@@ -818,7 +818,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       comment: '',
     };
     const before = (await outbox()).length;
-    // Deux appels simultanés avec la même clé : un seul groupe, deux demandes, deux événements.
+    // Deux appels simultanés avec la même clé : un seul groupe, deux demandes, trois événements (un par demande, un de groupe).
     const [a, b] = await Promise.all([
       asCustomer(() => useCases.requestQuoteGroup.execute(input), customer),
       asCustomer(() => useCases.requestQuoteGroup.execute(input), customer),
@@ -829,7 +829,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       (await pool.query('SELECT count(*)::int AS n FROM quote_requests WHERE group_id = $1', [a.group.id]))
         .rows[0].n,
     ).toBe(2);
-    expect((await outbox()).length - before).toBe(2);
+    expect((await outbox()).length - before).toBe(3);
     const stored = await deps.requests.findGroup(a.group.id);
     expect(stored?.requests[1]).toMatchObject({
       placeType: 'house',
@@ -852,10 +852,15 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     );
     expect(listed.items.map((request) => request.id)).toEqual([a.requests[1]!.id]);
     const { rows } = await pool.query(
-      "SELECT payload FROM outbox WHERE payload->'payload'->>'groupId' = $1",
+      "SELECT event_type, payload FROM outbox WHERE payload->'payload'->>'groupId' = $1 ORDER BY event_type",
       [a.group.id],
     );
-    expect(rows).toHaveLength(2);
+    // Une demande par prestation, plus le message de groupe (ADR-035, point 14).
+    expect(rows.map((row) => row.event_type)).toEqual([
+      'cleaning.quote.requested',
+      'cleaning.quote.requested',
+      'cleaning.quote_group.requested',
+    ]);
     expect(JSON.stringify(rows)).not.toContain('Portail bleu');
     expect(JSON.stringify(rows)).not.toContain('6.4489');
 

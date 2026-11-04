@@ -153,8 +153,11 @@ export class RequestQuoteGroupUseCase {
           organizationId: customer.organizationId,
           customerKind: customer.kind,
           serviceCode: service.code,
+          ...(service.name ? { serviceName: service.name } : {}),
           visitRequired: VISIT_REQUIRED,
           groupId: group.id,
+          // Un seul message au client pour l'envoi groupé (ADR-035 point 14).
+          summarizedByGroup: true,
         },
       });
       audit.push({
@@ -166,6 +169,24 @@ export class RequestQuoteGroupUseCase {
         details: { groupId: group.id, placeType: placeType.code, geocodingProvider: provider },
       });
       return request;
+    });
+    events.push({
+      type: 'cleaning.quote_group.requested',
+      payload: {
+        groupId: group.id,
+        customerId: customer.userId,
+        organizationId: customer.organizationId,
+        customerKind: customer.kind,
+        visitRequired: VISIT_REQUIRED,
+        requests: requests.map((request, index) => {
+          const name = items[index]!.service.name;
+          return {
+            requestId: request.id,
+            serviceCode: request.serviceCode,
+            ...(name ? { serviceName: name } : {}),
+          };
+        }),
+      },
     });
     audit.push({
       actorId: customer.userId,
