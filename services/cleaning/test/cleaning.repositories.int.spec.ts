@@ -818,7 +818,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       comment: '',
     };
     const before = (await outbox()).length;
-    // Deux appels simultanés avec la même clé : un seul groupe, deux demandes, deux événements par demande et un de groupe.
+    // Deux appels simultanés avec la même clé : un seul groupe, deux demandes, trois événements (un par demande, un de groupe).
     const [a, b] = await Promise.all([
       asCustomer(() => useCases.requestQuoteGroup.execute(input), customer),
       asCustomer(() => useCases.requestQuoteGroup.execute(input), customer),
