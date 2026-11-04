@@ -20,6 +20,7 @@ export * from './messaging/outbox-relay';
 export * from './messaging/ports';
 export * from './messaging/rabbitmq/connection';
 export * from './messaging/rabbitmq/consumer';
+export * from './messaging/rabbitmq/dead-letters';
 export * from './messaging/rabbitmq/publisher';
 export * from './messaging/rabbitmq/topology';
 export * from './messaging/sql-stores';

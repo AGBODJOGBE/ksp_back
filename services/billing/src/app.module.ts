@@ -31,6 +31,15 @@ import {
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 
+/**
+ * Délais croissants de nouvel essai des événements reçus, environ 1 h au total (ADR-032) : une
+ * annulation arrivée avant la confirmation de sa mission attend le contrat au lieu de partir en file
+ * d'erreurs dès la première minute.
+ */
+export const CONSUMER_RETRY_DELAYS_MS = [
+  10_000, 30_000, 60_000, 120_000, 300_000, 600_000, 900_000, 1_800_000,
+];
+
 /** Racine de composition : relie les cas d'usage à leurs adaptateurs. */
 @Module({})
 export class AppModule {
@@ -38,7 +47,7 @@ export class AppModule {
     return {
       module: AppModule,
       imports: [
-        PlatformModule.forRoot(config),
+        PlatformModule.forRoot(config, { consumerRetryDelaysMs: CONSUMER_RETRY_DELAYS_MS }),
         ClientsModule.register([grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL)]),
       ],
       controllers: [BillingGrpcController, BillingAdminGrpcController, InvoicePaymentDueGrpcController],

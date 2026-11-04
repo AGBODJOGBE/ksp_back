@@ -17,6 +17,11 @@ export interface RabbitMqConsumerOptions {
   /** Nombre de nouvelles tentatives avant la file d'erreurs (5 par défaut). */
   maxRetries?: number;
   retryDelayMs?: number;
+  /**
+   * Délais croissants entre les tentatives (une file de reprise par délai) ; remplace `maxRetries` et
+   * `retryDelayMs` : une tentative par délai, puis la file d'erreurs.
+   */
+  retryDelaysMs?: readonly number[];
 }
 
 const ATTEMPTS_HEADER = 'x-attempts';
@@ -65,7 +70,7 @@ export async function handleDelivery(
       logger.warn(
         `${envelope.type} (${envelope.eventId}) en échec, tentative ${attempts + 1}/${maxRetries} : ${reason}`,
       );
-      channel.sendToQueue(queues.retry, message.content, {
+      channel.sendToQueue(queues.retryTiers?.[attempts] ?? queues.retry, message.content, {
         ...message.properties,
         headers: { ...headers, [ATTEMPTS_HEADER]: attempts + 1, 'x-last-error': reason.slice(0, 500) },
       });
@@ -97,8 +102,9 @@ export class RabbitMqConsumer {
   async subscribe<T extends KspEventType>(eventType: T, handler: EventHandler<T>): Promise<void> {
     const channel = await this.connection.consumerChannel(this.options.prefetch ?? 10);
     this.channels.push(channel);
-    const queues = consumerQueues(this.options.consumer, eventType);
-    await assertConsumerTopology(channel, queues, eventType, this.options.retryDelayMs ?? 10_000);
+    const delays = this.options.retryDelaysMs;
+    const queues = consumerQueues(this.options.consumer, eventType, delays?.length ?? 0);
+    await assertConsumerTopology(channel, queues, eventType, delays ?? [this.options.retryDelayMs ?? 10_000]);
     await channel.consume(queues.main, (message) => {
       if (!message) return;
       void handleDelivery(
@@ -106,7 +112,7 @@ export class RabbitMqConsumer {
         queues,
         message,
         handler as (envelope: EventEnvelope) => Promise<void>,
-        this.options.maxRetries ?? 5,
+        this.options.retryDelaysMs?.length ?? this.options.maxRetries ?? 5,
         this.logger,
       );
     });

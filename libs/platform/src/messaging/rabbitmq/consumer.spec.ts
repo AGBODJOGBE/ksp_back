@@ -106,6 +106,42 @@ describe('handleDelivery', () => {
     expect(channel.sendToQueue).toHaveBeenCalledWith(queues.dlq, expect.any(Buffer), expect.anything());
   });
 
+  it('délais croissants : une file de reprise par tentative, puis la file d’erreurs', async () => {
+    const tiered = consumerQueues('billing', 'cleaning.request.cancelled', 3);
+    expect(tiered.retryTiers).toEqual([
+      'billing.cleaning.request.cancelled.retry.1',
+      'billing.cleaning.request.cancelled.retry.2',
+      'billing.cleaning.request.cancelled.retry.3',
+    ]);
+    const failing = async () => {
+      throw new Error('contrat pas encore enregistré');
+    };
+    const channel = fakeChannel();
+    await handleDelivery(channel, tiered, message(JSON.stringify(env)), failing, 3, silentLogger);
+    await handleDelivery(
+      channel,
+      tiered,
+      message(JSON.stringify(env), { 'x-attempts': 2 }),
+      failing,
+      3,
+      silentLogger,
+    );
+    const last = await handleDelivery(
+      channel,
+      tiered,
+      message(JSON.stringify(env), { 'x-attempts': 3 }),
+      failing,
+      3,
+      silentLogger,
+    );
+    expect(channel.sendToQueue.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      'billing.cleaning.request.cancelled.retry.1',
+      'billing.cleaning.request.cancelled.retry.3',
+      tiered.dlq,
+    ]);
+    expect(last).toBe('dead-lettered');
+  });
+
   it('envoie directement en file d’erreurs un message illisible, sans appeler le gestionnaire', async () => {
     const channel = fakeChannel();
     const handler = jest.fn();
