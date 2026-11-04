@@ -818,7 +818,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       comment: '',
     };
     const before = (await outbox()).length;
-    // Deux appels simultanés avec la même clé : un seul groupe, deux demandes, deux événements.
+    // Deux appels simultanés avec la même clé : un seul groupe, deux demandes, deux événements par demande et un de groupe.
     const [a, b] = await Promise.all([
       asCustomer(() => useCases.requestQuoteGroup.execute(input), customer),
       asCustomer(() => useCases.requestQuoteGroup.execute(input), customer),
@@ -829,7 +829,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       (await pool.query('SELECT count(*)::int AS n FROM quote_requests WHERE group_id = $1', [a.group.id]))
         .rows[0].n,
     ).toBe(2);
-    expect((await outbox()).length - before).toBe(2);
+    expect((await outbox()).length - before).toBe(3);
     const stored = await deps.requests.findGroup(a.group.id);
     expect(stored?.requests[1]).toMatchObject({
       placeType: 'house',
