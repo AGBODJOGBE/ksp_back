@@ -4,7 +4,7 @@ import { type NameBook, NO_NAMES } from '../../application/backoffice/backoffice
 import { type MissionView } from '../../application/deps';
 import { type StoredSettings } from '../../application/ports';
 import { type Agent, type Team } from '../../domain/agent';
-import { type ServiceDefinition } from '../../domain/catalog';
+import { isFullyPriced, type ServiceDefinition, teamSizeField } from '../../domain/catalog';
 import { CURRENCY } from '../../domain/money';
 import { expectedDeposit, paidAmount, paymentStatus, remainingDue } from '../../domain/payment';
 import { type Quote } from '../../domain/quote';
@@ -12,6 +12,14 @@ import { type QuoteRequest } from '../../domain/quote-request';
 import { type Recurrence } from '../../domain/recurrence';
 import { type Slot } from '../../domain/schedule';
 import { type PriceLine } from '../../domain/simulator';
+import {
+  answersToProto,
+  calculationToProto,
+  fieldToProto,
+  optionsToProto,
+  presentForm,
+  selectionsToProto,
+} from './form.presenters';
 
 /** Traduction du modèle vers les messages du contrat : dates ISO 8601, chaîne vide = absente. */
 export const money = (amount: number) => ({ amount, currency: CURRENCY });
@@ -97,6 +105,11 @@ export function presentRequest(request: QuoteRequest, names: NameBook = NO_NAMES
     daysPerWeek: request.daysPerWeek ?? 0,
     customerName: userName(names, request.customerId),
     organizationName: organizationName(names, request.organizationId),
+    answers: request.answers ? answersToProto(request.answers) : undefined,
+    optionSelections: selectionsToProto(request.optionSelections),
+    frequency: text(request.frequency),
+    pricingVersion: request.pricingVersion ?? 0,
+    calculation: request.calculation ? calculationToProto(request.calculation) : undefined,
   };
 }
 
@@ -172,19 +185,23 @@ export function presentMission(
 
 const optionalMoney = (amount: number | null) => (amount === null ? undefined : money(amount));
 
+/** Anciennes options (dépréciées) : options actives et leur forfait. */
+const legacyOptions = (service: ServiceDefinition): cleaningV1.CatalogOption[] =>
+  service.options
+    .filter((option) => option.active)
+    .map((option) => ({ code: option.code, label: option.label, price: optionalMoney(option.flatPrice) }));
+
 export function presentOffer(service: ServiceDefinition): cleaningV1.ServiceOffer {
   return {
     code: service.code,
     name: service.name,
     description: service.description,
+    // Anciens champs (dépréciés, ADR-033), gardés remplis pendant la transition.
     unit: service.unit,
-    options: service.pricing.options.map((option) => ({
-      code: option.code,
-      label: option.label,
-      price: optionalMoney(option.price),
-    })),
-    priced: service.pricing.unitPrice !== null,
+    options: legacyOptions(service),
+    priced: isFullyPriced(service),
     minimumPrice: optionalMoney(service.pricing.minimumPrice),
+    form: presentForm(service),
   };
 }
 
@@ -201,24 +218,28 @@ export function presentDefinition(
     active: service.active,
     pricing: {
       version: pricing.version,
-      unitPrice: optionalMoney(pricing.unitPrice),
+      // Anciens champs (dépréciés, ADR-033), déduits de la définition.
+      unitPrice: optionalMoney(teamSizeField(service)?.pricePerUnit ?? null),
       minimumPrice: optionalMoney(pricing.minimumPrice),
-      options: pricing.options.map((option) => ({
+      options: service.options.map((option) => ({
         code: option.code,
         label: option.label,
-        price: optionalMoney(option.price),
+        price: optionalMoney(option.flatPrice),
       })),
+      frequencies: pricing.frequencies.map((frequency) => ({ ...frequency })),
       communeCoefficients: Object.entries(pricing.communeCoefficients).map(([commune, coefficientBp]) => ({
         commune,
         coefficientBp,
       })),
       defaultCoefficientBp: pricing.defaultCoefficientBp,
-      teamSize: { ...pricing.teamSize },
+      teamSize: { ...pricing.teamSize, fieldCode: text(pricing.teamSize.fieldCode) },
       checklist: pricing.checklist.map((item) => ({ ...item, done: false })),
       updatedBy: pricing.updatedBy,
       updatedAt: pricing.version ? iso(pricing.updatedAt) : '',
       updatedByName: userName(names, pricing.updatedBy),
     },
+    fields: service.fields.map(fieldToProto),
+    options: optionsToProto(service),
   };
 }
 

@@ -21,20 +21,33 @@ export interface RecurrenceInput {
   durationMonths: number;
 }
 
-export interface SimulationInput {
-  serviceCode: string;
-  premisesType: string;
-  quantity: number;
-  options?: string[] | undefined;
-  commune: string;
-  frequency?: string | undefined;
+/** Réponse à un champ du formulaire d'une prestation (ADR-033). */
+export type Answers = Record<string, number | string | boolean>;
+
+export interface OptionSelectionInput {
+  code: string;
+  answers?: Answers | undefined;
 }
 
-export interface QuoteRequestInput {
+/**
+ * Réponses d'une simulation ou d'une demande (ADR-033) : nouveau format avec `answers` (options en
+ * objets), ou ancien format déprécié (`premisesType`, `quantity`, options en codes).
+ */
+export interface FormAnswersInput {
+  answers?: Answers | undefined;
+  options?: (string | OptionSelectionInput)[] | undefined;
+  frequency?: string | undefined;
+  premisesType?: string | undefined;
+  quantity?: number | undefined;
+}
+
+export interface SimulationInput extends FormAnswersInput {
   serviceCode: string;
-  premisesType: string;
-  quantity: number;
-  options?: string[] | undefined;
+  commune: string;
+}
+
+export interface QuoteRequestInput extends FormAnswersInput {
+  serviceCode: string;
   commune: string;
   address: string;
   preferredSlots: Slot[];
@@ -59,27 +72,74 @@ export interface QuoteInput {
   durationMinutes: number;
 }
 
+export interface FieldInput {
+  code: string;
+  label: string;
+  type: string;
+  required: boolean;
+  helpText?: string | null | undefined;
+  active: boolean;
+  unitLabel?: string | undefined;
+  min?: number | undefined;
+  max?: number | undefined;
+  pricePerUnit?: number | null | undefined;
+  choices?:
+    | {
+        code: string;
+        label: string;
+        supplement: number | null;
+        coefficientBp?: number | null | undefined;
+        active: boolean;
+      }[]
+    | undefined;
+  supplementIfYes?: number | null | undefined;
+  coefficientBpIfYes?: number | null | undefined;
+}
+
+/** Prestation complète au nouveau format (ADR-033) : champs, options, grille. */
 export interface ServiceInput {
   name: string;
   description?: string | undefined;
-  unit: string;
   active: boolean;
+  fields: FieldInput[];
+  options?:
+    | {
+        code: string;
+        label: string;
+        description?: string | null | undefined;
+        active: boolean;
+        flatPrice: number | null;
+        fields?: FieldInput[] | undefined;
+      }[]
+    | undefined;
   pricing: {
-    unitPrice: number | null;
     minimumPrice: number | null;
-    options?: { code: string; label: string; price: number | null }[] | undefined;
     communeCoefficients?: { commune: string; coefficientBp: number }[] | undefined;
     defaultCoefficientBp?: number | undefined;
-    teamSize?: { unitsPerAgent: number; minAgents: number; maxAgents: number } | undefined;
+    frequencies?: { code: string; label: string; coefficientBp: number; active: boolean }[] | undefined;
+    teamSize?:
+      | { fieldCode?: string | null | undefined; unitsPerAgent: number; minAgents: number; maxAgents: number }
+      | undefined;
     checklist?: { code: string; label: string }[] | undefined;
   };
+}
+
+/** Essai d'une grille : définition envoyée (non enregistrée) ou version en vigueur. */
+export interface PreviewInput {
+  definition?: ServiceInput | undefined;
+  answers: Answers;
+  options?: OptionSelectionInput[] | undefined;
+  commune: string;
+  frequency?: string | undefined;
+  requestedTeamSize?: number | undefined;
 }
 
 export interface SettingsInput {
   quoteValidityDays: number;
   minimumLeadHours: number;
   freeCancellationHours: number;
-  visitThresholdSquareMeters: number;
+  /** Déprécié (ADR-033) : ignoré par cleaning. */
+  visitThresholdSquareMeters?: number | undefined;
   maxOpenRequests: number;
   depositPercent: number;
   /** Réglages de la partie 10 : absents, ils gardent leur valeur en vigueur. */
@@ -143,6 +203,7 @@ export interface CleaningApi {
   completeIntervention(id: string): Promise<Json>;
   getCatalog(): Promise<Json>;
   saveService(code: string, input: ServiceInput): Promise<Json>;
+  previewService(code: string, input: PreviewInput): Promise<Json>;
   updateSettings(input: SettingsInput): Promise<Json>;
   listZones(): Promise<Json>;
   saveZone(commune: string): Promise<Json>;

@@ -40,13 +40,20 @@ const code = (promise: Promise<unknown>) =>
 const SLOT = { start: '2026-10-30T08:00:00Z', end: '2026-10-30T11:00:00Z' };
 const PLAN = { option: 'deposit', timing: 'before', method: 'cash' };
 
+/** Réponses au formulaire du nettoyage à domicile (nouveau format, ADR-033). */
+const ANSWERS = {
+  answers: { housing_type: 'apartment', rooms: 6, bathrooms: 1, condition: 'normal' },
+  optionSelections: [{ code: 'windows', answers: { window_count: 8 } }],
+  frequency: 'once',
+};
+/** Même besoin à l'ancien format (déprécié) : le nouveau formulaire reste incomplet. */
+const LEGACY = { premisesType: 'house', quantity: 6, options: ['windows'], frequency: 'once' };
+
 function requestInput(key = 'k-1') {
   return {
     idempotencyKey: key,
     serviceCode: 'home_cleaning',
-    premisesType: 'house',
-    quantity: 6,
-    options: ['windows'],
+    ...ANSWERS,
     commune: 'Abomey-Calavi',
     address: 'Lot 12, Abomey-Calavi',
     preferredSlots: [SLOT],
@@ -60,11 +67,7 @@ describe('simulateur et catalogue (UC-CL-01)', () => {
   beforeEach(() => {
     world = testWorld();
     world.catalog.services.set('home_cleaning', homeCleaning());
-    world.catalog.services.set('pest_control', {
-      ...homeCleaning({ unitPrice: null }),
-      code: 'pest_control',
-      active: false,
-    });
+    world.catalog.services.set('pest_control', homeCleaning({ code: 'pest_control', active: false }));
   });
 
   it('liste les seules prestations actives', async () => {
@@ -82,53 +85,78 @@ describe('simulateur et catalogue (UC-CL-01)', () => {
     ]);
   });
 
-  it('renvoie une fourchette et la mention non contractuelle', async () => {
+  it('renvoie une fourchette, le détail du calcul et la mention non contractuelle', async () => {
     const result = await new SimulateUseCase(world).execute({
       serviceCode: 'home_cleaning',
-      premisesType: 'house',
-      quantity: 6,
-      options: ['windows'],
       commune: 'Abomey Calavi',
-      frequency: 'once',
+      ...ANSWERS,
     });
-    expect(result.simulation).toMatchObject({
+    expect(result.calculation).toMatchObject({
+      pricingVersion: 3,
       priced: true,
-      computedPrice: 37_400,
-      low: 33_500,
-      high: 43_000,
+      computedPrice: 35_700,
+      estimate: { low: 32_000, high: 41_000 },
     });
     expect(result.notice).toMatch(/non contractuelle/);
   });
 
-  it('prestation sans prix : réponse propre', async () => {
-    world.catalog.services.set('home_cleaning', homeCleaning({ unitPrice: null }));
+  it('prestation sans prix : réponse propre, avec les prix manquants', async () => {
+    const unpriced = homeCleaning();
+    unpriced.fields[1]!.pricePerUnit = null;
+    world.catalog.services.set('home_cleaning', unpriced);
     const result = await new SimulateUseCase(world).execute({
       serviceCode: 'home_cleaning',
-      premisesType: 'house',
-      quantity: 6,
-      options: [],
       commune: 'Cotonou',
-      frequency: '',
+      ...ANSWERS,
     });
-    expect(result.simulation.priced).toBe(false);
+    expect(result.calculation).toMatchObject({
+      priced: false,
+      reason: 'price_not_set',
+      missingPrices: [{ optionCode: null, fieldCode: 'rooms', choiceCode: null }],
+    });
     expect(result.notice).toMatch(/pas encore publié/);
   });
 
-  it('refuse prestation inactive, option inconnue, quantité invalide', async () => {
-    const base = {
-      premisesType: 'house',
-      quantity: 3,
-      options: [] as string[],
+  it('ancien format toléré : converti, incomplet sans erreur', async () => {
+    const result = await new SimulateUseCase(world).execute({
+      serviceCode: 'home_cleaning',
       commune: 'Cotonou',
-      frequency: 'once',
-    };
-    const simulate = (input: Partial<typeof base> & { serviceCode: string }) =>
-      code(new SimulateUseCase(world).execute({ ...base, ...input }));
-    expect(await simulate({ serviceCode: 'pest_control' })).toBe('CLEANING_SERVICE_NOT_FOUND');
-    expect(await simulate({ serviceCode: 'home_cleaning', options: ['pool'] })).toBe(
+      ...LEGACY,
+    });
+    expect(result.calculation).toMatchObject({ priced: false, reason: 'answers_incomplete' });
+    expect(result.notice).toMatch(/Précisez votre besoin/);
+  });
+
+  it('refuse prestation inactive, réponse invalide (champ et raison), ancien format invalide', async () => {
+    const simulate = (input: object, serviceCode = 'home_cleaning') =>
+      new SimulateUseCase(world).execute({ serviceCode, commune: 'Cotonou', ...input });
+    const details = (input: object) =>
+      simulate(input).then(
+        () => null,
+        (error: AppError) => [error.code, error.details],
+      );
+    expect(await code(simulate(ANSWERS, 'pest_control'))).toBe('CLEANING_SERVICE_NOT_FOUND');
+    expect(await details({ ...ANSWERS, answers: { ...ANSWERS.answers, rooms: 0 } })).toEqual([
       'CLEANING_VALIDATION_FAILED',
-    );
-    expect(await simulate({ serviceCode: 'home_cleaning', quantity: 0 })).toBe('CLEANING_VALIDATION_FAILED');
+      { field: 'answers.rooms', reason: 'out_of_range' },
+    ]);
+    expect(await details({ ...ANSWERS, optionSelections: [{ code: 'pool', answers: {} }] })).toEqual([
+      'CLEANING_VALIDATION_FAILED',
+      { field: 'options[0].code', reason: 'unknown_option' },
+    ]);
+    expect(await details({ ...ANSWERS, frequency: '' })).toEqual([
+      'CLEANING_VALIDATION_FAILED',
+      { field: 'frequency', reason: 'required' },
+    ]);
+    expect(await details({ ...LEGACY, options: ['pool'] })).toEqual([
+      'CLEANING_VALIDATION_FAILED',
+      { field: 'options', reason: 'unknown_option' },
+    ]);
+    expect(await details({ ...LEGACY, quantity: 51 })).toEqual([
+      'CLEANING_VALIDATION_FAILED',
+      { field: 'quantity', reason: 'out_of_range' },
+    ]);
+    expect(await code(simulate({ ...LEGACY, quantity: 0 }))).toBe('CLEANING_VALIDATION_FAILED');
   });
 });
 
@@ -186,9 +214,18 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect(created).toMatchObject({
       status: 'received',
       customerKind: 'individual',
-      estimate: { low: 33_500, high: 43_000 },
+      estimate: { low: 32_000, high: 41_000 },
       recommendedTeamSize: 2,
+      answers: ANSWERS.answers,
+      optionSelections: ANSWERS.optionSelections,
+      frequency: 'once',
+      pricingVersion: 3,
+      // Anciens champs, déduits des réponses.
+      premisesType: 'other',
+      quantity: 6,
+      options: ['windows'],
     });
+    expect(created.calculation).toMatchObject({ priced: true, computedPrice: 35_700 });
     expect(world.recorder.events).toEqual([
       {
         type: 'cleaning.quote.requested',
@@ -264,26 +301,46 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect(await code(request('k-6'))).toBe('CLEANING_TOO_MANY_OPEN_REQUESTS');
   });
 
-  it('devis prérempli depuis la grille : ajustement de commune, acompte de 30 %', async () => {
+  it('devis prérempli depuis le détail du calcul : ajustement des coefficients, acompte de 30 %', async () => {
     const created = await request();
     const sent = await sendQuote(created.id);
     expect(sent.quote).toMatchObject({
-      subtotal: 37_400,
-      total: 37_400,
+      subtotal: 35_700,
+      total: 35_700,
       depositPercent: 30,
-      depositAmount: 11_220,
+      depositAmount: 10_710,
       teamSize: 2,
     });
     expect(sent.quote!.lines.at(-1)).toMatchObject({
-      label: 'Ajustement commune (Abomey-Calavi)',
-      amount: 3_400,
+      label: 'Ajustement : Abomey-Calavi',
+      amount: 1_700,
     });
     expect(sent.quote!.validUntil.toISOString()).toBe('2026-11-07T08:00:00.000Z');
   });
 
   it('prestation sans prix : le superviseur doit saisir les lignes', async () => {
+    const unpriced = homeCleaning();
+    unpriced.fields[1]!.pricePerUnit = null;
+    world.catalog.services.set('home_cleaning', unpriced);
     const created = await request();
-    world.catalog.services.set('home_cleaning', homeCleaning({ unitPrice: null }));
+    expect(created.calculation).toMatchObject({ priced: false, reason: 'price_not_set' });
+    expect(await code(sendQuote(created.id))).toBe('CLEANING_PRICE_NOT_SET');
+    // Prix fixé depuis : nouveau calcul avec la grille en vigueur et les réponses enregistrées.
+    world.catalog.services.set('home_cleaning', homeCleaning());
+    expect((await sendQuoteOnly(created.id)).quote).toMatchObject({ subtotal: 35_700 });
+  });
+
+  it('ancien format : demande enregistrée (réponses converties), devis à saisir par le superviseur', async () => {
+    const legacy = { ...requestInput('legacy'), answers: undefined, optionSelections: [], ...LEGACY };
+    const created = await asCustomer(() => new RequestQuoteUseCase(world).execute(legacy));
+    expect(created).toMatchObject({
+      answers: { rooms: 6 },
+      optionSelections: [{ code: 'windows', answers: {} }],
+      estimate: null,
+      premisesType: 'other',
+      quantity: 6,
+    });
+    expect(created.calculation).toMatchObject({ priced: false, reason: 'answers_incomplete' });
     expect(await code(sendQuote(created.id))).toBe('CLEANING_PRICE_NOT_SET');
   });
 
@@ -302,7 +359,7 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     const first = await accept('acc-1');
     expect(first.request.status).toBe('accepted');
     expect(first.mission.mission).toMatchObject({ status: 'to_schedule', plannedInterventions: 1 });
-    expect(first.mission.mission.payment).toMatchObject({ total: 37_400, depositAmount: 11_220 });
+    expect(first.mission.mission.payment).toMatchObject({ total: 35_700, depositAmount: 10_710 });
     const again = await accept('acc-1');
     expect(again.mission.mission.id).toBe(first.mission.mission.id);
     expect(world.missions.missions.size).toBe(1);

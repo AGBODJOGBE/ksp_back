@@ -1,3 +1,4 @@
+import { checkAnswers, convertLegacy } from '../../domain/answers';
 import { type ServiceDefinition } from '../../domain/catalog';
 import {
   buildQuote,
@@ -15,7 +16,12 @@ import {
 import { isBeforeScheduledTime, respectsLeadTime } from '../../domain/schedule';
 import { isValidZoneCode, zoneCode } from '../../domain/zone';
 import { type QuoteRequestFilter } from '../ports';
-import { type PriceLine, priceLines, simulate } from '../../domain/simulator';
+import {
+  calculatePrice,
+  type PriceCalculation,
+  type PriceLine,
+  quoteLinesFrom,
+} from '../../domain/simulator';
 import { type CleaningDeps, presentRequest } from '../deps';
 import { requireStaff, SUPERVISION } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
@@ -245,8 +251,8 @@ export interface SendQuoteInput {
 }
 
 /**
- * UC-CL-08 : établir et envoyer le devis. Lignes préremplies depuis la grille en vigueur
- * (avec l'ajustement de commune et le minimum de commande), modifiables ; prix figé à l'envoi.
+ * UC-CL-08 : établir et envoyer le devis. Lignes préremplies depuis le détail du calcul de la
+ * demande (avec l'ajustement des coefficients et le minimum de commande), modifiables ; prix figé à l'envoi.
  */
 export class SendQuoteUseCase {
   constructor(private readonly deps: CleaningDeps) {}
@@ -332,20 +338,36 @@ export class SendQuoteUseCase {
     return presentRequest(saved, now);
   }
 
-  /** Lignes de la grille ; l'écart dû à la commune ou au minimum devient une ligne d'ajustement. */
+  /**
+   * Lignes préremplies depuis le détail du calcul de la demande (ADR-033), avec une ligne
+   * d'ajustement pour les coefficients ou le minimum. Calcul sans prix : nouveau calcul avec la
+   * grille en vigueur et les réponses enregistrées ; toujours sans prix : CLEANING_PRICE_NOT_SET.
+   */
   private prefill(request: QuoteRequest, service: ServiceDefinition): PriceLine[] {
-    const lines = priceLines(service, request.quantity, request.options);
-    const simulation = simulate(service, {
-      quantity: request.quantity,
-      options: request.options,
-      commune: request.commune,
-    });
-    if (!lines || !simulation.priced) throw CleaningErrors.priceNotSet();
-    const adjustment = simulation.computedPrice - linesSubtotal(lines);
-    if (adjustment === 0) return lines;
-    const label = simulation.minimumApplied
-      ? 'Minimum de commande'
-      : `Ajustement commune (${request.commune})`;
-    return [...lines, { label, quantity: 1, unitPrice: adjustment, amount: adjustment }];
+    const calculation = request.calculation?.priced ? request.calculation : recalculate(request, service);
+    const lines = calculation ? quoteLinesFrom(calculation) : null;
+    if (!lines) throw CleaningErrors.priceNotSet();
+    return lines;
   }
+}
+
+/** Nouveau calcul d'une demande avec la grille en vigueur (réponses enregistrées ou ancien format). */
+function recalculate(request: QuoteRequest, service: ServiceDefinition): PriceCalculation | null {
+  const form = request.answers
+    ? { answers: request.answers, options: request.optionSelections, frequency: request.frequency }
+    : convertLegacy(service, {
+        premisesType: request.premisesType,
+        quantity: request.quantity,
+        options: request.options,
+        frequency: null,
+      });
+  if (!form) return null;
+  const check = checkAnswers(service, form, true);
+  if (!check.ok) return null;
+  return calculatePrice(service, {
+    ...check.value,
+    commune: request.commune,
+    requestedTeamSize: request.requestedTeamSize,
+    incomplete: check.incomplete,
+  });
 }

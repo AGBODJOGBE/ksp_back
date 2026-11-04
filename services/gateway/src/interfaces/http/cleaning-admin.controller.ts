@@ -148,6 +148,12 @@ export class CleaningAdminHttpController {
     return this.cleaning.saveService(serviceCode, parseBody(requestBodies.saveCleaningService, body));
   }
 
+  @Route('previewCleaningService')
+  previewService(@Param('code') code: unknown, @Body() body: unknown) {
+    const serviceCode = parseParam(cleaningParams.serviceCode, code, 'code');
+    return this.cleaning.previewService(serviceCode, parseBody(requestBodies.previewCleaningService, body));
+  }
+
   @Route('updateCleaningSettings')
   updateSettings(@Body() body: unknown) {
     return this.cleaning.updateSettings(parseBody(requestBodies.updateCleaningSettings, body));

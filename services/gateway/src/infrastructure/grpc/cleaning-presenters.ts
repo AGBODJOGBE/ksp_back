@@ -1,5 +1,13 @@
 import { type cleaningV1, type moneyV1 } from '@ksp/contracts';
 import { AppError } from '@ksp/platform';
+import {
+  answersFromProto,
+  presentCalculation,
+  presentFields,
+  presentForm,
+  presentOptionDefinitions,
+  selectionsFromProto,
+} from './cleaning-form-presenters';
 
 /**
  * Traduction des messages ksp.cleaning.v1 vers le JSON du contrat OpenAPI : montants
@@ -47,8 +55,13 @@ export function presentOffer(value: cleaningV1.ServiceOffer) {
     options: value.options.map(option),
     priced: value.priced,
     minimumPrice: money(value.minimumPrice),
+    form: presentForm(value.form),
   };
 }
+
+const malformedCalculation = () => {
+  throw malformed('détail du calcul');
+};
 
 export function presentSimulation(value: cleaningV1.SimulateResponse) {
   return {
@@ -62,6 +75,8 @@ export function presentSimulation(value: cleaningV1.SimulateResponse) {
     recommendedTeamSize: value.recommendedTeamSize,
     notice: value.notice,
     covered: value.covered,
+    reason: orNull(value.reason),
+    calculation: presentCalculation(value.calculation) ?? malformedCalculation(),
   };
 }
 
@@ -124,6 +139,12 @@ export function presentRequest(value: cleaningV1.QuoteRequest | undefined) {
     // Back-office (ADR-029) : null dans l'espace client, pour un compte sans nom, ou identity indisponible.
     customerName: orNull(value.customerName),
     organizationName: orNull(value.organizationName),
+    // Formulaire (ADR-033) : null pour une demande antérieure.
+    answers: value.answers ? answersFromProto(value.answers) : null,
+    selectedOptions: selectionsFromProto(value.optionSelections ?? []),
+    frequency: orNull(value.frequency),
+    pricingVersion: value.pricingVersion || null,
+    calculation: presentCalculation(value.calculation),
   };
 }
 
@@ -227,12 +248,21 @@ export function presentDefinition(value: cleaningV1.ServiceDefinition | undefine
         unitsPerAgent: pricing?.teamSize?.unitsPerAgent ?? 1,
         minAgents: pricing?.teamSize?.minAgents ?? 1,
         maxAgents: pricing?.teamSize?.maxAgents ?? 1,
+        fieldCode: orNull(pricing?.teamSize?.fieldCode),
       },
+      frequencies: (pricing?.frequencies ?? []).map(({ code, label, coefficientBp, active }) => ({
+        code,
+        label,
+        coefficientBp,
+        active,
+      })),
       checklist: (pricing?.checklist ?? []).map((item) => ({ code: item.code, label: item.label })),
       updatedBy: orNull(pricing?.updatedBy),
       updatedByName: orNull(pricing?.updatedByName),
       updatedAt: orNull(pricing?.updatedAt),
     },
+    fields: presentFields(value.fields ?? []),
+    options: presentOptionDefinitions(value.options ?? []),
   };
 }
 

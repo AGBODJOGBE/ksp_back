@@ -1,7 +1,8 @@
 import { INITIAL_ZONES, type Zone, zoneCode } from '../../domain/zone';
 import { type RoleClaim, runWithContext } from '@ksp/platform';
 import { type Agent, type Team, type Unavailability } from '../../domain/agent';
-import { DEFAULT_TEAM_SIZE, type ServiceDefinition } from '../../domain/catalog';
+import { type ServiceDefinition } from '../../domain/catalog';
+import { homeCleaningService } from '../../domain/testing';
 import {
   ACTIVE_INTERVENTION_STATUSES,
   type Intervention,
@@ -16,6 +17,7 @@ import {
   slotFrom,
 } from '../../domain/schedule';
 import { type CleaningSettings, DEFAULT_SETTINGS } from '../../domain/settings';
+import { type ServiceDefinitionInput } from '../catalog/admin-catalog.use-cases';
 import { type CleaningDeps } from '../deps';
 import {
   type AgentRepository,
@@ -26,7 +28,7 @@ import {
   type CreateResult,
   type MissionFilter,
   type MissionRepository,
-  type NewPricing,
+  type NewServiceVersion,
   type OrganizationStandingRepository,
   type PeopleDirectory,
   type QuoteRequestFilter,
@@ -86,19 +88,19 @@ export class InMemoryCatalog implements CatalogRepository {
   async findService(code: string) {
     return this.services.get(code) ?? null;
   }
-  async saveService(service: Omit<ServiceDefinition, 'pricing'>, pricing: NewPricing, changes: Changes) {
-    const previous = this.services.get(service.code);
+  async saveService(definition: NewServiceVersion, changes: Changes) {
+    const previous = this.services.get(definition.code);
     const at = changes.audit[0]!.at;
     const saved: ServiceDefinition = {
-      ...service,
+      ...definition,
       pricing: {
-        ...pricing,
+        ...definition.pricing,
         version: (previous?.pricing.version ?? 0) + 1,
         updatedBy: changes.audit[0]!.actorId,
         updatedAt: at,
       },
     };
-    this.services.set(service.code, saved);
+    this.services.set(definition.code, saved);
     this.recorder.record(changes);
     return saved;
   }
@@ -471,26 +473,31 @@ export const asSuperAdmin = <T>(fn: () => T, mfa = true) =>
 export const asAgent = <T>(fn: () => T, agentId = AGENT_ID) =>
   as(agentId, fn, { roles: ['cleaning_agent'], mfa: true });
 
-/** Prestation de démonstration utilisée par les tests. */
-export function homeCleaning(overrides: Partial<ServiceDefinition['pricing']> = {}): ServiceDefinition {
+/** Prestation de démonstration utilisée par les tests (grille complète, version 3). */
+export function homeCleaning(overrides: Partial<ServiceDefinition> = {}): ServiceDefinition {
+  return homeCleaningService({ ...overrides });
+}
+
+/** Définition saisie au back-office (nouveau format) reprenant une prestation du modèle. */
+export function definitionInput(service: ServiceDefinition): ServiceDefinitionInput {
   return {
-    code: 'home_cleaning',
-    name: 'Nettoyage à domicile',
-    description: 'Ménage complet',
-    unit: 'room',
-    active: true,
+    name: service.name,
+    description: service.description,
+    active: service.active,
+    fields: service.fields,
+    options: service.options,
     pricing: {
-      version: 1,
-      unitPrice: 5000,
-      minimumPrice: 15000,
-      options: [{ code: 'windows', label: 'Vitres', price: 4000 }],
-      communeCoefficients: { 'abomey-calavi': 11000 },
-      defaultCoefficientBp: 10000,
-      teamSize: { ...DEFAULT_TEAM_SIZE, unitsPerAgent: 3 },
-      checklist: [],
-      updatedBy: SUPERVISOR_ID,
-      updatedAt: new Date('2026-10-01T00:00:00Z'),
-      ...overrides,
+      minimumPrice: service.pricing.minimumPrice,
+      communeCoefficients: Object.entries(service.pricing.communeCoefficients).map(
+        ([commune, coefficientBp]) => ({
+          commune,
+          coefficientBp,
+        }),
+      ),
+      defaultCoefficientBp: service.pricing.defaultCoefficientBp,
+      frequencies: service.pricing.frequencies,
+      teamSize: service.pricing.teamSize,
+      checklist: service.pricing.checklist,
     },
   };
 }

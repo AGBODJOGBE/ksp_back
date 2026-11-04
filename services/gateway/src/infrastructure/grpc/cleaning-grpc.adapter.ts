@@ -8,6 +8,7 @@ import {
   type CleaningApi,
   type Json,
   type Page,
+  type PreviewInput,
   type QuoteInput,
   type QuoteRequestFilters,
   type QuoteRequestInput,
@@ -28,6 +29,13 @@ import {
   presentZone,
   xof,
 } from './cleaning-presenters';
+import {
+  answersToProto,
+  definitionToProto,
+  formToProto,
+  presentCalculation,
+  selectionsToProto,
+} from './cleaning-form-presenters';
 import { toUpstreamError } from './upstream-error';
 
 export interface CleaningClients {
@@ -63,7 +71,7 @@ export class CleaningGrpcAdapter implements CleaningApi {
   async simulate(input: SimulationInput): Promise<Json> {
     const res = await this.read('simulate', (m) =>
       this.clients.catalog.simulate(
-        { ...input, options: input.options ?? [], frequency: input.frequency ?? '' },
+        { serviceCode: input.serviceCode, commune: input.commune, ...formToProto(input) },
         m,
       ),
     );
@@ -81,9 +89,7 @@ export class CleaningGrpcAdapter implements CleaningApi {
         {
           idempotencyKey,
           serviceCode: input.serviceCode,
-          premisesType: input.premisesType,
-          quantity: input.quantity,
-          options: input.options ?? [],
+          ...formToProto(input),
           commune: input.commune,
           address: input.address,
           preferredSlots: input.preferredSlots,
@@ -356,39 +362,33 @@ export class CleaningGrpcAdapter implements CleaningApi {
   }
 
   async saveService(code: string, input: ServiceInput): Promise<Json> {
-    const p = input.pricing;
     const res = await this.write('saveService', (m) =>
-      this.clients.admin.saveService(
+      this.clients.admin.saveService({ service: definitionToProto(code, input) }, m),
+    );
+    return presentDefinition(res.service);
+  }
+
+  async previewService(code: string, input: PreviewInput): Promise<Json> {
+    // Rien n'est enregistré : l'essai est une lecture, rejouable.
+    const res = await this.read('previewService', (m) =>
+      this.clients.admin.previewService(
         {
-          service: {
-            code,
-            name: input.name,
-            description: input.description ?? '',
-            unit: input.unit,
-            active: input.active,
-            pricing: {
-              version: 0,
-              ...(p.unitPrice === null ? {} : { unitPrice: xof(p.unitPrice) }),
-              ...(p.minimumPrice === null ? {} : { minimumPrice: xof(p.minimumPrice) }),
-              options: (p.options ?? []).map((o) => ({
-                code: o.code,
-                label: o.label,
-                ...(o.price === null ? {} : { price: xof(o.price) }),
-              })),
-              communeCoefficients: p.communeCoefficients ?? [],
-              defaultCoefficientBp: p.defaultCoefficientBp ?? 0,
-              ...(p.teamSize ? { teamSize: p.teamSize } : {}),
-              checklist: (p.checklist ?? []).map((item) => ({ ...item, done: false })),
-              updatedBy: '',
-              updatedAt: '',
-              updatedByName: '',
-            },
-          },
+          serviceCode: code,
+          ...(input.definition ? { definition: definitionToProto(code, input.definition) } : {}),
+          answers: answersToProto(input.answers),
+          optionSelections: selectionsToProto(input.options ?? []),
+          commune: input.commune,
+          frequency: input.frequency ?? '',
+          requestedTeamSize: input.requestedTeamSize ?? 0,
         },
         m,
       ),
     );
-    return presentDefinition(res.service);
+    return {
+      serviceCode: res.serviceCode,
+      calculation: presentCalculation(res.calculation),
+      covered: res.covered,
+    };
   }
 
   async updateSettings(input: SettingsInput): Promise<Json> {
@@ -397,6 +397,8 @@ export class CleaningGrpcAdapter implements CleaningApi {
         {
           settings: {
             ...input,
+            // Déprécié, ignoré par cleaning (ADR-033).
+            visitThresholdSquareMeters: input.visitThresholdSquareMeters ?? 0,
             // 0 : valeur en vigueur conservée par cleaning.
             businessWarningUnpaidInvoices: input.businessWarningUnpaidInvoices ?? 0,
             businessSuspensionUnpaidInvoices: input.businessSuspensionUnpaidInvoices ?? 0,

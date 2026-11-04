@@ -17,8 +17,12 @@ import {
   presentTeam,
   presentZone,
 } from './presenters';
-
-const amount = (value: { amount: number } | undefined) => (value ? value.amount : null);
+import {
+  answersFromProto,
+  calculationToProto,
+  definitionFromProto,
+  selectionsFromProto,
+} from './form.presenters';
 
 function toLine(line: cleaningV1.PriceLine): PriceLine {
   return {
@@ -175,29 +179,30 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
   }
 
   async saveService(request: cleaningV1.SaveServiceRequest): Promise<cleaningV1.SaveServiceResponse> {
-    const service = request.service;
-    const pricing = service?.pricing;
-    const saved = await this.useCases.saveService.execute({
-      code: service?.code ?? '',
-      name: service?.name ?? '',
-      description: service?.description ?? '',
-      unit: service?.unit ?? '',
-      active: service?.active ?? false,
-      pricing: {
-        unitPrice: amount(pricing?.unitPrice),
-        minimumPrice: amount(pricing?.minimumPrice),
-        options: (pricing?.options ?? []).map((o) => ({
-          code: o.code,
-          label: o.label,
-          price: amount(o.price),
-        })),
-        communeCoefficients: pricing?.communeCoefficients ?? [],
-        defaultCoefficientBp: pricing?.defaultCoefficientBp ?? 0,
-        teamSize: pricing?.teamSize ?? null,
-        checklist: (pricing?.checklist ?? []).map((item) => ({ code: item.code, label: item.label })),
-      },
-    });
+    const saved = await this.useCases.saveService.execute(
+      request.service?.code ?? '',
+      definitionFromProto(request.service),
+    );
     return { service: await this.definition(saved) };
+  }
+
+  async previewService(
+    request: cleaningV1.PreviewServiceRequest,
+  ): Promise<cleaningV1.PreviewServiceResponse> {
+    const result = await this.useCases.previewService.execute({
+      serviceCode: request.serviceCode,
+      definition: request.definition ? definitionFromProto(request.definition) : undefined,
+      answers: answersFromProto(request.answers),
+      optionSelections: selectionsFromProto(request.optionSelections),
+      commune: request.commune,
+      frequency: request.frequency,
+      requestedTeamSize: request.requestedTeamSize,
+    });
+    return {
+      serviceCode: result.serviceCode,
+      calculation: calculationToProto(result.calculation),
+      covered: result.covered,
+    };
   }
 
   async updateSettings(

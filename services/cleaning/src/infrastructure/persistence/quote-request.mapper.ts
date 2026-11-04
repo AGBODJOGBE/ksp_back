@@ -1,10 +1,10 @@
 import {
-  type Prisma,
+  Prisma,
   type Quote as QuoteRow,
   type QuoteRequest as RequestRow,
   type SiteVisit as VisitRow,
 } from '../../../prisma/generated';
-import { type PremisesType } from '../../domain/catalog';
+import { type Answers, type OptionSelection, type PremisesType } from '../../domain/answers';
 import { type Quote } from '../../domain/quote';
 import { zoneCode } from '../../domain/zone';
 import {
@@ -15,7 +15,7 @@ import {
 } from '../../domain/quote-request';
 import { type Recurrence } from '../../domain/recurrence';
 import { type Slot } from '../../domain/schedule';
-import { type PriceLine } from '../../domain/simulator';
+import { type PriceCalculation, type PriceLine } from '../../domain/simulator';
 import { json } from './changes';
 
 /** Traduction entre les lignes PostgreSQL et le modèle du domaine. */
@@ -63,6 +63,11 @@ export function toRequest(row: RequestWithRelations): QuoteRequest {
     premisesType: row.premisesType as PremisesType,
     quantity: row.quantity,
     options: row.options,
+    answers: (row.answers ?? null) as Answers | null,
+    optionSelections: row.optionSelections as unknown as OptionSelection[],
+    frequency: row.frequency,
+    pricingVersion: row.pricingVersion,
+    calculation: (row.calculation ?? null) as unknown as PriceCalculation | null,
     commune: row.commune,
     address: row.address,
     preferredSlots: slotsFromJson(row.preferredSlots),
@@ -104,6 +109,11 @@ export function requestColumns(request: QuoteRequest) {
     premisesType: request.premisesType,
     quantity: request.quantity,
     options: request.options,
+    answers: request.answers ? json(request.answers) : Prisma.DbNull,
+    optionSelections: json(request.optionSelections),
+    frequency: request.frequency,
+    pricingVersion: request.pricingVersion,
+    calculation: request.calculation ? json(request.calculation) : Prisma.DbNull,
     commune: request.commune,
     // Code de zone de la commune saisie : filtre du back-office.
     communeCode: zoneCode(request.commune),

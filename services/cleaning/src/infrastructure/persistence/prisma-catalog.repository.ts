@@ -3,16 +3,19 @@ import { type CleaningService, type PricingRule as PricingRow } from '../../../p
 import {
   type Changes,
   type CatalogRepository,
-  type NewPricing,
+  type NewServiceVersion,
   type StoredSettings,
 } from '../../application/ports';
 import {
   type ChecklistTemplateItem,
   DEFAULT_TEAM_SIZE,
-  type PricedOption,
+  type FormField,
+  type LegacyUnit,
   type ServiceDefinition,
-  type ServiceUnit,
+  type ServiceFrequency,
+  type ServiceOption,
   type TeamSizeRule,
+  teamSizeField,
 } from '../../domain/catalog';
 import { BASIS_POINTS } from '../../domain/money';
 import { type CleaningSettings, DEFAULT_SETTINGS } from '../../domain/settings';
@@ -23,14 +26,13 @@ import { json, writeChanges } from './changes';
 
 const ids = new UuidV7Generator();
 
-/** Grille vide d'une prestation créée avant toute saisie de prix. */
+/** Grille vide d'une prestation créée avant toute saisie (aucune version). */
 const EMPTY_PRICING = {
   version: 0,
-  unitPrice: null,
   minimumPrice: null,
-  options: [],
   communeCoefficients: {},
   defaultCoefficientBp: BASIS_POINTS,
+  frequencies: [],
   teamSize: DEFAULT_TEAM_SIZE,
   checklist: [],
   updatedBy: '',
@@ -43,17 +45,19 @@ function toService(row: CleaningService & { pricing: PricingRow[] }): ServiceDef
     code: row.code,
     name: row.name,
     description: row.description,
-    unit: row.unit as ServiceUnit,
+    unit: row.unit as LegacyUnit,
     active: row.active,
+    fields: (latest?.fields ?? []) as unknown as FormField[],
+    options: (latest?.optionDefinitions ?? []) as unknown as ServiceOption[],
     pricing: latest
       ? {
           version: latest.version,
-          unitPrice: latest.unitPrice,
           minimumPrice: latest.minimumPrice,
-          options: latest.options as unknown as PricedOption[],
           communeCoefficients: latest.communeCoefficients as Record<string, number>,
           defaultCoefficientBp: latest.defaultCoefficientBp,
-          teamSize: latest.teamSize as unknown as TeamSizeRule,
+          frequencies: latest.frequencies as unknown as ServiceFrequency[],
+          // Versions antérieures à l'ADR-033 : pas de champ désigné.
+          teamSize: { fieldCode: null, ...(latest.teamSize as object) } as TeamSizeRule,
           checklist: latest.checklist as unknown as ChecklistTemplateItem[],
           updatedBy: latest.createdBy,
           updatedAt: latest.createdAt,
@@ -85,48 +89,46 @@ export class PrismaCatalogRepository implements CatalogRepository {
     return row ? toService(row) : null;
   }
 
-  async saveService(
-    service: Omit<ServiceDefinition, 'pricing'>,
-    pricing: NewPricing,
-    changes: Changes,
-  ): Promise<ServiceDefinition> {
+  async saveService(definition: NewServiceVersion, changes: Changes): Promise<ServiceDefinition> {
     const author = changes.audit[0]?.actorId ?? 'system';
     const at = changes.audit[0]?.at ?? new Date();
+    const { code, name, description, unit, active, fields, options, pricing } = definition;
     await this.prisma.$transaction(async (tx) => {
       await tx.cleaningService.upsert({
-        where: { code: service.code },
-        create: { ...service },
-        update: {
-          name: service.name,
-          description: service.description,
-          unit: service.unit,
-          active: service.active,
-        },
+        where: { code },
+        create: { code, name, description, unit, active },
+        update: { name, description, unit, active },
       });
       const last = await tx.pricingRule.findFirst({
-        where: { serviceCode: service.code },
+        where: { serviceCode: code },
         orderBy: { version: 'desc' },
         select: { version: true },
       });
       await tx.pricingRule.create({
         data: {
           id: ids.next(),
-          serviceCode: service.code,
+          serviceCode: code,
           version: (last?.version ?? 0) + 1,
-          unitPrice: pricing.unitPrice,
+          // Anciennes colonnes, déduites pour les anciens lecteurs (ADR-033).
+          unitPrice: teamSizeField(definition)?.pricePerUnit ?? null,
+          options: json(
+            options.map((option) => ({ code: option.code, label: option.label, price: option.flatPrice })),
+          ),
           minimumPrice: pricing.minimumPrice,
-          options: json(pricing.options),
           communeCoefficients: json(pricing.communeCoefficients),
           defaultCoefficientBp: pricing.defaultCoefficientBp,
           teamSize: json(pricing.teamSize),
           checklist: json(pricing.checklist),
+          fields: json(fields),
+          optionDefinitions: json(options),
+          frequencies: json(pricing.frequencies),
           createdBy: author,
           createdAt: at,
         },
       });
       await writeChanges(tx, changes, () => ids.next());
     });
-    return (await this.findService(service.code))!;
+    return (await this.findService(code))!;
   }
 
   async getSettings(): Promise<StoredSettings> {

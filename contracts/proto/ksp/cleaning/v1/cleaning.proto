@@ -31,7 +31,11 @@ import "ksp/common/v1/money.proto";
 //   CLEANING_INTERVENTION_NOT_FOUND     NOT_FOUND
 //   CLEANING_AGENT_NOT_FOUND            NOT_FOUND
 //   CLEANING_TEAM_NOT_FOUND             NOT_FOUND
-//   CLEANING_VALIDATION_FAILED          INVALID_ARGUMENT    details.field
+//   CLEANING_VALIDATION_FAILED          INVALID_ARGUMENT    details.field ; details.reason (facultatif, réponses au
+//                                                           formulaire d'une prestation, ADR-033) : "unknown_field",
+//                                                           "required", "invalid_type", "out_of_range",
+//                                                           "unknown_choice", "unknown_option", "duplicate_option",
+//                                                           "unknown_frequency"
 //   CLEANING_SLOT_INVALID               INVALID_ARGUMENT    créneau mal formé, ou hors des créneaux proposés
 //   CLEANING_INVALID_TRANSITION         FAILED_PRECONDITION details.from, details.to
 //   CLEANING_QUOTE_EXPIRED              FAILED_PRECONDITION devis au-delà de sa date de validité
@@ -68,7 +72,8 @@ import "ksp/common/v1/money.proto";
 // Catalogue et simulateur — public (UC-CL-01).
 // ---------------------------------------------------------------------------
 service CatalogService {
-  // Prestations actives, avec leurs options et leur minimum de commande quand ils sont fixés.
+  // Prestations actives et leur formulaire (champs, options, fréquences), sans aucun prix
+  // (ServiceOffer.form, ADR-033) ; anciens champs (options avec prix, minimum) dépréciés.
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
   // Estimation non contractuelle, sans donnée personnelle ; rien n'est enregistré.
   // Une prestation sans prix répond priced = false, sans erreur.
@@ -143,7 +148,11 @@ service CleaningAdminService {
   // Catalogue, grille tarifaire et réglages (cleaning_admin, super_admin). Chaque modification de prix
   // crée une nouvelle version datée, avec son auteur ; un devis envoyé garde son prix.
   rpc GetCatalog(GetCatalogRequest) returns (GetCatalogResponse);
+  // Crée ou remplace une prestation complète (champs, options, grille) : une nouvelle version (ADR-033).
   rpc SaveService(SaveServiceRequest) returns (SaveServiceResponse);
+  // Calcule un prix avec une définition envoyée (ou la version en vigueur) et des réponses, pour
+  // tester une grille avant de l'enregistrer. Rien n'est enregistré (ADR-033).
+  rpc PreviewService(PreviewServiceRequest) returns (PreviewServiceResponse);
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse);
 
   // Zones desservies (cleaning_admin, super_admin) : une demande de devis hors zone est refusée.
@@ -285,9 +294,13 @@ message QuoteRequest {
   // Organisation au nom de laquelle la demande est faite, vide pour un particulier.
   string organization_id = 5;
   string service_code = 6;
-  // "apartment", "house", "office", "shop", "warehouse" ou "other".
-  string premises_type = 7;
-  int32 quantity = 8;
+  // Déprécié (ADR-033) : valeur dérivée des réponses pour les anciens lecteurs, "other" si la
+  // prestation n'a pas de champ "premises_type". "apartment", "house", "office", "shop",
+  // "warehouse" ou "other".
+  string premises_type = 7 [deprecated = true];
+  // Déprécié (ADR-033) : réponse au champ de la taille d'équipe (TeamSizeRule.field_code), 1 sinon.
+  int32 quantity = 8 [deprecated = true];
+  // Codes des options choisies (le détail de leurs réponses est dans option_selections).
   repeated string options = 9;
   string commune = 10;
   // Adresse d'intervention : jamais dans les journaux ni dans les événements.
@@ -312,6 +325,18 @@ message QuoteRequest {
   string customer_name = 25;
   // Back-office : raison sociale de l'organisation, vide pour un particulier (ADR-029).
   string organization_name = 26;
+  // Réponses au formulaire de la prestation, telles qu'enregistrées (ancien format converti,
+  // ADR-033). Absentes pour une demande antérieure à la grille paramétrable.
+  AnswerSet answers = 27;
+  // Options choisies, avec leurs réponses.
+  repeated OptionSelection option_selections = 28;
+  // Code de la fréquence choisie, vide si aucune.
+  string frequency = 29;
+  // Version de la grille utilisée pour le calcul, 0 si inconnue (demande antérieure).
+  int32 pricing_version = 30;
+  // Détail du calcul au moment de la demande, absent pour une demande antérieure ; le devis est
+  // prérempli à partir de lui.
+  PriceCalculation calculation = 31;
 }
 
 message ChecklistItem {
@@ -395,7 +420,7 @@ message Suspension {
 message CatalogOption {
   string code = 1;
   string label = 2;
-  // Absent tant que l'option n'a pas de prix.
+  // Absent tant que l'option n'a pas de prix. Depuis l'ADR-033 : forfait de l'option (flat_price).
   ksp.common.v1.Money price = 3;
 }
 
@@ -403,12 +428,209 @@ message ServiceOffer {
   string code = 1;
   string name = 2;
   string description = 3;
-  // Unité de calcul : "square_meter", "room", "septic_tank" ou "cubic_meter".
-  string unit = 4;
-  repeated CatalogOption options = 5;
-  // Faux tant que l'équipe Nettoyage n'a pas fixé le prix unitaire.
+  // Déprécié (ADR-033) : unité de l'ancien formulaire, "square_meter", "room", "septic_tank" ou
+  // "cubic_meter". Les unités sont désormais celles des champs (FormField.unit_label).
+  string unit = 4 [deprecated = true];
+  // Déprécié (ADR-033) : options actives avec leur forfait ; lire form.options.
+  repeated CatalogOption options = 5 [deprecated = true];
+  // Vrai si toute réponse au formulaire (hors options) peut être chiffrée : tous les prix
+  // nécessaires des champs actifs sont fixés.
   bool priced = 6;
-  ksp.common.v1.Money minimum_price = 7;
+  // Déprécié (ADR-033) : le formulaire public ne montre plus de prix.
+  ksp.common.v1.Money minimum_price = 7 [deprecated = true];
+  // Formulaire de la prestation, sans aucun prix (ADR-033).
+  ServiceForm form = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Formulaire paramétrable d'une prestation (ADR-033).
+// ---------------------------------------------------------------------------
+
+// Réponse à un champ : nombre entier (type "number"), code d'un choix ("choice") ou oui/non
+// ("boolean").
+message AnswerValue {
+  oneof value {
+    int32 number_value = 1;
+    string choice_value = 2;
+    bool boolean_value = 3;
+  }
+}
+
+// Réponses à un formulaire, par code de champ. Le message présent (même vide) signale le nouveau
+// format de demande ; absent, la demande est à l'ancien format (premises_type, quantity, options).
+message AnswerSet {
+  map<string, AnswerValue> values = 1;
+}
+
+// Option choisie par le client, avec les réponses à ses propres champs.
+message OptionSelection {
+  string code = 1;
+  AnswerSet answers = 2;
+}
+
+// Valeur d'un champ "choice" (définition complète, back-office).
+message FieldChoice {
+  string code = 1;
+  string label = 2;
+  // Supplément ajouté au prix ; absent si non fixé.
+  ksp.common.v1.Money supplement = 3;
+  // Coefficient appliqué au prix, en points de base ; 0 si aucun.
+  // Supplément absent et coefficient 0 : valeur sans prix (priced = false si elle est choisie).
+  int32 coefficient_bp = 4;
+  bool active = 5;
+}
+
+// Champ du formulaire (définition complète, back-office). Les champs sont dans l'ordre d'affichage.
+message FieldDefinition {
+  // Code unique dans la prestation (ou dans l'option), par exemple "surface".
+  string code = 1;
+  string label = 2;
+  // "number", "choice" ou "boolean".
+  string type = 3;
+  bool required = 4;
+  // Aide affichée sous le champ, vide si aucune.
+  string help_text = 5;
+  bool active = 6;
+  // "number" : unité libre ("m²", "m³", "pièces", "mètres linéaires"…), bornes entières incluses
+  // et prix par unité (absent tant que non fixé).
+  string unit_label = 7;
+  int32 min = 8;
+  int32 max = 9;
+  ksp.common.v1.Money price_per_unit = 10;
+  // "choice" : valeurs proposées, dans l'ordre d'affichage.
+  repeated FieldChoice choices = 11;
+  // "boolean" : effet de la réponse « oui » (la réponse « non » n'a jamais d'effet). Supplément
+  // absent et coefficient 0 : non fixé (priced = false si le client répond oui).
+  ksp.common.v1.Money supplement_if_yes = 12;
+  int32 coefficient_bp_if_yes = 13;
+}
+
+// Option (prestation complémentaire) : forfait facultatif et champs propres.
+message OptionDefinition {
+  string code = 1;
+  string label = 2;
+  string description = 3;
+  bool active = 4;
+  // Forfait de l'option, absent si aucun. Une option sans champ et sans forfait n'a pas de prix.
+  ksp.common.v1.Money flat_price = 5;
+  repeated FieldDefinition fields = 6;
+}
+
+// Fréquence propre à la prestation, avec son coefficient sur le prix d'un passage.
+message ServiceFrequency {
+  // Par exemple "once", "weekly", "monthly".
+  string code = 1;
+  string label = 2;
+  int32 coefficient_bp = 3;
+  bool active = 4;
+}
+
+// Valeur d'un champ "choice" vue du public : sans supplément ni coefficient.
+message FormChoice {
+  string code = 1;
+  string label = 2;
+}
+
+// Champ actif du formulaire public : jamais de prix, de supplément ni de coefficient.
+message FormField {
+  string code = 1;
+  string label = 2;
+  // "number", "choice" ou "boolean".
+  string type = 3;
+  bool required = 4;
+  string help_text = 5;
+  // "number" seulement : unité et bornes entières incluses.
+  string unit_label = 6;
+  int32 min = 7;
+  int32 max = 8;
+  // "choice" seulement : valeurs actives.
+  repeated FormChoice choices = 9;
+}
+
+message FormOption {
+  string code = 1;
+  string label = 2;
+  string description = 3;
+  repeated FormField fields = 4;
+}
+
+message FormFrequency {
+  string code = 1;
+  string label = 2;
+}
+
+// Formulaire public d'une prestation : éléments actifs seulement, dans l'ordre d'affichage.
+message ServiceForm {
+  repeated FormField fields = 1;
+  repeated FormOption options = 2;
+  // Fréquences actives ; si la liste n'est pas vide, la fréquence est obligatoire (nouveau format).
+  repeated FormFrequency frequencies = 3;
+}
+
+// Ligne du détail d'un calcul.
+message CalculationLine {
+  // "unit_price" (nombre × prix par unité), "supplement" (choix ou réponse oui) ou "flat_price"
+  // (forfait d'une option).
+  string kind = 1;
+  // Option concernée, vide pour la prestation elle-même.
+  string option_code = 2;
+  // Champ concerné, vide pour un forfait.
+  string field_code = 3;
+  // Valeur choisie ("choice"), vide sinon.
+  string choice_code = 4;
+  string label = 5;
+  int32 quantity = 6;
+  string unit_label = 7;
+  ksp.common.v1.Money unit_price = 8;
+  ksp.common.v1.Money amount = 9;
+}
+
+// Coefficient appliqué : au montant d'une option (option_code renseigné) ou au total.
+message AppliedCoefficient {
+  // "choice", "boolean", "commune" ou "frequency".
+  string source = 1;
+  // Option dont le champ porte ce coefficient : il ne s'applique qu'au montant de cette option.
+  // Vide pour un coefficient de la prestation, de la commune ou de la fréquence.
+  string option_code = 2;
+  string field_code = 3;
+  // Code du choix, clé de la commune ou code de la fréquence ; vide pour un booléen.
+  string code = 4;
+  string label = 5;
+  int32 coefficient_bp = 6;
+}
+
+// Prix manquant dans la grille : forfait d'une option (field_code vide), prix par unité d'un champ
+// (choice_code vide) ou effet d'une valeur choisie.
+message MissingPrice {
+  string option_code = 1;
+  string field_code = 2;
+  string choice_code = 3;
+}
+
+// Détail du calcul d'un passage (ADR-033) :
+//   prix = max(minimum, (Σ lignes de la prestation + Σ options [Σ lignes de l'option × Π coefficients
+//   de ses champs]) × Π coefficients des champs de la prestation × commune × fréquence),
+//   arrondi une seule fois, au franc le plus proche.
+message PriceCalculation {
+  int32 pricing_version = 1;
+  bool priced = 2;
+  // Vide si priced ; sinon "price_not_set" (prix d'un champ de la prestation), "option_price_not_set"
+  // (prix d'une option ou de ses champs) ou "answers_incomplete" (ancien format sans les réponses
+  // obligatoires du nouveau formulaire).
+  string reason = 3;
+  repeated MissingPrice missing_prices = 4;
+  // Lignes calculables ; complètes seulement si priced.
+  repeated CalculationLine lines = 5;
+  // Montants absents si priced = false.
+  ksp.common.v1.Money base_amount = 6;
+  repeated AppliedCoefficient coefficients = 7;
+  ksp.common.v1.Money subtotal = 8;
+  // Minimum de commande de la grille, absent s'il n'est pas fixé.
+  ksp.common.v1.Money minimum_price = 9;
+  bool minimum_applied = 10;
+  ksp.common.v1.Money computed_price = 11;
+  PriceRange estimate = 12;
+  int32 recommended_team_size = 13;
 }
 
 // ===========================================================================
@@ -421,15 +643,28 @@ message ListServicesResponse {
   repeated ServiceOffer services = 1;
 }
 
+// Deux formats (ADR-033), distingués par la présence du message answers :
+// - nouveau : answers (présent, même vide), option_selections, frequency (code d'une fréquence
+//   active de la prestation, obligatoire si elle en a) ; premises_type, quantity et options vides ;
+// - ancien (déprécié) : premises_type, quantity, options (codes) ; converti vers le nouveau.
 message SimulateRequest {
   string service_code = 1;
-  string premises_type = 2;
-  // Quantité dans l'unité de la prestation (m², pièces…), entière et positive.
-  int32 quantity = 3;
-  repeated string options = 4;
+  // Ancien format (déprécié).
+  string premises_type = 2 [deprecated = true];
+  // Ancien format (déprécié) : quantité dans l'unité de la prestation, entière et positive ;
+  // devient la réponse au champ de la taille d'équipe (TeamSizeRule.field_code).
+  int32 quantity = 3 [deprecated = true];
+  // Ancien format (déprécié) : codes des options choisies.
+  repeated string options = 4 [deprecated = true];
   string commune = 5;
-  // "once", "weekly" ou "monthly" : informatif, le prix est celui d'un passage.
+  // Nouveau format : code d'une fréquence de la prestation (coefficient sur le prix d'un passage).
+  // Ancien format : "once", "weekly" ou "monthly", appliqué si la prestation a une fréquence de
+  // même code, sans effet sinon.
   string frequency = 6;
+  // Nouveau format : réponses au formulaire de la prestation.
+  AnswerSet answers = 7;
+  // Nouveau format : options choisies, avec leurs réponses.
+  repeated OptionSelection option_selections = 8;
 }
 
 message SimulateResponse {
@@ -446,6 +681,10 @@ message SimulateResponse {
   string notice = 9;
   // Vrai si la commune est dans une zone desservie ; l'estimation est donnée dans tous les cas.
   bool covered = 10;
+  // Raison de l'absence de prix (voir PriceCalculation.reason), vide si priced.
+  string reason = 11;
+  // Détail complet du calcul (ADR-033) ; breakdown reprend ses lignes.
+  PriceCalculation calculation = 12;
 }
 
 // Zone desservie vue du public.
@@ -472,12 +711,16 @@ message Page {
   string cursor = 2;
 }
 
+// Mêmes deux formats que SimulateRequest (ADR-033), distingués par la présence de answers.
 message RequestQuoteRequest {
   string idempotency_key = 1;
   string service_code = 2;
-  string premises_type = 3;
-  int32 quantity = 4;
-  repeated string options = 5;
+  // Ancien format (déprécié).
+  string premises_type = 3 [deprecated = true];
+  // Ancien format (déprécié).
+  int32 quantity = 4 [deprecated = true];
+  // Ancien format (déprécié) : codes des options choisies.
+  repeated string options = 5 [deprecated = true];
   string commune = 6;
   string address = 7;
   repeated TimeSlot preferred_slots = 8;
@@ -486,6 +729,13 @@ message RequestQuoteRequest {
   int32 requested_team_size = 11;
   // Entreprise : jours d'intervention par semaine, si connus (1 à 7) ; 0 si non précisés.
   int32 days_per_week = 12;
+  // Nouveau format : réponses au formulaire de la prestation.
+  AnswerSet answers = 13;
+  // Nouveau format : options choisies, avec leurs réponses.
+  repeated OptionSelection option_selections = 14;
+  // Code de la fréquence (règles de SimulateRequest.frequency) ; vide si aucune. Indépendante de
+  // recurrence, qui décrit le contrat (passages par période, durée).
+  string frequency = 15;
 }
 
 message RequestQuoteResponse {
@@ -630,7 +880,10 @@ message CompleteVisitResponse {
 
 message SendQuoteRequest {
   string request_id = 1;
-  // Vide : lignes préremplies depuis la grille en vigueur.
+  // Vide : lignes préremplies depuis le détail du calcul de la demande (ADR-033) : ses lignes, une
+  // ligne d'ajustement pour les coefficients et, s'il s'applique, une ligne pour le minimum de
+  // commande. Calcul sans prix : nouveau calcul avec la grille en vigueur et les réponses
+  // enregistrées ; toujours sans prix : CLEANING_PRICE_NOT_SET.
   repeated PriceLine lines = 2;
   repeated TimeSlot proposed_slots = 3;
   // 0 : validité par défaut (réglages).
@@ -761,14 +1014,21 @@ message TeamSizeRule {
   int32 units_per_agent = 1;
   int32 min_agents = 2;
   int32 max_agents = 3;
+  // Champ "number" de la prestation (pas d'une option) qui porte la quantité : taille d'équipe,
+  // et cible de l'ancien champ quantity (ADR-033). Vide : taille minimale (ou celle demandée).
+  string field_code = 4;
 }
 
+// Grille d'une prestation. La version couvre la définition complète (champs, options, grille) :
+// chaque enregistrement en crée une nouvelle (ADR-033).
 message PricingRule {
   int32 version = 1;
-  // Absents tant que non fixés.
-  ksp.common.v1.Money unit_price = 2;
+  // Déprécié (ADR-033) : prix par unité du champ de la taille d'équipe, absent s'il n'est pas fixé.
+  ksp.common.v1.Money unit_price = 2 [deprecated = true];
+  // Absent tant que non fixé (aucun minimum).
   ksp.common.v1.Money minimum_price = 3;
-  repeated CatalogOption options = 4;
+  // Déprécié (ADR-033) : options avec leur forfait ; lire ServiceDefinition.options.
+  repeated CatalogOption options = 4 [deprecated = true];
   repeated CommuneCoefficient commune_coefficients = 5;
   // Coefficient d'une commune absente de la liste.
   int32 default_coefficient_bp = 6;
@@ -778,23 +1038,39 @@ message PricingRule {
   string updated_at = 10;
   // Back-office : nom affiché de l'auteur de la version (ADR-029).
   string updated_by_name = 11;
+  // Fréquences propres à la prestation, dans l'ordre d'affichage (ADR-033).
+  repeated ServiceFrequency frequencies = 12;
 }
 
+// Définition complète d'une prestation (back-office).
+//
+// À l'écriture (SaveService, PreviewService), nouveau format seulement (ADR-033) : fields non vide
+// (au moins un champ actif), options, pricing ; unit, pricing.unit_price et pricing.options sont
+// ignorés. fields vide (ancien corps) : CLEANING_VALIDATION_FAILED, details.field = "fields",
+// details.reason = "required".
 message ServiceDefinition {
   string code = 1;
   string name = 2;
   string description = 3;
-  string unit = 4;
+  // Déprécié (ADR-033) : unité de l'ancien formulaire ("square_meter", "room", "septic_tank" ou
+  // "cubic_meter"). Ignoré à l'écriture : déduit de l'unité du champ de la taille d'équipe.
+  string unit = 4 [deprecated = true];
   bool active = 5;
   PricingRule pricing = 6;
+  // Champs du formulaire, dans l'ordre d'affichage (ADR-033).
+  repeated FieldDefinition fields = 7;
+  // Options (prestations complémentaires), dans l'ordre d'affichage (ADR-033).
+  repeated OptionDefinition options = 8;
 }
 
 message Settings {
   int32 quote_validity_days = 1;
   int32 minimum_lead_hours = 2;
   int32 free_cancellation_hours = 3;
-  // Sans effet depuis la décision du 2026-10-23 : visite des lieux obligatoire pour toute demande.
-  int32 visit_threshold_square_meters = 4;
+  // Déprécié : sans effet depuis la décision du 2026-10-23 (visite des lieux obligatoire pour toute
+  // demande). Toujours renvoyé ; à l'écriture, ignoré (0 accepté), la valeur enregistrée ne change pas
+  // (ADR-033).
+  int32 visit_threshold_square_meters = 4 [deprecated = true];
   int32 max_open_requests = 5;
   int32 deposit_percent = 6;
   string updated_by = 7;
@@ -826,6 +1102,29 @@ message SaveServiceRequest {
 
 message SaveServiceResponse {
   ServiceDefinition service = 1;
+}
+
+message PreviewServiceRequest {
+  string service_code = 1;
+  // Définition à tester, au nouveau format seulement (fields non vide) ; elle n'est pas enregistrée.
+  // Absente : version en vigueur de la prestation (CLEANING_SERVICE_NOT_FOUND si elle n'existe pas ;
+  // une prestation inactive est acceptée).
+  ServiceDefinition definition = 2;
+  // Réponses au nouveau format, validées comme celles du client (obligatoire, même vide).
+  AnswerSet answers = 3;
+  repeated OptionSelection option_selections = 4;
+  string commune = 5;
+  string frequency = 6;
+  // 0 : taille recommandée par la règle.
+  int32 requested_team_size = 7;
+}
+
+message PreviewServiceResponse {
+  string service_code = 1;
+  // pricing_version : version en vigueur, ou 0 pour une définition envoyée.
+  PriceCalculation calculation = 2;
+  // Vrai si la commune est dans une zone desservie.
+  bool covered = 3;
 }
 
 message UpdateSettingsRequest {

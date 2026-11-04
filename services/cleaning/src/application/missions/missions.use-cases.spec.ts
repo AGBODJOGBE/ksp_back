@@ -1,9 +1,13 @@
 import { type AppError } from '@ksp/platform';
 import { type Mission } from '../../domain/mission';
 import { newPaymentState } from '../../domain/payment';
+import { gardenService } from '../../domain/testing';
 import {
   GetCatalogUseCase,
+  PreviewServiceUseCase,
+  type PreviewServiceInput,
   SaveServiceUseCase,
+  type ServiceDefinitionInput,
   UpdateSettingsUseCase,
 } from '../catalog/admin-catalog.use-cases';
 import { HasPendingObligationsUseCase } from '../obligations/has-pending-obligations.use-case';
@@ -20,6 +24,7 @@ import {
   asSupervisor,
   asSuperAdmin,
   CUSTOMER_ID,
+  definitionInput,
   homeCleaning,
   OTHER_AGENT_ID,
   OTHER_CUSTOMER_ID,
@@ -401,35 +406,86 @@ describe('administration du catalogue et des équipes (UC-CL-11, 12)', () => {
     world = testWorld();
   });
 
-  const pricing = {
-    unitPrice: 250,
-    minimumPrice: 25_000,
-    options: [{ code: 'windows', label: 'Vitres', price: 10_000 }],
-    communeCoefficients: [{ commune: 'Abomey Calavi', coefficientBp: 11_000 }],
-    defaultCoefficientBp: 0,
-    teamSize: null,
-    checklist: [],
-  };
-  const save = (unitPrice: number | null) =>
-    asAdmin(() =>
-      new SaveServiceUseCase(world).execute({
-        code: 'office_cleaning',
-        name: 'Nettoyage de bureaux',
-        description: '',
-        unit: 'square_meter',
-        active: true,
-        pricing: { ...pricing, unitPrice },
-      }),
+  const definition = () => ({
+    ...definitionInput(gardenService()),
+    pricing: {
+      ...definitionInput(gardenService()).pricing,
+      communeCoefficients: [{ commune: 'Abomey Calavi', coefficientBp: 11_000 }],
+    },
+  });
+  const save = (input: ServiceDefinitionInput = definition()) =>
+    asAdmin(() => new SaveServiceUseCase(world).execute('garden_maintenance', input));
+  const failure = (promise: Promise<unknown>) =>
+    promise.then(
+      () => null,
+      (error: AppError) => [error.code, error.details],
     );
 
-  it('chaque modification de grille crée une version datée avec son auteur', async () => {
-    const v1 = await save(250);
-    const v2 = await save(300);
+  it('chaque enregistrement crée une version complète, datée, avec son auteur', async () => {
+    const v1 = await save();
+    const v2 = await save();
     expect([v1.pricing.version, v2.pricing.version]).toEqual([1, 2]);
+    expect(v2).toMatchObject({ code: 'garden_maintenance', unit: 'square_meter', active: true });
+    expect(v2.fields.map((field) => field.code)).toEqual(['surface', 'condition']);
+    expect(v2.options.map((option) => option.code)).toEqual(['hedge_trimming', 'green_waste_removal']);
     expect(v2.pricing.communeCoefficients).toEqual({ 'abomey-calavi': 11_000 });
     expect(world.recorder.audit.map((entry) => entry.action)).toEqual(['service.saved', 'service.saved']);
-    expect(await code(save(12.5))).toBe('CLEANING_VALIDATION_FAILED');
+  });
+
+  it('refuse l’ancien corps (sans champ), une définition invalide et un rôle insuffisant', async () => {
+    expect(await failure(save({ ...definition(), fields: [] }))).toEqual([
+      'CLEANING_VALIDATION_FAILED',
+      { field: 'fields', reason: 'required' },
+    ]);
+    const invalid = definition();
+    invalid.fields = [{ ...invalid.fields[0]!, pricePerUnit: 12.5 }, invalid.fields[1]!];
+    expect(await failure(save(invalid))).toEqual([
+      'CLEANING_VALIDATION_FAILED',
+      { field: 'fields[0].pricePerUnit' },
+    ]);
     expect(await code(asSupervisor(() => new GetCatalogUseCase(world).execute()))).toBe('AUTH_FORBIDDEN');
+  });
+
+  it('essai d’une grille : définition envoyée ou version en vigueur, rien n’est enregistré', async () => {
+    const preview = (input: Partial<PreviewServiceInput>) =>
+      asAdmin(() =>
+        new PreviewServiceUseCase(world).execute({
+          serviceCode: 'garden_maintenance',
+          answers: { surface: 400, condition: 'overgrown' },
+          optionSelections: [{ code: 'green_waste_removal', answers: {} }],
+          commune: 'Cotonou',
+          frequency: 'monthly',
+          requestedTeamSize: 0,
+          ...input,
+        }),
+      );
+    const essai = await preview({ definition: definition() });
+    // (60 000 + 10 000) × 1,3 × 0,9
+    expect(essai.calculation).toMatchObject({ pricingVersion: null, priced: true, computedPrice: 81_900 });
+    expect(essai.covered).toBe(true);
+    expect(world.catalog.services.has('garden_maintenance')).toBe(false);
+    expect(world.recorder.audit).toEqual([]);
+    expect(await code(preview({}))).toBe('CLEANING_SERVICE_NOT_FOUND');
+
+    await save();
+    expect((await preview({})).calculation).toMatchObject({ pricingVersion: 1, computedPrice: 81_900 });
+    expect(await failure(preview({ answers: { surface: 400 } }))).toEqual([
+      'CLEANING_VALIDATION_FAILED',
+      { field: 'answers.condition', reason: 'required' },
+    ]);
+    const unpriced = definition();
+    unpriced.fields = [{ ...unpriced.fields[0]!, pricePerUnit: null }, unpriced.fields[1]!];
+    expect((await preview({ definition: unpriced })).calculation).toMatchObject({
+      priced: false,
+      missingPrices: [{ optionCode: null, fieldCode: 'surface', choiceCode: null }],
+    });
+    expect(await failure(preview({ definition: { ...definition(), fields: [] } }))).toEqual([
+      'CLEANING_VALIDATION_FAILED',
+      { field: 'definition.fields', reason: 'required' },
+    ]);
+    expect(
+      await code(asSupervisor(() => new PreviewServiceUseCase(world).execute({} as PreviewServiceInput))),
+    ).toBe('AUTH_FORBIDDEN');
   });
 
   it('réglages : acompte réglable, bornes contrôlées', async () => {
