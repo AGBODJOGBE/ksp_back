@@ -851,9 +851,10 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       }),
     );
     expect(listed.items.map((request) => request.id)).toEqual([a.requests[1]!.id]);
-    const { rows } = await pool.query("SELECT payload FROM outbox WHERE payload->>'groupId' = $1", [
-      a.group.id,
-    ]);
+    const { rows } = await pool.query(
+      "SELECT payload FROM outbox WHERE payload->'payload'->>'groupId' = $1",
+      [a.group.id],
+    );
     expect(rows).toHaveLength(2);
     expect(JSON.stringify(rows)).not.toContain('Portail bleu');
     expect(JSON.stringify(rows)).not.toContain('6.4489');

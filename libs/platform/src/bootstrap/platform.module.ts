@@ -12,6 +12,11 @@ import { RabbitMqPublisher } from '../messaging/rabbitmq/publisher';
 
 export const SERVICE_CONFIG = Symbol('SERVICE_CONFIG');
 
+export interface PlatformOptions {
+  /** Délais croissants de nouvel essai des événements reçus (voir RabbitMqConsumerOptions.retryDelaysMs). */
+  consumerRetryDelaysMs?: readonly number[];
+}
+
 /**
  * Module commun importé par chaque service :
  * journaux, santé et métriques, contexte des appels gRPC, vérification des jetons de service, RabbitMQ.
@@ -19,7 +24,7 @@ export const SERVICE_CONFIG = Symbol('SERVICE_CONFIG');
 @Global()
 @Module({})
 export class PlatformModule {
-  static forRoot(config: BaseServiceConfig): DynamicModule {
+  static forRoot(config: BaseServiceConfig, options: PlatformOptions = {}): DynamicModule {
     const providers: Provider[] = [
       { provide: SERVICE_CONFIG, useValue: config },
       ReadinessRegistry,
@@ -32,7 +37,11 @@ export class PlatformModule {
       },
       {
         provide: RabbitMqConsumer,
-        useFactory: (c: RabbitMqConnection) => new RabbitMqConsumer(c, { consumer: config.SERVICE_NAME }),
+        useFactory: (c: RabbitMqConnection) =>
+          new RabbitMqConsumer(c, {
+            consumer: config.SERVICE_NAME,
+            retryDelaysMs: options.consumerRetryDelaysMs,
+          }),
         inject: [RabbitMqConnection],
       },
     ];

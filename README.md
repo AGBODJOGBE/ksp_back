@@ -63,18 +63,19 @@ Consoles locales : RabbitMQ http://localhost:15672 (ksp / ksp), MinIO http://loc
 
 ## Commandes
 
-| Commande                              | Rôle                                                                       |
-| ------------------------------------- | -------------------------------------------------------------------------- |
-| `pnpm typecheck`                      | Vérification des types de tout le dépôt                                    |
-| `pnpm test`                           | Tests unitaires (et tests d'intégration si `TEST_DATABASE_URL` est défini) |
-| `pnpm lint` · `pnpm format:check`     | Règles de code et format                                                   |
-| `pnpm build`                          | Compilation de toutes les bibliothèques et services                        |
-| `pnpm contracts:lint`                 | Vérifie les `.proto`                                                       |
-| `pnpm contracts:breaking`             | Détecte une rupture de compatibilité par rapport à `main`                  |
-| `pnpm contracts:generate`             | Régénère `libs/contracts/src/generated` après une modification de `.proto` |
-| `pnpm prisma:generate`                | Génère le client Prisma de chaque service                                  |
-| `pnpm new-service <nom>`              | Crée un service complet et conforme                                        |
-| `pnpm outbox:replay <service> [ids…]` | Remet en publication les événements d'outbox mis de côté (ADR-032)         |
+| Commande                              | Rôle                                                                              |
+| ------------------------------------- | --------------------------------------------------------------------------------- |
+| `pnpm typecheck`                      | Vérification des types de tout le dépôt                                           |
+| `pnpm test`                           | Tests unitaires (et tests d'intégration si `TEST_DATABASE_URL` est défini)        |
+| `pnpm lint` · `pnpm format:check`     | Règles de code et format                                                          |
+| `pnpm build`                          | Compilation de toutes les bibliothèques et services                               |
+| `pnpm contracts:lint`                 | Vérifie les `.proto`                                                              |
+| `pnpm contracts:breaking`             | Détecte une rupture de compatibilité par rapport à `main`                         |
+| `pnpm contracts:generate`             | Régénère `libs/contracts/src/generated` après une modification de `.proto`        |
+| `pnpm prisma:generate`                | Génère le client Prisma de chaque service                                         |
+| `pnpm new-service <nom>`              | Crée un service complet et conforme                                               |
+| `pnpm outbox:replay <service> [ids…]` | Remet en publication les événements d'outbox mis de côté (ADR-032)                |
+| `pnpm dlq:replay <service> [types…]`  | Remet dans leur file les messages en file d'erreurs (.dlq) d'un service (ADR-032) |
 
 ## Créer un service
 
