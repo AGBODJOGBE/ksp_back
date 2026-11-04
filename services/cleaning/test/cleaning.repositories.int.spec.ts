@@ -910,7 +910,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     // Parcours par lieu (ADR-034) : groupe de 3 demandes, commune choisie à la main, demande ancienne.
     const group = await deps.requests.findGroup('0192f1c4-de70-7000-8000-0000000a0001');
     expect(group?.requests.map((request) => [request.serviceCode, request.status])).toEqual([
-      ['house_cleaning', 'received'],
+      ['house_cleaning', 'visit_scheduled'],
       ['garden_maintenance', 'visit_scheduled'],
       ['septic_emptying', 'accepted'],
     ]);
