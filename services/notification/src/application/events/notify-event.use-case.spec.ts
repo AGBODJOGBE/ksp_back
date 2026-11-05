@@ -1222,6 +1222,32 @@ describe('NotifyEventUseCase — comptes entreprise (ADR-027)', () => {
   });
 });
 
+describe('NotifyEventUseCase — suppression du compte (ADR-036)', () => {
+  it('demande : le titulaire, avec la date prévue et le moyen d’annuler', async () => {
+    const { useCase, whatsapp } = setup();
+    await expect(
+      useCase.execute(
+        event('identity.user.deletion_requested', {
+          userId: CUSTOMER,
+          requestedAt: '2026-11-05T10:00:00.000Z',
+          scheduledFor: '2026-12-05T10:00:00.000Z',
+        }),
+      ),
+    ).resolves.toMatchObject({ accepted: 1 });
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(whatsapp.sent[0]).toMatchObject({ templateCode: 'identity.account_deletion_requested.customer' });
+    expect(whatsapp.sent[0]!.content!.text).toContain('votre compte KSP sera supprimé le 5 décembre 2026');
+    expect(whatsapp.sent[0]!.content!.text).toContain('https://ksp.bj/mon-espace/compte');
+  });
+
+  it('annulation : le titulaire est prévenu', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(event('identity.user.deletion_cancelled', { userId: CUSTOMER }));
+    expect(whatsapp.sent[0]).toMatchObject({ templateCode: 'identity.account_deletion_cancelled.customer' });
+    expect(whatsapp.sent[0]!.content!.text).toContain('il est de nouveau actif');
+  });
+});
+
 describe('NotifyEventUseCase — paiement en ligne (ADR-031)', () => {
   const PAYMENT = '0192f1c4-0000-7000-8000-0000000p5001';
   const ref = {

@@ -81,12 +81,39 @@ export interface TotpEnrollment {
 /** Méthodes acceptées à la seconde étape d'un compte interne (jamais de SMS, ADR-023). */
 export type SecondFactorMethod = 'totp' | 'recovery_code';
 
+/** Raison lisible qui empêche la suppression d'un compte (UC-ID-11, ADR-036). */
+export interface DeletionObstacle {
+  service: string;
+  kind: string;
+  reference: string;
+  description: string;
+}
+
+/** Suppression demandée : compte gelé jusqu'à `scheduledFor`, puis anonymisé. */
+export interface AccountDeletion {
+  requestedAt: string;
+  scheduledFor: string;
+  /** Obligations trouvées à l'échéance : anonymisation reportée (vide sinon). */
+  postponedBy: DeletionObstacle[];
+}
+
 export interface Profile {
   user: UserProfile;
   profileIncomplete: boolean;
   /** Adresse en attente de confirmation par code ; null s'il n'y en a pas. */
   pendingEmail: string | null;
   activeContext: ActiveContext;
+  /** Suppression demandée (compte deletion_pending) ; null sinon. */
+  deletion: AccountDeletion | null;
+}
+
+/** Suppression annulée : profil à jour et jeton d'accès complet qui remplace le jeton restreint. */
+export interface CancelledDeletion {
+  user: UserProfile;
+  profileIncomplete: boolean;
+  activeContext: ActiveContext;
+  accessToken: string;
+  accessTokenExpiresAt: string;
 }
 
 /** Code de confirmation envoyé à la nouvelle adresse e-mail. */
@@ -135,4 +162,7 @@ export interface IdentityAccount {
   updateMe(changes: ProfileChanges): Promise<Profile>;
   changeEmail(email: string): Promise<EmailChange>;
   confirmEmail(code: string): Promise<Profile>;
+  /** UC-ID-11 : identity interroge chaque service ; toutes les sessions du compte sont fermées. */
+  requestDeletion(): Promise<AccountDeletion>;
+  cancelDeletion(): Promise<CancelledDeletion>;
 }

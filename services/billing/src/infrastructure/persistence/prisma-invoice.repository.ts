@@ -108,6 +108,15 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
     return rows.map(toInvoice);
   }
 
+  async listUnpaidForCustomer(customerId: string): Promise<Invoice[]> {
+    const rows = await this.prisma.invoice.findMany({
+      where: { customerId, status: { in: ['pending_payment', 'overdue'] } },
+      include: INVOICE_INCLUDE,
+      orderBy: { id: 'asc' },
+    });
+    return rows.map(toInvoice);
+  }
+
   markOverdue(invoice: Invoice, events: (overdueCount: number) => OutboxMessage[]): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       const { count } = await tx.invoice.updateMany({

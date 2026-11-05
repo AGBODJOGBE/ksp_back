@@ -450,6 +450,12 @@ export class InMemoryRequests implements QuoteRequestRepository {
       now,
     );
   }
+  async openForCustomer(customerId: string, now: Date) {
+    return [...this.requests.values()]
+      .filter((r) => r.customerId === customerId && isOpenRequest(r, now))
+      .map((r) => ({ id: r.id }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
   async findGroupOperation(actorId: string, operation: GroupOperation, idempotencyKey: string) {
     return this.missions.operations.get(`${actorId}:${operation}:${idempotencyKey}`) ?? null;
   }

@@ -49,6 +49,14 @@ paiement du même objet, quel que soit le payeur ou la part, jusqu'à ce que la 
 obligatoire) : date, auteur et note sont enregistrés, le statut reste `amount_mismatch`, le blocage est
 levé. Écarts à traiter : `GET /api/v1/admin/payment/payments?underReview=true`.
 
+## Suppression d'un compte (ADR-036)
+
+`ksp.common.v1.ObligationService` : un paiement du compte en attente (`pending_payment`) ou en écart
+de montant pas encore traité par la finance (`payment_under_review`) bloque la suppression, en son
+nom ou pour une organisation (le payeur est la personne). Seul identity peut appeler
+(`PAYMENT_CALLER_FORBIDDEN`). Aucune donnée personnelle à effacer à `identity.user.deleted` : le
+paiement ne garde que l'identifiant du payeur (pièce comptable).
+
 ## Organisation
 
 | Dossier              | Contenu                                                         |

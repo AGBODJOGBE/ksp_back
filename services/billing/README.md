@@ -41,6 +41,13 @@ partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/bill
   `billing.invoice.paid` ; consommés par cleaning (avertissement, suspension, déblocage) et
   notification (espace client, e-mail).
 
+- **Suppression d'un compte** (`ksp.common.v1.ObligationService`, ADR-036) : une facture en
+  attente de paiement ou impayée du compte (`customer_id`, y compris celle d'une organisation pour
+  le compte qui a demandé la prestation) bloque la suppression (`unpaid_invoice`, numéro de
+  facture). Seul identity peut appeler (`BILLING_CALLER_FORBIDDEN`). Aucune donnée personnelle à
+  effacer à `identity.user.deleted` : la facture ne garde que l'identifiant du compte et l'en-tête de
+  l'organisation (document comptable).
+
 ## Démarrer en local
 
 ```bash

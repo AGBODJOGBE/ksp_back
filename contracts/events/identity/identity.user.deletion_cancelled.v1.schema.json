@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.user.deletion_cancelled.v1.schema.json",
+  "title": "identity.user.deletion_cancelled",
+  "description": "Le titulaire a annulé la suppression de son compte pendant le délai (UC-ID-11, ADR-036) : le compte est de nouveau actif.",
+  "x-event-type": "identity.user.deletion_cancelled",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["userId"],
+  "properties": {
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

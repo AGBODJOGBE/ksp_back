@@ -2,9 +2,13 @@ import { identityV1 } from '@ksp/contracts';
 import { currentContext, requireUser } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
 import { GetMeUseCase, type Profile, UpdateMeUseCase } from '../../application/account/account.use-cases';
+import {
+  CancelDeletionUseCase,
+  RequestDeletionUseCase,
+} from '../../application/deletion/account-deletion.use-cases';
 import { ChangeEmailUseCase } from '../../application/email/change-email.use-case';
 import { ConfirmEmailUseCase } from '../../application/email/confirm-email.use-case';
-import { toActiveContextMessage, toUserMessage } from './mappers';
+import { toActiveContextMessage, toDeletionMessage, toUserMessage } from './mappers';
 
 function toProfileMessage(profile: Profile): identityV1.GetMeResponse {
   return {
@@ -12,6 +16,7 @@ function toProfileMessage(profile: Profile): identityV1.GetMeResponse {
     profileIncomplete: profile.profileIncomplete,
     pendingEmail: profile.pendingEmail ?? '',
     activeContext: toActiveContextMessage(profile.activeContext),
+    ...(profile.deletion ? { deletion: toDeletionMessage(profile.deletion) } : {}),
   };
 }
 
@@ -28,6 +33,8 @@ export class AccountGrpcController implements identityV1.AccountServiceControlle
     private readonly updateMeUseCase: UpdateMeUseCase,
     private readonly changeEmailUseCase: ChangeEmailUseCase,
     private readonly confirmEmailUseCase: ConfirmEmailUseCase,
+    private readonly requestDeletionUseCase: RequestDeletionUseCase,
+    private readonly cancelDeletionUseCase: CancelDeletionUseCase,
   ) {}
 
   async getMe(): Promise<identityV1.GetMeResponse> {
@@ -71,6 +78,26 @@ export class AccountGrpcController implements identityV1.AccountServiceControlle
       user: toUserMessage(profile.account),
       profileIncomplete: profile.profileIncomplete,
       activeContext: toActiveContextMessage(profile.activeContext),
+    };
+  }
+
+  async requestDeletion(): Promise<identityV1.RequestDeletionResponse> {
+    const deletion = await this.requestDeletionUseCase.execute(requireUser().userId);
+    return { deletion: toDeletionMessage(deletion) };
+  }
+
+  async cancelDeletion(): Promise<identityV1.CancelDeletionResponse> {
+    const user = requireUser();
+    const result = await this.cancelDeletionUseCase.execute({
+      userId: user.userId,
+      sessionId: user.sessionId,
+    });
+    return {
+      user: toUserMessage(result.account),
+      profileIncomplete: result.profileIncomplete,
+      activeContext: toActiveContextMessage(result.activeContext),
+      accessToken: result.accessToken,
+      accessTokenExpiresAt: result.accessTokenExpiresAt.toISOString(),
     };
   }
 }

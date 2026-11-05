@@ -4,7 +4,9 @@ import { Logger } from '@nestjs/common';
 import { type Metadata } from '@grpc/grpc-js';
 import { type Observable } from 'rxjs';
 import {
+  type AccountDeletion,
   type ActiveContext,
+  type CancelledDeletion,
   type ContextType,
   type EmailChange,
   type IdentityAccount,
@@ -121,14 +123,31 @@ function toSession(tokens: identityV1.SessionTokens | undefined): SessionTokens 
   };
 }
 
+function toDeletion(deletion: identityV1.AccountDeletion): AccountDeletion {
+  return {
+    requestedAt: deletion.requestedAt,
+    scheduledFor: deletion.scheduledFor,
+    postponedBy: deletion.postponedBy.map((obstacle) => ({
+      service: obstacle.service,
+      kind: obstacle.kind,
+      reference: obstacle.reference,
+      description: obstacle.description,
+    })),
+  };
+}
+
 function toProfile(response: identityV1.GetMeResponse | identityV1.ConfirmEmailResponse): Profile {
   return {
     user: toUser(response.user),
     profileIncomplete: response.profileIncomplete,
     pendingEmail: 'pendingEmail' in response ? orNull(response.pendingEmail) : null,
     activeContext: toActiveContext(response.activeContext),
+    deletion: 'deletion' in response && response.deletion ? toDeletion(response.deletion) : null,
   };
 }
+
+/** Le contrôle des obligations interroge plusieurs services : délai plus long que les autres appels. */
+const DELETION_DEADLINE_MS = 6000;
 
 /**
  * Client gRPC d'identity (AuthService, AccountService) : traduction des messages, délai,
@@ -295,10 +314,33 @@ export class IdentityGrpcAdapter implements IdentityAuth, IdentityAccount {
     );
   }
 
+  async requestDeletion(): Promise<AccountDeletion> {
+    const response = await this.call(
+      'requestDeletion',
+      (metadata) => this.account.requestDeletion({}, metadata),
+      { deadlineMs: DELETION_DEADLINE_MS },
+    );
+    if (!response.deletion) throw malformed('suppression absente');
+    return toDeletion(response.deletion);
+  }
+
+  async cancelDeletion(): Promise<CancelledDeletion> {
+    const response = await this.call('cancelDeletion', (metadata) =>
+      this.account.cancelDeletion({}, metadata),
+    );
+    return {
+      user: toUser(response.user),
+      profileIncomplete: response.profileIncomplete,
+      activeContext: toActiveContext(response.activeContext),
+      accessToken: response.accessToken,
+      accessTokenExpiresAt: response.accessTokenExpiresAt,
+    };
+  }
+
   private async call<T>(
     name: string,
     invoke: (metadata: Metadata) => Observable<T>,
-    options: { idempotent?: boolean } = {},
+    options: { idempotent?: boolean; deadlineMs?: number } = {},
   ): Promise<T> {
     try {
       return await this.caller.call(name, invoke, options);

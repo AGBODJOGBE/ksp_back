@@ -40,6 +40,14 @@ E-mail du profil (lot 2) : `PUT /api/v1/identity/me/email` envoie un code par e-
 adresse, `POST /api/v1/identity/me/email/verify` la confirme (ADR-026). identity ajoute ses propres
 limites par adresse et par compte.
 
+Suppression du compte (ADR-036) : `POST /api/v1/identity/me/deletion` (`AccountService/RequestDeletion`,
+délai de 6 secondes : identity interroge plusieurs services ; cookie de renouvellement effacé sur le
+web) et `DELETE /api/v1/identity/me/deletion` (`AccountService/CancelDeletion`, nouveau jeton d'accès
+complet). Pendant le délai, le jeton d'une nouvelle connexion porte le seul rôle
+`account_deletion_pending` : la gateway le refuse sur toute route connectée
+(`GATEWAY_ACCOUNT_DELETION_PENDING`, 403) sauf celles marquées `x-ksp-pending-deletion` dans le contrat
+(`GET /me`, `DELETE /me/deletion`, `POST /logout`).
+
 Type de compte : `GET /api/v1/identity/me` et chaque session ouverte ou renouvelée rendent
 `activeContext` (`type` : `individual` ou `business`, `organizationId`), contexte du jeton lu par
 cleaning et billing. Une réponse d'identity sans contexte actif est une erreur interne : déployer

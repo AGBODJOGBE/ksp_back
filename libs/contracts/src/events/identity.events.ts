@@ -18,7 +18,12 @@ export interface IdentityEventPayloads {
   'identity.user.verified': { userId: string; verifiedVia: 'phone' | 'email' };
   'identity.user.suspended': { userId: string; reason: string; suspendedBy: string };
   'identity.user.reactivated': { userId: string; reactivatedBy: string };
+  /** Anonymisé à l'échéance du délai de suppression (UC-ID-11, ADR-036). */
   'identity.user.deleted': { userId: string };
+  /** Suppression demandée : compte gelé jusqu'à `scheduledFor` (ADR-036). */
+  'identity.user.deletion_requested': { userId: string; requestedAt: string; scheduledFor: string };
+  /** Suppression annulée pendant le délai : compte de nouveau actif (ADR-036). */
+  'identity.user.deletion_cancelled': { userId: string };
   /** Demande de création, en attente de validation par un admin KSP (ADR-027). */
   'identity.organization.created': { organizationId: string; createdBy: string; legalName?: string };
   'identity.organization.validated': {

@@ -25,7 +25,9 @@ import {
   ConfirmEmailUseCase,
   ConfirmTotpUseCase,
   EnrollTotpUseCase,
+  CancelAccountDeletionUseCase,
   GetMeUseCase,
+  RequestAccountDeletionUseCase,
   LogoutUseCase,
   RefreshSessionUseCase,
   RequestOtpUseCase,
@@ -297,6 +299,8 @@ export class AppModule {
         identityUseCase(VerifyMfaUseCase),
         identityUseCase(ChangeEmailUseCase),
         identityUseCase(ConfirmEmailUseCase),
+        identityUseCase(RequestAccountDeletionUseCase),
+        identityUseCase(CancelAccountDeletionUseCase),
         {
           provide: GetPublicKeysUseCase,
           inject: [SigningKeysCache],

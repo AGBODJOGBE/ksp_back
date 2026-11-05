@@ -1,6 +1,9 @@
+import { ACCOUNT_DELETION_PENDING_ROLE as CONTRACT_DELETION_PENDING_ROLE } from '@ksp/contracts';
+import { ACCOUNT_DELETION_PENDING_ROLE } from '../../domain/access/access-policy';
 import { FakeIdentity } from '../testing/fakes';
 import { GetPublicKeysUseCase } from '../keys/public-keys';
 import {
+  CancelAccountDeletionUseCase,
   ChangeEmailUseCase,
   ConfirmEmailUseCase,
   ConfirmTotpUseCase,
@@ -8,6 +11,7 @@ import {
   GetMeUseCase,
   LogoutUseCase,
   RefreshSessionUseCase,
+  RequestAccountDeletionUseCase,
   RequestOtpUseCase,
   UpdateMeUseCase,
   VerifyMfaUseCase,
@@ -128,6 +132,21 @@ describe('cas d’usage identity de la gateway', () => {
       pendingEmail: null,
     });
     expect(identity.calls.map((call) => call.input)).toEqual(['koffi@exemple.com', '482913']);
+  });
+
+  it('session restreinte : même rôle que celui émis par identity (ADR-036)', () => {
+    expect(ACCOUNT_DELETION_PENDING_ROLE).toBe(CONTRACT_DELETION_PENDING_ROLE);
+  });
+
+  it('suppression du compte : demande puis annulation (UC-ID-11)', async () => {
+    const identity = new FakeIdentity();
+    await expect(new RequestAccountDeletionUseCase(identity).execute()).resolves.toMatchObject({
+      scheduledFor: '2026-12-05T10:00:00.000Z',
+    });
+    await expect(new CancelAccountDeletionUseCase(identity).execute()).resolves.toMatchObject({
+      accessToken: 'jwt-complet',
+    });
+    expect(identity.calls.map((call) => call.method)).toEqual(['requestDeletion', 'cancelDeletion']);
   });
 
   it('clés publiques : document JWKS', async () => {

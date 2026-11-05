@@ -28,6 +28,7 @@ import {
 } from './infrastructure/scheduling/reconcile-payments.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import {
+  ObligationGrpcController,
   PaymentAdminGrpcController,
   PaymentGrpcController,
   PaymentWebhookGrpcController,
@@ -64,7 +65,12 @@ export class AppModule {
           grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
         ]),
       ],
-      controllers: [PaymentGrpcController, PaymentWebhookGrpcController, PaymentAdminGrpcController],
+      controllers: [
+        PaymentGrpcController,
+        PaymentWebhookGrpcController,
+        PaymentAdminGrpcController,
+        ObligationGrpcController,
+      ],
       providers: [
         PrismaService,
         OutboxRelayService,

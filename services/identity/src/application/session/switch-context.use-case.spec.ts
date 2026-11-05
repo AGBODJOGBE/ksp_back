@@ -82,6 +82,16 @@ async function expectAppError(promise: Promise<unknown>, code: string): Promise<
 }
 
 describe('SwitchContextUseCase (UC-ID-15)', () => {
+  it('compte en cours de suppression : pas de changement de contexte (ADR-036)', async () => {
+    const { useCase, sessions, issued } = setup();
+    sessions.accounts.get(USER)!.status = 'deletion_pending';
+    await expectAppError(
+      useCase.execute({ userId: USER, sessionId: SESSION, organizationId: ORG }),
+      'IDENTITY_ACCOUNT_DELETION_PENDING',
+    );
+    expect(issued).toEqual([]);
+  });
+
   it('active une organisation validée : jeton ctx = organisation, rôle du membre, session mise à jour', async () => {
     const { useCase, sessions, issued } = setup();
     const switched = await useCase.execute({ userId: USER, sessionId: SESSION, organizationId: ORG });

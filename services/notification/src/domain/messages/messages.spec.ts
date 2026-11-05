@@ -4,6 +4,7 @@ import { findTemplate, invalidVariables, isEventTemplate } from '../template';
 import { BILLING_TEMPLATES } from './billing.messages';
 import { CLEANING_TEMPLATES, paymentNote, unpaidText } from './cleaning.messages';
 import { formatDate, formatDateTime, formatDuration, formatXof } from './format';
+import { ACCOUNT_TEMPLATES } from './account.messages';
 import { ORGANIZATION_TEMPLATES } from './organization.messages';
 import { PAYMENT_TEMPLATES } from './payment.messages';
 
@@ -247,6 +248,27 @@ describe('Modèles de la facturation', () => {
     expect(message.text).toContain('est réglée en totalité depuis le 16 décembre 2026.');
     if (expected) expect(message.text).toContain(expected);
     else expect(message.text).not.toContain('Il reste');
+  });
+});
+
+describe('Suppression du compte (ADR-036)', () => {
+  it('modèles au catalogue, par WhatsApp et e-mail, messages courts, sans date ni lien invalide', () => {
+    for (const template of ACCOUNT_TEMPLATES) {
+      expect(findTemplate(template.code)).toBe(template);
+      expect(template).toMatchObject({ channels: ['whatsapp', 'email'], kind: 'short', secret: false });
+    }
+    const requested = findTemplate('identity.account_deletion_requested.customer')!;
+    const variables = {
+      first_name: 'Koffi',
+      scheduled_for: '5 décembre 2026',
+      link: 'https://ksp.bj/mon-espace/compte',
+    };
+    expect(invalidVariables(requested, variables)).toEqual([]);
+    expect(invalidVariables(requested, { ...variables, link: 'pas un lien' })).toEqual(['link']);
+    const message = requested.render!(variables);
+    expect(message.subject).toBe('Suppression de votre compte KSP demandée');
+    expect(message.text).toContain('Bonjour Koffi,');
+    expect(message.text).toContain('sera supprimé le 5 décembre 2026');
   });
 });
 

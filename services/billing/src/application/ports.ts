@@ -78,6 +78,11 @@ export interface InvoiceRepository {
   /** Factures en attente de paiement dont l'échéance est passée. */
   listPastDue(now: Date): Promise<Invoice[]>;
   /**
+   * Factures du client (en son nom ou pour une organisation) en attente de paiement ou impayées,
+   * les plus anciennes d'abord : elles bloquent la suppression de son compte (UC-ID-11, ADR-036).
+   */
+  listUnpaidForCustomer(customerId: string): Promise<Invoice[]>;
+  /**
    * Passe la facture en « impayée » si elle est encore en attente (contrôle de version).
    * `events` reçoit le nombre de factures impayées du contrat, celle-ci comprise.
    */

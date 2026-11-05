@@ -529,10 +529,32 @@ message SigningKey {
 //   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION aucun code en attente, ou code expiré
 //   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
 //
-// Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
-// RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) ont leurs
-// propres services (OrganizationService, OrganizationAdminService) ; l'administration des comptes
-// (UC-ID-18 à 21) aura le sien.
+// Suppression du compte (UC-ID-11, ADR-036) : RequestDeletion gèle le compte (deletion_pending)
+// pendant le délai de suppression (30 jours par défaut, réglage d'identity) et ferme toutes ses
+// sessions ; à l'échéance, le compte est anonymisé (deleted) et identity.user.deleted est publié.
+// Pendant le délai, une connexion par code reste possible mais n'ouvre qu'une session restreinte
+// (rôle account_deletion_pending, sans le rôle customer) : la gateway n'y accepte que GetMe,
+// CancelDeletion, Logout et le renouvellement. Les autres méthodes de ce service sont refusées.
+//   IDENTITY_DELETION_BLOCKED            FAILED_PRECONDITION obligations en cours dans un service
+//                                                            (details.obligations : service, kind,
+//                                                            reference, description)
+//   IDENTITY_DELETION_CHECK_UNAVAILABLE  UNAVAILABLE         un service n'a pas pu être interrogé :
+//                                                            réessayer plus tard (details.services)
+//   IDENTITY_DELETION_LAST_ORG_ADMIN     FAILED_PRECONDITION seul administrateur d'une organisation
+//                                                            non refusée (details.organizations :
+//                                                            id, legalName)
+//   IDENTITY_DELETION_INTERNAL_ACCOUNT   FAILED_PRECONDITION compte interne (rôle du back-office) :
+//                                                            à retirer par un administrateur KSP
+//   IDENTITY_ACCOUNT_SUSPENDED           PERMISSION_DENIED   compte suspendu
+//   IDENTITY_ACCOUNT_DELETION_PENDING    PERMISSION_DENIED   compte en cours de suppression : seules
+//                                                            la lecture du profil et l'annulation
+//                                                            sont possibles
+//   IDENTITY_SESSION_REVOKED             UNAUTHENTICATED     CancelDeletion depuis une session fermée
+//                                                            (celles d'avant la demande le sont toutes)
+//
+// Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08).
+// Les organisations (UC-ID-12 à 16) ont leurs propres services (OrganizationService,
+// OrganizationAdminService) ; l'administration des comptes (UC-ID-18 à 21) aura le sien.
 // ---------------------------------------------------------------------------
 service AccountService {
   rpc GetMe(GetMeRequest) returns (GetMeResponse);
@@ -546,6 +568,57 @@ service AccountService {
   // Confirmer l'adresse par le dernier code reçu : elle devient l'e-mail vérifié du compte
   // (événement identity.user.verified, verifiedVia = email).
   rpc ConfirmEmail(ConfirmEmailRequest) returns (ConfirmEmailResponse);
+  // UC-ID-11. Demander la suppression de son compte (session normale, compte actif). Chaque service
+  // qui implémente ksp.common.v1.ObligationService est interrogé : une seule obligation en cours
+  // refuse la demande, avec la liste des raisons ; un service qui ne répond pas la refuse aussi
+  // (réessayer plus tard). Accepté : le compte passe en deletion_pending, toutes ses sessions sont
+  // fermées, y compris celle de l'appelant (identity.user.deletion_requested). Idempotent : un
+  // compte déjà en cours de suppression rend la suppression prévue, sans nouveau contrôle.
+  rpc RequestDeletion(RequestDeletionRequest) returns (RequestDeletionResponse);
+  // UC-ID-11. Annuler la suppression, depuis la session restreinte ouverte par une nouvelle
+  // connexion : le compte redevient actif (identity.user.deletion_cancelled) et la réponse porte un
+  // nouveau jeton d'accès complet (rôle customer) pour la même session ; le jeton de
+  // renouvellement ne change pas. Idempotent : sur un compte actif, rend le profil et un jeton.
+  rpc CancelDeletion(CancelDeletionRequest) returns (CancelDeletionResponse);
+}
+
+// Suppression demandée d'un compte (UC-ID-11).
+message AccountDeletion {
+  string requested_at = 1;
+  // Date prévue de l'anonymisation : demande + délai de suppression en vigueur à la demande.
+  string scheduled_for = 2;
+  // Obligations trouvées au dernier contrôle de l'échéance : l'anonymisation est reportée tant
+  // qu'il en reste (vide sinon).
+  repeated DeletionObstacle postponed_by = 3;
+}
+
+// Raison lisible qui empêche la suppression d'un compte.
+message DeletionObstacle {
+  // Service qui l'a signalée (cleaning, billing, payment…) ou "identity" (organisation).
+  string service = 1;
+  // Nature, par exemple "open_cleaning_mission", "unpaid_invoice", "last_org_admin".
+  string kind = 2;
+  // Référence lisible de l'objet concerné (numéro de facture, identifiant…).
+  string reference = 3;
+  // Explication affichée à l'utilisateur.
+  string description = 4;
+}
+
+message RequestDeletionRequest {}
+
+message RequestDeletionResponse {
+  AccountDeletion deletion = 1;
+}
+
+message CancelDeletionRequest {}
+
+message CancelDeletionResponse {
+  User user = 1;
+  bool profile_incomplete = 2;
+  ActiveContext active_context = 3;
+  // Nouveau jeton d'accès complet, à utiliser à la place du jeton restreint.
+  string access_token = 4;
+  string access_token_expires_at = 5;
 }
 
 message GetMeRequest {}
@@ -557,6 +630,8 @@ message GetMeResponse {
   string pending_email = 3;
   // Contexte du jeton d'accès de l'appelant (x-active-context).
   ActiveContext active_context = 4;
+  // Suppression demandée (compte deletion_pending) ; absente sinon.
+  AccountDeletion deletion = 5;
 }
 
 message UpdateMeRequest {

@@ -11,6 +11,7 @@ import {
   type ProfileChanges,
 } from '../../application/session/session.ports';
 import { type UserDirectory } from '../../application/directory/get-users.use-case';
+import { type DeletionObstacle } from '../../domain/user/account-deletion';
 import { Prisma } from '../../../prisma/generated';
 import { PrismaService } from '../prisma/prisma.service';
 import { openSession } from './session-writes';
@@ -24,6 +25,9 @@ export const ACCOUNT_SELECT = {
   createdAt: true,
   email: true,
   emailVerifiedAt: true,
+  deletionRequestedAt: true,
+  deletionScheduledFor: true,
+  deletionPostponedBy: true,
   phones: { where: { isPrimary: true }, select: { phoneE164: true }, take: 1 },
 } as const;
 
@@ -40,7 +44,33 @@ export function toAccount(row: AccountRow): Account {
     emailVerifiedAt: row.emailVerifiedAt,
     preferredLanguage: row.preferredLanguage,
     createdAt: row.createdAt,
+    deletion:
+      row.status === 'deletion_pending' && row.deletionRequestedAt && row.deletionScheduledFor
+        ? {
+            requestedAt: row.deletionRequestedAt,
+            scheduledFor: row.deletionScheduledFor,
+            postponedBy: deletionObstacles(row.deletionPostponedBy),
+          }
+        : null,
   };
+}
+
+/** Raisons d'un report enregistrées en JSON ; tout élément mal formé est ignoré. */
+export function deletionObstacles(value: unknown): DeletionObstacle[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item: unknown) => {
+    const entry = item as Record<string, unknown> | null;
+    if (!entry || typeof entry !== 'object') return [];
+    const field = (key: string) => (typeof entry[key] === 'string' ? (entry[key] as string) : '');
+    return [
+      {
+        service: field('service'),
+        kind: field('kind'),
+        reference: field('reference'),
+        description: field('description'),
+      },
+    ];
+  });
 }
 
 /** Comptes et ouverture de session, en base identity. */

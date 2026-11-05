@@ -336,6 +336,7 @@ describe('gateway : routes identity de bout en bout (serveur gRPC identity simul
         },
         profileIncomplete: true,
         pendingEmail: null,
+        deletion: null,
         activeContext: { type: 'individual', organizationId: null, organizationName: null },
       });
       const call = identity.stub.last('getMe')!;
@@ -414,6 +415,78 @@ describe('gateway : routes identity de bout en bout (serveur gRPC identity simul
     expect(res.status).toBe(200);
     expect(res.headers['cache-control']).toBe('public, max-age=600');
     expect(res.body).toEqual({ keys: [keys.accessJwk] });
+  });
+
+  describe('suppression du compte (UC-ID-11, ADR-036)', () => {
+    const DELETION = '/api/v1/identity/me/deletion';
+    const restricted = (req: request.Test, bearerToken: string) =>
+      req.set('Authorization', `Bearer ${bearerToken}`).set('X-Forwarded-For', nextIp());
+    let restrictedToken: string;
+    beforeAll(async () => {
+      restrictedToken = await keys.accessToken({
+        claims: { roles: [{ role: 'account_deletion_pending', scopeType: 'personal' }] },
+      });
+    });
+
+    it('demande depuis le web : échéance rendue, cookie de renouvellement effacé', async () => {
+      const res = await bearer(http.post(DELETION)).set('Origin', ORIGINS.web);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        deletion: {
+          requestedAt: '2026-11-05T10:00:00.000Z',
+          scheduledFor: '2026-12-05T10:00:00.000Z',
+          postponedBy: [],
+        },
+      });
+      expect(String(res.headers['set-cookie'])).toMatch(/^__Secure-ksp_rt=; .*Max-Age=0/);
+      expect(identity.stub.last('requestDeletion')?.context?.user?.userId).toBe(USER_ID);
+    });
+
+    it('demande refusée par une obligation : 422 avec les raisons', async () => {
+      identity.stub.on('requestDeletion', () =>
+        Promise.reject(
+          AppError.precondition('IDENTITY_DELETION_BLOCKED', 'Opérations en cours.', {
+            obligations: [{ service: 'billing', kind: 'unpaid_invoice', reference: 'F-1', description: 'x' }],
+          }),
+        ),
+      );
+      const res = await bearer(http.post(DELETION)).set('X-App-Version', '1.4.2');
+      expect(res.status).toBe(422);
+      expect(res.body.error).toMatchObject({
+        code: 'IDENTITY_DELETION_BLOCKED',
+        details: { obligations: [expect.objectContaining({ kind: 'unpaid_invoice' })] },
+      });
+      expect(res.headers['set-cookie']).toBeUndefined();
+    });
+
+    it('session restreinte : profil, annulation et déconnexion seulement', async () => {
+      expect((await restricted(http.get(ME), restrictedToken)).status).toBe(200);
+      expect(
+        (await restricted(http.post(LOGOUT), restrictedToken).set('X-App-Version', '1.4.2')).status,
+      ).toBe(200);
+      const cancelled = await restricted(http.delete(DELETION), restrictedToken);
+      expect(cancelled.status).toBe(200);
+      expect(cancelled.body).toMatchObject({ user: { id: USER_ID, status: 'active' } });
+      expect(cancelled.body.accessToken).toEqual(expect.any(String));
+
+      const calls = identity.stub.calls.length;
+      for (const send of [
+        () => restricted(http.patch(ME), restrictedToken).send({ firstName: 'Koffi' }),
+        () => restricted(http.post(DELETION), restrictedToken),
+        () =>
+          restricted(http.put('/api/v1/identity/me/email'), restrictedToken).send({
+            email: 'koffi@exemple.com',
+          }),
+        () =>
+          restricted(http.post('/api/v1/identity/context'), restrictedToken).send({ organizationId: null }),
+        () => restricted(http.get('/api/v1/identity/organizations'), restrictedToken),
+      ]) {
+        const res = await send();
+        expect(res.status).toBe(403);
+        expect(res.body.error.code).toBe('GATEWAY_ACCOUNT_DELETION_PENDING');
+      }
+      expect(identity.stub.calls).toHaveLength(calls);
+    });
   });
 
   describe('exploitation', () => {

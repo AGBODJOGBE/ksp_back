@@ -12,7 +12,7 @@ import {
 } from '../../domain/session/session-policy';
 import { mfaErrors } from '../mfa/mfa-errors';
 import { type OrganizationRepository } from '../organization/organization.ports';
-import { backofficeRoleClaims, CUSTOMER_ROLE, organizationRoleClaims } from '../role/role-claims';
+import { backofficeRoleClaims, organizationRoleClaims, personalRoleClaims } from '../role/role-claims';
 import { type RoleRepository } from '../role/role.ports';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { type AccessTokenIssuer, type AccessTokenSubject } from '../token/access-token-issuer';
@@ -73,6 +73,7 @@ export class RefreshSessionUseCase {
     if (account.status === 'suspended') {
       throw AppError.forbidden('IDENTITY_ACCOUNT_SUSPENDED', 'Ce compte est suspendu.');
     }
+    if (account.status === 'deleted') throw invalid();
 
     const policy = this.policies[sessionCategory(session.clientKind)];
     if (isIdleExpired(session.lastSeenAt, now, policy)) {
@@ -132,6 +133,8 @@ export class RefreshSessionUseCase {
     const { session, account } = stored;
     const personal = { organizationId: null, organizationName: null, roles: null };
     if (!session.activeOrgId || sessionCategory(session.clientKind) !== 'customer') return personal;
+    // Compte en cours de suppression : contexte personnel seul, session restreinte (ADR-036).
+    if (account.status === 'deletion_pending') return personal;
     const membership = await this.organizations.membership(account.id, session.activeOrgId);
     if (!membership || !canBeActiveContext(membership.organization.status)) return personal;
     return {
@@ -149,7 +152,13 @@ export class RefreshSessionUseCase {
     const { session, account } = stored;
     if (sessionCategory(session.clientKind) === 'customer') {
       // Heure de la connexion, pas du renouvellement : un renouvellement n'est pas une authentification.
-      return { roles: [CUSTOMER_ROLE], mfa: false, authTime: session.createdAt, amr: ['otp'] };
+      // Compte en cours de suppression : session restreinte (ADR-036), jusqu'à l'annulation.
+      return {
+        roles: personalRoleClaims(account.status),
+        mfa: false,
+        authTime: session.createdAt,
+        amr: ['otp'],
+      };
     }
     const assigned = await this.roles.activeRoles(account.id);
     if (!session.mfaAt || backofficeRoles(assigned).length === 0) {

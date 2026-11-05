@@ -186,6 +186,14 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return rows.map((row) => row.id);
   }
 
+  async listOpenForCustomer(customerId: string): Promise<PaymentIntent[]> {
+    const rows = await this.prisma.paymentIntent.findMany({
+      where: { customerId, OR: [{ status: 'pending' }, UNDER_REVIEW] },
+      orderBy: { id: 'asc' },
+    });
+    return rows.map(toDomain);
+  }
+
   save(intent: PaymentIntent, events: OutboxMessage[]): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       const { count } = await tx.paymentIntent.updateMany({

@@ -1,5 +1,7 @@
 import {
+  type AccountDeletion,
   type ActiveContext,
+  type CancelledDeletion,
   type EmailChange,
   type MfaChallenge,
   type OtpChallenge,
@@ -83,12 +85,36 @@ export function presentTotpEnrollment(enrollment: TotpEnrollment) {
   };
 }
 
+export function presentDeletion(deletion: AccountDeletion) {
+  return {
+    requestedAt: deletion.requestedAt,
+    scheduledFor: deletion.scheduledFor,
+    postponedBy: deletion.postponedBy.map((obstacle) => ({
+      service: obstacle.service,
+      kind: obstacle.kind,
+      reference: obstacle.reference,
+      description: obstacle.description,
+    })),
+  };
+}
+
 export function presentProfile(profile: Profile) {
   return {
     user: presentUser(profile.user),
     profileIncomplete: profile.profileIncomplete,
     pendingEmail: profile.pendingEmail,
     activeContext: presentActiveContext(profile.activeContext),
+    deletion: profile.deletion ? presentDeletion(profile.deletion) : null,
+  };
+}
+
+export function presentCancelledDeletion(result: CancelledDeletion) {
+  return {
+    user: presentUser(result.user),
+    profileIncomplete: result.profileIncomplete,
+    activeContext: presentActiveContext(result.activeContext),
+    accessToken: result.accessToken,
+    accessTokenExpiresAt: result.accessTokenExpiresAt,
   };
 }
 

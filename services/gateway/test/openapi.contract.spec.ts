@@ -55,6 +55,7 @@ interface Operation extends Json {
   'x-ksp-roles'?: string[];
   'x-ksp-mfa-max-age'?: number;
   'x-ksp-raw-body'?: boolean;
+  'x-ksp-pending-deletion'?: boolean;
   parameters?: { $ref?: string }[];
 }
 
@@ -133,6 +134,7 @@ describe('contrat OpenAPI : manifeste de routage', () => {
         rateLimit: op['x-ksp-rate-limit'],
         roles: op['x-ksp-roles'] ?? null,
         mfaMaxAge: op['x-ksp-mfa-max-age'] ?? null,
+        pendingDeletion: op['x-ksp-pending-deletion'] ?? false,
         idempotencyKey: (op.parameters ?? []).some((p) => p.$ref?.endsWith('/IdempotencyKey'))
           ? 'required'
           : (op.parameters ?? []).some((p) => p.$ref?.endsWith('/OptionalIdempotencyKey'))
@@ -150,6 +152,7 @@ describe('contrat OpenAPI : manifeste de routage', () => {
         rateLimit: route.rateLimit,
         roles: route.access.anyRole ? [...route.access.anyRole] : null,
         mfaMaxAge: route.access.recentMfaSeconds ?? null,
+        pendingDeletion: route.access.allowsPendingDeletion ?? false,
         idempotencyKey: route.idempotencyKey ?? null,
       }))
       .sort((a, b) => a.operationId.localeCompare(b.operationId));
@@ -335,6 +338,9 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   const newUserToken = () =>
     keys.accessToken({ subject: `0192f1c4-7a2b-7c3d-8e4f-${String(++emailUsers).padStart(12, '0')}` });
   const asUser = (req: request.Test, bearer: string) => from(req).set('Authorization', `Bearer ${bearer}`);
+  /** Session restreinte d'un compte en cours de suppression (ADR-036). */
+  const restrictedToken = () =>
+    keys.accessToken({ claims: { roles: [{ role: 'account_deletion_pending', scopeType: 'personal' }] } });
   const fail = (method: Parameters<typeof identity.stub.on>[0], error: AppError) =>
     identity.stub.on(method, () => Promise.reject(error));
 
@@ -593,6 +599,101 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     ],
     ['non connecté', 'logout', 401, () => from(http().post('/api/v1/identity/logout'))],
     ['profil', 'getMe', 200, () => authed(http().get('/api/v1/identity/me'))],
+    [
+      'profil d’un compte en cours de suppression, session restreinte',
+      'getMe',
+      200,
+      async () => {
+        identity.stub.on('getMe', async () => ({
+          user: { ...protoUser, status: 'USER_STATUS_DELETION_PENDING' },
+          profileIncomplete: false,
+          pendingEmail: '',
+          activeContext: protoIndividual,
+          deletion: {
+            requestedAt: '2026-11-05T10:00:00.000Z',
+            scheduledFor: '2026-12-05T10:00:00.000Z',
+            postponedBy: [
+              {
+                service: 'billing',
+                kind: 'unpaid_invoice',
+                reference: 'FAC-2026-000042',
+                description: 'Facture à payer.',
+              },
+            ],
+          },
+        }));
+        return asUser(http().get('/api/v1/identity/me'), await restrictedToken());
+      },
+    ],
+    [
+      'suppression demandée',
+      'requestAccountDeletion',
+      200,
+      () => authed(http().post('/api/v1/identity/me/deletion'), 'web'),
+    ],
+    [
+      'suppression refusée : obligations en cours',
+      'requestAccountDeletion',
+      422,
+      () => {
+        fail(
+          'requestDeletion',
+          AppError.precondition('IDENTITY_DELETION_BLOCKED', 'Opérations en cours.', {
+            obligations: [
+              {
+                service: 'cleaning',
+                kind: 'open_cleaning_mission',
+                reference: 'm-1',
+                description: 'Prestation en cours.',
+              },
+            ],
+          }),
+        );
+        return authed(http().post('/api/v1/identity/me/deletion'));
+      },
+    ],
+    [
+      'suppression refusée : service injoignable',
+      'requestAccountDeletion',
+      503,
+      () => {
+        fail(
+          'requestDeletion',
+          AppError.unavailable('IDENTITY_DELETION_CHECK_UNAVAILABLE', 'Réessayez plus tard.', {
+            services: ['payment'],
+          }),
+        );
+        return authed(http().post('/api/v1/identity/me/deletion'));
+      },
+    ],
+    [
+      'session restreinte : pas de nouvelle demande',
+      'requestAccountDeletion',
+      403,
+      async () => asUser(http().post('/api/v1/identity/me/deletion'), await restrictedToken()),
+    ],
+    [
+      'suppression annulée depuis la session restreinte',
+      'cancelAccountDeletion',
+      200,
+      async () => asUser(http().delete('/api/v1/identity/me/deletion'), await restrictedToken()),
+    ],
+    [
+      'annulation depuis une session fermée',
+      'cancelAccountDeletion',
+      401,
+      () => {
+        fail('cancelDeletion', AppError.unauthenticated('IDENTITY_SESSION_REVOKED', 'Session fermée.'));
+        return authed(http().delete('/api/v1/identity/me/deletion'));
+      },
+    ],
+    [
+      'session restreinte : autre route refusée',
+      'updateMe',
+      403,
+      async () =>
+        asUser(http().patch('/api/v1/identity/me'), await restrictedToken()).send({ firstName: 'Koffi' }),
+    ],
     ['profil sans jeton', 'getMe', 401, () => from(http().get('/api/v1/identity/me'), 'none')],
     [
       'compte supprimé',

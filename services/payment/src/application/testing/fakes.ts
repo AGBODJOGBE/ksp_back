@@ -116,6 +116,11 @@ export class InMemoryPayments implements PaymentRepository {
       .map((r) => r.id)
       .sort();
   }
+  async listOpenForCustomer(customerId: string) {
+    return [...this.rows.values()]
+      .filter((r) => r.customerId === customerId && (r.status === 'pending' || isUnderReview(r)))
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
   async save(intent: PaymentIntent, events: OutboxMessage[]) {
     const current = this.rows.get(intent.id);
     if (!current || current.version !== intent.version) return false;

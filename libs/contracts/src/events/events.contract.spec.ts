@@ -35,6 +35,12 @@ const examples: { [K in IdentityEventType]: IdentityEventPayloads[K] } = {
   'identity.user.suspended': { userId: uuid, reason: 'Fraude signalée', suspendedBy: uuid },
   'identity.user.reactivated': { userId: uuid, reactivatedBy: uuid },
   'identity.user.deleted': { userId: uuid },
+  'identity.user.deletion_requested': {
+    userId: uuid,
+    requestedAt: '2026-11-05T10:00:00.000Z',
+    scheduledFor: '2026-12-05T10:00:00.000Z',
+  },
+  'identity.user.deletion_cancelled': { userId: uuid },
   'identity.organization.created': { organizationId: uuid, createdBy: uuid, legalName: 'SARL Bénin Propre' },
   'identity.organization.validated': {
     organizationId: uuid,

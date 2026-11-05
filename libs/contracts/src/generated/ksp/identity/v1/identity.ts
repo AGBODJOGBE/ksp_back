@@ -464,6 +464,51 @@ export interface SigningKey {
   use: string;
 }
 
+/** Suppression demandée d'un compte (UC-ID-11). */
+export interface AccountDeletion {
+  requestedAt: string;
+  /** Date prévue de l'anonymisation : demande + délai de suppression en vigueur à la demande. */
+  scheduledFor: string;
+  /**
+   * Obligations trouvées au dernier contrôle de l'échéance : l'anonymisation est reportée tant
+   * qu'il en reste (vide sinon).
+   */
+  postponedBy: DeletionObstacle[];
+}
+
+/** Raison lisible qui empêche la suppression d'un compte. */
+export interface DeletionObstacle {
+  /** Service qui l'a signalée (cleaning, billing, payment…) ou "identity" (organisation). */
+  service: string;
+  /** Nature, par exemple "open_cleaning_mission", "unpaid_invoice", "last_org_admin". */
+  kind: string;
+  /** Référence lisible de l'objet concerné (numéro de facture, identifiant…). */
+  reference: string;
+  /** Explication affichée à l'utilisateur. */
+  description: string;
+}
+
+export interface RequestDeletionRequest {
+}
+
+export interface RequestDeletionResponse {
+  deletion?: AccountDeletion | undefined;
+}
+
+export interface CancelDeletionRequest {
+}
+
+export interface CancelDeletionResponse {
+  user?: User | undefined;
+  profileIncomplete: boolean;
+  activeContext?:
+    | ActiveContext
+    | undefined;
+  /** Nouveau jeton d'accès complet, à utiliser à la place du jeton restreint. */
+  accessToken: string;
+  accessTokenExpiresAt: string;
+}
+
 export interface GetMeRequest {
 }
 
@@ -473,7 +518,11 @@ export interface GetMeResponse {
   /** Adresse en attente de confirmation (code envoyé, encore valable) ; vide sinon. */
   pendingEmail: string;
   /** Contexte du jeton d'accès de l'appelant (x-active-context). */
-  activeContext?: ActiveContext | undefined;
+  activeContext?:
+    | ActiveContext
+    | undefined;
+  /** Suppression demandée (compte deletion_pending) ; absente sinon. */
+  deletion?: AccountDeletion | undefined;
 }
 
 export interface UpdateMeRequest {
@@ -1154,10 +1203,32 @@ export const AUTH_SERVICE_NAME = "AuthService";
  *   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION aucun code en attente, ou code expiré
  *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
  *
- * Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
- * RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) ont leurs
- * propres services (OrganizationService, OrganizationAdminService) ; l'administration des comptes
- * (UC-ID-18 à 21) aura le sien.
+ * Suppression du compte (UC-ID-11, ADR-036) : RequestDeletion gèle le compte (deletion_pending)
+ * pendant le délai de suppression (30 jours par défaut, réglage d'identity) et ferme toutes ses
+ * sessions ; à l'échéance, le compte est anonymisé (deleted) et identity.user.deleted est publié.
+ * Pendant le délai, une connexion par code reste possible mais n'ouvre qu'une session restreinte
+ * (rôle account_deletion_pending, sans le rôle customer) : la gateway n'y accepte que GetMe,
+ * CancelDeletion, Logout et le renouvellement. Les autres méthodes de ce service sont refusées.
+ *   IDENTITY_DELETION_BLOCKED            FAILED_PRECONDITION obligations en cours dans un service
+ *                                                            (details.obligations : service, kind,
+ *                                                            reference, description)
+ *   IDENTITY_DELETION_CHECK_UNAVAILABLE  UNAVAILABLE         un service n'a pas pu être interrogé :
+ *                                                            réessayer plus tard (details.services)
+ *   IDENTITY_DELETION_LAST_ORG_ADMIN     FAILED_PRECONDITION seul administrateur d'une organisation
+ *                                                            non refusée (details.organizations :
+ *                                                            id, legalName)
+ *   IDENTITY_DELETION_INTERNAL_ACCOUNT   FAILED_PRECONDITION compte interne (rôle du back-office) :
+ *                                                            à retirer par un administrateur KSP
+ *   IDENTITY_ACCOUNT_SUSPENDED           PERMISSION_DENIED   compte suspendu
+ *   IDENTITY_ACCOUNT_DELETION_PENDING    PERMISSION_DENIED   compte en cours de suppression : seules
+ *                                                            la lecture du profil et l'annulation
+ *                                                            sont possibles
+ *   IDENTITY_SESSION_REVOKED             UNAUTHENTICATED     CancelDeletion depuis une session fermée
+ *                                                            (celles d'avant la demande le sont toutes)
+ *
+ * Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08).
+ * Les organisations (UC-ID-12 à 16) ont leurs propres services (OrganizationService,
+ * OrganizationAdminService) ; l'administration des comptes (UC-ID-18 à 21) aura le sien.
  * ---------------------------------------------------------------------------
  */
 
@@ -1183,6 +1254,26 @@ export interface AccountServiceClient {
    */
 
   confirmEmail(request: ConfirmEmailRequest, metadata?: Metadata): Observable<ConfirmEmailResponse>;
+
+  /**
+   * UC-ID-11. Demander la suppression de son compte (session normale, compte actif). Chaque service
+   * qui implémente ksp.common.v1.ObligationService est interrogé : une seule obligation en cours
+   * refuse la demande, avec la liste des raisons ; un service qui ne répond pas la refuse aussi
+   * (réessayer plus tard). Accepté : le compte passe en deletion_pending, toutes ses sessions sont
+   * fermées, y compris celle de l'appelant (identity.user.deletion_requested). Idempotent : un
+   * compte déjà en cours de suppression rend la suppression prévue, sans nouveau contrôle.
+   */
+
+  requestDeletion(request: RequestDeletionRequest, metadata?: Metadata): Observable<RequestDeletionResponse>;
+
+  /**
+   * UC-ID-11. Annuler la suppression, depuis la session restreinte ouverte par une nouvelle
+   * connexion : le compte redevient actif (identity.user.deletion_cancelled) et la réponse porte un
+   * nouveau jeton d'accès complet (rôle customer) pour la même session ; le jeton de
+   * renouvellement ne change pas. Idempotent : sur un compte actif, rend le profil et un jeton.
+   */
+
+  cancelDeletion(request: CancelDeletionRequest, metadata?: Metadata): Observable<CancelDeletionResponse>;
 }
 
 /**
@@ -1208,10 +1299,32 @@ export interface AccountServiceClient {
  *   IDENTITY_OTP_EXPIRED            FAILED_PRECONDITION aucun code en attente, ou code expiré
  *   IDENTITY_OTP_TOO_MANY_ATTEMPTS  FAILED_PRECONDITION code annulé, en demander un nouveau
  *
- * Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08),
- * RequestDeletion et CancelDeletion (UC-ID-11). Les organisations (UC-ID-12 à 16) ont leurs
- * propres services (OrganizationService, OrganizationAdminService) ; l'administration des comptes
- * (UC-ID-18 à 21) aura le sien.
+ * Suppression du compte (UC-ID-11, ADR-036) : RequestDeletion gèle le compte (deletion_pending)
+ * pendant le délai de suppression (30 jours par défaut, réglage d'identity) et ferme toutes ses
+ * sessions ; à l'échéance, le compte est anonymisé (deleted) et identity.user.deleted est publié.
+ * Pendant le délai, une connexion par code reste possible mais n'ouvre qu'une session restreinte
+ * (rôle account_deletion_pending, sans le rôle customer) : la gateway n'y accepte que GetMe,
+ * CancelDeletion, Logout et le renouvellement. Les autres méthodes de ce service sont refusées.
+ *   IDENTITY_DELETION_BLOCKED            FAILED_PRECONDITION obligations en cours dans un service
+ *                                                            (details.obligations : service, kind,
+ *                                                            reference, description)
+ *   IDENTITY_DELETION_CHECK_UNAVAILABLE  UNAVAILABLE         un service n'a pas pu être interrogé :
+ *                                                            réessayer plus tard (details.services)
+ *   IDENTITY_DELETION_LAST_ORG_ADMIN     FAILED_PRECONDITION seul administrateur d'une organisation
+ *                                                            non refusée (details.organizations :
+ *                                                            id, legalName)
+ *   IDENTITY_DELETION_INTERNAL_ACCOUNT   FAILED_PRECONDITION compte interne (rôle du back-office) :
+ *                                                            à retirer par un administrateur KSP
+ *   IDENTITY_ACCOUNT_SUSPENDED           PERMISSION_DENIED   compte suspendu
+ *   IDENTITY_ACCOUNT_DELETION_PENDING    PERMISSION_DENIED   compte en cours de suppression : seules
+ *                                                            la lecture du profil et l'annulation
+ *                                                            sont possibles
+ *   IDENTITY_SESSION_REVOKED             UNAUTHENTICATED     CancelDeletion depuis une session fermée
+ *                                                            (celles d'avant la demande le sont toutes)
+ *
+ * Prochains lots (ajout sans rupture) : ChangePhone (UC-ID-07), AddCredentials (UC-ID-08).
+ * Les organisations (UC-ID-12 à 16) ont leurs propres services (OrganizationService,
+ * OrganizationAdminService) ; l'administration des comptes (UC-ID-18 à 21) aura le sien.
  * ---------------------------------------------------------------------------
  */
 
@@ -1246,11 +1359,44 @@ export interface AccountServiceController {
     request: ConfirmEmailRequest,
     metadata?: Metadata,
   ): Promise<ConfirmEmailResponse> | Observable<ConfirmEmailResponse> | ConfirmEmailResponse;
+
+  /**
+   * UC-ID-11. Demander la suppression de son compte (session normale, compte actif). Chaque service
+   * qui implémente ksp.common.v1.ObligationService est interrogé : une seule obligation en cours
+   * refuse la demande, avec la liste des raisons ; un service qui ne répond pas la refuse aussi
+   * (réessayer plus tard). Accepté : le compte passe en deletion_pending, toutes ses sessions sont
+   * fermées, y compris celle de l'appelant (identity.user.deletion_requested). Idempotent : un
+   * compte déjà en cours de suppression rend la suppression prévue, sans nouveau contrôle.
+   */
+
+  requestDeletion(
+    request: RequestDeletionRequest,
+    metadata?: Metadata,
+  ): Promise<RequestDeletionResponse> | Observable<RequestDeletionResponse> | RequestDeletionResponse;
+
+  /**
+   * UC-ID-11. Annuler la suppression, depuis la session restreinte ouverte par une nouvelle
+   * connexion : le compte redevient actif (identity.user.deletion_cancelled) et la réponse porte un
+   * nouveau jeton d'accès complet (rôle customer) pour la même session ; le jeton de
+   * renouvellement ne change pas. Idempotent : sur un compte actif, rend le profil et un jeton.
+   */
+
+  cancelDeletion(
+    request: CancelDeletionRequest,
+    metadata?: Metadata,
+  ): Promise<CancelDeletionResponse> | Observable<CancelDeletionResponse> | CancelDeletionResponse;
 }
 
 export function AccountServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["getMe", "updateMe", "changeEmail", "confirmEmail"];
+    const grpcMethods: string[] = [
+      "getMe",
+      "updateMe",
+      "changeEmail",
+      "confirmEmail",
+      "requestDeletion",
+      "cancelDeletion",
+    ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("AccountService", method)(constructor.prototype[method], method, descriptor);

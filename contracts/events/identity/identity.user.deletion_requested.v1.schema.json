@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.user.deletion_requested.v1.schema.json",
+  "title": "identity.user.deletion_requested",
+  "description": "Le titulaire a demandé la suppression de son compte (UC-ID-11, ADR-036) : compte gelé jusqu'à scheduledFor, puis anonymisé (identity.user.deleted) sauf annulation.",
+  "x-event-type": "identity.user.deletion_requested",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["userId", "requestedAt", "scheduledFor"],
+  "properties": {
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scheduledFor": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Date prévue de l'anonymisation."
+    }
+  }
+}

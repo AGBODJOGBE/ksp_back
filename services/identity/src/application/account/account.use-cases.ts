@@ -1,7 +1,9 @@
 import { AppError } from '@ksp/platform';
 import { type ActiveContext } from '../../domain/context/active-context';
+import { type AccountDeletion } from '../../domain/user/account-deletion';
 import { isProfileIncomplete, normalizeLanguage, normalizeName } from '../../domain/user/profile';
 import { type ActiveContexts } from '../context/active-contexts';
+import { deletionErrors } from '../deletion/deletion-errors';
 import { type PendingEmails } from '../email/pending-email';
 import { type Account, type AccountRepository, type ProfileChanges } from '../session/session.ports';
 
@@ -16,6 +18,8 @@ export interface Profile {
    * raison sociale de l'organisation active.
    */
   activeContext: ActiveContext;
+  /** Suppression demandée (compte deletion_pending) ; null sinon (UC-ID-11). */
+  deletion: AccountDeletion | null;
 }
 
 const notFound = () => AppError.notFound('IDENTITY_USER_NOT_FOUND', 'Compte introuvable.');
@@ -38,6 +42,7 @@ async function toProfile(
     profileIncomplete: isProfileIncomplete(found),
     pendingEmail: await pendingEmails.of(found),
     activeContext: await contexts.of(activeContext),
+    deletion: found.status === 'deletion_pending' ? (found.deletion ?? null) : null,
   };
 }
 
@@ -92,7 +97,8 @@ export class UpdateMeUseCase {
       throw AppError.invalid('IDENTITY_PROFILE_EMPTY_UPDATE', 'Aucun champ à modifier.');
     }
 
-    existing(await this.accounts.findById(input.userId));
+    const current = existing(await this.accounts.findById(input.userId));
+    if (current.status === 'deletion_pending') throw deletionErrors.pending();
     return toProfile(
       await this.accounts.updateProfile(input.userId, changes),
       this.pendingEmails,

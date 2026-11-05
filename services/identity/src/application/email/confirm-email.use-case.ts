@@ -6,6 +6,7 @@ import { type OtpHasher } from '../otp/otp.ports';
 import { type AccountRepository } from '../session/session.ports';
 import { type Clock } from '../shared/system.ports';
 import { checkEmailCode } from './email-code-check';
+import { deletionErrors } from '../deletion/deletion-errors';
 import { emailErrors } from './email-errors';
 import {
   EmailAlreadyUsedError,
@@ -40,6 +41,7 @@ export class ConfirmEmailUseCase {
   async execute(input: ConfirmEmailInput): Promise<Profile> {
     const account = await this.accounts.findById(input.userId);
     if (!account || account.status === 'deleted') throw emailErrors.userNotFound();
+    if (account.status === 'deletion_pending') throw deletionErrors.pending();
 
     const now = this.clock.now();
     const verification = await checkEmailCode(
@@ -63,6 +65,7 @@ export class ConfirmEmailUseCase {
         profileIncomplete: isProfileIncomplete(confirmed),
         pendingEmail: null,
         activeContext: await this.contexts.of(input.activeContext),
+        deletion: null,
       };
     } catch (error) {
       if (error instanceof VerificationAlreadyConsumedError) throw emailErrors.expired();

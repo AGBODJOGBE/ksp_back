@@ -177,6 +177,23 @@ describe('RefreshSessionUseCase (UC-ID-04)', () => {
     await expectAppError(refresh.execute('rt-1'), 'IDENTITY_REFRESH_TOKEN_INVALID');
   });
 
+  it('compte en cours de suppression : le renouvellement garde la session restreinte (ADR-036)', async () => {
+    const { refresh, account, issued, store } = setup();
+    store.sessions[0]!.activeOrgId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0a01';
+    account.status = 'deletion_pending';
+    await refresh.execute('rt-1');
+    expect(issued[0]).toMatchObject({
+      activeContext: 'personal',
+      roles: [{ role: 'account_deletion_pending', scopeType: 'personal' }],
+    });
+  });
+
+  it('un compte anonymisé ne renouvelle plus rien', async () => {
+    const { refresh, account } = setup();
+    account.status = 'deleted';
+    await expectAppError(refresh.execute('rt-1'), 'IDENTITY_REFRESH_TOKEN_INVALID');
+  });
+
   it('un compte suspendu ne peut plus renouveler sa session', async () => {
     const { refresh, account } = setup();
     account.status = 'suspended';

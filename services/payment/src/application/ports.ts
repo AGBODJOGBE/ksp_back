@@ -74,6 +74,12 @@ export interface PaymentRepository {
    */
   listUnresolvedMismatches(input: { subjectType: SubjectType; subjectId: string }): Promise<string[]>;
   /**
+   * Paiements du payeur pas encore réglés : en attente, ou écart de montant pas encore traité par
+   * la finance (« en vérification »), les plus anciens d'abord. Ils bloquent la suppression de son
+   * compte (UC-ID-11, ADR-036).
+   */
+  listOpenForCustomer(customerId: string): Promise<PaymentIntent[]>;
+  /**
    * Enregistre le paiement si sa version n'a pas changé depuis la lecture, avec ses événements
    * (outbox) dans la même transaction ; sinon false.
    */

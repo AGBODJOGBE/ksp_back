@@ -31,9 +31,11 @@ export interface PendingObligation {
 
 /**
  * Contrat commun implémenté par chaque service qui peut empêcher la suppression
- * d'un compte (recovery, order, wallet, realestate, cleaning).
- * identity interroge tous ces services avant de supprimer un compte :
- * une seule réponse positive bloque la suppression (UC-ID-11).
+ * d'un compte : aujourd'hui cleaning, billing et payment ; plus tard recovery, order, wallet,
+ * realestate. identity interroge tous ces services à la demande de suppression, puis de nouveau
+ * juste avant l'anonymisation : une seule réponse positive bloque (UC-ID-11, ADR-036).
+ * Seul identity est autorisé à appeler ce contrat (jeton de service, sinon
+ * <SERVICE>_CALLER_FORBIDDEN).
  */
 
 export interface ObligationServiceClient {
@@ -45,9 +47,11 @@ export interface ObligationServiceClient {
 
 /**
  * Contrat commun implémenté par chaque service qui peut empêcher la suppression
- * d'un compte (recovery, order, wallet, realestate, cleaning).
- * identity interroge tous ces services avant de supprimer un compte :
- * une seule réponse positive bloque la suppression (UC-ID-11).
+ * d'un compte : aujourd'hui cleaning, billing et payment ; plus tard recovery, order, wallet,
+ * realestate. identity interroge tous ces services à la demande de suppression, puis de nouveau
+ * juste avant l'anonymisation : une seule réponse positive bloque (UC-ID-11, ADR-036).
+ * Seul identity est autorisé à appeler ce contrat (jeton de service, sinon
+ * <SERVICE>_CALLER_FORBIDDEN).
  */
 
 export interface ObligationServiceController {

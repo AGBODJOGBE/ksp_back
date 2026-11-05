@@ -8,7 +8,7 @@ async function main(): Promise<void> {
   await bootstrapService({
     module: AppModule.forRoot(config) as never,
     config,
-    grpcPackages: ['payment'],
+    grpcPackages: ['payment', 'obligation'],
   });
 }
 

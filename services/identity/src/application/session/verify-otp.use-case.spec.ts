@@ -200,6 +200,26 @@ describe('VerifyOtpUseCase (UC-ID-01, validation du code)', () => {
     });
   });
 
+  it('compte en cours de suppression : session restreinte, pour annuler (ADR-036)', async () => {
+    const { useCase, sentChallenge, issued } = setup();
+    const { account } = await login(useCase, input(await sentChallenge()));
+    account.status = 'deletion_pending';
+    const restricted = await login(useCase, input(await sentChallenge()));
+    expect(restricted.account.status).toBe('deletion_pending');
+    expect(issued.at(-1)?.roles).toEqual([{ role: 'account_deletion_pending', scopeType: 'personal' }]);
+  });
+
+  it('compte en cours de suppression : pas de connexion au back-office', async () => {
+    const { useCase, store, sentChallenge } = setup();
+    const { account } = await login(useCase, input(await sentChallenge()));
+    account.status = 'deletion_pending';
+    await expectAppError(
+      useCase.execute(input(await sentChallenge(), { clientKind: 'backoffice' })),
+      'IDENTITY_ACCOUNT_DELETION_PENDING',
+    );
+    expect(store.loginEvents.at(-1)).toMatchObject({ success: false, reason: 'account_deletion_pending' });
+  });
+
   it('au-delà de la limite, la session la plus ancienne est révoquée', async () => {
     const { useCase, store, sentChallenge, advance } = setup();
     const first = await login(useCase, input(await sentChallenge()));

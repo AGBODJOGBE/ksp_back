@@ -72,6 +72,14 @@ Le même script ajoute, pour le parcours par lieu (ADR-034) : un type de lieu d�
   et adresse géocodée des dossiers clôturés, par lots ; effacement de tous les dossiers d'un client à
   `identity.user.deleted` (événement du contrat, pas encore publié par identity).
 
+## Suppression d'un compte (ADR-036)
+
+`ksp.common.v1.ObligationService`, appelé par identity seul (`CLEANING_CALLER_FORBIDDEN` sinon) à la
+demande de suppression puis avant l'anonymisation : une mission non terminée
+(`open_cleaning_mission`) ou une demande de devis ouverte — reçue, visite planifiée, devis envoyé
+encore valide (`open_cleaning_request`) — bloque la suppression. `identity.user.deleted` efface les
+positions des lieux du compte (ADR-035).
+
 ## Règles (cahier des charges, parties 4 et 9)
 
 | Sujet      | Fonctionnement                                                                                                                                                                                                                                                                                                |

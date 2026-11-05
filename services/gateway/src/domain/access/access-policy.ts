@@ -1,5 +1,11 @@
 import { type AccessRequirement } from '../routing/route-manifest';
 
+/**
+ * Rôle d'une session restreinte : compte en cours de suppression (ADR-036). Même valeur que
+ * ACCOUNT_DELETION_PENDING_ROLE de @ksp/contracts (le domaine reste sans dépendance ; un test le vérifie).
+ */
+export const ACCOUNT_DELETION_PENDING_ROLE = 'account_deletion_pending';
+
 /** Ce que la gateway sait de l'appelant, tiré du jeton d'accès vérifié. */
 export interface Caller {
   roles: readonly { role: string }[];
@@ -9,7 +15,11 @@ export interface Caller {
 }
 
 export type AccessDecision =
-  { allowed: true } | { allowed: false; reason: 'unauthenticated' | 'role_missing' | 'mfa_required' };
+  | { allowed: true }
+  | {
+      allowed: false;
+      reason: 'unauthenticated' | 'role_missing' | 'mfa_required' | 'account_deletion_pending';
+    };
 
 /**
  * Applique l'exigence d'accès d'une route (UC-GW-03). Ce contrôle ne remplace pas ceux du service :
@@ -22,6 +32,14 @@ export function checkAccess(
 ): AccessDecision {
   if (requirement.level !== 'authenticated') return { allowed: true };
   if (!caller) return { allowed: false, reason: 'unauthenticated' };
+  // Session restreinte d'un compte en cours de suppression (ADR-036) : refusée partout, sauf sur les
+  // routes qui l'acceptent explicitement (lecture du profil, annulation, déconnexion).
+  if (
+    !requirement.allowsPendingDeletion &&
+    caller.roles.some((claim) => claim.role === ACCOUNT_DELETION_PENDING_ROLE)
+  ) {
+    return { allowed: false, reason: 'account_deletion_pending' };
+  }
   if (requirement.anyRole?.length) {
     const held = new Set(caller.roles.map((claim) => claim.role));
     if (!requirement.anyRole.some((role) => held.has(role)))

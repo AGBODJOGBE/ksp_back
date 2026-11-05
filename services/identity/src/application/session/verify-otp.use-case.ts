@@ -7,7 +7,8 @@ import { type ClientKind, type SessionPolicy } from '../../domain/session/sessio
 import { mfaErrors } from '../mfa/mfa-errors';
 import { type MfaRequired, type OpenMfaChallenge } from '../mfa/open-mfa-challenge';
 import { type OtpChallengeRepository, type OtpHasher } from '../otp/otp.ports';
-import { CUSTOMER_ROLE } from '../role/role-claims';
+import { deletionErrors } from '../deletion/deletion-errors';
+import { personalRoleClaims } from '../role/role-claims';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { type AccessTokenIssuer } from '../token/access-token-issuer';
 import {
@@ -96,6 +97,11 @@ export class VerifyOtpUseCase {
       throw AppError.forbidden('IDENTITY_ACCOUNT_SUSPENDED', 'Ce compte est suspendu.');
     }
 
+    if (account?.status === 'deletion_pending' && input.clientKind === 'backoffice') {
+      await this.recordFailure(account.id, 'account_deletion_pending', input);
+      throw deletionErrors.pending();
+    }
+
     if (input.clientKind === 'backoffice') return this.startMfa(input, challenge.id, account, now);
     const session = await this.openSession(input, challenge.id, challenge.target, account, now, true);
     return { status: 'authenticated', session };
@@ -175,7 +181,8 @@ export class VerifyOtpUseCase {
       clientId: input.clientKind,
       activeContext: PERSONAL_CONTEXT,
       // Sites et applications : le rôle client ; les rôles internes ne servent qu'au back-office.
-      roles: [CUSTOMER_ROLE],
+      // Compte en cours de suppression : session restreinte, pour annuler (UC-ID-11, ADR-036).
+      roles: personalRoleClaims(result.account.status),
       mfa: false,
       authTime: now,
       amr: ['otp'],
