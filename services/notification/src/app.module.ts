@@ -10,6 +10,7 @@ import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { EVENT_RULES } from './application/events/listened-events';
 import { NotifyEventUseCase } from './application/events/notify-event.use-case';
+import { EraseUserNotificationsUseCase } from './application/privacy/erase-user-notifications.use-case';
 import { type ChannelProvider } from './application/send/notification.ports';
 import { MessageDispatcher } from './application/send/message-dispatcher';
 import { SendNotificationUseCase } from './application/send/send-notification.use-case';
@@ -21,8 +22,10 @@ import { IdentityRecipientDirectory } from './infrastructure/identity/identity-r
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { PrismaNotificationRepository } from './infrastructure/notification/prisma-notification.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
+import { PrismaUserNotificationsEraser } from './infrastructure/privacy/prisma-user-notifications-eraser';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { NotificationGrpcController } from './interfaces/grpc/notification.controller';
+import { AccountErasureConsumer } from './interfaces/messaging/account-erasure.consumer';
 import { EventNotificationsConsumer } from './interfaces/messaging/event-notifications.consumer';
 
 const CHANNEL_PROVIDERS = Symbol('CHANNEL_PROVIDERS');
@@ -116,7 +119,14 @@ export class AppModule {
             );
           },
         },
+        PrismaUserNotificationsEraser,
+        {
+          provide: EraseUserNotificationsUseCase,
+          inject: [PrismaUserNotificationsEraser],
+          useFactory: (eraser: PrismaUserNotificationsEraser) => new EraseUserNotificationsUseCase(eraser),
+        },
         EventNotificationsConsumer,
+        AccountErasureConsumer,
       ],
     };
   }

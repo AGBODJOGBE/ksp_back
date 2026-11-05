@@ -105,7 +105,15 @@ Textes : `src/domain/messages/cleaning.messages.ts` et `billing.messages.ts` (fr
 
 **Messages regroupés (ADR-035 point 14)** : un envoi groupé, une visite commune et un envoi groupé de devis donnent **un seul message**, qui liste les prestations (et, pour les devis, le montant de chacun, le total et la validité). Les événements par demande publiés dans la même transaction portent `summarizedByGroup: true` et n'envoient rien. Sans ce marqueur (demande seule, devis envoyé seul, événement antérieur), un message par demande. Les messages d'une demande citent sa prestation quand l'événement en donne le nom (`serviceName`) : objet « … — Vitres », texte « pour « Vitres » » ; sans lui, l'ancien libellé. En production, `PORTAL_BASE_URL` doit être une adresse HTTPS publique (le service refuse de démarrer sinon).
 
-**Suppression du compte (ADR-036)** : `identity.user.deletion_requested` (date prévue, comment annuler) et `identity.user.deletion_cancelled`, au titulaire du compte. Rien pour `identity.user.deleted` : le compte anonymisé n'a plus de coordonnées. À traiter (à valider) : effacer ou détacher ses notifications dans l'espace KSP (`in_app_notifications`) sur `identity.user.deleted`.
+**Suppression du compte (ADR-036)** : `identity.user.deletion_requested` (date prévue, comment annuler) et `identity.user.deletion_cancelled`, au titulaire du compte. Aucun message pour `identity.user.deleted` : le compte anonymisé n'a plus de coordonnées.
+
+**Compte anonymisé (`identity.user.deleted`, ADR-036)** : file `notification.identity.user.deleted` (`AccountErasureConsumer`, `EraseUserNotificationsUseCase`). En une transaction avec l'inbox (consommateur `notification.identity.user.deleted` dans `processed_events`) :
+
+- les notifications de l'espace KSP du compte (`in_app_notifications`, titre et texte avec le prénom) sont **supprimées** ;
+- l'historique des envois (`notifications`, retrouvé par `recipient_user_id`, index de la migration 0005) est **détaché** : `recipient_user_id` et `provider_message_id` vidés, `target_masked` vidé, `idempotency_key` (qui contient l'identifiant du compte) remplacée par `erased:<id>` ; modèle, canaux, statut, code et cause d'échec et dates restent pour les statistiques. Le texte et les variables d'un message ne sont jamais conservés (ADR-014) : rien d'autre à effacer ;
+- les événements `notification.message.failed` encore dans l'outbox perdent `recipientUserId` et leur `targetMasked` (vidé).
+
+Un second passage du même événement n'efface rien (inbox) ; un compte sans notification marque simplement l'événement traité. Les journaux ne contiennent que les compteurs. Un événement métier traité après l'anonymisation ne recrée rien : identity ne rend plus le compte (destinataire introuvable).
 
 **Ajouter un événement** (suspension, reprise, facture…) : ses modèles dans `domain/messages`, sa règle dans `application/events`, l'entrée dans `listened-events.ts`, le modèle WhatsApp dans `infrastructure/channels/whatsapp-templates.ts`.
 
@@ -173,12 +181,14 @@ Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie
 | `src/domain/messages`             | Textes des messages des événements, mise en forme (montants, dates, durées)                             |
 | `src/application/send`            | `SendNotificationUseCase`, `MessageDispatcher` (envoi idempotent partagé), ports, erreurs               |
 | `src/application/events`          | `NotifyEventUseCase`, règles par événement, ports (annuaire, inbox)                                     |
+| `src/application/privacy`         | `EraseUserNotificationsUseCase` : effacement d'un compte anonymisé (ADR-036), port                      |
 | `src/application/testing`         | Doublures en mémoire des ports                                                                          |
 | `src/infrastructure/channels`     | Prestataires WhatsApp (Meta, console) et e-mail (Brevo, console), leur fabrique, modèles WhatsApp       |
 | `src/infrastructure/events`       | Inbox et notifications dans l'espace (tables `processed_events`, `in_app_notifications`)                |
 | `src/infrastructure/identity`     | Annuaires d'identity : destinataires (`GetUsersByIds`), e-mail de facturation (`GetOrganizationsByIds`) |
+| `src/infrastructure/privacy`      | Effacement Prisma d'un compte anonymisé (espace, historique des envois, outbox, inbox)                  |
 | `src/infrastructure/notification` | Dépôt Prisma (table `notifications`, outbox)                                                            |
 | `src/interfaces/grpc`             | Contrôleur gRPC                                                                                         |
-| `src/interfaces/messaging`        | Abonnement RabbitMQ aux événements écoutés                                                              |
+| `src/interfaces/messaging`        | Abonnement RabbitMQ aux événements écoutés et aux comptes anonymisés                                    |
 
-Tests : `test/notification.repository.int.spec.ts` et `test/event-inbox.int.spec.ts` (PostgreSQL, ignorés sans `TEST_DATABASE_URL`) et `test/send-notification.grpc.spec.ts` (bout en bout gRPC avec le client d'identity).
+Tests : `test/notification.repository.int.spec.ts`, `test/event-inbox.int.spec.ts` et `test/user-notifications-eraser.int.spec.ts` (PostgreSQL, ignorés sans `TEST_DATABASE_URL`) et `test/send-notification.grpc.spec.ts` (bout en bout gRPC avec le client d'identity).
