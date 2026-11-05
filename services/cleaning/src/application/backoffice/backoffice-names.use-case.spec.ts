@@ -153,6 +153,22 @@ describe('noms affichés au back-office (ADR-029)', () => {
     expect(names.organizations.size).toBe(0);
   });
 
+  it('auteurs système des données de départ (migration, demo) : ni recherche ni nom', async () => {
+    const lookups: string[][] = [];
+    const findAgents = world.agents.findAgents.bind(world.agents);
+    world.agents.findAgents = (ids: string[]) => {
+      lookups.push(ids);
+      return findAgents(ids);
+    };
+    const names = await asSupervisor(() =>
+      new ResolveBackofficeNamesUseCase(world).forAuthors(['migration', 'demo', SUPERVISOR_ID]),
+    );
+    expect(lookups).toEqual([[SUPERVISOR_ID]]);
+    expect(world.people.calls).toEqual([{ kind: 'users', ids: [SUPERVISOR_ID] }]);
+    expect(names.users.get('migration')).toBeUndefined();
+    expect(names.users.get(SUPERVISOR_ID)).toBe('Afi Superviseure');
+  });
+
   it('aucun identifiant : aucun appel ; réservé au back-office', async () => {
     await asSupervisor(() => new ResolveBackofficeNamesUseCase(world).forAuthors([null, undefined]));
     expect(world.people.calls).toEqual([]);

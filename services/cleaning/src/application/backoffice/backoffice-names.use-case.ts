@@ -19,8 +19,14 @@ interface NameRequest {
   organizationIds: (string | null | undefined)[];
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Comptes à nommer : seuls les identifiants de compte. Les auteurs système des données de départ
+ * (`migration`, `demo`) n'ont pas de nom, et une valeur hors UUID ferait échouer la lecture des agents.
+ */
 const present = (ids: (string | null | undefined)[]) => [
-  ...new Set(ids.filter((id): id is string => Boolean(id))),
+  ...new Set(ids.filter((id): id is string => Boolean(id) && UUID.test(id as string))),
 ];
 
 /**
