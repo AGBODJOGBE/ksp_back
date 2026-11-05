@@ -34,11 +34,12 @@ export class PrismaUserNotificationsEraser implements UserNotificationsEraser {
           'WHERE recipient_user_id = $1::uuid',
         userId,
       );
+      // Parenthèses obligatoires : `-` est prioritaire sur `->` en SQL.
       await tx.$executeRawUnsafe(
         "UPDATE outbox SET payload = jsonb_set(payload, '{payload}', " +
-          "(payload->'payload' - 'recipientUserId') || jsonb_build_object('targetMasked', '')) " +
+          "((payload->'payload') - 'recipientUserId'::text) || jsonb_build_object('targetMasked', ''::text)) " +
           "WHERE event_type = 'notification.message.failed' " +
-          "AND lower(payload->'payload'->>'recipientUserId') = $1",
+          "AND lower(payload->'payload'->>'recipientUserId') = lower($1::text)",
         userId,
       );
     });

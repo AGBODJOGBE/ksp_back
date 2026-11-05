@@ -54,7 +54,12 @@ describeWithDatabase('PrismaUserNotificationsEraser (PostgreSQL)', () => {
     pool.query(
       'INSERT INTO in_app_notifications (id, user_id, template_code, title, body, link, source_event_id, created_at) ' +
         "VALUES ($1, $2, 'cleaning.quote_sent.customer', 'Votre devis', 'Bonjour Koffi', NULL, $3, now())",
-      [`0192f1c4-bbbb-7000-8000-${String(id).padStart(12, '0')}`, userId, EVENT_ID],
+      // Une notification par événement source : (événement, compte, modèle) est unique.
+      [
+        `0192f1c4-bbbb-7000-8000-${String(id).padStart(12, '0')}`,
+        userId,
+        `0192f1c4-eeee-7000-8000-${String(id).padStart(12, '0')}`,
+      ],
     );
 
   const delivery = (id: number, userId: string | null, status: 'accepted' | 'failed') =>
