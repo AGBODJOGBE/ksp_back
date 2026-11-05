@@ -8,6 +8,8 @@ import {
   type CleaningApi,
   type EstimateInput,
   type GroupInterventionsInput,
+  type GroupMeasurementBody,
+  type MeasurementBody,
   type GroupQuotesInput,
   type LocationCorrectionInput,
   type VisitFilters,
@@ -51,6 +53,7 @@ import {
   answersToProto,
   definitionToProto,
   formToProto,
+  measurementToProto,
   presentCalculation,
   selectionsToProto,
 } from './cleaning-form-presenters';
@@ -217,9 +220,26 @@ export class CleaningGrpcAdapter implements CleaningApi {
     return { ...presentOutcome(res.outcome), requests: res.requests.map(presentRequest) };
   }
 
-  async completeGroupVisit(id: string, report: string, idempotencyKey: string | undefined): Promise<Json> {
+  async completeGroupVisit(
+    id: string,
+    report: string,
+    idempotencyKey: string | undefined,
+    measurements?: GroupMeasurementBody[] | undefined,
+  ): Promise<Json> {
     const res = await this.write('completeGroupVisit', (m) =>
-      this.clients.admin.completeGroupVisit({ groupId: id, report, idempotencyKey: idempotencyKey ?? '' }, m),
+      this.clients.admin.completeGroupVisit(
+        {
+          groupId: id,
+          report,
+          idempotencyKey: idempotencyKey ?? '',
+          // Mesures constatées par demande (ADR-037).
+          measurements: (measurements ?? []).map((item) => ({
+            requestId: item.requestId,
+            ...measurementToProto(item),
+          })),
+        },
+        m,
+      ),
     );
     return { ...presentOutcome(res.outcome), requests: res.requests.map(presentRequest) };
   }
@@ -498,11 +518,43 @@ export class CleaningGrpcAdapter implements CleaningApi {
     );
   }
 
-  async completeVisit(visitId: string, report: string): Promise<Json> {
-    return presentRequest(
-      (await this.write('completeVisit', (m) => this.clients.admin.completeVisit({ visitId, report }, m)))
-        .request,
+  async completeVisit(
+    visitId: string,
+    report: string,
+    measurements?: MeasurementBody | undefined,
+  ): Promise<Json> {
+    const res = await this.write('completeVisit', (m) =>
+      this.clients.admin.completeVisit(
+        {
+          visitId,
+          report,
+          // Absentes : aucune mesure (ADR-037).
+          ...(measurements ? { measurements: measurementToProto(measurements) } : {}),
+        },
+        m,
+      ),
     );
+    return presentRequest(res.request);
+  }
+
+  async estimateRequestPrice(id: string, input: MeasurementBody): Promise<Json> {
+    // Rien n'est enregistré : le recalcul est une lecture, rejouable (ADR-037).
+    const res = await this.read('estimateRequestPrice', (m) =>
+      this.clients.admin.estimateRequestPrice({ requestId: id, ...measurementToProto(input) }, m),
+    );
+    return {
+      requestId: res.requestId,
+      serviceCode: res.serviceCode,
+      commune: res.commune,
+      calculation: presentCalculation(res.calculation),
+    };
+  }
+
+  async saveRequestMeasurements(id: string, input: MeasurementBody): Promise<Json> {
+    const res = await this.write('saveRequestMeasurements', (m) =>
+      this.clients.admin.saveRequestMeasurements({ requestId: id, ...measurementToProto(input) }, m),
+    );
+    return presentRequest(res.request);
   }
 
   async sendQuote(id: string, input: QuoteInput): Promise<Json> {

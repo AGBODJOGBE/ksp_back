@@ -173,6 +173,12 @@ const placeItem = {
   options: z.array(optionSelection).max(20).optional(),
   frequency: code.optional(),
 };
+/** Mesures constatées ou réponses à recalculer (ADR-037) : nouveau format seulement. */
+const measurement = {
+  answers,
+  options: z.array(optionSelection).max(20).optional(),
+  frequency: code.optional(),
+};
 const latitude = z.number().min(-90).max(90);
 const longitude = z.number().min(-180).max(180);
 
@@ -257,7 +263,13 @@ export const cleaningBodies = {
     agentId: uuid,
     excludeRequestIds: z.array(uuid).max(10).optional(),
   }),
-  completeCleaningGroupVisit: z.strictObject({ report: text(5000) }),
+  completeCleaningGroupVisit: z.strictObject({
+    report: text(5000),
+    measurements: z
+      .array(z.strictObject({ requestId: uuid, ...measurement }))
+      .max(10)
+      .optional(),
+  }),
   rejectCleaningRequestGroup: requiredReason,
   sendCleaningGroupQuotes: z.strictObject({
     proposedSlots: z.array(slot).min(1).max(3),
@@ -300,7 +312,12 @@ export const cleaningBodies = {
   cancelMyCleaningMission: optionalReason,
   rejectCleaningQuoteRequest: requiredReason,
   scheduleCleaningVisit: z.strictObject({ scheduledAt: dateTime, agentId: uuid }),
-  completeCleaningVisit: z.strictObject({ report: text(5000) }),
+  completeCleaningVisit: z.strictObject({
+    report: text(5000),
+    measurements: z.strictObject(measurement).optional(),
+  }),
+  estimateCleaningQuoteRequest: z.strictObject(measurement),
+  saveCleaningMeasurements: z.strictObject(measurement),
   sendCleaningQuote: z.strictObject({
     lines: z
       .array(z.strictObject({ label: text(200), quantity: int(1, 1_000_000), unitPrice: z.number().int() }))

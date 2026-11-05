@@ -619,4 +619,144 @@ describe('cleaning en gRPC', () => {
       visibilityReason: 'inactive',
     });
   });
+
+  it('mesures constatées : compte rendu, recalcul, correction, réponses lisibles (ADR-037)', async () => {
+    const AGENT = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002';
+    world.agents.agents.set(AGENT, {
+      agentId: AGENT,
+      displayName: 'Awa',
+      active: true,
+      unavailabilities: [],
+    });
+    const staff = {
+      userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001',
+      roles: ['cleaning_supervisor'],
+      mfa: true,
+    };
+    const agent = { userId: AGENT, roles: ['cleaning_agent'], mfa: true };
+    const { request } = await call(
+      (m) =>
+        quotes.requestQuote(
+          {
+            idempotencyKey: 'grpc-measure',
+            serviceCode: 'home_cleaning',
+            premisesType: '',
+            quantity: 0,
+            options: [],
+            answers: ANSWERS,
+            optionSelections: WINDOWS,
+            frequency: 'once',
+            commune: 'Cotonou',
+            address: 'Lot 12',
+            preferredSlots: [SLOT],
+            comment: '',
+            requestedTeamSize: 0,
+            daysPerWeek: 0,
+          },
+          m,
+        ),
+      asCustomer,
+    );
+    const requestId = request!.id;
+    const scheduled = await call(
+      (m) => admin.scheduleVisit({ requestId, scheduledAt: '2026-12-02T09:00:00Z', agentId: AGENT }, m),
+      staff,
+    );
+    const measured: cleaningV1.AnswerSet = {
+      values: { ...ANSWERS.values, rooms: { numberValue: 8 } },
+    };
+    const before = world.clock.current;
+    world.clock.current = new Date('2026-12-02T10:00:00Z');
+    const done = await call(
+      (m) =>
+        admin.completeVisit(
+          {
+            visitId: scheduled.request!.visit!.id,
+            report: 'Huit pièces.',
+            measurements: { answers: measured, optionSelections: WINDOWS, frequency: 'once' },
+          },
+          m,
+        ),
+      agent,
+    );
+    world.clock.current = before;
+    expect(done.request?.measurement).toMatchObject({
+      answers: measured,
+      frequency: 'once',
+      pricingVersion: 3,
+      measuredBy: AGENT,
+      measuredByName: 'Awa',
+      calculation: { priced: true, computedPrice: { amount: 43000, currency: 'XOF' } },
+    });
+    expect(done.request?.measuredSummary?.fields[1]).toMatchObject({
+      code: 'rooms',
+      label: 'Nombre de pièces',
+      type: 'number',
+      value: { numberValue: 8 },
+      display: '8 pièces',
+      unitLabel: 'pièces',
+    });
+
+    const estimate = await call(
+      (m) =>
+        admin.estimateRequestPrice(
+          { requestId, answers: ANSWERS, optionSelections: [], frequency: 'once' },
+          m,
+        ),
+      agent,
+    );
+    expect(estimate).toMatchObject({
+      requestId,
+      serviceCode: 'home_cleaning',
+      commune: 'Cotonou',
+      calculation: { priced: true, computedPrice: { amount: 30000, currency: 'XOF' } },
+    });
+    const refused = await call(
+      (m) => admin.saveRequestMeasurements({ requestId, optionSelections: [], frequency: 'once' }, m),
+      staff,
+    ).catch((error: AppError) => error);
+    expect(refused).toMatchObject({ code: 'CLEANING_VALIDATION_FAILED', details: { field: 'answers' } });
+    const corrected = await call(
+      (m) =>
+        admin.saveRequestMeasurements(
+          { requestId, answers: ANSWERS, optionSelections: [], frequency: 'once' },
+          m,
+        ),
+      staff,
+    );
+    expect(corrected.request?.measurement?.calculation?.computedPrice).toEqual({
+      amount: 30000,
+      currency: 'XOF',
+    });
+    // Le chargeur gRPC ajoute le nom du choix de oneof (« value ») : comparaison partielle.
+    expect(corrected.request?.answerSummary?.options).toMatchObject([
+      {
+        optionCode: 'windows',
+        label: 'Vitres',
+        fields: [
+          {
+            code: 'window_count',
+            label: 'Nombre de fenêtres',
+            type: 'number',
+            value: { numberValue: 8 },
+            display: '8 fenêtres',
+            unitLabel: 'fenêtres',
+          },
+        ],
+      },
+    ]);
+    expect(corrected.request?.answerSummary?.frequency).toEqual({ code: 'once', label: 'Une fois' });
+
+    // Espace client : réponses lisibles, jamais les mesures.
+    const mine = await call((m) => quotes.getRequest({ requestId }, m), asCustomer);
+    expect(mine.request?.answerSummary?.fields.map((field) => field.display)).toEqual([
+      'Appartement',
+      '6 pièces',
+      '1 salles de bain',
+      'Normal',
+      'Non',
+    ]);
+    expect(mine.request?.measurement ?? null).toBeNull();
+    expect(mine.request?.measuredSummary ?? null).toBeNull();
+  });
 });

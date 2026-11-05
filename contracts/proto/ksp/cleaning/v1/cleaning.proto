@@ -75,6 +75,8 @@ import "ksp/common/v1/money.proto";
 //   CLEANING_ZONE_HAS_ACTIVITY          ALREADY_EXISTS      désactivation d'une zone avec des demandes ouvertes ou des
 //                                                           missions actives sans confirm = true (details.openRequests,
 //                                                           details.activeMissions ; ADR-035)
+//   CLEANING_MEASUREMENTS_LOCKED        FAILED_PRECONDITION mesures constatées refusées : devis déjà envoyé ou demande
+//                                                           close (details.status ; ADR-037)
 //   CLEANING_CALLER_FORBIDDEN           PERMISSION_DENIED   HasPendingObligations appelé par un autre service qu'identity
 //   AUTH_REQUIRED                       UNAUTHENTICATED
 //   AUTH_FORBIDDEN                      PERMISSION_DENIED   rôle du back-office manquant
@@ -162,8 +164,20 @@ service CleaningAdminService {
   rpc RejectQuoteRequest(RejectQuoteRequestRequest) returns (RejectQuoteRequestResponse);
   rpc ScheduleVisit(ScheduleVisitRequest) returns (ScheduleVisitResponse);
   // Aussi ouvert à cleaning_agent pour les visites qui lui sont affectées (ADR-035).
+  // Mesures constatées facultatives (ADR-037) : validées comme une simulation, enregistrées à
+  // part des réponses du client.
   rpc CompleteVisit(CompleteVisitRequest) returns (CompleteVisitResponse);
+  // Sans lignes : préremplies depuis le calcul des mesures constatées s'il existe (ADR-037), sinon
+  // depuis celui de la demande.
   rpc SendQuote(SendQuoteRequest) returns (SendQuoteResponse);
+  // Mesures constatées et recalcul (ADR-037). Supervision, ou cleaning_agent affecté à la visite de
+  // la demande (sinon CLEANING_REQUEST_NOT_FOUND).
+  // Recalcul du prix avec d'autres réponses, sans rien enregistrer : commune de la demande, grille
+  // en vigueur (même calcul que la simulation).
+  rpc EstimateRequestPrice(EstimateRequestPriceRequest) returns (EstimateRequestPriceResponse);
+  // Enregistre (ou remplace) les mesures après la visite, avant l'envoi du devis
+  // (CLEANING_MEASUREMENTS_LOCKED sinon) ; les réponses du client restent intactes.
+  rpc SaveRequestMeasurements(SaveRequestMeasurementsRequest) returns (SaveRequestMeasurementsResponse);
 
   // Demandes groupées (ADR-035). idempotency_key facultative : un second envoi avec la même clé
   // rend le résultat du premier sans rien réécrire.
@@ -424,6 +438,86 @@ message QuoteRequest {
   string place_type_label = 39;
   // Adresse lisible rendue par le géocodeur pour la position, vide si aucune.
   string geocoded_address = 40;
+  // Mesures constatées sur le terrain après la visite (ADR-037) ; absentes sans mesure, et toujours
+  // dans l'espace client. Les réponses du client (answers, option_selections, frequency,
+  // calculation) ne sont jamais remplacées.
+  RequestMeasurement measurement = 41;
+  // Réponses du client, lisibles (libellés des champs et des choix, Oui/Non, unités), résolues avec
+  // la version de grille de son calcul (ADR-037) ; type de locaux et quantité pour une demande à
+  // l'ancien format. Absent seulement si la demande n'a pas pu être décrite.
+  AnswerSummary answer_summary = 42;
+  // Mesures constatées, lisibles, résolues avec leur version de grille ; absent sans mesure et dans
+  // l'espace client.
+  AnswerSummary measured_summary = 43;
+}
+
+// Mesures constatées après la visite technique (ADR-037).
+message RequestMeasurement {
+  AnswerSet answers = 1;
+  repeated OptionSelection option_selections = 2;
+  // Code de la fréquence, vide si aucune.
+  string frequency = 3;
+  // Calcul des mesures : grille en vigueur et commune de la demande au moment de la saisie ; le
+  // devis est prérempli à partir de lui.
+  PriceCalculation calculation = 4;
+  int32 pricing_version = 5;
+  string measured_at = 6;
+  // Agent ou superviseur qui a saisi les mesures, et son nom affiché (ADR-029, vide s'il est inconnu).
+  string measured_by = 7;
+  string measured_by_name = 8;
+}
+
+// Réponses lisibles d'une demande (ADR-037), sans aucun prix.
+message AnswerSummary {
+  // Champs de la prestation, dans l'ordre du formulaire (un oui/non sans réponse n'apparaît pas).
+  repeated AnswerSummaryField fields = 1;
+  // Options choisies, dans l'ordre du formulaire.
+  repeated AnswerSummaryOption options = 2;
+  // Fréquence choisie, absente si aucune.
+  AnswerSummaryFrequency frequency = 3;
+}
+
+message AnswerSummaryField {
+  string code = 1;
+  // Libellé du champ ; le code s'il n'existe pas dans la version de grille.
+  string label = 2;
+  // "number", "choice" ou "boolean".
+  string type = 3;
+  AnswerValue value = 4;
+  // Valeur affichable : "120 m²", "Très sale", "Oui".
+  string display = 5;
+  // Unité d'un nombre, vide sinon.
+  string unit_label = 6;
+}
+
+message AnswerSummaryOption {
+  string option_code = 1;
+  string label = 2;
+  repeated AnswerSummaryField fields = 3;
+}
+
+message AnswerSummaryFrequency {
+  string code = 1;
+  string label = 2;
+}
+
+// Mesures saisies (ADR-037) : réponses au nouveau format seulement, validées comme une simulation
+// (erreurs : details.field préfixé, "measurements.answers.surface").
+message MeasurementInput {
+  // Obligatoire, même vide.
+  AnswerSet answers = 1;
+  repeated OptionSelection option_selections = 2;
+  // Code d'une fréquence active de la prestation, obligatoire si elle en a.
+  string frequency = 3;
+}
+
+// Mesures d'une demande de la visite commune (ADR-037) : erreurs "measurements[1].answers.surface",
+// demande hors de la visite ou citée deux fois : "measurements[1].requestId".
+message RequestMeasurementInput {
+  string request_id = 1;
+  AnswerSet answers = 2;
+  repeated OptionSelection option_selections = 3;
+  string frequency = 4;
 }
 
 // Position GPS d'un lieu d'intervention (ADR-034).
@@ -1190,6 +1284,37 @@ message ScheduleVisitResponse {
 message CompleteVisitRequest {
   string visit_id = 1;
   string report = 2;
+  // Mesures constatées sur place (ADR-037), facultatives.
+  MeasurementInput measurements = 3;
+}
+
+message EstimateRequestPriceRequest {
+  string request_id = 1;
+  // Réponses au nouveau format, validées comme celles du client (obligatoire, même vide).
+  AnswerSet answers = 2;
+  repeated OptionSelection option_selections = 3;
+  string frequency = 4;
+}
+
+message EstimateRequestPriceResponse {
+  string request_id = 1;
+  string service_code = 2;
+  // Commune de la demande, utilisée pour le coefficient.
+  string commune = 3;
+  // Même détail que la simulation : priced, reason, lignes, prix, taille d'équipe, prix manquants.
+  PriceCalculation calculation = 4;
+}
+
+message SaveRequestMeasurementsRequest {
+  string request_id = 1;
+  // Réponses au nouveau format (obligatoire, même vide).
+  AnswerSet answers = 2;
+  repeated OptionSelection option_selections = 3;
+  string frequency = 4;
+}
+
+message SaveRequestMeasurementsResponse {
+  QuoteRequest request = 1;
 }
 
 message CompleteVisitResponse {
@@ -1239,6 +1364,8 @@ message CompleteGroupVisitRequest {
   string group_id = 1;
   string report = 2;
   string idempotency_key = 3;
+  // Mesures constatées par demande (ADR-037), facultatives : demandes de cette visite commune.
+  repeated RequestMeasurementInput measurements = 4;
 }
 
 message CompleteGroupVisitResponse {

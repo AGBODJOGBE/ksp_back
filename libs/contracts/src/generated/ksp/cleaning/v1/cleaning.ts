@@ -230,6 +230,104 @@ export interface QuoteRequest {
   placeTypeLabel: string;
   /** Adresse lisible rendue par le géocodeur pour la position, vide si aucune. */
   geocodedAddress: string;
+  /**
+   * Mesures constatées sur le terrain après la visite (ADR-037) ; absentes sans mesure, et toujours
+   * dans l'espace client. Les réponses du client (answers, option_selections, frequency,
+   * calculation) ne sont jamais remplacées.
+   */
+  measurement?:
+    | RequestMeasurement
+    | undefined;
+  /**
+   * Réponses du client, lisibles (libellés des champs et des choix, Oui/Non, unités), résolues avec
+   * la version de grille de son calcul (ADR-037) ; type de locaux et quantité pour une demande à
+   * l'ancien format. Absent seulement si la demande n'a pas pu être décrite.
+   */
+  answerSummary?:
+    | AnswerSummary
+    | undefined;
+  /**
+   * Mesures constatées, lisibles, résolues avec leur version de grille ; absent sans mesure et dans
+   * l'espace client.
+   */
+  measuredSummary?: AnswerSummary | undefined;
+}
+
+/** Mesures constatées après la visite technique (ADR-037). */
+export interface RequestMeasurement {
+  answers?: AnswerSet | undefined;
+  optionSelections: OptionSelection[];
+  /** Code de la fréquence, vide si aucune. */
+  frequency: string;
+  /**
+   * Calcul des mesures : grille en vigueur et commune de la demande au moment de la saisie ; le
+   * devis est prérempli à partir de lui.
+   */
+  calculation?: PriceCalculation | undefined;
+  pricingVersion: number;
+  measuredAt: string;
+  /** Agent ou superviseur qui a saisi les mesures, et son nom affiché (ADR-029, vide s'il est inconnu). */
+  measuredBy: string;
+  measuredByName: string;
+}
+
+/** Réponses lisibles d'une demande (ADR-037), sans aucun prix. */
+export interface AnswerSummary {
+  /** Champs de la prestation, dans l'ordre du formulaire (un oui/non sans réponse n'apparaît pas). */
+  fields: AnswerSummaryField[];
+  /** Options choisies, dans l'ordre du formulaire. */
+  options: AnswerSummaryOption[];
+  /** Fréquence choisie, absente si aucune. */
+  frequency?: AnswerSummaryFrequency | undefined;
+}
+
+export interface AnswerSummaryField {
+  code: string;
+  /** Libellé du champ ; le code s'il n'existe pas dans la version de grille. */
+  label: string;
+  /** "number", "choice" ou "boolean". */
+  type: string;
+  value?:
+    | AnswerValue
+    | undefined;
+  /** Valeur affichable : "120 m²", "Très sale", "Oui". */
+  display: string;
+  /** Unité d'un nombre, vide sinon. */
+  unitLabel: string;
+}
+
+export interface AnswerSummaryOption {
+  optionCode: string;
+  label: string;
+  fields: AnswerSummaryField[];
+}
+
+export interface AnswerSummaryFrequency {
+  code: string;
+  label: string;
+}
+
+/**
+ * Mesures saisies (ADR-037) : réponses au nouveau format seulement, validées comme une simulation
+ * (erreurs : details.field préfixé, "measurements.answers.surface").
+ */
+export interface MeasurementInput {
+  /** Obligatoire, même vide. */
+  answers?: AnswerSet | undefined;
+  optionSelections: OptionSelection[];
+  /** Code d'une fréquence active de la prestation, obligatoire si elle en a. */
+  frequency: string;
+}
+
+/**
+ * Mesures d'une demande de la visite commune (ADR-037) : erreurs "measurements[1].answers.surface",
+ * demande hors de la visite ou citée deux fois : "measurements[1].requestId".
+ */
+export interface RequestMeasurementInput {
+  requestId: string;
+  answers?: AnswerSet | undefined;
+  optionSelections: OptionSelection[];
+  frequency: string;
 }
 
 /** Position GPS d'un lieu d'intervention (ADR-034). */
@@ -1096,6 +1194,37 @@ export interface ScheduleVisitResponse {
 export interface CompleteVisitRequest {
   visitId: string;
   report: string;
+  /** Mesures constatées sur place (ADR-037), facultatives. */
+  measurements?: MeasurementInput | undefined;
+}
+
+export interface EstimateRequestPriceRequest {
+  requestId: string;
+  /** Réponses au nouveau format, validées comme celles du client (obligatoire, même vide). */
+  answers?: AnswerSet | undefined;
+  optionSelections: OptionSelection[];
+  frequency: string;
+}
+
+export interface EstimateRequestPriceResponse {
+  requestId: string;
+  serviceCode: string;
+  /** Commune de la demande, utilisée pour le coefficient. */
+  commune: string;
+  /** Même détail que la simulation : priced, reason, lignes, prix, taille d'équipe, prix manquants. */
+  calculation?: PriceCalculation | undefined;
+}
+
+export interface SaveRequestMeasurementsRequest {
+  requestId: string;
+  /** Réponses au nouveau format (obligatoire, même vide). */
+  answers?: AnswerSet | undefined;
+  optionSelections: OptionSelection[];
+  frequency: string;
+}
+
+export interface SaveRequestMeasurementsResponse {
+  request?: QuoteRequest | undefined;
 }
 
 export interface CompleteVisitResponse {
@@ -1147,6 +1276,8 @@ export interface CompleteGroupVisitRequest {
   groupId: string;
   report: string;
   idempotencyKey: string;
+  /** Mesures constatées par demande (ADR-037), facultatives : demandes de cette visite commune. */
+  measurements: RequestMeasurementInput[];
 }
 
 export interface CompleteGroupVisitResponse {
@@ -2210,11 +2341,42 @@ export interface CleaningAdminServiceClient {
 
   scheduleVisit(request: ScheduleVisitRequest, metadata?: Metadata): Observable<ScheduleVisitResponse>;
 
-  /** Aussi ouvert à cleaning_agent pour les visites qui lui sont affectées (ADR-035). */
+  /**
+   * Aussi ouvert à cleaning_agent pour les visites qui lui sont affectées (ADR-035).
+   * Mesures constatées facultatives (ADR-037) : validées comme une simulation, enregistrées à
+   * part des réponses du client.
+   */
 
   completeVisit(request: CompleteVisitRequest, metadata?: Metadata): Observable<CompleteVisitResponse>;
 
+  /**
+   * Sans lignes : préremplies depuis le calcul des mesures constatées s'il existe (ADR-037), sinon
+   * depuis celui de la demande.
+   */
+
   sendQuote(request: SendQuoteRequest, metadata?: Metadata): Observable<SendQuoteResponse>;
+
+  /**
+   * Mesures constatées et recalcul (ADR-037). Supervision, ou cleaning_agent affecté à la visite de
+   * la demande (sinon CLEANING_REQUEST_NOT_FOUND).
+   * Recalcul du prix avec d'autres réponses, sans rien enregistrer : commune de la demande, grille
+   * en vigueur (même calcul que la simulation).
+   */
+
+  estimateRequestPrice(
+    request: EstimateRequestPriceRequest,
+    metadata?: Metadata,
+  ): Observable<EstimateRequestPriceResponse>;
+
+  /**
+   * Enregistre (ou remplace) les mesures après la visite, avant l'envoi du devis
+   * (CLEANING_MEASUREMENTS_LOCKED sinon) ; les réponses du client restent intactes.
+   */
+
+  saveRequestMeasurements(
+    request: SaveRequestMeasurementsRequest,
+    metadata?: Metadata,
+  ): Observable<SaveRequestMeasurementsResponse>;
 
   /**
    * Demandes groupées (ADR-035). idempotency_key facultative : un second envoi avec la même clé
@@ -2400,17 +2562,51 @@ export interface CleaningAdminServiceController {
     metadata?: Metadata,
   ): Promise<ScheduleVisitResponse> | Observable<ScheduleVisitResponse> | ScheduleVisitResponse;
 
-  /** Aussi ouvert à cleaning_agent pour les visites qui lui sont affectées (ADR-035). */
+  /**
+   * Aussi ouvert à cleaning_agent pour les visites qui lui sont affectées (ADR-035).
+   * Mesures constatées facultatives (ADR-037) : validées comme une simulation, enregistrées à
+   * part des réponses du client.
+   */
 
   completeVisit(
     request: CompleteVisitRequest,
     metadata?: Metadata,
   ): Promise<CompleteVisitResponse> | Observable<CompleteVisitResponse> | CompleteVisitResponse;
 
+  /**
+   * Sans lignes : préremplies depuis le calcul des mesures constatées s'il existe (ADR-037), sinon
+   * depuis celui de la demande.
+   */
+
   sendQuote(
     request: SendQuoteRequest,
     metadata?: Metadata,
   ): Promise<SendQuoteResponse> | Observable<SendQuoteResponse> | SendQuoteResponse;
+
+  /**
+   * Mesures constatées et recalcul (ADR-037). Supervision, ou cleaning_agent affecté à la visite de
+   * la demande (sinon CLEANING_REQUEST_NOT_FOUND).
+   * Recalcul du prix avec d'autres réponses, sans rien enregistrer : commune de la demande, grille
+   * en vigueur (même calcul que la simulation).
+   */
+
+  estimateRequestPrice(
+    request: EstimateRequestPriceRequest,
+    metadata?: Metadata,
+  ): Promise<EstimateRequestPriceResponse> | Observable<EstimateRequestPriceResponse> | EstimateRequestPriceResponse;
+
+  /**
+   * Enregistre (ou remplace) les mesures après la visite, avant l'envoi du devis
+   * (CLEANING_MEASUREMENTS_LOCKED sinon) ; les réponses du client restent intactes.
+   */
+
+  saveRequestMeasurements(
+    request: SaveRequestMeasurementsRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<SaveRequestMeasurementsResponse>
+    | Observable<SaveRequestMeasurementsResponse>
+    | SaveRequestMeasurementsResponse;
 
   /**
    * Demandes groupées (ADR-035). idempotency_key facultative : un second envoi avec la même clé
@@ -2657,6 +2853,8 @@ export function CleaningAdminServiceControllerMethods() {
       "scheduleVisit",
       "completeVisit",
       "sendQuote",
+      "estimateRequestPrice",
+      "saveRequestMeasurements",
       "scheduleGroupVisit",
       "completeGroupVisit",
       "rejectRequestGroup",

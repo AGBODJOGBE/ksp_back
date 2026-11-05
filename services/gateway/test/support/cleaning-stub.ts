@@ -92,6 +92,65 @@ export const protoAnswers: cleaningV1.AnswerSet = {
   },
 };
 
+/** Réponses lisibles du client (ADR-037). */
+export const protoAnswerSummary: cleaningV1.AnswerSummary = {
+  fields: [
+    {
+      code: 'housing_type',
+      label: 'Type de logement',
+      type: 'choice',
+      value: { choiceValue: 'apartment' },
+      display: 'Appartement',
+      unitLabel: '',
+    },
+    {
+      code: 'rooms',
+      label: 'Nombre de pièces',
+      type: 'number',
+      value: { numberValue: 6 },
+      display: '6 pièces',
+      unitLabel: 'pièces',
+    },
+    {
+      code: 'pets',
+      label: "Présence d'animaux",
+      type: 'boolean',
+      value: { booleanValue: false },
+      display: 'Non',
+      unitLabel: '',
+    },
+  ],
+  options: [
+    {
+      optionCode: 'windows',
+      label: 'Vitres',
+      fields: [
+        {
+          code: 'window_count',
+          label: 'Nombre de fenêtres',
+          type: 'number',
+          value: { numberValue: 8 },
+          display: '8 fenêtres',
+          unitLabel: 'fenêtres',
+        },
+      ],
+    },
+  ],
+  frequency: { code: 'once', label: 'Une fois' },
+};
+
+/** Mesures constatées après la visite (ADR-037) : 8 pièces au lieu de 6. */
+export const protoMeasurement: cleaningV1.RequestMeasurement = {
+  answers: { values: { ...protoAnswers.values, rooms: { numberValue: 8 } } },
+  optionSelections: [{ code: 'windows', answers: { values: { window_count: { numberValue: 8 } } } }],
+  frequency: 'once',
+  calculation: { ...protoCalculation, computedPrice: xof(45150) },
+  pricingVersion: 3,
+  measuredAt: '2026-10-26T10:00:00.000Z',
+  measuredBy: IDS.agent,
+  measuredByName: 'Awa Dossou',
+};
+
 export const protoRequest: cleaningV1.QuoteRequest = {
   id: IDS.request,
   status: 'quote_sent',
@@ -143,6 +202,14 @@ export const protoRequest: cleaningV1.QuoteRequest = {
   groupSize: 2,
   serviceName: 'Nettoyage à domicile',
   placeTypeLabel: 'Maison',
+  answerSummary: protoAnswerSummary,
+  measurement: protoMeasurement,
+  measuredSummary: {
+    ...protoAnswerSummary,
+    fields: protoAnswerSummary.fields.map((field) =>
+      field.code === 'rooms' ? { ...field, value: { numberValue: 8 }, display: '8 pièces' } : field,
+    ),
+  },
   geocodedAddress: 'Zogbadjè, Abomey-Calavi, Bénin',
 };
 
@@ -589,6 +656,13 @@ const DEFAULTS: Record<Method, () => unknown> = {
   rejectQuoteRequest: withRequest,
   scheduleVisit: withRequest,
   completeVisit: withRequest,
+  estimateRequestPrice: () => ({
+    requestId: IDS.request,
+    serviceCode: 'home_cleaning',
+    commune: 'Abomey-Calavi',
+    calculation: protoMeasurement.calculation,
+  }),
+  saveRequestMeasurements: withRequest,
   sendQuote: withRequest,
   listMissions: () => ({ missions: [protoMission], nextCursor: '' }),
   getMissionDetail: withMission,

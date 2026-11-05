@@ -64,7 +64,28 @@ export class CleaningAdminHttpController {
   @Route('completeCleaningVisit')
   completeVisit(@Param('id') id: unknown, @Body() body: unknown) {
     const visitId = idFrom(id);
-    return this.cleaning.completeVisit(visitId, parseBody(requestBodies.completeCleaningVisit, body).report);
+    const { report, measurements } = parseBody(requestBodies.completeCleaningVisit, body);
+    return this.cleaning.completeVisit(visitId, report, measurements);
+  }
+
+  // --- Mesures constatées et recalcul (ADR-037) ------------------------------------------------
+
+  @Route('estimateCleaningQuoteRequest')
+  estimateQuoteRequest(@Param('id') id: unknown, @Body() body: unknown) {
+    const requestId = idFrom(id);
+    return this.cleaning.estimateRequestPrice(
+      requestId,
+      parseBody(requestBodies.estimateCleaningQuoteRequest, body),
+    );
+  }
+
+  @Route('saveCleaningMeasurements')
+  saveMeasurements(@Param('id') id: unknown, @Body() body: unknown) {
+    const requestId = idFrom(id);
+    return this.cleaning.saveRequestMeasurements(
+      requestId,
+      parseBody(requestBodies.saveCleaningMeasurements, body),
+    );
   }
 
   @Route('sendCleaningQuote')
@@ -98,8 +119,8 @@ export class CleaningAdminHttpController {
   ) {
     const groupId = idFrom(id);
     const idempotencyKey = optionalKey(key);
-    const { report } = parseBody(requestBodies.completeCleaningGroupVisit, body);
-    return this.cleaning.completeGroupVisit(groupId, report, idempotencyKey);
+    const { report, measurements } = parseBody(requestBodies.completeCleaningGroupVisit, body);
+    return this.cleaning.completeGroupVisit(groupId, report, idempotencyKey, measurements);
   }
 
   @Route('rejectCleaningRequestGroup')

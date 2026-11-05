@@ -889,6 +889,102 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     ]);
   });
 
+  it('mesures constatées : colonnes à part, correction, devis prérempli, version de grille relue (ADR-037)', async () => {
+    const customer = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e37';
+    const service = homeCleaningService({
+      pricing: { ...homeCleaningService().pricing, communeCoefficients: {} },
+    });
+    const saved = await asAdmin(() =>
+      useCases.saveService.execute('home_cleaning', definitionInput(service)),
+    );
+    await asAdmin(() => useCases.registerAgent.execute({ agentId: AGENT_ID, displayName: 'Awa' })).catch(
+      () => undefined,
+    );
+    const answers = { housing_type: 'apartment', rooms: 4, bathrooms: 0, condition: 'normal' };
+    const request = await asCustomer(
+      () =>
+        useCases.requestQuote.execute({
+          idempotencyKey: 'int-measure',
+          serviceCode: 'home_cleaning',
+          answers,
+          optionSelections: [],
+          frequency: 'once',
+          commune: 'Cotonou',
+          address: 'Lot 37, Cotonou',
+          preferredSlots: [SLOT],
+          comment: '',
+          requestedTeamSize: 0,
+        }),
+      customer,
+    );
+    const visited = await asSupervisor(() =>
+      useCases.scheduleVisit.execute({
+        requestId: request.id,
+        scheduledAt: '2026-10-26T09:00:00Z',
+        agentId: AGENT_ID,
+      }),
+    );
+    const now = clock.current;
+    clock.current = new Date('2026-10-26T09:30:00Z');
+    await asSupervisor(() =>
+      useCases.completeVisit.execute({
+        visitId: visited.visit!.id,
+        report: 'Six pièces en réalité.',
+        measurements: { answers: { ...answers, rooms: 6 }, optionSelections: [], frequency: 'once' },
+      }),
+    );
+    clock.current = now;
+    const stored = await deps.requests.findById(request.id);
+    expect(stored).toMatchObject({
+      answers,
+      calculation: { computedPrice: 18_000 },
+      measurement: {
+        answers: { ...answers, rooms: 6 },
+        optionSelections: [],
+        frequency: 'once',
+        pricingVersion: saved.pricing.version,
+        calculation: { priced: true, computedPrice: 27_000 },
+      },
+    });
+    const columns = await pool.query(
+      'SELECT measured_by, measured_at, measured_pricing_version FROM quote_requests WHERE id = $1',
+      [request.id],
+    );
+    expect(columns.rows[0]).toMatchObject({ measured_pricing_version: saved.pricing.version });
+    expect(columns.rows[0].measured_by).toBeTruthy();
+
+    // Correction avant le devis, puis devis prérempli depuis les mesures.
+    await asSupervisor(() =>
+      useCases.saveMeasurements.execute({
+        requestId: request.id,
+        answers: { ...answers, rooms: 5 },
+        optionSelections: [],
+        frequency: 'once',
+      }),
+    );
+    const sent = await asSupervisor(() =>
+      useCases.sendQuote.execute({
+        requestId: request.id,
+        lines: [],
+        proposedSlots: [SLOT],
+        validityDays: 0,
+        teamSize: 0,
+        durationMinutes: 180,
+      }),
+    );
+    expect(sent.quote).toMatchObject({ subtotal: 22_500 });
+    const audit = await pool.query(
+      "SELECT action FROM audit_log WHERE entity_id = $1 AND action = 'request.measured'",
+      [request.id],
+    );
+    expect(audit.rows).toHaveLength(2);
+
+    // Une version remplacée se relit telle quelle (réponses lisibles avec la version utilisée).
+    const previous = await deps.catalog.findServiceVersion('home_cleaning', saved.pricing.version - 1);
+    expect(previous?.pricing.version).toBe(saved.pricing.version - 1);
+    expect(await deps.catalog.findServiceVersion('home_cleaning', 999)).toBeNull();
+  });
+
   it('données de démonstration : chargées après les migrations, rejouables, désinsectisation sans prix', async () => {
     const demo = readFileSync(join(__dirname, '..', 'prisma', 'demo', 'demo-data.sql'), 'utf8');
     const client = await pool.connect();

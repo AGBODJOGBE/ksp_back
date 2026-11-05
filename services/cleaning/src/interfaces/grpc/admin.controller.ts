@@ -8,6 +8,7 @@ import { type ServiceDefinition } from '../../domain/catalog';
 import { type QuoteRequest } from '../../domain/quote-request';
 import { type PriceLine } from '../../domain/simulator';
 import { type ZoneView } from '../../application/catalog/zones.use-cases';
+import { type MeasurementInput } from '../../application/requests/measurements.use-cases';
 import {
   presentAgent,
   presentDefinition,
@@ -27,6 +28,19 @@ import {
   definitionFromProto,
   selectionsFromProto,
 } from './form.presenters';
+
+/** Mesures reçues (ADR-037) : réponses absentes = non fournies, refusées par cleaning. */
+function measurementFromProto(input: {
+  answers?: cleaningV1.AnswerSet | undefined;
+  optionSelections: cleaningV1.OptionSelection[];
+  frequency: string;
+}): MeasurementInput {
+  return {
+    answers: input.answers ? answersFromProto(input.answers) : undefined,
+    optionSelections: selectionsFromProto(input.optionSelections),
+    frequency: input.frequency,
+  };
+}
 
 function toLine(line: cleaningV1.PriceLine): PriceLine {
   return {
@@ -62,7 +76,7 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
     });
     const [names, labels] = await Promise.all([
       this.useCases.resolveNames.forRequests(page.items),
-      this.useCases.describeRequests.execute(page.items),
+      this.useCases.describeRequests.execute(page.items, 'backoffice'),
     ]);
     return {
       requests: page.items.map((item) => presentRequest(item, names, labels)),
@@ -75,7 +89,7 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
   ): Promise<cleaningV1.GetQuoteRequestResponse> {
     const found = await this.useCases.getQuoteRequest.execute(request.requestId);
     const siblings = await this.useCases.listGroupSiblings.execute(found);
-    const labels = await this.useCases.describeRequests.execute([found, ...siblings]);
+    const labels = await this.useCases.describeRequests.execute([found, ...siblings], 'backoffice');
     return {
       request: await this.request(found),
       groupRequests: siblings.map((sibling) => presentSibling(sibling, labels)),
@@ -93,7 +107,40 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
   }
 
   async completeVisit(request: cleaningV1.CompleteVisitRequest): Promise<cleaningV1.CompleteVisitResponse> {
-    return { request: await this.request(await this.useCases.completeVisit.execute(request)) };
+    const result = await this.useCases.completeVisit.execute({
+      visitId: request.visitId,
+      report: request.report,
+      // Message absent : aucune mesure (ADR-037).
+      measurements: request.measurements ? measurementFromProto(request.measurements) : undefined,
+    });
+    return { request: await this.request(result) };
+  }
+
+  // --- Mesures constatées et recalcul (ADR-037) -------------------------------------------------
+
+  async estimateRequestPrice(
+    request: cleaningV1.EstimateRequestPriceRequest,
+  ): Promise<cleaningV1.EstimateRequestPriceResponse> {
+    const result = await this.useCases.estimateRequestPrice.execute({
+      requestId: request.requestId,
+      ...measurementFromProto(request),
+    });
+    return {
+      requestId: result.requestId,
+      serviceCode: result.serviceCode,
+      commune: result.commune,
+      calculation: calculationToProto(result.calculation),
+    };
+  }
+
+  async saveRequestMeasurements(
+    request: cleaningV1.SaveRequestMeasurementsRequest,
+  ): Promise<cleaningV1.SaveRequestMeasurementsResponse> {
+    const result = await this.useCases.saveMeasurements.execute({
+      requestId: request.requestId,
+      ...measurementFromProto(request),
+    });
+    return { request: await this.request(result) };
   }
 
   async sendQuote(request: cleaningV1.SendQuoteRequest): Promise<cleaningV1.SendQuoteResponse> {
@@ -113,7 +160,15 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
   async completeGroupVisit(
     request: cleaningV1.CompleteGroupVisitRequest,
   ): Promise<cleaningV1.CompleteGroupVisitResponse> {
-    const outcome = await this.useCases.completeGroupVisit.execute(request);
+    const outcome = await this.useCases.completeGroupVisit.execute({
+      groupId: request.groupId,
+      report: request.report,
+      idempotencyKey: request.idempotencyKey,
+      measurements: request.measurements.map((item) => ({
+        requestId: item.requestId,
+        ...measurementFromProto(item),
+      })),
+    });
     // Un agent ne voit que les demandes dont il a la visite, sans leur position une fois close.
     return { outcome: presentOutcome(outcome), requests: await this.groupRequests(outcome.groupId) };
   }
@@ -158,7 +213,7 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
     const requests = page.items.flatMap((entry) => entry.requests);
     const [names, labels] = await Promise.all([
       this.useCases.resolveNames.forRequests(requests),
-      this.useCases.describeRequests.execute(requests),
+      this.useCases.describeRequests.execute(requests, 'backoffice'),
     ]);
     return {
       visits: page.items.map((entry) => presentVisit(entry, names, labels)),
@@ -419,7 +474,7 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
   private async request(request: QuoteRequest): Promise<cleaningV1.QuoteRequest> {
     const [names, labels] = await Promise.all([
       this.useCases.resolveNames.forRequests([request]),
-      this.useCases.describeRequests.execute([request]),
+      this.useCases.describeRequests.execute([request], 'backoffice'),
     ]);
     return presentRequest(request, names, labels);
   }
@@ -448,7 +503,7 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
     const view = await this.useCases.getRequestGroup.execute(groupId);
     const [names, labels] = await Promise.all([
       this.useCases.resolveNames.forRequests(view.requests),
-      this.useCases.describeRequests.execute(view.requests),
+      this.useCases.describeRequests.execute(view.requests, 'backoffice'),
     ]);
     return view.requests.map((item) => presentRequest(item, names, labels));
   }

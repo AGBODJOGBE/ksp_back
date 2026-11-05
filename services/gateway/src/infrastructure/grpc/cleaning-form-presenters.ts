@@ -3,6 +3,7 @@ import {
   type Answers,
   type FieldInput,
   type FormAnswersInput,
+  type MeasurementBody,
   type OptionSelectionInput,
   type ServiceInput,
 } from '../../application/cleaning/cleaning.ports';
@@ -44,6 +45,49 @@ export function answersFromProto(set: cleaningV1.AnswerSet | undefined): Answers
   }
   return answers;
 }
+
+/** Réponses lisibles (ADR-037), null si absentes. */
+export function presentSummary(value: cleaningV1.AnswerSummary | undefined) {
+  if (!value) return null;
+  const field = (item: cleaningV1.AnswerSummaryField) => ({
+    code: item.code,
+    label: item.label,
+    type: item.type,
+    value: item.value?.numberValue ?? item.value?.choiceValue ?? item.value?.booleanValue ?? null,
+    display: item.display,
+    unitLabel: orNull(item.unitLabel),
+  });
+  return {
+    fields: value.fields.map(field),
+    options: value.options.map((option) => ({
+      optionCode: option.optionCode,
+      label: option.label,
+      fields: option.fields.map(field),
+    })),
+    frequency: value.frequency ? { code: value.frequency.code, label: value.frequency.label } : null,
+  };
+}
+
+/** Mesures constatées (ADR-037), à plat dans la demande ; null sans mesure et dans l'espace client. */
+export function presentMeasurement(value: cleaningV1.RequestMeasurement | undefined) {
+  return {
+    measuredAnswers: value ? answersFromProto(value.answers) : null,
+    measuredOptions: value ? selectionsFromProto(value.optionSelections) : null,
+    measuredFrequency: value ? orNull(value.frequency) : null,
+    measuredCalculation: value ? presentCalculation(value.calculation) : null,
+    measuredPricingVersion: value ? value.pricingVersion || null : null,
+    measuredAt: value ? orNull(value.measuredAt) : null,
+    measuredBy: value ? orNull(value.measuredBy) : null,
+    measuredByName: value ? orNull(value.measuredByName) : null,
+  };
+}
+
+/** Mesures ou réponses à recalculer (ADR-037) : nouveau format seulement. */
+export const measurementToProto = (input: MeasurementBody) => ({
+  answers: answersToProto(input.answers),
+  optionSelections: selectionsToProto(input.options ?? []),
+  frequency: input.frequency ?? '',
+});
 
 export const selectionsToProto = (options: OptionSelectionInput[]): cleaningV1.OptionSelection[] =>
   options.map((option) => ({ code: option.code, answers: answersToProto(option.answers ?? {}) }));

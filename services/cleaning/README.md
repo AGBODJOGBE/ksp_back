@@ -72,6 +72,24 @@ Le même script ajoute, pour le parcours par lieu (ADR-034) : un type de lieu d�
   et adresse géocodée des dossiers clôturés, par lots ; effacement de tous les dossiers d'un client à
   `identity.user.deleted` (événement du contrat, pas encore publié par identity).
 
+## Mesures constatées après la visite (ADR-037)
+
+- **Mesures** : au compte rendu de la visite (par demande, ou par demande de la visite commune) ou ensuite
+  (`PUT /admin/cleaning/quote-requests/{id}/measurements`), l'agent de la visite ou la supervision saisit
+  les dimensions réelles dans les champs du formulaire du client, validées comme une simulation. Elles sont
+  gardées à part (colonnes `measured_*`, migration `0010_visit_measurements`) avec leur calcul (grille en
+  vigueur, commune de la demande), leur version de grille, leur date et leur auteur ; les réponses du client
+  ne sont jamais remplacées. Chaque saisie est tracée (`request.measured`).
+- **Verrou** : plus de saisie une fois un devis envoyé ou la demande close (`CLEANING_MEASUREMENTS_LOCKED`) ;
+  une nouvelle visite après le devis rouvre la saisie.
+- **Recalcul** : `POST /admin/cleaning/quote-requests/{id}/estimate`, même calcul que la simulation,
+  rien n'est enregistré.
+- **Devis** : sans lignes, prérempli depuis le calcul des mesures s'il existe (taille d'équipe comprise),
+  sinon depuis celui de la demande.
+- **Réponses lisibles** : `answerSummary` (client et back-office) et `measuredSummary` (back-office), libellés
+  résolus avec la version de grille utilisée ; type de locaux et quantité pour une demande à l'ancien format.
+  Les mesures ne sont jamais montrées dans l'espace client.
+
 ## Suppression d'un compte (ADR-036)
 
 `ksp.common.v1.ObligationService`, appelé par identity seul (`CLEANING_CALLER_FORBIDDEN` sinon) à la

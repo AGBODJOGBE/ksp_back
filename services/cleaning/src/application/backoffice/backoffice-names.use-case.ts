@@ -44,7 +44,8 @@ export class ResolveBackofficeNamesUseCase {
   forRequests(requests: readonly QuoteRequest[]): Promise<NameBook> {
     return this.execute({
       customerIds: requests.map((request) => request.customerId),
-      staffIds: requests.map((request) => request.visit?.agentId),
+      // Agent de la visite et auteur des mesures constatées (ADR-037).
+      staffIds: requests.flatMap((request) => [request.visit?.agentId, request.measurement?.measuredBy]),
       organizationIds: requests.map((request) => request.organizationId),
     });
   }

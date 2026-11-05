@@ -5,7 +5,9 @@ import {
   presentCalculation,
   presentFields,
   presentForm,
+  presentMeasurement,
   presentOptionDefinitions,
+  presentSummary,
   selectionsFromProto,
 } from './cleaning-form-presenters';
 
@@ -270,6 +272,10 @@ export function presentRequest(value: cleaningV1.QuoteRequest | undefined) {
     landmark: orNull(value.landmark),
     geocodingProvider: orNull(value.geocodingProvider),
     geocodedAddress: orNull(value.geocodedAddress),
+    // Réponses lisibles (ADR-037) ; mesures constatées : back-office seulement.
+    answerSummary: presentSummary(value.answerSummary),
+    ...presentMeasurement(value.measurement),
+    measuredSummary: presentSummary(value.measuredSummary),
   };
 }
 

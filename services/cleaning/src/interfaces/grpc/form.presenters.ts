@@ -4,6 +4,7 @@ import {
   type ServiceDefinitionInput,
 } from '../../application/catalog/admin-catalog.use-cases';
 import { type PricingInput } from '../../application/catalog/pricing-input';
+import { type AnswerSummary, type SummaryField } from '../../domain/answer-summary';
 import { type Answers, type OptionSelection } from '../../domain/answers';
 import { type FormField, type ServiceDefinition } from '../../domain/catalog';
 import { CURRENCY } from '../../domain/money';
@@ -51,6 +52,27 @@ export const selectionsFromProto = (selections: cleaningV1.OptionSelection[]): O
 
 export const selectionsToProto = (selections: OptionSelection[]): cleaningV1.OptionSelection[] =>
   selections.map((selection) => ({ code: selection.code, answers: answersToProto(selection.answers) }));
+
+/** Réponses lisibles (ADR-037) : valeur dans le même message qu'une réponse. */
+export function summaryToProto(summary: AnswerSummary): cleaningV1.AnswerSummary {
+  const field = (item: SummaryField): cleaningV1.AnswerSummaryField => ({
+    code: item.code,
+    label: item.label,
+    type: item.type,
+    value: answersToProto({ [item.code]: item.value }).values[item.code],
+    display: item.display,
+    unitLabel: text(item.unitLabel),
+  });
+  return {
+    fields: summary.fields.map(field),
+    options: summary.options.map((option) => ({
+      optionCode: option.optionCode,
+      label: option.label,
+      fields: option.fields.map(field),
+    })),
+    frequency: summary.frequency ?? undefined,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Formulaire public (sans aucun prix) et définition complète (back-office)

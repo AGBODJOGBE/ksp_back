@@ -10,6 +10,7 @@ import { type Quote } from '../../domain/quote';
 import { zoneCode } from '../../domain/zone';
 import {
   type CustomerKind,
+  type Measurement,
   type QuoteRequest,
   type RequestStatus,
   type VisitStatus,
@@ -68,6 +69,38 @@ function toQuote(row: QuoteRow): Quote {
   };
 }
 
+/** Mesures constatées (ADR-037), null si aucune n'est enregistrée. */
+function measurementFromColumns(row: RequestRow): Measurement | null {
+  if (
+    row.measuredAnswers === null ||
+    row.measuredCalculation === null ||
+    row.measuredVersion === null ||
+    row.measuredAt === null ||
+    row.measuredBy === null
+  ) {
+    return null;
+  }
+  return {
+    answers: row.measuredAnswers as Answers,
+    optionSelections: (row.measuredOptions ?? []) as unknown as OptionSelection[],
+    frequency: row.measuredFrequency,
+    calculation: row.measuredCalculation as unknown as PriceCalculation,
+    pricingVersion: row.measuredVersion,
+    measuredAt: row.measuredAt,
+    measuredBy: row.measuredBy,
+  };
+}
+
+const measurementColumns = (measurement: Measurement | null | undefined) => ({
+  measuredAnswers: measurement ? json(measurement.answers) : Prisma.DbNull,
+  measuredOptions: measurement ? json(measurement.optionSelections) : Prisma.DbNull,
+  measuredFrequency: measurement?.frequency ?? null,
+  measuredCalculation: measurement ? json(measurement.calculation) : Prisma.DbNull,
+  measuredVersion: measurement?.pricingVersion ?? null,
+  measuredAt: measurement?.measuredAt ?? null,
+  measuredBy: measurement?.measuredBy ?? null,
+});
+
 export function toRequest(row: RequestWithRelations): QuoteRequest {
   const quote = row.quotes[0];
   return {
@@ -85,6 +118,7 @@ export function toRequest(row: RequestWithRelations): QuoteRequest {
     frequency: row.frequency,
     pricingVersion: row.pricingVersion,
     calculation: (row.calculation ?? null) as unknown as PriceCalculation | null,
+    measurement: measurementFromColumns(row),
     commune: row.commune,
     address: row.address,
     groupId: row.groupId,
@@ -138,6 +172,7 @@ export function requestColumns(request: QuoteRequest) {
     frequency: request.frequency,
     pricingVersion: request.pricingVersion,
     calculation: request.calculation ? json(request.calculation) : Prisma.DbNull,
+    ...measurementColumns(request.measurement),
     commune: request.commune,
     // Code de zone de la commune saisie : filtre du back-office.
     communeCode: zoneCode(request.commune),

@@ -159,6 +159,15 @@ model QuoteRequest {
   geocodingProvider   String?            @map("geocoding_provider")
   /// Adresse lisible rendue par le géocodeur pour la position (ADR-034).
   geocodedAddress     String?            @map("geocoded_address")
+  /// Mesures constatées après la visite (ADR-037), null sans mesure ; les réponses du client restent.
+  measuredAnswers     Json?              @map("measured_answers")
+  measuredOptions     Json?              @map("measured_option_selections")
+  measuredFrequency   String?            @map("measured_frequency")
+  /// Calcul des mesures : grille en vigueur et commune de la demande au moment de la saisie.
+  measuredCalculation Json?              @map("measured_calculation")
+  measuredVersion     Int?               @map("measured_pricing_version")
+  measuredAt          DateTime?          @map("measured_at") @db.Timestamptz(3)
+  measuredBy          String?            @map("measured_by") @db.Uuid
   createdAt           DateTime           @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime           @map("updated_at") @db.Timestamptz(3)
   /// Contrôle de concurrence optimiste.
