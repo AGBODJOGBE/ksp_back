@@ -42,6 +42,7 @@ import {
   requireUuid,
 } from '../shared/validation';
 import { assertRequestTransition, saveRequest } from './customer-requests.use-cases';
+import { measure, type MeasurementInput } from './measurements.use-cases';
 
 const REQUEST_STATUSES: readonly RequestStatus[] = [
   'received',
@@ -233,7 +234,12 @@ export class ScheduleVisitUseCase {
 export class CompleteVisitUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
-  async execute(input: { visitId: string; report: string }): Promise<QuoteRequest> {
+  async execute(input: {
+    visitId: string;
+    report: string;
+    /** Mesures constatées sur place (ADR-037), facultatives. */
+    measurements?: MeasurementInput | undefined;
+  }): Promise<QuoteRequest> {
     // Ouvert à l'agent affecté à la visite (ADR-035) ; la visite d'un autre agent est introuvable.
     const staff = requireStaff(FIELD_WORK);
     const request = await this.deps.requests.findByVisitId(requireUuid('visitId', input.visitId));
@@ -248,10 +254,13 @@ export class CompleteVisitUseCase {
       throw CleaningErrors.visitTooEarly(request.visit.scheduledAt, timeZone);
     }
     const report = requiredText('report', input.report, 5000);
+    const measured = input.measurements
+      ? await measure(this.deps, request, input.measurements, staff, 'visit', 'measurements.')
+      : null;
     const visit = { ...request.visit, status: 'completed' as const, report, completedAt: now };
     const saved = await saveRequest(
       this.deps,
-      { ...request, visit },
+      { ...(measured?.request ?? request), visit },
       {
         events: [],
         audit: [
@@ -262,6 +271,7 @@ export class CompleteVisitUseCase {
             entityId: request.id,
             at: now,
           },
+          ...(measured ? [measured.audit] : []),
         ],
       },
     );
@@ -323,6 +333,8 @@ export interface PreparedQuote {
   request: QuoteRequest;
   quote: Quote;
   pricingVersion: number;
+  /** Lignes préremplies : depuis les mesures constatées, depuis la demande, ou saisies (null). */
+  prefilledFrom?: 'measurement' | 'request' | null;
 }
 
 /**
@@ -344,13 +356,15 @@ export async function prepareQuote(
   if (!canSendQuote(request)) throw CleaningErrors.visitRequired();
 
   const lines = input.lines.length ? input.lines : prefill(request, service);
+  // Mesures constatées (ADR-037) : leur calcul donne aussi la taille d'équipe recommandée.
+  const measuredTeamSize = request.measurement?.calculation.recommendedTeamSize;
   if (!lines.every(isValidLine) || linesSubtotal(lines) < 0) throw CleaningErrors.invalid('lines');
   const validityDays = input.validityDays
     ? requirePositiveInt('validityDays', input.validityDays, 90)
     : settings.quoteValidityDays;
   const teamSize = input.teamSize
     ? requirePositiveInt('teamSize', input.teamSize, 50)
-    : request.recommendedTeamSize;
+    : (measuredTeamSize ?? request.recommendedTeamSize);
   const durationMinutes = requirePositiveInt('durationMinutes', input.durationMinutes, 24 * 60);
   const recurrence = input.recurrence?.period ? parseRecurrence(input.recurrence) : request.recurrence;
 
@@ -369,6 +383,7 @@ export async function prepareQuote(
     request: { ...request, status: 'quote_sent', quote },
     quote,
     pricingVersion: service.pricing.version,
+    prefilledFrom: input.lines.length ? null : request.measurement ? 'measurement' : 'request',
   };
 }
 
@@ -376,7 +391,7 @@ export async function prepareQuote(
 export async function quoteSentChanges(
   deps: CleaningDeps,
   actorId: string,
-  { request, quote, pricingVersion }: PreparedQuote,
+  { request, quote, pricingVersion, prefilledFrom }: PreparedQuote,
   now: Date,
   extra: Record<string, unknown> = {},
   /** Envoi groupé : cleaning.quote_group.sent résume les devis (ADR-035 point 14). */
@@ -410,6 +425,7 @@ export async function quoteSentChanges(
           subtotal: quote.subtotal,
           total: quote.total,
           pricingVersion,
+          ...(prefilledFrom ? { prefilledFrom } : {}),
           ...extra,
         },
       },
@@ -418,12 +434,14 @@ export async function quoteSentChanges(
 }
 
 /**
- * Lignes préremplies depuis le détail du calcul de la demande (ADR-033), avec une ligne
- * d'ajustement pour les coefficients ou le minimum. Calcul sans prix : nouveau calcul avec la
- * grille en vigueur et les réponses enregistrées ; toujours sans prix : CLEANING_PRICE_NOT_SET.
+ * Lignes préremplies depuis le détail du calcul des mesures constatées s'il y en a (ADR-037), sinon
+ * de la demande (ADR-033), avec une ligne d'ajustement pour les coefficients ou le minimum. Calcul
+ * sans prix : nouveau calcul avec la grille en vigueur et les réponses enregistrées (les mesures
+ * remplacent celles du client) ; toujours sans prix : CLEANING_PRICE_NOT_SET.
  */
 function prefill(request: QuoteRequest, service: ServiceDefinition): PriceLine[] {
-  const calculation = request.calculation?.priced ? request.calculation : recalculate(request, service);
+  const stored = request.measurement ? request.measurement.calculation : request.calculation;
+  const calculation = stored?.priced ? stored : recalculate(request, service);
   const lines = calculation ? quoteLinesFrom(calculation) : null;
   if (!lines) throw CleaningErrors.priceNotSet();
   return lines;
@@ -431,14 +449,21 @@ function prefill(request: QuoteRequest, service: ServiceDefinition): PriceLine[]
 
 /** Nouveau calcul d'une demande avec la grille en vigueur (réponses enregistrées ou ancien format). */
 function recalculate(request: QuoteRequest, service: ServiceDefinition): PriceCalculation | null {
-  const form = request.answers
-    ? { answers: request.answers, options: request.optionSelections, frequency: request.frequency }
-    : convertLegacy(service, {
-        premisesType: request.premisesType,
-        quantity: request.quantity,
-        options: request.options,
-        frequency: null,
-      });
+  const { measurement } = request;
+  const form = measurement
+    ? {
+        answers: measurement.answers,
+        options: measurement.optionSelections,
+        frequency: measurement.frequency,
+      }
+    : request.answers
+      ? { answers: request.answers, options: request.optionSelections, frequency: request.frequency }
+      : convertLegacy(service, {
+          premisesType: request.premisesType,
+          quantity: request.quantity,
+          options: request.options,
+          frequency: null,
+        });
   if (!form) return null;
   const check = checkAnswers(service, form, true);
   if (!check.ok) return null;

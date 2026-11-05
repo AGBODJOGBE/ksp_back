@@ -173,6 +173,18 @@ export interface ServiceInput {
 }
 
 /** Essai d'une grille : définition envoyée (non enregistrée) ou version en vigueur. */
+/** Mesures constatées ou réponses à recalculer (ADR-037) : nouveau format seulement. */
+export interface MeasurementBody {
+  answers: Answers;
+  options?: OptionSelectionInput[] | undefined;
+  frequency?: string | undefined;
+}
+
+/** Mesures d'une demande de la visite commune (ADR-037). */
+export interface GroupMeasurementBody extends MeasurementBody {
+  requestId: string;
+}
+
 export interface PreviewInput {
   definition?: ServiceInput | undefined;
   answers: Answers;
@@ -269,7 +281,11 @@ export interface CleaningApi {
   getQuoteRequest(id: string): Promise<Json>;
   rejectQuoteRequest(id: string, reason: string): Promise<Json>;
   scheduleVisit(id: string, input: { scheduledAt: string; agentId: string }): Promise<Json>;
-  completeVisit(visitId: string, report: string): Promise<Json>;
+  /** Mesures constatées facultatives (ADR-037). */
+  completeVisit(visitId: string, report: string, measurements?: MeasurementBody | undefined): Promise<Json>;
+  /** Recalcul sans enregistrement et mesures constatées (ADR-037). */
+  estimateRequestPrice(id: string, input: MeasurementBody): Promise<Json>;
+  saveRequestMeasurements(id: string, input: MeasurementBody): Promise<Json>;
   sendQuote(id: string, input: QuoteInput): Promise<Json>;
   /** Opérations de groupe (ADR-035) : Idempotency-Key facultative. */
   scheduleGroupVisit(
@@ -277,7 +293,12 @@ export interface CleaningApi {
     input: { scheduledAt: string; agentId: string; excludeRequestIds?: string[] | undefined },
     idempotencyKey: string | undefined,
   ): Promise<Json>;
-  completeGroupVisit(id: string, report: string, idempotencyKey: string | undefined): Promise<Json>;
+  completeGroupVisit(
+    id: string,
+    report: string,
+    idempotencyKey: string | undefined,
+    measurements?: GroupMeasurementBody[] | undefined,
+  ): Promise<Json>;
   rejectRequestGroup(id: string, reason: string, idempotencyKey: string | undefined): Promise<Json>;
   sendGroupQuotes(id: string, input: GroupQuotesInput, idempotencyKey: string | undefined): Promise<Json>;
   scheduleGroupInterventions(

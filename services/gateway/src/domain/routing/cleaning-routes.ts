@@ -249,6 +249,25 @@ export const CLEANING_ROUTES = [
     rateLimit: 'authenticated',
     requiresKnownClient: false,
   },
+  // Mesures constatées et recalcul (ADR-037) : agent de la visite contrôlé par cleaning.
+  {
+    operationId: 'estimateCleaningQuoteRequest',
+    method: 'POST',
+    path: '/api/v1/admin/cleaning/quote-requests/{id}/estimate',
+    grpc: `${ADMIN}/EstimateRequestPrice`,
+    access: { level: 'authenticated', anyRole: FIELD_WORK, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
+    operationId: 'saveCleaningMeasurements',
+    method: 'PUT',
+    path: '/api/v1/admin/cleaning/quote-requests/{id}/measurements',
+    grpc: `${ADMIN}/SaveRequestMeasurements`,
+    access: { level: 'authenticated', anyRole: FIELD_WORK, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
   {
     operationId: 'sendCleaningQuote',
     method: 'POST',

@@ -100,8 +100,18 @@ export class InMemoryCatalog implements CatalogRepository {
   async findService(code: string) {
     return this.services.get(code) ?? null;
   }
+  /** Versions remplacées, gardées pour la lecture d'une demande avec sa version (ADR-037). */
+  readonly history: ServiceDefinition[] = [];
+  async findServiceVersion(code: string, version: number) {
+    const current = this.services.get(code);
+    if (current?.pricing.version === version) return current;
+    return (
+      this.history.find((service) => service.code === code && service.pricing.version === version) ?? null
+    );
+  }
   async saveService(definition: NewServiceVersion, changes: Changes) {
     const previous = this.services.get(definition.code);
+    if (previous) this.history.push(previous);
     const at = changes.audit[0]!.at;
     const saved: ServiceDefinition = {
       ...definition,

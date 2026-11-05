@@ -70,6 +70,7 @@ import {
   ScheduleVisitUseCase,
   SendQuoteUseCase,
 } from './requests/admin-requests.use-cases';
+import { EstimateRequestPriceUseCase, SaveMeasurementsUseCase } from './requests/measurements.use-cases';
 import {
   AcceptQuoteUseCase,
   CancelRequestUseCase,
@@ -120,6 +121,8 @@ export function createUseCases(deps: CleaningDeps) {
     rejectQuoteRequest: new RejectQuoteRequestUseCase(deps),
     scheduleVisit: new ScheduleVisitUseCase(deps),
     completeVisit: new CompleteVisitUseCase(deps),
+    estimateRequestPrice: new EstimateRequestPriceUseCase(deps),
+    saveMeasurements: new SaveMeasurementsUseCase(deps),
     sendQuote: new SendQuoteUseCase(deps),
     listMissions: new ListMissionsUseCase(deps),
     getMissionDetail: new GetMissionDetailUseCase(deps),

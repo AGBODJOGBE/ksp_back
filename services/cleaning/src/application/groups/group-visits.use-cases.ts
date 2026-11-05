@@ -4,7 +4,8 @@ import { isBeforeScheduledTime } from '../../domain/schedule';
 import { type CleaningDeps, presentRequest } from '../deps';
 import { type AuditEntry, type GroupOutcome, type VisitEntry, type VisitFilter } from '../ports';
 import { eventSubject } from '../shared/event-subject';
-import { FIELD_WORK, requireStaff, seesEverything, SUPERVISION } from '../shared/access';
+import { FIELD_WORK, requireStaff, seesEverything, type Staff, SUPERVISION } from '../shared/access';
+import { measure, type MeasurementInput } from '../requests/measurements.use-cases';
 import { CleaningErrors } from '../shared/errors';
 import {
   oneOf,
@@ -152,7 +153,13 @@ export class ScheduleGroupVisitUseCase {
 export class CompleteGroupVisitUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
-  async execute(input: { groupId: string; report: string; idempotencyKey?: string }): Promise<GroupOutcome> {
+  async execute(input: {
+    groupId: string;
+    report: string;
+    idempotencyKey?: string;
+    /** Mesures constatées par demande (ADR-037), facultatives : demandes de cette visite seulement. */
+    measurements?: (MeasurementInput & { requestId: string })[] | undefined;
+  }): Promise<GroupOutcome> {
     const staff = requireStaff(FIELD_WORK);
     const key = parseKey(input.idempotencyKey, false);
     const view = await anyGroup(this.deps, input.groupId);
@@ -169,8 +176,9 @@ export class CompleteGroupVisitUseCase {
       throw CleaningErrors.visitTooEarly(first.scheduledAt, timeZone);
     }
     const report = requiredText('report', input.report, 5000);
+    const measured = await this.measurements(members, input.measurements ?? [], staff);
     const completed = members.map((request): QuoteRequest => ({
-      ...request,
+      ...(measured.get(request.id)?.request ?? request),
       visit: { ...request.visit!, status: 'completed', report, completedAt: now },
       updatedAt: now,
     }));
@@ -183,14 +191,17 @@ export class CompleteGroupVisitUseCase {
       requests: completed,
       changes: {
         events: [],
-        audit: completed.map((request) => ({
-          actorId: staff.userId,
-          action: 'visit.completed',
-          entityType: 'quote_request' as const,
-          entityId: request.id,
-          at: now,
-          details: { groupVisitId: outcome.groupVisitId },
-        })),
+        audit: completed.flatMap((request): AuditEntry[] => [
+          {
+            actorId: staff.userId,
+            action: 'visit.completed',
+            entityType: 'quote_request',
+            entityId: request.id,
+            at: now,
+            details: { groupVisitId: outcome.groupVisitId },
+          },
+          ...(measured.has(request.id) ? [measured.get(request.id)!.audit] : []),
+        ]),
       },
       operation: operationRecord(staff.userId, 'visit.completed', key, outcome),
     });
@@ -200,6 +211,25 @@ export class CompleteGroupVisitUseCase {
       { actorId: staff.userId, operation: 'visit.completed', key, groupId: view.group.id },
       outcome,
     );
+  }
+
+  /**
+   * Mesures de chaque demande de la visite commune, validées comme une simulation ; une demande
+   * hors de cette visite, ou citée deux fois, est refusée (`measurements[i].requestId`).
+   */
+  private async measurements(
+    members: QuoteRequest[],
+    items: (MeasurementInput & { requestId: string })[],
+    staff: Staff,
+  ): Promise<Map<string, { request: QuoteRequest; audit: AuditEntry }>> {
+    const measured = new Map<string, { request: QuoteRequest; audit: AuditEntry }>();
+    for (const [index, item] of items.entries()) {
+      const at = `measurements[${index}]`;
+      const request = members.find((member) => member.id === item.requestId);
+      if (!request || measured.has(request.id)) throw CleaningErrors.invalid(`${at}.requestId`);
+      measured.set(request.id, await measure(this.deps, request, item, staff, 'visit', `${at}.`));
+    }
+    return measured;
   }
 }
 

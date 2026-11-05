@@ -78,6 +78,11 @@ export interface QuoteRequest {
   pricingVersion: number | null;
   /** Détail du calcul au moment de la demande, null pour une demande antérieure. */
   calculation: PriceCalculation | null;
+  /**
+   * Mesures constatées sur le terrain après la visite (ADR-037) : elles ne remplacent jamais les
+   * réponses du client, gardées pour l'historique. Absent ou null : aucune mesure.
+   */
+  measurement?: Measurement | null;
   commune: string;
   address: string;
   /** Groupe des demandes créées ensemble pour un même lieu (ADR-034), null pour une demande seule. */
@@ -108,6 +113,27 @@ export interface QuoteRequest {
   updatedAt: Date;
   /** Version pour le contrôle de concurrence optimiste (double acceptation, etc.). */
   version: number;
+}
+
+/**
+ * Mesures constatées par l'agent ou le superviseur (ADR-037) : mêmes réponses que le formulaire
+ * du client, calculées avec la grille en vigueur et la commune de la demande au moment de la saisie.
+ */
+export interface Measurement {
+  answers: Answers;
+  optionSelections: OptionSelection[];
+  frequency: string | null;
+  calculation: PriceCalculation;
+  pricingVersion: number;
+  measuredAt: Date;
+  measuredBy: string;
+}
+
+/** Mesures modifiables tant qu'aucun devis n'est envoyé (ou après une nouvelle visite) : demande reçue ou visite planifiée. */
+const MEASURABLE_STATUSES: readonly RequestStatus[] = ['received', 'visit_scheduled'];
+
+export function canRecordMeasurements(request: Pick<QuoteRequest, 'status' | 'quote'>, now: Date): boolean {
+  return MEASURABLE_STATUSES.includes(effectiveRequestStatus(request, now));
 }
 
 /**

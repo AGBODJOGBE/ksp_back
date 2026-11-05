@@ -90,6 +90,14 @@ export class PrismaCatalogRepository implements CatalogRepository {
     return row ? toService(row) : null;
   }
 
+  async findServiceVersion(code: string, version: number): Promise<ServiceDefinition | null> {
+    const row = await this.prisma.cleaningService.findUnique({
+      where: { code },
+      include: { pricing: { where: { version }, take: 1 } },
+    });
+    return row?.pricing.length ? toService(row) : null;
+  }
+
   async saveService(definition: NewServiceVersion, changes: Changes): Promise<ServiceDefinition> {
     const author = changes.audit[0]?.actorId ?? 'system';
     const at = changes.audit[0]?.at ?? new Date();

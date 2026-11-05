@@ -2813,6 +2813,60 @@ paths:
                 landmark: null
                 geocodingProvider: null
                 geocodedAddress: null
+                answerSummary:
+                  fields:
+                    - code: housing_type
+                      label: Type de logement
+                      type: choice
+                      value: villa
+                      display: Villa
+                      unitLabel: null
+                    - code: rooms
+                      label: Nombre de pièces
+                      type: number
+                      value: 6
+                      display: 6 pièces
+                      unitLabel: pièces
+                    - code: bathrooms
+                      label: Nombre de salles de bain
+                      type: number
+                      value: 1
+                      display: 1 salles de bain
+                      unitLabel: salles de bain
+                    - code: condition
+                      label: État
+                      type: choice
+                      value: normal
+                      display: Normal
+                      unitLabel: null
+                    - code: pets
+                      label: Présence d'animaux
+                      type: boolean
+                      value: false
+                      display: Non
+                      unitLabel: null
+                  options:
+                    - optionCode: windows
+                      label: Vitres
+                      fields:
+                        - code: window_count
+                          label: Nombre de fenêtres
+                          type: number
+                          value: 8
+                          display: 8 fenêtres
+                          unitLabel: fenêtres
+                  frequency:
+                    code: once
+                    label: Une fois
+                measuredAnswers: null
+                measuredOptions: null
+                measuredFrequency: null
+                measuredCalculation: null
+                measuredPricingVersion: null
+                measuredAt: null
+                measuredBy: null
+                measuredByName: null
+                measuredSummary: null
                 calculation:
                   pricingVersion: 3
                   priced: true
@@ -2993,6 +3047,60 @@ paths:
                     landmark: null
                     geocodingProvider: null
                     geocodedAddress: null
+                    answerSummary:
+                      fields:
+                        - code: housing_type
+                          label: Type de logement
+                          type: choice
+                          value: villa
+                          display: Villa
+                          unitLabel: null
+                        - code: rooms
+                          label: Nombre de pièces
+                          type: number
+                          value: 6
+                          display: 6 pièces
+                          unitLabel: pièces
+                        - code: bathrooms
+                          label: Nombre de salles de bain
+                          type: number
+                          value: 1
+                          display: 1 salles de bain
+                          unitLabel: salles de bain
+                        - code: condition
+                          label: État
+                          type: choice
+                          value: normal
+                          display: Normal
+                          unitLabel: null
+                        - code: pets
+                          label: Présence d'animaux
+                          type: boolean
+                          value: false
+                          display: Non
+                          unitLabel: null
+                      options:
+                        - optionCode: windows
+                          label: Vitres
+                          fields:
+                            - code: window_count
+                              label: Nombre de fenêtres
+                              type: number
+                              value: 8
+                              display: 8 fenêtres
+                              unitLabel: fenêtres
+                      frequency:
+                        code: once
+                        label: Une fois
+                    measuredAnswers: null
+                    measuredOptions: null
+                    measuredFrequency: null
+                    measuredCalculation: null
+                    measuredPricingVersion: null
+                    measuredAt: null
+                    measuredBy: null
+                    measuredByName: null
+                    measuredSummary: null
                     calculation:
                       pricingVersion: 3
                       priced: true
@@ -3214,6 +3322,60 @@ paths:
                 landmark: null
                 geocodingProvider: null
                 geocodedAddress: null
+                answerSummary:
+                  fields:
+                    - code: housing_type
+                      label: Type de logement
+                      type: choice
+                      value: villa
+                      display: Villa
+                      unitLabel: null
+                    - code: rooms
+                      label: Nombre de pièces
+                      type: number
+                      value: 6
+                      display: 6 pièces
+                      unitLabel: pièces
+                    - code: bathrooms
+                      label: Nombre de salles de bain
+                      type: number
+                      value: 1
+                      display: 1 salles de bain
+                      unitLabel: salles de bain
+                    - code: condition
+                      label: État
+                      type: choice
+                      value: normal
+                      display: Normal
+                      unitLabel: null
+                    - code: pets
+                      label: Présence d'animaux
+                      type: boolean
+                      value: false
+                      display: Non
+                      unitLabel: null
+                  options:
+                    - optionCode: windows
+                      label: Vitres
+                      fields:
+                        - code: window_count
+                          label: Nombre de fenêtres
+                          type: number
+                          value: 8
+                          display: 8 fenêtres
+                          unitLabel: fenêtres
+                  frequency:
+                    code: once
+                    label: Une fois
+                measuredAnswers: null
+                measuredOptions: null
+                measuredFrequency: null
+                measuredCalculation: null
+                measuredPricingVersion: null
+                measuredAt: null
+                measuredBy: null
+                measuredByName: null
+                measuredSummary: null
                 calculation:
                   pricingVersion: 3
                   priced: true
@@ -3453,6 +3615,60 @@ paths:
                   landmark: null
                   geocodingProvider: null
                   geocodedAddress: null
+                  answerSummary:
+                    fields:
+                      - code: housing_type
+                        label: Type de logement
+                        type: choice
+                        value: villa
+                        display: Villa
+                        unitLabel: null
+                      - code: rooms
+                        label: Nombre de pièces
+                        type: number
+                        value: 6
+                        display: 6 pièces
+                        unitLabel: pièces
+                      - code: bathrooms
+                        label: Nombre de salles de bain
+                        type: number
+                        value: 1
+                        display: 1 salles de bain
+                        unitLabel: salles de bain
+                      - code: condition
+                        label: État
+                        type: choice
+                        value: normal
+                        display: Normal
+                        unitLabel: null
+                      - code: pets
+                        label: Présence d'animaux
+                        type: boolean
+                        value: false
+                        display: Non
+                        unitLabel: null
+                    options:
+                      - optionCode: windows
+                        label: Vitres
+                        fields:
+                          - code: window_count
+                            label: Nombre de fenêtres
+                            type: number
+                            value: 8
+                            display: 8 fenêtres
+                            unitLabel: fenêtres
+                    frequency:
+                      code: once
+                      label: Une fois
+                  measuredAnswers: null
+                  measuredOptions: null
+                  measuredFrequency: null
+                  measuredCalculation: null
+                  measuredPricingVersion: null
+                  measuredAt: null
+                  measuredBy: null
+                  measuredByName: null
+                  measuredSummary: null
                   calculation:
                     pricingVersion: 3
                     priced: true
@@ -4309,6 +4525,11 @@ paths:
 
         Ouvert à l’agent affecté à la visite (ADR-035) ; la visite d’un autre agent : `CLEANING_VISIT_NOT_FOUND`. Pour un agent, la demande renvoyée n’a plus de position (visite close).
 
+        `measurements` (facultatif, ADR-037) : dimensions constatées sur place, mêmes champs que le formulaire du client,
+        validées comme une simulation (`details.field` = `measurements.answers.rooms`) ; enregistrées à part
+        (`measuredAnswers`, `measuredCalculation`…), sans remplacer les réponses du client, et tracées. Rien n’est
+        enregistré si elles sont refusées.
+
         Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CompleteVisit
       x-ksp-access: authenticated
@@ -4330,7 +4551,19 @@ paths:
             schema:
               $ref: '#/components/schemas/CompleteCleaningVisitRequest'
             example:
-              report: Deux étages, accès facile, 6 pièces confirmées.
+              report: Deux étages, accès facile ; 8 pièces et 2 salles de bain en réalité, logement très sale.
+              measurements:
+                answers:
+                  housing_type: apartment
+                  rooms: 8
+                  bathrooms: 2
+                  condition: very_dirty
+                  pets: false
+                options:
+                  - code: windows
+                    answers:
+                      window_count: 12
+                frequency: once
       responses:
         '200':
           description: Succès
@@ -4361,6 +4594,231 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-requests/{id}/estimate:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: estimateCleaningQuoteRequest
+      summary: Recalculer le prix d’une demande avec d’autres réponses
+      description: |
+        ADR-037. Après la visite, recalcule le prix avec les dimensions constatées, **sans rien enregistrer** : même
+        calcul que la simulation, avec la **commune de la demande** et la **grille en vigueur** de sa prestation. Corps
+        au nouveau format seulement (`answers` obligatoire, même `{}`), validé comme une simulation :
+        `CLEANING_VALIDATION_FAILED` (400) avec `details.field` (`answers.rooms`) et `details.reason`. Un prix non
+        fixé donne `calculation.priced = false` avec `reason` et `missingPrices`.
+
+        Supervision, ou agent affecté à la visite de la demande (sinon `CLEANING_REQUEST_NOT_FOUND`, 404).
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/EstimateRequestPrice
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningMeasurementInput'
+            example:
+              answers:
+                housing_type: apartment
+                rooms: 8
+                bathrooms: 2
+                condition: very_dirty
+                pets: false
+              options:
+                - code: windows
+                  answers:
+                    window_count: 12
+              frequency: once
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningRequestEstimate'
+              example:
+                requestId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                serviceCode: home_cleaning
+                commune: Abomey-Calavi
+                calculation:
+                  pricingVersion: 3
+                  priced: true
+                  reason: null
+                  missingPrices: []
+                  lines:
+                    - kind: unit_price
+                      optionCode: null
+                      fieldCode: rooms
+                      choiceCode: null
+                      label: Nombre de pièces
+                      quantity: 8
+                      unitLabel: pièces
+                      unitPrice: { amount: 4500, currency: XOF }
+                      amount: { amount: 36000, currency: XOF }
+                    - kind: unit_price
+                      optionCode: null
+                      fieldCode: bathrooms
+                      choiceCode: null
+                      label: Nombre de salles de bain
+                      quantity: 2
+                      unitLabel: salles de bain
+                      unitPrice: { amount: 3000, currency: XOF }
+                      amount: { amount: 6000, currency: XOF }
+                    - kind: unit_price
+                      optionCode: windows
+                      fieldCode: window_count
+                      choiceCode: null
+                      label: Vitres — nombre de fenêtres
+                      quantity: 12
+                      unitLabel: fenêtres
+                      unitPrice: { amount: 500, currency: XOF }
+                      amount: { amount: 6000, currency: XOF }
+                  baseAmount: { amount: 48000, currency: XOF }
+                  coefficients:
+                    - source: choice
+                      optionCode: null
+                      fieldCode: condition
+                      code: very_dirty
+                      label: 'État : très sale'
+                      coefficientBp: 15000
+                    - source: commune
+                      optionCode: null
+                      fieldCode: null
+                      code: abomey-calavi
+                      label: Abomey-Calavi
+                      coefficientBp: 10500
+                    - source: frequency
+                      optionCode: null
+                      fieldCode: null
+                      code: once
+                      label: Une fois
+                      coefficientBp: 10000
+                  subtotal: { amount: 75600, currency: XOF }
+                  minimumPrice: { amount: 15000, currency: XOF }
+                  minimumApplied: false
+                  computedPrice: { amount: 75600, currency: XOF }
+                  estimate:
+                    low: { amount: 68000, currency: XOF }
+                    high: { amount: 87000, currency: XOF }
+                  recommendedTeamSize: 3
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/quote-requests/{id}/measurements:
+    put:
+      tags:
+        - Nettoyage (back-office)
+      operationId: saveCleaningMeasurements
+      summary: Enregistrer ou corriger les mesures constatées
+      description: |
+        ADR-037. Enregistre (ou remplace) les dimensions réellement constatées sur le terrain, dans les mêmes champs que
+        le formulaire du client, et leur calcul (grille en vigueur, commune de la demande). Les réponses du client
+        (`answers`, `selectedOptions`, `frequency`, `calculation`) ne sont **jamais** remplacées ; chaque saisie est
+        tracée dans le journal d’audit (`request.measured`). Le devis envoyé sans lignes est ensuite prérempli depuis
+        `measuredCalculation`.
+
+        Possible tant qu’aucun devis n’est envoyé (demande reçue ou visite planifiée, y compris une nouvelle visite après
+        un devis) ; sinon `CLEANING_MEASUREMENTS_LOCKED` (422, `details.status`). Supervision, ou agent de la visite de
+        la demande (sinon `CLEANING_REQUEST_NOT_FOUND`). Validation comme une simulation (`answers.<champ>`).
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SaveRequestMeasurements
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningMeasurementInput'
+            example:
+              answers:
+                housing_type: apartment
+                rooms: 8
+                bathrooms: 2
+                condition: very_dirty
+                pets: false
+              options:
+                - code: windows
+                  answers:
+                    window_count: 12
+              frequency: once
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningQuoteRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/admin/cleaning/quote-requests/{id}/quote:
     post:
       tags:
@@ -4368,7 +4826,7 @@ paths:
       operationId: sendCleaningQuote
       summary: Établir et envoyer le devis
       description: |
-        UC-CL-08. Sans `lines`, lignes préremplies depuis le détail du calcul de la demande (ADR-033) : ses lignes, une ligne d’ajustement pour les coefficients et, s’il s’applique, une ligne pour le minimum de commande ; calcul sans prix : nouveau calcul avec la grille en vigueur et les réponses enregistrées. Lignes modifiables ; 1 à 3 créneaux ; prix figé à l’envoi.
+        UC-CL-08. Sans `lines`, lignes préremplies depuis le détail du calcul des mesures constatées s’il existe (`measuredCalculation`, ADR-037), sinon de la demande (ADR-033) : ses lignes, une ligne d’ajustement pour les coefficients et, s’il s’applique, une ligne pour le minimum de commande ; calcul sans prix : nouveau calcul avec la grille en vigueur et les réponses enregistrées (les mesures, s’il y en a). Sans `teamSize`, taille recommandée par ce calcul. Lignes modifiables ; 1 à 3 créneaux ; prix figé à l’envoi.
 
         Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
@@ -4510,6 +4968,10 @@ paths:
         (`CLEANING_VISIT_TOO_EARLY`). `Idempotency-Key` facultative. Pour un agent, `requests` ne contient que ses
         demandes, sans position (visite close).
 
+        `measurements` (facultatif, ADR-037) : mesures constatées par demande de la visite commune, validées comme une
+        simulation (`measurements[1].answers.surface`) ; une demande hors de la visite ou citée deux fois :
+        `CLEANING_VALIDATION_FAILED`, `details.field` = `measurements[1].requestId`. Tout ou rien.
+
         Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CompleteGroupVisit
       x-ksp-access: authenticated
@@ -4530,9 +4992,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CompleteCleaningVisitRequest'
+              $ref: '#/components/schemas/CompleteCleaningGroupVisitRequest'
             example:
               report: Maison et jardin vus, accès facile.
+              measurements:
+                - requestId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1002
+                  answers:
+                    surface: 600
+                    condition: overgrown
+                  frequency: once
       responses:
         '200':
           description: Succès
@@ -4639,8 +5107,8 @@ paths:
       operationId: sendCleaningGroupQuotes
       summary: Envoyer les devis d’un groupe ensemble
       description: |
-        ADR-035. Un devis par demande listée, chiffré séparément (lignes vides : préremplies depuis le calcul de la
-        demande, comme `sendCleaningQuote`), avec les mêmes créneaux proposés ; tout ou rien (une erreur porte
+        ADR-035. Un devis par demande listée, chiffré séparément (lignes vides : préremplies depuis le calcul des
+        mesures constatées, sinon de la demande, comme `sendCleaningQuote`, ADR-037), avec les mêmes créneaux proposés ; tout ou rien (une erreur porte
         `details.requestId`). Le client peut ensuite tout accepter en une fois. `Idempotency-Key` facultative.
 
         Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
@@ -9594,6 +10062,16 @@ components:
         - landmark
         - geocodingProvider
         - geocodedAddress
+        - answerSummary
+        - measuredAnswers
+        - measuredOptions
+        - measuredFrequency
+        - measuredCalculation
+        - measuredPricingVersion
+        - measuredAt
+        - measuredBy
+        - measuredByName
+        - measuredSummary
       properties:
         id:
           type: string
@@ -9778,6 +10256,63 @@ components:
             - string
             - 'null'
           description: Adresse lisible rendue par le géocodeur, null si aucune.
+        answerSummary:
+          description: Réponses du client, lisibles (ADR-037) ; null seulement si la demande n’a pas pu être décrite.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningAnswerSummary'
+            - type: 'null'
+        measuredAnswers:
+          description: |
+            Back-office — mesures constatées après la visite (ADR-037), même forme que `answers` ; null sans mesure et
+            toujours dans l’espace client. Les réponses du client ne sont jamais remplacées.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningAnswers'
+            - type: 'null'
+        measuredOptions:
+          description: Back-office — options des mesures constatées, même forme que `selectedOptions` ; null sans mesure.
+          oneOf:
+            - type: array
+              items:
+                $ref: '#/components/schemas/CleaningOptionSelection'
+            - type: 'null'
+        measuredFrequency:
+          type:
+            - string
+            - 'null'
+          description: Back-office — fréquence des mesures constatées, null sans mesure ou sans fréquence.
+        measuredCalculation:
+          description: |
+            Back-office — calcul des mesures (grille en vigueur et commune de la demande au moment de la saisie) ; le
+            devis sans lignes est prérempli depuis lui. Null sans mesure.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningPriceCalculation'
+            - type: 'null'
+        measuredPricingVersion:
+          type:
+            - integer
+            - 'null'
+          description: Back-office — version de grille du calcul des mesures, null sans mesure.
+        measuredAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        measuredBy:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Back-office — agent ou superviseur qui a saisi les mesures.
+        measuredByName:
+          type:
+            - string
+            - 'null'
+          description: Back-office — nom affiché de l’auteur des mesures (ADR-029), null s’il est inconnu.
+        measuredSummary:
+          description: Back-office — mesures constatées, lisibles (ADR-037) ; null sans mesure et dans l’espace client.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningAnswerSummary'
+            - type: 'null'
         groupRequests:
           type: array
           description: Back-office, détail d’une demande seulement — autres demandes du même groupe (vide pour une demande seule).
@@ -10858,6 +11393,164 @@ components:
           type: string
           minLength: 1
           maxLength: 5000
+        measurements:
+          $ref: '#/components/schemas/CleaningMeasurementInput'
+    CompleteCleaningGroupVisitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - report
+      properties:
+        report:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        measurements:
+          type: array
+          maxItems: 10
+          description: Mesures constatées par demande de la visite commune (ADR-037), facultatives.
+          items:
+            $ref: '#/components/schemas/CleaningGroupMeasurementInput'
+    CleaningMeasurementInput:
+      type: object
+      additionalProperties: false
+      description: |
+        Mesures constatées ou réponses à recalculer (ADR-037) : nouveau format seulement, mêmes champs que le formulaire
+        du client, validées comme une simulation. `frequency` est obligatoire si la prestation a une fréquence active.
+      required:
+        - answers
+      properties:
+        answers:
+          $ref: '#/components/schemas/CleaningAnswers'
+        options:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CleaningOptionSelection'
+        frequency:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+    CleaningGroupMeasurementInput:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - answers
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        answers:
+          $ref: '#/components/schemas/CleaningAnswers'
+        options:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CleaningOptionSelection'
+        frequency:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,49}$
+    CleaningRequestEstimate:
+      type: object
+      additionalProperties: false
+      description: Recalcul du prix d’une demande (ADR-037), rien n’est enregistré.
+      required:
+        - requestId
+        - serviceCode
+        - commune
+        - calculation
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        serviceCode:
+          type: string
+        commune:
+          type: string
+          description: Commune de la demande, utilisée pour le coefficient.
+        calculation:
+          $ref: '#/components/schemas/CleaningPriceCalculation'
+    CleaningAnswerSummaryField:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - type
+        - value
+        - display
+        - unitLabel
+      properties:
+        code:
+          type: string
+        label:
+          type: string
+          description: Libellé du champ dans la version de grille utilisée ; le code s’il n’y existe pas.
+        type:
+          enum:
+            - number
+            - choice
+            - boolean
+        value:
+          $ref: '#/components/schemas/CleaningAnswerValue'
+        display:
+          type: string
+          description: Valeur affichable — « 120 m² », « Très sale », « Oui ».
+        unitLabel:
+          type:
+            - string
+            - 'null'
+          description: Unité d’un nombre, null sinon.
+    CleaningAnswerSummary:
+      type: object
+      additionalProperties: false
+      description: |
+        Réponses lisibles d’une demande (ADR-037), sans aucun prix : libellés des champs et des choix, « Oui » / « Non »,
+        nombres avec leur unité, résolus avec la version de grille utilisée. Une demande à l’ancien format donne
+        « Type de locaux » et « Quantité ».
+      required:
+        - fields
+        - options
+        - frequency
+      properties:
+        fields:
+          type: array
+          description: Champs de la prestation, dans l’ordre du formulaire (un oui/non sans réponse n’apparaît pas).
+          items:
+            $ref: '#/components/schemas/CleaningAnswerSummaryField'
+        options:
+          type: array
+          description: Options choisies, dans l’ordre du formulaire.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - optionCode
+              - label
+              - fields
+            properties:
+              optionCode:
+                type: string
+              label:
+                type: string
+              fields:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CleaningAnswerSummaryField'
+        frequency:
+          description: Fréquence choisie, null si aucune.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required:
+                - code
+                - label
+              properties:
+                code:
+                  type: string
+                label:
+                  type: string
+            - type: 'null'
     SendCleaningQuoteRequest:
       type: object
       additionalProperties: false

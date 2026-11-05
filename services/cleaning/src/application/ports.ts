@@ -65,6 +65,11 @@ export interface CatalogRepository {
   listServices(): Promise<ServiceDefinition[]>;
   findService(code: string): Promise<ServiceDefinition | null>;
   /**
+   * Définition d'une version donnée de la grille (champs, options, fréquences de cette version),
+   * pour lire une demande avec la version utilisée par son calcul (ADR-037) ; null si inconnue.
+   */
+  findServiceVersion(code: string, version: number): Promise<ServiceDefinition | null>;
+  /**
    * Crée ou remplace la prestation complète (champs, options, grille) : une nouvelle version
    * datée, avec son auteur (ADR-033).
    */

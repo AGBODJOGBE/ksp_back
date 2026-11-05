@@ -19,7 +19,7 @@ import { isFullyPriced, type ServiceDefinition, teamSizeField } from '../../doma
 import { CURRENCY } from '../../domain/money';
 import { expectedDeposit, paidAmount, paymentStatus, remainingDue } from '../../domain/payment';
 import { type Quote } from '../../domain/quote';
-import { type QuoteRequest } from '../../domain/quote-request';
+import { type Measurement, type QuoteRequest } from '../../domain/quote-request';
 import { type Recurrence } from '../../domain/recurrence';
 import { type Slot } from '../../domain/schedule';
 import { type PriceLine } from '../../domain/simulator';
@@ -30,6 +30,7 @@ import {
   optionsToProto,
   presentForm,
   selectionsToProto,
+  summaryToProto,
 } from './form.presenters';
 
 /** Traduction du modèle vers les messages du contrat : dates ISO 8601, chaîne vide = absente. */
@@ -94,6 +95,8 @@ export function presentRequest(
   names: NameBook = NO_NAMES,
   labels: RequestLabels = NO_LABELS,
 ): cleaningV1.QuoteRequest {
+  const backoffice = labels.audience === 'backoffice';
+  const summaries = labels.summaries.get(request.id);
   return {
     id: request.id,
     status: request.status,
@@ -148,6 +151,24 @@ export function presentRequest(
     serviceName: labels.serviceNames.get(request.serviceCode) ?? '',
     placeTypeLabel: (request.placeType && labels.placeTypeLabels.get(request.placeType)) || '',
     geocodedAddress: text(request.geocodedAddress),
+    // Mesures constatées (ADR-037) : au back-office seulement.
+    measurement:
+      backoffice && request.measurement ? presentMeasurement(request.measurement, names) : undefined,
+    answerSummary: summaries ? summaryToProto(summaries.answers) : undefined,
+    measuredSummary: backoffice && summaries?.measured ? summaryToProto(summaries.measured) : undefined,
+  };
+}
+
+function presentMeasurement(measurement: Measurement, names: NameBook): cleaningV1.RequestMeasurement {
+  return {
+    answers: answersToProto(measurement.answers),
+    optionSelections: selectionsToProto(measurement.optionSelections),
+    frequency: text(measurement.frequency),
+    calculation: calculationToProto(measurement.calculation),
+    pricingVersion: measurement.pricingVersion,
+    measuredAt: iso(measurement.measuredAt),
+    measuredBy: measurement.measuredBy,
+    measuredByName: userName(names, measurement.measuredBy),
   };
 }
 

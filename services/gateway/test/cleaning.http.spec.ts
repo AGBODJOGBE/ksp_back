@@ -1217,4 +1217,118 @@ describe('gateway → cleaning', () => {
       ).status,
     ).toBe(400);
   });
+
+  it('mesures constatées (ADR-037) : recalcul, correction, compte rendu avec mesures, réponses lisibles', async () => {
+    const agent = await agentToken();
+    const REQUEST = `/api/v1/admin/cleaning/quote-requests/${IDS.request}`;
+    const measured = {
+      answers: { housing_type: 'apartment', rooms: 8, bathrooms: 2, condition: 'very_dirty', pets: false },
+      options: [{ code: 'windows', answers: { window_count: 12 } }],
+      frequency: 'once',
+    };
+
+    const estimate = await backoffice(http().post(`${REQUEST}/estimate`), agent).send(measured);
+    expect(estimate.status).toBe(200);
+    expect(estimate.body).toMatchObject({
+      requestId: IDS.request,
+      commune: 'Abomey-Calavi',
+      calculation: { priced: true, computedPrice: xof(45150) },
+    });
+    expect(cleaning.stub.last('estimateRequestPrice')!.request).toMatchObject({
+      requestId: IDS.request,
+      answers: { values: { rooms: { numberValue: 8 }, pets: { booleanValue: false } } },
+      optionSelections: [{ code: 'windows', answers: { values: { window_count: { numberValue: 12 } } } }],
+      frequency: 'once',
+    });
+    // Nouveau format seulement : answers obligatoire, ancien format et champ inconnu refusés.
+    for (const body of [{}, { premisesType: 'house', quantity: 6 }, { ...measured, commune: 'Cotonou' }]) {
+      expect((await backoffice(http().post(`${REQUEST}/estimate`), agent).send(body)).status).toBe(400);
+    }
+    expect(
+      (await http().post(`${REQUEST}/estimate`).set('Authorization', `Bearer ${customer}`).send(measured))
+        .status,
+    ).toBe(403);
+
+    const saved = await backoffice(http().put(`${REQUEST}/measurements`), staff).send(measured);
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject({
+      measuredAnswers: { rooms: 8 },
+      measuredOptions: [{ code: 'windows', answers: { window_count: 8 } }],
+      measuredFrequency: 'once',
+      measuredPricingVersion: 3,
+      measuredAt: '2026-10-26T10:00:00.000Z',
+      measuredBy: IDS.agent,
+      measuredByName: 'Awa Dossou',
+      measuredCalculation: { computedPrice: xof(45150) },
+      answerSummary: {
+        fields: [
+          { code: 'housing_type', display: 'Appartement', unitLabel: null, value: 'apartment' },
+          { code: 'rooms', type: 'number', value: 6, display: '6 pièces', unitLabel: 'pièces' },
+          { code: 'pets', type: 'boolean', value: false, display: 'Non' },
+        ],
+        options: [{ optionCode: 'windows', label: 'Vitres', fields: [{ display: '8 fenêtres' }] }],
+        frequency: { code: 'once', label: 'Une fois' },
+      },
+      measuredSummary: {
+        fields: [expect.anything(), { code: 'rooms', display: '8 pièces' }, expect.anything()],
+      },
+    });
+    expect(cleaning.stub.last('saveRequestMeasurements')!.request).toMatchObject({ requestId: IDS.request });
+
+    // Mesures refusées par cleaning (devis déjà envoyé) : 422 et code transmis.
+    cleaning.stub.on('saveRequestMeasurements', () =>
+      Promise.reject(
+        AppError.precondition('CLEANING_MEASUREMENTS_LOCKED', 'Devis déjà envoyé.', { status: 'quote_sent' }),
+      ),
+    );
+    const locked = await backoffice(http().put(`${REQUEST}/measurements`), agent).send(measured);
+    expect(locked.status).toBe(422);
+    expect(locked.body.error).toMatchObject({
+      code: 'CLEANING_MEASUREMENTS_LOCKED',
+      details: { status: 'quote_sent' },
+    });
+
+    // Compte rendu avec mesures (par demande et commun) ; sans mesures : message absent.
+    expect(
+      (
+        await backoffice(http().post(`/api/v1/admin/cleaning/visits/${IDS.visit}/complete`), agent).send({
+          report: 'Huit pièces',
+          measurements: measured,
+        })
+      ).status,
+    ).toBe(200);
+    expect(cleaning.stub.last('completeVisit')!.request).toMatchObject({
+      visitId: IDS.visit,
+      measurements: { answers: { values: { rooms: { numberValue: 8 } } }, frequency: 'once' },
+    });
+    await backoffice(http().post(`/api/v1/admin/cleaning/visits/${IDS.visit}/complete`), agent).send({
+      report: 'Vu',
+    });
+    expect(cleaning.stub.last('completeVisit')!.request['measurements'] ?? null).toBeNull();
+    const group = await backoffice(http().post(`${GROUP}/visits/complete`), agent).send({
+      report: 'Maison et jardin vus',
+      measurements: [
+        { requestId: IDS.sibling, answers: { surface: 600, condition: 'overgrown' }, frequency: 'once' },
+      ],
+    });
+    expect(group.status).toBe(200);
+    expect(cleaning.stub.last('completeGroupVisit')!.request).toMatchObject({
+      measurements: [
+        {
+          requestId: IDS.sibling,
+          answers: { values: { surface: { numberValue: 600 }, condition: { choiceValue: 'overgrown' } } },
+          optionSelections: [],
+          frequency: 'once',
+        },
+      ],
+    });
+    expect(
+      (
+        await backoffice(http().post(`${GROUP}/visits/complete`), agent).send({
+          report: 'Vu',
+          measurements: [{ requestId: 'pas-un-uuid', answers: {} }],
+        })
+      ).status,
+    ).toBe(400);
+  });
 });

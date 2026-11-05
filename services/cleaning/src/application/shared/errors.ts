@@ -103,6 +103,13 @@ export const CleaningErrors = {
       'CLEANING_PRICE_NOT_SET',
       "Le prix de cette prestation n'est pas encore fixé : complétez les lignes du devis.",
     ),
+  /** Mesures constatées (ADR-037) : plus modifiables une fois un devis envoyé ou la demande close. */
+  measurementsLocked: (status: string) =>
+    AppError.precondition(
+      'CLEANING_MEASUREMENTS_LOCKED',
+      'Les mesures ne peuvent plus être modifiées : un devis a déjà été envoyé ou la demande est close. Planifiez une nouvelle visite pour les corriger.',
+      { status },
+    ),
   visitRequired: () =>
     AppError.precondition(
       'CLEANING_VISIT_REQUIRED',
