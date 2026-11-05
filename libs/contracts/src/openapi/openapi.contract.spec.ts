@@ -22,6 +22,7 @@ interface Operation extends Json {
   'x-ksp-roles'?: string[];
   'x-ksp-mfa-max-age'?: number;
   'x-ksp-raw-body'?: boolean;
+  'x-ksp-pending-deletion'?: boolean;
 }
 
 interface MediaType {
@@ -130,6 +131,17 @@ describe('contrat OpenAPI de la gateway', () => {
         expect(roles).toBeDefined();
         expect(mfa).toBeDefined();
       }
+    },
+  );
+
+  // Session restreinte d'un compte en cours de suppression (ADR-036) : acceptée seulement sur les
+  // routes connectées qui le déclarent ; toutes les autres la refusent (403).
+  it.each(operations.filter(({ op }) => op['x-ksp-access'] === 'authenticated'))(
+    '$method $path : session restreinte acceptée explicitement, ou refusée (403)',
+    ({ op }) => {
+      const pendingDeletion = op['x-ksp-pending-deletion'];
+      if (pendingDeletion !== undefined) expect(pendingDeletion).toBe(true);
+      else expect(Object.keys(op.responses ?? {})).toContain('403');
     },
   );
 

@@ -72,7 +72,7 @@
     },
     "roles": {
       "type": "array",
-      "description": "Rôles du contexte actif, avec leur portée. Les permissions ne sont pas dans le jeton : chaque service les déduit du catalogue.",
+      "description": "Rôles du contexte actif, avec leur portée. Les permissions ne sont pas dans le jeton : chaque service les déduit du catalogue. Session restreinte d'un compte en cours de suppression (ADR-036) : le seul rôle account_deletion_pending, sans customer.",
       "items": {
         "type": "object",
         "additionalProperties": false,

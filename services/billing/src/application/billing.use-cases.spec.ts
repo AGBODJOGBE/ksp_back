@@ -548,6 +548,26 @@ describe('paiement en ligne d’une facture (ADR-031)', () => {
     });
   });
 
+  it('obligations (UC-ID-11) : une facture à payer bloque la suppression du compte ; identity seul', async () => {
+    const asService = (service: string, userId = CUSTOMER_ID) =>
+      runWithContext({ correlationId: 'c-test', callerService: service }, () =>
+        useCases.hasPendingObligations.execute({ userId }),
+      );
+    expect(await asService('identity')).toEqual([
+      {
+        kind: 'unpaid_invoice',
+        reference: invoice().number,
+        description: `La facture ${invoice().number} (100 000 FCFA) est en attente de paiement.`,
+      },
+    ]);
+    expect(await asService('identity', OTHER_CUSTOMER_ID)).toEqual([]);
+    expect(await code(asService('gateway'))).toBe('BILLING_CALLER_FORBIDDEN');
+    expect(await code(asService('identity', 'pas-un-uuid'))).toBe('BILLING_VALIDATION_FAILED');
+    // Réglée : plus rien ne bloque.
+    await succeeded();
+    expect(await asService('identity')).toEqual([]);
+  });
+
   it('payment.intent.succeeded : facture payée (billing.invoice.paid), idempotent', async () => {
     expect(await succeeded()).toEqual({ outcome: 'recorded', excess: 0 });
     expect((await succeeded()).outcome).toBe('duplicate');

@@ -1,4 +1,5 @@
 import { type ClientKind } from '../../domain/session/session-policy';
+import { type AccountDeletion } from '../../domain/user/account-deletion';
 
 export type UserStatusName =
   'pending_verification' | 'active' | 'locked' | 'suspended' | 'deletion_pending' | 'deleted';
@@ -16,6 +17,8 @@ export interface Account {
   emailVerifiedAt: Date | null;
   preferredLanguage: string;
   createdAt: Date;
+  /** Suppression demandée (statut deletion_pending) ; absente ou null sinon (UC-ID-11). */
+  deletion?: AccountDeletion | null;
 }
 
 /** Champs du profil modifiables par l'utilisateur ; un champ absent n'est pas modifié. */

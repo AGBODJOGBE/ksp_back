@@ -3,6 +3,7 @@ import { type ActiveContext, PERSONAL_CONTEXT } from '../../domain/context/activ
 import { canBeActiveContext } from '../../domain/organization/organization';
 import { sessionCategory } from '../../domain/session/session-policy';
 import { isUuid } from '../context/active-contexts';
+import { deletionErrors } from '../deletion/deletion-errors';
 import { organizationErrors } from '../organization/organization-errors';
 import { type OrganizationRepository } from '../organization/organization.ports';
 import { CUSTOMER_ROLE, organizationRoleClaims } from '../role/role-claims';
@@ -45,6 +46,7 @@ export class SwitchContextUseCase {
     if (session.account.status === 'suspended') {
       throw AppError.forbidden('IDENTITY_ACCOUNT_SUSPENDED', 'Ce compte est suspendu.');
     }
+    if (session.account.status === 'deletion_pending') throw deletionErrors.pending();
     if (sessionCategory(session.clientKind) !== 'customer') throw organizationErrors.contextForbidden();
 
     let organization: { id: string; legalName: string } | null = null;

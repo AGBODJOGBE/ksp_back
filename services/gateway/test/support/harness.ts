@@ -179,6 +179,20 @@ export class IdentityStub {
       profileIncomplete: true,
       activeContext: protoIndividual,
     }),
+    requestDeletion: () => ({
+      deletion: {
+        requestedAt: '2026-11-05T10:00:00.000Z',
+        scheduledFor: '2026-12-05T10:00:00.000Z',
+        postponedBy: [],
+      },
+    }),
+    cancelDeletion: () => ({
+      user: protoUser,
+      profileIncomplete: false,
+      activeContext: protoIndividual,
+      accessToken: 'eyJhbGciOiJFUzI1NiJ9.e30.Y2FuY2Vs',
+      accessTokenExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+    }),
     switchContext: (request) => ({
       accessToken: 'eyJhbGciOiJFUzI1NiJ9.e30.b3Jn',
       accessTokenExpiresAt: new Date(Date.now() + 900_000).toISOString(),
@@ -378,6 +392,12 @@ class StubAccountController implements identityV1.AccountServiceController {
   }
   confirmEmail(request: identityV1.ConfirmEmailRequest) {
     return this.stub.handle('confirmEmail', { ...request });
+  }
+  requestDeletion(request: identityV1.RequestDeletionRequest) {
+    return this.stub.handle('requestDeletion', { ...request });
+  }
+  cancelDeletion(request: identityV1.CancelDeletionRequest) {
+    return this.stub.handle('cancelDeletion', { ...request });
   }
 }
 

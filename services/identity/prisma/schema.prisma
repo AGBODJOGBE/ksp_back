@@ -69,7 +69,14 @@ model User {
   preferredLanguage   String     @default("fr") @map("preferred_language")
   createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// Suppression demandée (UC-ID-11, ADR-036) : compte gelé (deletion_pending) jusqu'à deletion_scheduled_for.
   deletionRequestedAt DateTime?  @map("deletion_requested_at") @db.Timestamptz(3)
+  /// Date prévue de l'anonymisation, fixée à la demande (demande + délai de suppression).
+  deletionScheduledFor DateTime? @map("deletion_scheduled_for") @db.Timestamptz(3)
+  /// Dernier contrôle des obligations à l'échéance, quand l'anonymisation a été reportée.
+  deletionCheckedAt   DateTime?  @map("deletion_checked_at") @db.Timestamptz(3)
+  /// Obligations trouvées au dernier contrôle de l'échéance : [{ service, kind, reference, description }].
+  deletionPostponedBy Json?      @map("deletion_postponed_by")
   anonymizedAt        DateTime?  @map("anonymized_at") @db.Timestamptz(3)
   /// Adresse e-mail en minuscules, enregistrée seulement après confirmation par code ; unique entre comptes.
   email               String?    @unique
@@ -85,6 +92,8 @@ model User {
   emailVerifications EmailVerification[]
   memberships        OrganizationMember[]
 
+  /// Suppressions échues à traiter par la tâche d'anonymisation.
+  @@index([status, deletionScheduledFor])
   @@map("users")
 }
 

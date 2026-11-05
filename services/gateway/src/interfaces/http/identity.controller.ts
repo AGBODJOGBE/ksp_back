@@ -3,6 +3,7 @@ import { Body, Controller, Inject, Req, Res } from '@nestjs/common';
 import { type Clock } from '../../application/access/access.ports';
 import { type SessionTokens } from '../../application/identity/identity.ports';
 import {
+  CancelAccountDeletionUseCase,
   ChangeEmailUseCase,
   ConfirmEmailUseCase,
   ConfirmTotpUseCase,
@@ -10,6 +11,7 @@ import {
   GetMeUseCase,
   LogoutUseCase,
   RefreshSessionUseCase,
+  RequestAccountDeletionUseCase,
   RequestOtpUseCase,
   UpdateMeUseCase,
   VerifyMfaUseCase,
@@ -19,6 +21,8 @@ import { type ClientKind, refreshTokenTransport } from '../../domain/client/clie
 import { CLOCK } from '../../tokens';
 import { type GatewayRequest, type GatewayResponse } from './http-types';
 import {
+  presentCancelledDeletion,
+  presentDeletion,
   presentEmailChange,
   presentMfaRequired,
   presentOtpChallenge,
@@ -57,6 +61,8 @@ export class IdentityHttpController {
     private readonly verifyMfaUseCase: VerifyMfaUseCase,
     private readonly changeEmailUseCase: ChangeEmailUseCase,
     private readonly confirmEmailUseCase: ConfirmEmailUseCase,
+    private readonly requestAccountDeletionUseCase: RequestAccountDeletionUseCase,
+    private readonly cancelAccountDeletionUseCase: CancelAccountDeletionUseCase,
     private readonly cookies: RefreshCookies,
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
@@ -179,6 +185,27 @@ export class IdentityHttpController {
     return presentProfile(
       await this.confirmEmailUseCase.execute(parseBody(requestBodies.confirmEmail, body)),
     );
+  }
+
+  /**
+   * UC-ID-11 : toutes les sessions du compte sont fermées par identity ; sur le web et le
+   * back-office, le cookie de renouvellement devenu inutile est effacé. Pas de corps.
+   */
+  @Route('requestAccountDeletion')
+  async requestAccountDeletion(
+    @Req() request: GatewayRequest,
+    @Res({ passthrough: true }) response: GatewayResponse,
+  ) {
+    const deletion = await this.requestAccountDeletionUseCase.execute();
+    const clientKind = request.gateway?.clientKind;
+    if (clientKind && clientKind !== 'mobile') this.cookies.clear(response, clientKind);
+    return { deletion: presentDeletion(deletion) };
+  }
+
+  /** Le jeton d'accès rendu remplace le jeton restreint ; le jeton de renouvellement ne change pas. */
+  @Route('cancelAccountDeletion')
+  async cancelAccountDeletion() {
+    return presentCancelledDeletion(await this.cancelAccountDeletionUseCase.execute());
   }
 
   /** Navigateur : jeton de renouvellement dans le cookie ; mobile : dans le corps. */

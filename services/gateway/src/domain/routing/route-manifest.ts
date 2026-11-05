@@ -17,6 +17,11 @@ export interface AccessRequirement {
   anyRole?: readonly string[];
   /** Double authentification datant de moins de ce nombre de secondes. */
   recentMfaSeconds?: number;
+  /**
+   * Accepte la session restreinte d'un compte en cours de suppression (extension
+   * x-ksp-pending-deletion, ADR-036) ; toute autre route la refuse.
+   */
+  allowsPendingDeletion?: boolean;
 }
 
 /** Une ligne du manifeste de routage (cahier des charges Gateway, partie 5). */
@@ -106,7 +111,7 @@ export const ROUTE_MANIFEST = [
     method: 'POST',
     path: '/api/v1/identity/logout',
     grpc: `${IDENTITY_AUTH}/Logout`,
-    access: { level: 'authenticated' },
+    access: { level: 'authenticated', allowsPendingDeletion: true },
     rateLimit: 'authenticated',
     requiresKnownClient: true,
   },
@@ -115,7 +120,7 @@ export const ROUTE_MANIFEST = [
     method: 'GET',
     path: '/api/v1/identity/me',
     grpc: `${IDENTITY_ACCOUNT}/GetMe`,
-    access: { level: 'authenticated' },
+    access: { level: 'authenticated', allowsPendingDeletion: true },
     rateLimit: 'authenticated',
     requiresKnownClient: false,
   },
@@ -145,6 +150,26 @@ export const ROUTE_MANIFEST = [
     grpc: `${IDENTITY_ACCOUNT}/ConfirmEmail`,
     access: { level: 'authenticated' },
     rateLimit: 'email_code_verify',
+    requiresKnownClient: false,
+  },
+  {
+    // Suppression du compte (UC-ID-11, ADR-036) : contrôle des obligations dans chaque service.
+    operationId: 'requestAccountDeletion',
+    method: 'POST',
+    path: '/api/v1/identity/me/deletion',
+    grpc: `${IDENTITY_ACCOUNT}/RequestDeletion`,
+    access: { level: 'authenticated' },
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
+    // Depuis la session restreinte ouverte par une nouvelle connexion pendant le délai.
+    operationId: 'cancelAccountDeletion',
+    method: 'DELETE',
+    path: '/api/v1/identity/me/deletion',
+    grpc: `${IDENTITY_ACCOUNT}/CancelDeletion`,
+    access: { level: 'authenticated', allowsPendingDeletion: true },
+    rateLimit: 'authenticated',
     requiresKnownClient: false,
   },
   {

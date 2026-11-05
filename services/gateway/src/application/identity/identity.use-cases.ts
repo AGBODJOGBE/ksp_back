@@ -1,6 +1,8 @@
 import { AppError } from '@ksp/platform';
 import { type ClientKind, refreshTokenTransport } from '../../domain/client/client-kind';
 import {
+  type AccountDeletion,
+  type CancelledDeletion,
   type EmailChange,
   type IdentityAccount,
   type IdentityAuth,
@@ -151,6 +153,24 @@ export class ConfirmEmailUseCase {
 
   execute(input: { code: string }): Promise<Profile> {
     return this.account.confirmEmail(input.code);
+  }
+}
+
+/** Demander la suppression de son compte (UC-ID-11, ADR-036). */
+export class RequestAccountDeletionUseCase {
+  constructor(private readonly account: IdentityAccount) {}
+
+  execute(): Promise<AccountDeletion> {
+    return this.account.requestDeletion();
+  }
+}
+
+/** Annuler la suppression depuis la session restreinte : un jeton complet est rendu. */
+export class CancelAccountDeletionUseCase {
+  constructor(private readonly account: IdentityAccount) {}
+
+  execute(): Promise<CancelledDeletion> {
+    return this.account.cancelDeletion();
   }
 }
 

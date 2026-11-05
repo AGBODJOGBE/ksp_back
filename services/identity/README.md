@@ -78,6 +78,29 @@ organisation validée (`business`, avec `organization_name`), voir ci-dessous.
 | Événements            | `identity.organization.created`, `identity.member.added`, `identity.organization.validated`, `.rejected`, `.suspended`, `.reactivated` (outbox). La suspension et la réactivation portent `createdBy` (demandeur, prévenu par notification).                                                                                                                                                                                |
 | Autres services       | `IdentityService.GetOrganizationsByIds` (jeton de service, 100 identifiants au plus) : raison sociale, adresse, IFU, RCCM, état et e-mail de facturation, ni membres ni décisions. Appelants : billing (en-tête des factures, sans l'e-mail), cleaning (raison sociale au back-office, sans l'e-mail, ADR-029) et notification (e-mail de facturation, toujours vérifié). Tout autre service → `IDENTITY_CALLER_FORBIDDEN`. |
 
+## Suppression du compte (UC-ID-11, ADR-036)
+
+- `AccountService.RequestDeletion` (`POST /api/v1/identity/me/deletion`) : refusée pour un compte
+  interne, pour le seul administrateur d'une organisation non refusée, et dès qu'un service signale
+  une obligation (`IDENTITY_DELETION_BLOCKED`, raisons lisibles) ou ne répond pas
+  (`IDENTITY_DELETION_CHECK_UNAVAILABLE`, réessayer plus tard). Services interrogés en parallèle
+  (`ksp.common.v1.ObligationService`) : `OBLIGATION_SERVICES` (par défaut cleaning, billing,
+  payment), 1,5 s chacun. Acceptée : compte `deletion_pending` jusqu'à `deletion_scheduled_for`
+  (`ACCOUNT_DELETION_DELAY_DAYS`, 30), toutes les sessions fermées,
+  `identity.user.deletion_requested`.
+- Pendant le délai, une connexion par code ouvre une **session restreinte** (rôle
+  `account_deletion_pending`, sans `customer`) : la gateway n'accepte que `GetMe`, `CancelDeletion`
+  et la déconnexion ; identity revérifie (`IDENTITY_ACCOUNT_DELETION_PENDING`). Pas de connexion au
+  back-office.
+- `AccountService.CancelDeletion` (`DELETE /api/v1/identity/me/deletion`) : compte de nouveau actif,
+  `identity.user.deletion_cancelled`, nouveau jeton d'accès complet pour la même session.
+- Tâche planifiée (`ACCOUNT_DELETION_INTERVAL_MS`, 15 minutes ; 0 la désactive) : comptes échus par
+  lots de `ACCOUNT_DELETION_BATCH_SIZE` (50) ; mêmes contrôles ; obligation apparue → report
+  enregistré (raisons dans `GetMe`) et signalé dans les journaux, nouveau contrôle après
+  `ACCOUNT_DELETION_RECHECK_MINUTES` (60). Sinon anonymisation conditionnelle : nom, e-mail,
+  numéros (libérés), sessions, double authentification, rôles, appartenances
+  (`identity.member.removed`), puis `identity.user.deleted`, dans la même transaction.
+
 ## Recherche de compte au back-office (ADR-029)
 
 - `AccountAdminService.FindAccountByPhone` (route `POST /api/v1/admin/identity/accounts/lookup`,

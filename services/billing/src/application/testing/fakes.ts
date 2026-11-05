@@ -116,6 +116,13 @@ export class InMemoryInvoices implements InvoiceRepository {
   async listPastDue(now: Date) {
     return [...this.invoices.values()].filter((i) => i.status === 'pending_payment' && i.dueAt <= now);
   }
+  async listUnpaidForCustomer(customerId: string) {
+    return [...this.invoices.values()]
+      .filter(
+        (i) => i.customerId === customerId && (i.status === 'pending_payment' || i.status === 'overdue'),
+      )
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
   async markOverdue(invoice: Invoice, events: (overdueCount: number) => OutboxMessage[]) {
     const stored = this.invoices.get(invoice.id);
     if (!stored || stored.status !== 'pending_payment' || stored.version !== invoice.version) return false;

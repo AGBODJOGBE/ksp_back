@@ -84,6 +84,18 @@ describe('exigences d’accès', () => {
     expect(checkAccess({ level: 'authenticated' }, caller, now)).toEqual({ allowed: true });
   });
 
+  it('session restreinte (compte en cours de suppression) : seulement les routes qui l’acceptent', () => {
+    const restricted = { roles: [{ role: 'account_deletion_pending' }], mfa: false };
+    expect(checkAccess({ level: 'authenticated' }, restricted, now)).toEqual({
+      allowed: false,
+      reason: 'account_deletion_pending',
+    });
+    expect(checkAccess({ level: 'authenticated', allowsPendingDeletion: true }, restricted, now)).toEqual({
+      allowed: true,
+    });
+    expect(checkAccess({ level: 'public' }, null, now)).toEqual({ allowed: true });
+  });
+
   it('un rôle manquant est refusé', () => {
     const requirement = { level: 'authenticated' as const, anyRole: ['recovery_agent', 'super_admin'] };
     expect(checkAccess(requirement, caller, now)).toEqual({ allowed: false, reason: 'role_missing' });

@@ -171,6 +171,12 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
     'legal_name',
     'link',
   ]),
+  // Suppression du compte (ADR-036).
+  'identity.account_deletion_requested.customer': spec('ksp_identity_account_deletion_requested', [
+    'scheduled_for',
+    'link',
+  ]),
+  'identity.account_deletion_cancelled.customer': spec('ksp_identity_account_deletion_cancelled', ['link']),
   'cleaning.contract_resumed.team': spec('ksp_cleaning_team_contract_resumed', [
     'mission_id',
     'rescheduled_count',

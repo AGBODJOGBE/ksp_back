@@ -1,4 +1,4 @@
-import { paymentV1 } from '@ksp/contracts';
+import { commonV1, paymentV1 } from '@ksp/contracts';
 import { Controller, Inject, Logger } from '@nestjs/common';
 import { parsePage } from '../../application/shared/validation';
 import { PAYMENT_USE_CASES, type PaymentUseCases } from '../../application/use-cases';
@@ -105,5 +105,22 @@ export class PaymentAdminGrpcController implements paymentV1.PaymentAdminService
       idempotencyKey: request.idempotencyKey,
     });
     return { payment: presentAdminPayment(payment) };
+  }
+}
+
+/**
+ * ksp.common.v1.ObligationService, interrogé par identity avant la suppression d'un compte
+ * (UC-ID-11, ADR-036). Le contrôle de l'appelant est fait par le cas d'usage.
+ */
+@Controller()
+@commonV1.ObligationServiceControllerMethods()
+export class ObligationGrpcController implements commonV1.ObligationServiceController {
+  constructor(@Inject(PAYMENT_USE_CASES) private readonly useCases: PaymentUseCases) {}
+
+  async hasPendingObligations(
+    request: commonV1.HasPendingObligationsRequest,
+  ): Promise<commonV1.HasPendingObligationsResponse> {
+    const obligations = await this.useCases.hasPendingObligations.execute({ userId: request.userId });
+    return { hasPending: obligations.length > 0, obligations };
   }
 }

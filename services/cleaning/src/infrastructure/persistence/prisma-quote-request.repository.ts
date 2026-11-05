@@ -235,6 +235,20 @@ export class PrismaQuoteRequestRepository implements QuoteRequestRepository {
     return rows.filter((row) => !row.groupId).length + groups.size;
   }
 
+  async openForCustomer(customerId: string, now: Date): Promise<{ id: string }[]> {
+    return this.prisma.quoteRequest.findMany({
+      where: {
+        customerId,
+        OR: [
+          { status: { in: ['received', 'visit_scheduled'] } },
+          { status: 'quote_sent', quotes: { some: { validUntil: { gt: now } } } },
+        ],
+      },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+  }
+
   async findGroupOperation(
     actorId: string,
     operation: GroupOperation,

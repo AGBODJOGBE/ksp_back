@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { type MfaPolicy } from './domain/mfa/mfa-challenge';
 import { type OtpPolicy } from './domain/otp/otp-policy';
 import { type SessionCategory, type SessionPolicy } from './domain/session/session-policy';
+import { type DeletionPolicy } from './domain/user/account-deletion';
 
 /**
  * Configuration du service : variables communes, plus celles propres à identity.
@@ -64,6 +65,27 @@ export const configSchema = baseServiceConfigSchema.safeExtend({
   MFA_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
   /** Adresse gRPC du service notification (envoi des codes, ADR-014). */
   NOTIFICATION_GRPC_URL: z.string().min(1).default('localhost:50052'),
+  /** Suppression du compte (UC-ID-11, ADR-036) : délai entre la demande et l'anonymisation, en jours. */
+  ACCOUNT_DELETION_DELAY_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  /**
+   * Services interrogés avant une suppression (ksp.common.v1.ObligationService) : « nom=hôte:port »
+   * séparés par des virgules. Un service injoignable refuse la demande.
+   */
+  OBLIGATION_SERVICES: z
+    .string()
+    .default('cleaning=localhost:50053,billing=localhost:50054,payment=localhost:50055'),
+  /** Délai de réponse de chaque service interrogé : sous le délai de la gateway (3 secondes). */
+  OBLIGATION_CHECK_DEADLINE_MS: z.coerce.number().int().positive().default(1500),
+  /** Passage de la tâche d'anonymisation ; 0 : tâche désactivée. */
+  ACCOUNT_DELETION_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .default(15 * 60_000),
+  /** Une suppression échue mais reportée est recontrôlée au plus une fois par ce délai, en minutes. */
+  ACCOUNT_DELETION_RECHECK_MINUTES: z.coerce.number().int().positive().default(60),
+  /** Comptes traités au plus par passage. */
+  ACCOUNT_DELETION_BATCH_SIZE: z.coerce.number().int().positive().max(500).default(50),
 });
 
 export type ServiceConfig = z.infer<typeof configSchema>;
@@ -104,4 +126,13 @@ export function otpPolicyFrom(config: ServiceConfig): OtpPolicy {
 /** Règles du code de confirmation de l'e-mail : celles des codes, avec sa propre validité. */
 export function emailOtpPolicyFrom(config: ServiceConfig): OtpPolicy {
   return { ...otpPolicyFrom(config), ttlSeconds: config.EMAIL_OTP_TTL_SECONDS };
+}
+
+/** Règles de la suppression du compte (UC-ID-11, ADR-036). */
+export function deletionPolicyFrom(config: ServiceConfig): DeletionPolicy {
+  return {
+    delayDays: config.ACCOUNT_DELETION_DELAY_DAYS,
+    recheckMinutes: config.ACCOUNT_DELETION_RECHECK_MINUTES,
+    batchSize: config.ACCOUNT_DELETION_BATCH_SIZE,
+  };
 }

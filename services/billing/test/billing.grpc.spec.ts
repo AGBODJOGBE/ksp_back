@@ -1,5 +1,5 @@
 import { type AddressInfo, createServer } from 'node:net';
-import { billingV1 } from '@ksp/contracts';
+import { billingV1, commonV1 } from '@ksp/contracts';
 import {
   AppError,
   GrpcCaller,
@@ -16,7 +16,11 @@ import { type Metadata } from '@grpc/grpc-js';
 import { type Observable } from 'rxjs';
 import { CUSTOMER_ID, ORGANIZATION_ID, testWorld, type TestWorld } from '../src/application/testing/fakes';
 import { BILLING_USE_CASES, createUseCases } from '../src/application/use-cases';
-import { BillingAdminGrpcController, BillingGrpcController } from '../src/interfaces/grpc/billing.controller';
+import {
+  BillingAdminGrpcController,
+  BillingGrpcController,
+  ObligationGrpcController,
+} from '../src/interfaces/grpc/billing.controller';
 
 /**
  * Bout en bout sur un vrai serveur gRPC (doublures en mémoire, sans base) : chargement du
@@ -41,6 +45,7 @@ describe('billing en gRPC', () => {
   let world: TestWorld;
   let invoices: billingV1.BillingServiceClient;
   let admin: billingV1.BillingAdminServiceClient;
+  let obligations: commonV1.ObligationServiceClient;
   const caller = new GrpcCaller({ target: 'billing' });
 
   beforeAll(async () => {
@@ -68,14 +73,14 @@ describe('billing en gRPC', () => {
     await useCases.issueDueInvoices.execute();
 
     @Module({
-      controllers: [BillingGrpcController, BillingAdminGrpcController],
+      controllers: [BillingGrpcController, BillingAdminGrpcController, ObligationGrpcController],
       providers: [{ provide: BILLING_USE_CASES, useValue: useCases }, GrpcContextInterceptor],
     })
     class TestModule {}
 
     const port = await freePort();
     app = await NestFactory.createMicroservice<MicroserviceOptions>(TestModule, {
-      ...grpcServerOptions(['billing'], port),
+      ...grpcServerOptions(['billing', 'obligation'], port),
       logger: false,
     });
     app.useGlobalFilters(new GrpcExceptionFilter());
@@ -86,6 +91,11 @@ describe('billing en gRPC', () => {
     ) as unknown as ClientGrpc;
     invoices = client.getService(billingV1.BILLING_SERVICE_NAME);
     admin = client.getService(billingV1.BILLING_ADMIN_SERVICE_NAME);
+    obligations = (
+      ClientProxyFactory.create(
+        grpcClientOptions('o', 'obligation', `127.0.0.1:${port}`) as never,
+      ) as unknown as ClientGrpc
+    ).getService(commonV1.OBLIGATION_SERVICE_NAME);
   });
 
   afterAll(async () => {
@@ -133,6 +143,26 @@ describe('billing en gRPC', () => {
       ifu: '3201912345678',
       rccm: 'RB/COT/19 B 1234',
     });
+  });
+
+  it('suppression du compte (ksp.common.v1) : la facture à payer bloque, avec sa référence', async () => {
+    const response = await call(
+      (m) => obligations.hasPendingObligations({ userId: CUSTOMER_ID, organizationId: '' }, m),
+      { roles: [] },
+    );
+    expect(response).toEqual({
+      hasPending: true,
+      obligations: [
+        {
+          kind: 'unpaid_invoice',
+          reference: 'FAC-2026-000001',
+          description: 'La facture FAC-2026-000001 (150 000 FCFA) est en attente de paiement.',
+        },
+      ],
+    });
+    await expect(
+      call((m) => obligations.hasPendingObligations({ userId: 'x', organizationId: '' }, m), { roles: [] }),
+    ).rejects.toMatchObject({ code: 'BILLING_VALIDATION_FAILED' });
   });
 
   it('paiement manuel au back-office, réglages, erreurs traduites', async () => {

@@ -27,6 +27,7 @@ import {
   BillingAdminGrpcController,
   BillingGrpcController,
   InvoicePaymentDueGrpcController,
+  ObligationGrpcController,
 } from './interfaces/grpc/billing.controller';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
@@ -50,7 +51,12 @@ export class AppModule {
         PlatformModule.forRoot(config, { consumerRetryDelaysMs: CONSUMER_RETRY_DELAYS_MS }),
         ClientsModule.register([grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL)]),
       ],
-      controllers: [BillingGrpcController, BillingAdminGrpcController, InvoicePaymentDueGrpcController],
+      controllers: [
+        BillingGrpcController,
+        BillingAdminGrpcController,
+        InvoicePaymentDueGrpcController,
+        ObligationGrpcController,
+      ],
       providers: [
         PrismaService,
         OutboxRelayService,

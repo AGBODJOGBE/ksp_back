@@ -3,6 +3,7 @@ import { type MembershipView } from '../../application/organization/organization
 import { type OrganizationMemberView } from '../../application/organization/organization.ports';
 import { type Account, type UserStatusName } from '../../application/session/session.ports';
 import { type ActiveContext, type ContextType } from '../../domain/context/active-context';
+import { type AccountDeletion } from '../../domain/user/account-deletion';
 import {
   type Organization,
   type OrganizationStatus,
@@ -30,6 +31,15 @@ export function toUserMessage(account: Account): identityV1.User {
     preferredLanguage: account.preferredLanguage,
     createdAt: account.createdAt.toISOString(),
     emailVerified: account.email !== null && account.emailVerifiedAt !== null,
+  };
+}
+
+/** Suppression demandée → message AccountDeletion (UC-ID-11). */
+export function toDeletionMessage(deletion: AccountDeletion): identityV1.AccountDeletion {
+  return {
+    requestedAt: deletion.requestedAt.toISOString(),
+    scheduledFor: deletion.scheduledFor.toISOString(),
+    postponedBy: deletion.postponedBy.map((obstacle) => ({ ...obstacle })),
   };
 }
 

@@ -209,6 +209,11 @@ export interface QuoteRequestRepository {
    * qu'une de ses demandes l'est.
    */
   countOpen(customerId: string, now: Date): Promise<number>;
+  /**
+   * Demandes ouvertes du client (reçue, visite planifiée, devis envoyé encore valide), une par
+   * demande : elles bloquent la suppression de son compte (UC-ID-11, ADR-036).
+   */
+  openForCustomer(customerId: string, now: Date): Promise<{ id: string }[]>;
   /** Opération de groupe déjà faite avec cette clé par cet auteur, ou null (ADR-035). */
   findGroupOperation(
     actorId: string,

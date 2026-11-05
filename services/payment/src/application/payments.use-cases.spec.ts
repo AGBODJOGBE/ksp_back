@@ -899,3 +899,65 @@ describe('paiement en ligne (cas d’usage)', () => {
     });
   });
 });
+
+describe('obligations avant la suppression d’un compte (UC-ID-11, ADR-036)', () => {
+  let deps: ReturnType<typeof makeDeps>;
+  let useCases: ReturnType<typeof createUseCases>;
+  const payments = () => deps.payments as InMemoryPayments;
+  const obligations = (service = 'identity', userId = CUSTOMER_ID) =>
+    asService(service, () => useCases.hasPendingObligations.execute({ userId }));
+
+  beforeEach(() => {
+    deps = makeDeps();
+    useCases = createUseCases(deps);
+    (deps.dues as InMemoryDues).missions.set(MISSION_ID, missionDue());
+  });
+
+  const create = () =>
+    asCustomer(() =>
+      useCases.createPayment.execute({
+        subjectType: 'cleaning_mission',
+        subjectId: MISSION_ID,
+        part: 'deposit',
+        idempotencyKey: KEY,
+      }),
+    );
+
+  it('un paiement en attente, puis en vérification, bloque ; réglé ou traité, plus rien', async () => {
+    expect(await obligations()).toEqual([]);
+    const { payment } = await create();
+    expect(await obligations()).toEqual([
+      {
+        kind: 'pending_payment',
+        reference: payment.id,
+        description: 'Un paiement de 15 000 FCFA est en attente de confirmation.',
+      },
+    ]);
+    expect(await obligations('identity', OTHER_CUSTOMER_ID)).toEqual([]);
+
+    const stored = (await payments().findById(payment.id))!;
+    payments().rows.set(payment.id, { ...stored, status: 'amount_mismatch' });
+    expect(await obligations()).toEqual([
+      expect.objectContaining({ kind: 'payment_under_review', reference: payment.id }),
+    ]);
+
+    payments().rows.set(payment.id, {
+      ...stored,
+      status: 'amount_mismatch',
+      mismatchResolution: {
+        resolvedAt: new Date(),
+        resolvedBy: STAFF_ID,
+        note: 'Remboursé',
+        idempotencyKey: null,
+      },
+    });
+    expect(await obligations()).toEqual([]);
+    payments().rows.set(payment.id, { ...stored, status: 'succeeded' });
+    expect(await obligations()).toEqual([]);
+  });
+
+  it('seul identity peut interroger ; identifiant vérifié', async () => {
+    expect((await rejection(obligations('gateway'))).code).toBe('PAYMENT_CALLER_FORBIDDEN');
+    expect((await rejection(obligations('identity', 'pas-un-uuid'))).code).toBe('PAYMENT_VALIDATION_FAILED');
+  });
+});

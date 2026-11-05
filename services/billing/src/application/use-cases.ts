@@ -15,6 +15,7 @@ import {
 } from './invoices.use-cases';
 import { IssueDueInvoicesUseCase, MarkOverdueInvoicesUseCase } from './issuing.use-cases';
 import { GetInvoiceAmountDueUseCase, RecordOnlineInvoicePaymentUseCase } from './online-payments.use-cases';
+import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import { type BillingDeps } from './ports';
 
 /** Cas d'usage du service (une classe chacun), reliés aux mêmes dépendances. */
@@ -35,6 +36,7 @@ export function createUseCases(deps: BillingDeps) {
     updateSettings: new UpdateBillingSettingsUseCase(deps),
     getInvoiceAmountDue: new GetInvoiceAmountDueUseCase(deps),
     recordOnlinePayment: new RecordOnlineInvoicePaymentUseCase(deps),
+    hasPendingObligations: new HasPendingObligationsUseCase(deps),
   };
 }
 

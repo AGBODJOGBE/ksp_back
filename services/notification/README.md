@@ -56,7 +56,7 @@ Les journaux ne contiennent ni le jeton, ni le numéro, ni le code : seulement l
 Chaque événement écouté a sa file `notification.<événement>` (quorum), sa file de reprise `.retry` (10 secondes, 5 reprises) et sa file d'erreurs `.dlq`, créées par le kit. Le traitement (`NotifyEventUseCase`) :
 
 1. ignore un événement déjà traité (inbox, table `processed_events`) ;
-2. déduit de l'événement les messages à envoyer (`application/events/cleaning.rules.ts`, `billing.rules.ts`, `organization.rules.ts`) et lit les coordonnées des destinataires dans identity (`GetUsersByIds`, jeton de service), ainsi que l'e-mail de facturation des organisations pour leurs factures (`GetOrganizationsByIds`) ; identity indisponible → reprise par la file. **Seule une adresse e-mail vérifiée par code est retenue** (`email_verified` du compte, e-mail de facturation toujours vérifié) : sans elle, aucun e-mail ne part (devis, compte rendu, avis d'impayés, factures) et le message reste visible dans l'espace KSP ;
+2. déduit de l'événement les messages à envoyer (`application/events/cleaning.rules.ts`, `billing.rules.ts`, `organization.rules.ts`, `account.rules.ts`) et lit les coordonnées des destinataires dans identity (`GetUsersByIds`, jeton de service), ainsi que l'e-mail de facturation des organisations pour leurs factures (`GetOrganizationsByIds`) ; identity indisponible → reprise par la file. **Seule une adresse e-mail vérifiée par code est retenue** (`email_verified` du compte, e-mail de facturation toujours vérifié) : sans elle, aucun e-mail ne part (devis, compte rendu, avis d'impayés, factures) et le message reste visible dans l'espace KSP ;
 3. envoie un message par destinataire, avec la clé d'idempotence `<événement>:<modèle>:<destinataire>` (table `notifications`) : une nouvelle livraison n'envoie rien deux fois ;
 4. marque l'événement traité et enregistre une notification par destinataire dans `in_app_notifications`, dans la même transaction.
 
@@ -105,6 +105,8 @@ Textes : `src/domain/messages/cleaning.messages.ts` et `billing.messages.ts` (fr
 
 **Messages regroupés (ADR-035 point 14)** : un envoi groupé, une visite commune et un envoi groupé de devis donnent **un seul message**, qui liste les prestations (et, pour les devis, le montant de chacun, le total et la validité). Les événements par demande publiés dans la même transaction portent `summarizedByGroup: true` et n'envoient rien. Sans ce marqueur (demande seule, devis envoyé seul, événement antérieur), un message par demande. Les messages d'une demande citent sa prestation quand l'événement en donne le nom (`serviceName`) : objet « … — Vitres », texte « pour « Vitres » » ; sans lui, l'ancien libellé. En production, `PORTAL_BASE_URL` doit être une adresse HTTPS publique (le service refuse de démarrer sinon).
 
+**Suppression du compte (ADR-036)** : `identity.user.deletion_requested` (date prévue, comment annuler) et `identity.user.deletion_cancelled`, au titulaire du compte. Rien pour `identity.user.deleted` : le compte anonymisé n'a plus de coordonnées. À traiter (à valider) : effacer ou détacher ses notifications dans l'espace KSP (`in_app_notifications`) sur `identity.user.deleted`.
+
 **Ajouter un événement** (suspension, reprise, facture…) : ses modèles dans `domain/messages`, sa règle dans `application/events`, l'entrée dans `listened-events.ts`, le modèle WhatsApp dans `infrastructure/channels/whatsapp-templates.ts`.
 
 ### Modèles WhatsApp à faire approuver par Meta
@@ -148,6 +150,8 @@ Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie
 | `ksp_identity_organization_rejected`                                                                                                                                                                          | prénom, raison sociale, motif, lien                                                   |
 | `ksp_identity_organization_suspended`                                                                                                                                                                         | prénom, raison sociale, motif, lien                                                   |
 | `ksp_identity_organization_reactivated`                                                                                                                                                                       | prénom, raison sociale, lien                                                          |
+| `ksp_identity_account_deletion_requested`                                                                                                                                                                     | prénom, date prévue, lien                                                             |
+| `ksp_identity_account_deletion_cancelled`                                                                                                                                                                     | prénom, lien                                                                          |
 
 ## E-mail (Brevo)
 

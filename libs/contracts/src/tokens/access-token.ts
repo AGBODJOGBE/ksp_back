@@ -38,3 +38,10 @@ export const ACCESS_TOKEN = {
   type: 'at+jwt',
   algorithm: 'ES256',
 } as const;
+
+/**
+ * Rôle d'une session restreinte : compte en cours de suppression (UC-ID-11, ADR-036). Il remplace
+ * le rôle customer ; la gateway n'accepte un tel jeton que sur les routes qui l'autorisent
+ * explicitement (lecture du profil, annulation de la suppression, déconnexion).
+ */
+export const ACCOUNT_DELETION_PENDING_ROLE = 'account_deletion_pending';

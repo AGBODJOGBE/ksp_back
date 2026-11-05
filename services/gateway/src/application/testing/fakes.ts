@@ -2,7 +2,9 @@
 import { AppError, type VerifiedAccessToken } from '@ksp/platform';
 import { type AccessTokenVerifierPort, type RateLimiter, type RateLimitResult } from '../access/access.ports';
 import {
+  type AccountDeletion,
   type ActiveContext,
+  type CancelledDeletion,
   type EmailChange,
   type IdentityAccount,
   type IdentityAuth,
@@ -136,7 +138,7 @@ export class FakeIdentity implements IdentityAuth, IdentityAccount {
 
   async getMe(): Promise<Profile> {
     this.calls.push({ method: 'getMe', input: undefined });
-    return { user, profileIncomplete: true, pendingEmail: null, activeContext: individual };
+    return { user, profileIncomplete: true, pendingEmail: null, activeContext: individual, deletion: null };
   }
 
   async updateMe(changes: ProfileChanges): Promise<Profile> {
@@ -146,6 +148,7 @@ export class FakeIdentity implements IdentityAuth, IdentityAccount {
       profileIncomplete: false,
       pendingEmail: null,
       activeContext: individual,
+      deletion: null,
     };
   }
 
@@ -161,6 +164,27 @@ export class FakeIdentity implements IdentityAuth, IdentityAccount {
       profileIncomplete: true,
       pendingEmail: null,
       activeContext: individual,
+      deletion: null,
+    };
+  }
+
+  async requestDeletion(): Promise<AccountDeletion> {
+    this.calls.push({ method: 'requestDeletion', input: undefined });
+    return {
+      requestedAt: '2026-11-05T10:00:00.000Z',
+      scheduledFor: '2026-12-05T10:00:00.000Z',
+      postponedBy: [],
+    };
+  }
+
+  async cancelDeletion(): Promise<CancelledDeletion> {
+    this.calls.push({ method: 'cancelDeletion', input: undefined });
+    return {
+      user,
+      profileIncomplete: false,
+      activeContext: individual,
+      accessToken: 'jwt-complet',
+      accessTokenExpiresAt: '2026-11-05T10:15:00.000Z',
     };
   }
 }

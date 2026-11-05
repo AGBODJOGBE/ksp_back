@@ -8,6 +8,7 @@ import {
   ResolveAmountMismatchUseCase,
   SimulatePaymentUseCase,
 } from './payments.use-cases';
+import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import { type PaymentDeps } from './ports';
 
 /** Cas d'usage du service (une classe chacun), reliés aux mêmes dépendances. */
@@ -21,6 +22,7 @@ export function createUseCases(deps: PaymentDeps) {
     receiveProviderNotification: new ReceiveProviderNotificationUseCase(deps),
     simulatePayment: new SimulatePaymentUseCase(deps),
     reconcilePendingPayments: new ReconcilePendingPaymentsUseCase(deps),
+    hasPendingObligations: new HasPendingObligationsUseCase(deps),
   };
 }
 

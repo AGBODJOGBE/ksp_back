@@ -1,4 +1,4 @@
-import { type AppError } from '@ksp/platform';
+import { type AppError, runWithContext } from '@ksp/platform';
 import { type Mission } from '../../domain/mission';
 import { newPaymentState } from '../../domain/payment';
 import { gardenService } from '../../domain/testing';
@@ -401,6 +401,16 @@ describe('missions et passages (UC-CL-09, 10)', () => {
       expect.objectContaining({ kind: 'open_cleaning_mission', reference: MISSION_ID }),
     ]);
     expect(await obligations.execute({ userId: OTHER_CUSTOMER_ID })).toEqual([]);
+  });
+
+  it('obligations : seul identity peut interroger les obligations d’un compte', async () => {
+    const obligations = new HasPendingObligationsUseCase(world);
+    const asCaller = (callerService: string) =>
+      runWithContext({ correlationId: 'c', callerService }, () =>
+        obligations.execute({ userId: CUSTOMER_ID }),
+      );
+    await expect(asCaller('billing')).rejects.toMatchObject({ code: 'CLEANING_CALLER_FORBIDDEN' });
+    expect(await asCaller('identity')).not.toEqual([]);
   });
 });
 

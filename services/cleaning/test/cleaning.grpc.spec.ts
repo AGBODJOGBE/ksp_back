@@ -280,10 +280,27 @@ describe('cleaning en gRPC', () => {
       options: ['windows'],
       calculation: { priced: true, computedPrice: { amount: 34000, currency: 'XOF' } },
     });
-    const { obligations: none } = await call((m) =>
+    // Suppression du compte (ADR-036) : la demande ouverte la bloque.
+    const pending = await call((m) =>
       obligations.hasPendingObligations({ userId: CUSTOMER, organizationId: '' }, m),
     );
-    expect(none).toEqual([]);
+    expect(pending).toEqual({
+      hasPending: true,
+      obligations: [
+        {
+          kind: 'open_cleaning_request',
+          reference: request?.id,
+          description: 'Une demande de devis de nettoyage est en cours.',
+        },
+      ],
+    });
+    const other = await call((m) =>
+      obligations.hasPendingObligations(
+        { userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001', organizationId: '' },
+        m,
+      ),
+    );
+    expect(other).toEqual({ hasPending: false, obligations: [] });
   });
 
   it('back-office : super_admin, filtres de zone et de type, noms lus dans l’annuaire', async () => {

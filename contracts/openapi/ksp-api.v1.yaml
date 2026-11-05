@@ -36,6 +36,9 @@ info:
     - En-tête `Idempotency-Key` obligatoire sur les écritures sensibles (paramètre `IdempotencyKey`).
     - `x-ksp-raw-body` : corps transmis au service octet pour octet, sans validation par la gateway
       (notification signée d'un prestataire : la signature porte sur le corps exact, ADR-031).
+    - `x-ksp-pending-deletion` : la route accepte la session restreinte d'un compte en cours de
+      suppression (jeton au seul rôle `account_deletion_pending`, ADR-036). Toute autre route
+      connectée la refuse avec `GATEWAY_ACCOUNT_DELETION_PENDING` (403).
 
 servers:
   - url: https://api.ksp.bj
@@ -620,6 +623,7 @@ paths:
       x-ksp-grpc: ksp.identity.v1.AuthService/Logout
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
+      x-ksp-pending-deletion: true
       security:
         - bearerAuth: []
       requestBody:
@@ -671,10 +675,15 @@ paths:
         du parcours de paiement dans les métiers ; le même objet accompagne chaque session ouverte
         ou renouvelée.
 
+        Compte en cours de suppression (`user.status` = `deletion_pending`, ADR-036) : `deletion` donne
+        la date prévue de la suppression et, si elle a été reportée, les raisons ; null sinon. Cette
+        route accepte la session restreinte ouverte pendant le délai.
+
         Erreurs : `IDENTITY_USER_NOT_FOUND` (404) si le compte a été supprimé.
       x-ksp-grpc: ksp.identity.v1.AccountService/GetMe
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
+      x-ksp-pending-deletion: true
       security:
         - bearerAuth: []
       responses:
@@ -703,6 +712,7 @@ paths:
                   type: individual
                   organizationId: null
                 pendingEmail: null
+                deletion: null
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -765,10 +775,13 @@ paths:
                   type: individual
                   organizationId: null
                 pendingEmail: null
+                deletion: null
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -827,6 +840,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '413':
@@ -895,10 +910,13 @@ paths:
                   type: individual
                   organizationId: null
                 pendingEmail: null
+                deletion: null
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -907,6 +925,147 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/identity/me/deletion:
+    post:
+      tags: [Compte]
+      operationId: requestAccountDeletion
+      summary: Demander la suppression de son compte
+      description: |
+        UC-ID-11 (ADR-036). identity interroge chaque service qui peut s'y opposer (Nettoyage :
+        prestation ou demande de devis en cours ; facturation : facture à payer ; paiement : paiement
+        en attente ou en vérification). Une seule obligation refuse la demande, avec la liste lisible
+        des raisons (`details.obligations`) ; un service qui ne répond pas la refuse aussi (503,
+        réessayer plus tard). Refusée aussi pour le seul administrateur d'un compte entreprise non
+        refusé (`details.organizations`) et pour un compte interne.
+
+        Acceptée : le compte est **gelé** jusqu'à `deletion.scheduledFor` (30 jours par défaut,
+        réglage d'identity) et **toutes ses sessions sont fermées**, celle-ci comprise : sur le web,
+        la gateway efface aussi le cookie de renouvellement. Pendant le délai, une nouvelle connexion
+        par code ouvre une session restreinte qui ne permet que de lire le profil, d'annuler la
+        suppression et de se déconnecter. À l'échéance, les mêmes contrôles sont refaits, puis le
+        compte est anonymisé (nom, téléphone, e-mail, appareils) ; le numéro redevient libre.
+        Rejouer la demande rend la même échéance. Pas de corps.
+
+        Erreurs : `IDENTITY_DELETION_BLOCKED`, `IDENTITY_DELETION_LAST_ORG_ADMIN` et
+        `IDENTITY_DELETION_INTERNAL_ACCOUNT` (422), `IDENTITY_ACCOUNT_SUSPENDED` (403),
+        `IDENTITY_USER_NOT_FOUND` (404), `IDENTITY_DELETION_CHECK_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.identity.v1.AccountService/RequestDeletion
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Suppression enregistrée, compte gelé, sessions fermées
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+            Set-Cookie:
+              $ref: '#/components/headers/Set-Cookie-Clear'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestAccountDeletionResponse'
+              example:
+                deletion:
+                  requestedAt: '2026-11-05T10:00:00Z'
+                  scheduledFor: '2026-12-05T10:00:00Z'
+                  postponedBy: []
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Suppression impossible pour l'instant (`IDENTITY_DELETION_BLOCKED`, `IDENTITY_DELETION_LAST_ORG_ADMIN`, `IDENTITY_DELETION_INTERNAL_ACCOUNT`)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: IDENTITY_DELETION_BLOCKED
+                  message: Votre compte ne peut pas être supprimé tant que des opérations sont en cours.
+                  details:
+                    obligations:
+                      - service: billing
+                        kind: unpaid_invoice
+                        reference: FAC-2026-000042
+                        description: La facture FAC-2026-000042 (150 000 FCFA) est en attente de paiement.
+                  correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    delete:
+      tags: [Compte]
+      operationId: cancelAccountDeletion
+      summary: Annuler la suppression de son compte
+      description: |
+        UC-ID-11 (ADR-036). Depuis la session restreinte ouverte par une **nouvelle connexion** pendant
+        le délai (les sessions d'avant la demande sont fermées) : le compte redevient actif. La
+        réponse porte un **nouveau jeton d'accès complet** à utiliser à la place du jeton restreint ;
+        le jeton de renouvellement ne change pas, et les renouvellements suivants rendent des jetons
+        complets. Sur un compte déjà actif, rend simplement un nouveau jeton.
+
+        Erreurs : `IDENTITY_SESSION_REVOKED` (401), `IDENTITY_ACCOUNT_SUSPENDED` (403),
+        `IDENTITY_USER_NOT_FOUND` (404, compte déjà anonymisé).
+      x-ksp-grpc: ksp.identity.v1.AccountService/CancelDeletion
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-pending-deletion: true
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Suppression annulée, compte de nouveau actif
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelAccountDeletionResponse'
+              example:
+                user:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                  status: active
+                  firstName: Koffi
+                  lastName: Adjovi
+                  phone: '+2290197000045'
+                  email: null
+                  emailVerified: false
+                  preferredLanguage: fr
+                  createdAt: '2026-10-17T10:00:00Z'
+                profileIncomplete: false
+                activeContext:
+                  type: individual
+                  organizationId: null
+                accessToken: eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9.e30.c2ln
+                accessTokenExpiresAt: '2026-11-20T10:15:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -1009,6 +1168,8 @@ paths:
                 $ref: '#/components/schemas/OrganizationMembershipList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -1077,6 +1238,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
         '413':
@@ -1120,6 +1283,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -2266,6 +2431,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
@@ -2361,6 +2528,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '413':
@@ -2406,6 +2575,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -2459,6 +2630,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -2524,6 +2697,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -2734,6 +2909,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '413':
@@ -2958,6 +3135,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -3176,6 +3355,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -3484,6 +3665,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -3539,6 +3722,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '413':
@@ -3592,6 +3777,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '413':
@@ -3709,6 +3896,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -3819,6 +4008,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -3868,6 +4059,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '413':
@@ -6431,6 +6624,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -6470,6 +6665,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -6889,6 +7086,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -6936,6 +7135,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -6981,6 +7182,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -7033,6 +7236,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -7596,7 +7801,7 @@ components:
               details: {}
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
     Forbidden:
-      description: Accès refusé (`IDENTITY_ACCOUNT_SUSPENDED`, `IDENTITY_BACKOFFICE_FORBIDDEN`, `IDENTITY_CONTEXT_FORBIDDEN`, `IDENTITY_ORGANIZATION_FORBIDDEN`)
+      description: Accès refusé (`IDENTITY_ACCOUNT_SUSPENDED`, `IDENTITY_BACKOFFICE_FORBIDDEN`, `IDENTITY_CONTEXT_FORBIDDEN`, `IDENTITY_ORGANIZATION_FORBIDDEN`, `IDENTITY_ACCOUNT_DELETION_PENDING`, `GATEWAY_ACCOUNT_DELETION_PENDING`, session restreinte d'un compte en cours de suppression)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -7644,7 +7849,7 @@ components:
                 retryAfterSeconds: 45
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
     ServiceUnavailable:
-      description: Service momentanément indisponible, coupe-circuit ouvert (`IDENTITY_UNAVAILABLE`)
+      description: Service momentanément indisponible, coupe-circuit ouvert (`IDENTITY_UNAVAILABLE`, `IDENTITY_DELETION_CHECK_UNAVAILABLE`, un service n'a pas pu confirmer l'absence d'obligation, réessayer plus tard)
       headers:
         X-Correlation-Id:
           $ref: '#/components/headers/X-Correlation-Id'
@@ -8151,7 +8356,7 @@ components:
     MeResponse:
       type: object
       additionalProperties: false
-      required: [user, profileIncomplete, pendingEmail, activeContext]
+      required: [user, profileIncomplete, pendingEmail, activeContext, deletion]
       properties:
         user:
           $ref: '#/components/schemas/User'
@@ -8163,6 +8368,74 @@ components:
           type: [string, 'null']
           format: email
           description: Adresse en attente de confirmation par code (code envoyé, encore valable) ; null sinon.
+        deletion:
+          oneOf:
+            - $ref: '#/components/schemas/AccountDeletion'
+            - type: 'null'
+          description: Suppression demandée (compte `deletion_pending`, ADR-036) ; null sinon.
+
+    DeletionObstacle:
+      type: object
+      additionalProperties: false
+      required: [service, kind, reference, description]
+      description: Raison lisible qui empêche la suppression d'un compte (ADR-036).
+      properties:
+        service:
+          type: string
+          description: Service qui l'a signalée (`cleaning`, `billing`, `payment`…) ou `identity` (compte entreprise).
+        kind:
+          type: string
+          description: Nature, par exemple `open_cleaning_mission`, `open_cleaning_request`, `unpaid_invoice`, `pending_payment`, `payment_under_review`, `last_org_admin`.
+        reference:
+          type: string
+          description: Référence lisible de l'objet concerné (numéro de facture, identifiant, raison sociale).
+        description:
+          type: string
+          description: Explication à afficher.
+
+    AccountDeletion:
+      type: object
+      additionalProperties: false
+      required: [requestedAt, scheduledFor, postponedBy]
+      properties:
+        requestedAt:
+          type: string
+          format: date-time
+        scheduledFor:
+          type: string
+          format: date-time
+          description: Date prévue de l'anonymisation, fixée à la demande.
+        postponedBy:
+          type: array
+          description: Obligations trouvées à l'échéance ; tant qu'il en reste, la suppression est reportée.
+          items:
+            $ref: '#/components/schemas/DeletionObstacle'
+
+    RequestAccountDeletionResponse:
+      type: object
+      additionalProperties: false
+      required: [deletion]
+      properties:
+        deletion:
+          $ref: '#/components/schemas/AccountDeletion'
+
+    CancelAccountDeletionResponse:
+      type: object
+      additionalProperties: false
+      required: [user, profileIncomplete, activeContext, accessToken, accessTokenExpiresAt]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        profileIncomplete:
+          type: boolean
+        activeContext:
+          $ref: '#/components/schemas/ActiveContext'
+        accessToken:
+          type: string
+          description: Nouveau jeton d'accès complet, à utiliser à la place du jeton restreint.
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
 
     SwitchContextRequest:
       type: object

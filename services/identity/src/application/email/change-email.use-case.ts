@@ -4,6 +4,7 @@ import { type OtpCodeGenerator, type OtpHasher } from '../otp/otp.ports';
 import { type AccountRepository } from '../session/session.ports';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { EmailCodeIssuer, type IssuedEmailCode } from './email-code-issuer';
+import { deletionErrors } from '../deletion/deletion-errors';
 import { emailErrors } from './email-errors';
 import { type EmailCodeSender, type EmailVerificationRepository } from './email.ports';
 
@@ -46,6 +47,7 @@ export class ChangeEmailUseCase {
 
     const account = await this.accounts.findById(input.userId);
     if (!account || account.status === 'deleted') throw emailErrors.userNotFound();
+    if (account.status === 'deletion_pending') throw deletionErrors.pending();
     if (account.email === email.value && account.emailVerifiedAt) throw emailErrors.alreadyVerified();
 
     return this.issuer.issue({ userId: account.id, email, ip: input.ip, organization: null });

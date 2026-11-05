@@ -46,6 +46,12 @@ export class AuthorizeRequestUseCase {
     if (route.access.level === 'authenticated') {
       caller = await this.verifier.verify(bearerToken(request.authorization));
       const decision = checkAccess(route.access, caller.user, Math.floor(this.clock.now().getTime() / 1000));
+      if (!decision.allowed && decision.reason === 'account_deletion_pending') {
+        throw AppError.forbidden(
+          'GATEWAY_ACCOUNT_DELETION_PENDING',
+          'Votre compte est en cours de suppression : vous pouvez seulement annuler la suppression.',
+        );
+      }
       if (!decision.allowed && decision.reason === 'mfa_required') {
         throw AppError.forbidden(
           'GATEWAY_MFA_REQUIRED',

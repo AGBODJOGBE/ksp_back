@@ -1,10 +1,20 @@
 import { FindAccountByPhoneUseCase } from './application/account-admin/find-account-by-phone.use-case';
-import { notificationV1 } from '@ksp/contracts';
+import { commonV1, notificationV1 } from '@ksp/contracts';
 import { GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
-import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
+import {
+  type ClientGrpc,
+  type ClientOptions,
+  ClientProxyFactory,
+  ClientsModule,
+} from '@nestjs/microservices';
 import { GetMeUseCase, UpdateMeUseCase } from './application/account/account.use-cases';
 import { ActiveContexts } from './application/context/active-contexts';
+import {
+  AnonymizeDueAccountsUseCase,
+  CancelDeletionUseCase,
+  RequestDeletionUseCase,
+} from './application/deletion/account-deletion.use-cases';
 import { GetOrganizationsUseCase } from './application/directory/get-organizations.use-case';
 import { GetUsersUseCase } from './application/directory/get-users.use-case';
 import { ChangeEmailUseCase } from './application/email/change-email.use-case';
@@ -38,6 +48,7 @@ import { AccessTokenIssuer } from './application/token/access-token-issuer';
 import { GetSigningKeysUseCase } from './application/token/get-signing-keys.use-case';
 import {
   backofficeSessionPolicyFrom,
+  deletionPolicyFrom,
   emailOtpPolicyFrom,
   mfaPolicyFrom,
   otpPolicyFrom,
@@ -46,6 +57,15 @@ import {
   sessionPolicyFrom,
 } from './config';
 import { TOTP_DEFAULTS } from './domain/mfa/totp';
+import {
+  GrpcObligationChecker,
+  parseObligationServices,
+} from './infrastructure/deletion/grpc-obligation-checker';
+import { PrismaAccountDeletionRepository } from './infrastructure/deletion/prisma-account-deletion.repository';
+import {
+  ACCOUNT_DELETION_INTERVAL_MS,
+  AccountDeletionSchedulerService,
+} from './infrastructure/scheduling/account-deletion-scheduler.service';
 import { NotificationEmailCodeSender } from './infrastructure/email/notification-email-code-sender';
 import { PrismaEmailVerificationRepository } from './infrastructure/email/prisma-email-verification.repository';
 import { AesGcmSecretCipher } from './infrastructure/mfa/aes-gcm-secret-cipher';
@@ -86,6 +106,17 @@ const OTP_SENDER = Symbol('OTP_SENDER');
 const EMAIL_CODE_SENDER = Symbol('EMAIL_CODE_SENDER');
 const TOKEN_SIGNER = Symbol('TOKEN_SIGNER');
 const SECRET_CIPHER = Symbol('SECRET_CIPHER');
+const OBLIGATION_CHECKER = Symbol('OBLIGATION_CHECKER');
+
+/**
+ * Client gRPC de ksp.common.v1.ObligationService pour un service de la configuration
+ * (OBLIGATION_SERVICES) : la liste peut s'allonger sans changer de code.
+ */
+function obligationClient(service: string, url: string): commonV1.ObligationServiceClient {
+  const { name: _name, ...options } = grpcClientOptions(`obligation:${service}`, 'obligation', url);
+  const proxy = ClientProxyFactory.create(options as ClientOptions) as unknown as ClientGrpc;
+  return proxy.getService<commonV1.ObligationServiceClient>(commonV1.OBLIGATION_SERVICE_NAME);
+}
 
 /** Racine de composition : relie chaque cas d'usage à ses adaptateurs. */
 @Module({})
@@ -525,6 +556,76 @@ export class AppModule {
           useFactory: (organizations: PrismaOrganizationRepository) =>
             new GetOrganizationUseCase(organizations),
         },
+        PrismaAccountDeletionRepository,
+        {
+          // Lu au démarrage : une liste de services mal formée empêche le service de démarrer.
+          provide: OBLIGATION_CHECKER,
+          inject: [IssueServiceTokenUseCase],
+          useFactory: (serviceTokens: IssueServiceTokenUseCase) =>
+            new GrpcObligationChecker(
+              parseObligationServices(config.OBLIGATION_SERVICES).map(({ service, url }) => ({
+                service,
+                client: obligationClient(service, url),
+                caller: new GrpcCaller({
+                  target: service,
+                  defaultDeadlineMs: config.OBLIGATION_CHECK_DEADLINE_MS,
+                  serviceTokenProvider: new LocalServiceTokenProvider(serviceTokens),
+                }),
+              })),
+              config.OBLIGATION_CHECK_DEADLINE_MS,
+            ),
+        },
+        {
+          provide: RequestDeletionUseCase,
+          inject: [
+            PrismaLoginRepository,
+            PrismaAccountDeletionRepository,
+            PrismaRoleRepository,
+            OBLIGATION_CHECKER,
+          ],
+          useFactory: (
+            accounts: PrismaLoginRepository,
+            deletions: PrismaAccountDeletionRepository,
+            roles: PrismaRoleRepository,
+            obligations: GrpcObligationChecker,
+          ) =>
+            new RequestDeletionUseCase(
+              accounts,
+              deletions,
+              roles,
+              obligations,
+              new SystemClock(),
+              deletionPolicyFrom(config),
+            ),
+        },
+        {
+          provide: CancelDeletionUseCase,
+          inject: [
+            PrismaSessionStore,
+            PrismaLoginRepository,
+            PrismaAccountDeletionRepository,
+            AccessTokenIssuer,
+          ],
+          useFactory: (
+            sessions: PrismaSessionStore,
+            accounts: PrismaLoginRepository,
+            deletions: PrismaAccountDeletionRepository,
+            accessTokens: AccessTokenIssuer,
+          ) => new CancelDeletionUseCase(sessions, accounts, deletions, accessTokens, new SystemClock()),
+        },
+        {
+          provide: AnonymizeDueAccountsUseCase,
+          inject: [PrismaAccountDeletionRepository, OBLIGATION_CHECKER],
+          useFactory: (deletions: PrismaAccountDeletionRepository, obligations: GrpcObligationChecker) =>
+            new AnonymizeDueAccountsUseCase(
+              deletions,
+              obligations,
+              new SystemClock(),
+              deletionPolicyFrom(config),
+            ),
+        },
+        { provide: ACCOUNT_DELETION_INTERVAL_MS, useValue: config.ACCOUNT_DELETION_INTERVAL_MS },
+        AccountDeletionSchedulerService,
         {
           provide: DecideOrganizationUseCase,
           inject: [PrismaOrganizationRepository],
