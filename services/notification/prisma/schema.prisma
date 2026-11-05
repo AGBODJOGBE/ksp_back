@@ -81,6 +81,8 @@ model Notification {
   acceptedAt        DateTime?             @map("accepted_at") @db.Timestamptz(3)
   failedAt          DateTime?             @map("failed_at") @db.Timestamptz(3)
 
+  /// Envois d'un compte, retrouvés à son anonymisation (ADR-036).
+  @@index([recipientUserId])
   @@map("notifications")
 }
 

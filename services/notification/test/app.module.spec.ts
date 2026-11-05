@@ -2,9 +2,11 @@ import { loadConfig } from '@ksp/platform';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { NotifyEventUseCase } from '../src/application/events/notify-event.use-case';
+import { EraseUserNotificationsUseCase } from '../src/application/privacy/erase-user-notifications.use-case';
 import { SendNotificationUseCase } from '../src/application/send/send-notification.use-case';
 import { configSchema } from '../src/config';
 import { NotificationGrpcController } from '../src/interfaces/grpc/notification.controller';
+import { AccountErasureConsumer } from '../src/interfaces/messaging/account-erasure.consumer';
 import { EventNotificationsConsumer } from '../src/interfaces/messaging/event-notifications.consumer';
 
 const ENV = {
@@ -24,6 +26,8 @@ describe('AppModule', () => {
     expect(moduleRef.get(SendNotificationUseCase)).toBeDefined();
     expect(moduleRef.get(NotifyEventUseCase)).toBeDefined();
     expect(moduleRef.get(EventNotificationsConsumer)).toBeDefined();
+    expect(moduleRef.get(EraseUserNotificationsUseCase)).toBeDefined();
+    expect(moduleRef.get(AccountErasureConsumer)).toBeDefined();
     await moduleRef.close();
   });
 
