@@ -25,7 +25,7 @@ import {
 } from '../../domain/simulator';
 import { type CleaningDeps, presentRequest } from '../deps';
 import { FIELD_WORK, requireStaff, seesEverything, SUPERVISION } from '../shared/access';
-import { requestForStaff } from '../groups/group-support';
+import { requestForStaff, type StaffRequest } from '../groups/group-support';
 import { type Quote } from '../../domain/quote';
 import { type Slot } from '../../domain/schedule';
 import { type CleaningSettings } from '../../domain/settings';
@@ -239,7 +239,7 @@ export class CompleteVisitUseCase {
     report: string;
     /** Mesures constatées sur place (ADR-037), facultatives. */
     measurements?: MeasurementInput | undefined;
-  }): Promise<QuoteRequest> {
+  }): Promise<StaffRequest> {
     // Ouvert à l'agent affecté à la visite (ADR-035) ; la visite d'un autre agent est introuvable.
     const staff = requireStaff(FIELD_WORK);
     const request = await this.deps.requests.findByVisitId(requireUuid('visitId', input.visitId));

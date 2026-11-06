@@ -1,7 +1,14 @@
 import { AppError } from '@ksp/platform';
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
-import { type CleaningServer, IDS, protoMission, startCleaningStub } from './support/cleaning-stub';
+import {
+  type CleaningServer,
+  IDS,
+  protoMission,
+  protoRequest,
+  protoVisit,
+  startCleaningStub,
+} from './support/cleaning-stub';
 import {
   type IdentityServer,
   ORIGINS,
@@ -1330,5 +1337,95 @@ describe('gateway → cleaning', () => {
         })
       ).status,
     ).toBe(400);
+  });
+  it('agent seul : compte rendu et correction des mesures sans montant ; recalcul avec son calcul', async () => {
+    const agent = await agentToken();
+    const REQUEST = `/api/v1/admin/cleaning/quote-requests/${IDS.request}`;
+    // Ce que cleaning renvoie à un agent seul : réponses et mesures, aucun montant (ADR-037).
+    const forAgent = {
+      request: {
+        ...protoRequest,
+        estimate: undefined,
+        quote: undefined,
+        calculation: undefined,
+        measurement: { ...protoRequest.measurement!, calculation: undefined },
+      },
+    };
+    cleaning.stub.on('completeVisit', async () => forAgent);
+    cleaning.stub.on('saveRequestMeasurements', async () => forAgent);
+    const measured = { answers: { housing_type: 'apartment', rooms: 8 }, frequency: 'once' };
+    const noAmounts = {
+      estimate: null,
+      quote: null,
+      calculation: null,
+      measuredCalculation: null,
+      answers: { rooms: 6 },
+      measuredAnswers: { rooms: 8 },
+    };
+
+    const done = await backoffice(
+      http().post(`/api/v1/admin/cleaning/visits/${IDS.visit}/complete`),
+      agent,
+    ).send({
+      report: 'Huit pièces',
+      measurements: measured,
+    });
+    expect(done.status).toBe(200);
+    expect(done.body).toMatchObject(noAmounts);
+    const saved = await backoffice(http().put(`${REQUEST}/measurements`), agent).send(measured);
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject(noAmounts);
+
+    // Le recalcul reste son outil de saisie : le calcul lui est présenté.
+    const estimate = await backoffice(http().post(`${REQUEST}/estimate`), agent).send(measured);
+    expect(estimate.status).toBe(200);
+    expect(estimate.body.calculation).toMatchObject({ priced: true });
+  });
+
+  it('liste des visites : réponses du client et mesures pour préremplir ; aucun montant pour un agent', async () => {
+    const supervision = await backoffice(http().get('/api/v1/admin/cleaning/visits'), staff);
+    expect(supervision.status).toBe(200);
+    expect(supervision.body.data[0].requests[0]).toMatchObject({
+      serviceCode: 'home_cleaning',
+      serviceName: 'Nettoyage à domicile',
+      placeType: 'house',
+      placeTypeLabel: 'Maison',
+      answers: { housing_type: 'apartment', rooms: 6, pets: false },
+      selectedOptions: [{ code: 'windows', answers: { window_count: 8 } }],
+      frequency: 'once',
+      pricingVersion: 3,
+      answerSummary: { fields: [{ code: 'housing_type', display: 'Appartement' }, {}, {}] },
+      calculation: { priced: true },
+      measuredAnswers: { rooms: 8 },
+      measuredOptions: [{ code: 'windows', answers: { window_count: 8 } }],
+      measuredFrequency: 'once',
+      measuredCalculation: { computedPrice: xof(45150) },
+      measuredBy: IDS.agent,
+      measuredSummary: { frequency: { code: 'once', label: 'Une fois' } },
+    });
+
+    // Agent : cleaning n'envoie aucun montant ; la gateway présente null, sans rien inventer.
+    cleaning.stub.on('listVisits', async () => ({
+      visits: [
+        {
+          ...protoVisit,
+          requests: protoVisit.requests.map((item) => ({
+            ...item,
+            calculation: undefined,
+            measurement: item.measurement && { ...item.measurement, calculation: undefined },
+          })),
+        },
+      ],
+      nextCursor: '',
+    }));
+    const forAgent = await backoffice(http().get('/api/v1/admin/cleaning/visits'), await agentToken());
+    expect(forAgent.status).toBe(200);
+    expect(forAgent.body.data[0].requests[0]).toMatchObject({
+      answers: { rooms: 6 },
+      measuredAnswers: { rooms: 8 },
+      measuredSummary: { frequency: { code: 'once' } },
+      calculation: null,
+      measuredCalculation: null,
+    });
   });
 });

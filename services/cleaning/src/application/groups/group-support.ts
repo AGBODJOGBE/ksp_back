@@ -113,12 +113,22 @@ export async function settle(
 }
 
 /**
- * Position masquée pour un agent (ADR-035) : un agent seul ne voit plus la position, le repère ni
- * l'adresse géocodée d'une visite terminée ou annulée ; la supervision garde l'accès.
+ * Demande montrée à un membre du back-office : `withAmounts` est faux pour un agent seul (ADR-037),
+ * qui ne voit jamais les montants commerciaux de la demande (calcul, fourchette, devis, calcul des
+ * mesures). Le recalcul EstimateRequestPrice, son outil de saisie, lui reste ouvert.
  */
-export function requestForStaff(staff: Staff, request: QuoteRequest): QuoteRequest {
-  if (seesEverything(staff) || request.visit?.status === 'scheduled') return request;
-  return { ...withoutPosition(request), geocodedAddress: null };
+export type StaffRequest = QuoteRequest & { withAmounts: boolean };
+
+/**
+ * Demande vue par la supervision (tout), ou par un agent seul : sans montants (ADR-037) et, une fois
+ * la visite terminée ou annulée, sans position, repère ni adresse géocodée (ADR-035). Le calcul des
+ * mesures est retiré à la présentation (`withAmounts`).
+ */
+export function requestForStaff(staff: Staff, request: QuoteRequest): StaffRequest {
+  if (seesEverything(staff)) return { ...request, withAmounts: true };
+  const located =
+    request.visit?.status === 'scheduled' ? request : { ...withoutPosition(request), geocodedAddress: null };
+  return { ...located, estimate: null, calculation: null, quote: null, withAmounts: false };
 }
 
 /** Même règle pour une mission : terminée ou annulée, sa position est masquée pour un agent seul. */

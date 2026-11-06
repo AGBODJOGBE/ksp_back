@@ -4525,6 +4525,8 @@ paths:
 
         Ouvert à l’agent affecté à la visite (ADR-035) ; la visite d’un autre agent : `CLEANING_VISIT_NOT_FOUND`. Pour un agent, la demande renvoyée n’a plus de position (visite close).
 
+        Agent seul (sans rôle de supervision) : aucun montant commercial dans la demande renvoyée (`calculation`, `estimate`, `quote`, `measuredCalculation` à `null`, ADR-037).
+
         `measurements` (facultatif, ADR-037) : dimensions constatées sur place, mêmes champs que le formulaire du client,
         validées comme une simulation (`details.field` = `measurements.answers.rooms`) ; enregistrées à part
         (`measuredAnswers`, `measuredCalculation`…), sans remplacer les réponses du client, et tracées. Rien n’est
@@ -4607,7 +4609,8 @@ paths:
         `CLEANING_VALIDATION_FAILED` (400) avec `details.field` (`answers.rooms`) et `details.reason`. Un prix non
         fixé donne `calculation.priced = false` avec `reason` et `missingPrices`.
 
-        Supervision, ou agent affecté à la visite de la demande (sinon `CLEANING_REQUEST_NOT_FOUND`, 404).
+        Supervision, ou agent affecté à la visite de la demande (sinon `CLEANING_REQUEST_NOT_FOUND`, 404). Le calcul
+        est renvoyé à l’agent aussi : c’est son outil de saisie, il y voit l’effet de ses mesures (ADR-037).
 
         Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/EstimateRequestPrice
@@ -4754,6 +4757,8 @@ paths:
         Possible tant qu’aucun devis n’est envoyé (demande reçue ou visite planifiée, y compris une nouvelle visite après
         un devis) ; sinon `CLEANING_MEASUREMENTS_LOCKED` (422, `details.status`). Supervision, ou agent de la visite de
         la demande (sinon `CLEANING_REQUEST_NOT_FOUND`). Validation comme une simulation (`answers.<champ>`).
+
+        Agent seul (sans rôle de supervision) : aucun montant commercial dans la demande renvoyée (`calculation`, `estimate`, `quote`, `measuredCalculation` à `null`, ADR-037).
 
         Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/SaveRequestMeasurements
@@ -4966,7 +4971,8 @@ paths:
         ADR-035. Complète toutes les visites encore planifiées de la visite commune, avec le même compte rendu. Ouvert à
         l’agent de cette visite (un autre agent : `CLEANING_VISIT_NOT_FOUND`). Refusé avant l’heure prévue
         (`CLEANING_VISIT_TOO_EARLY`). `Idempotency-Key` facultative. Pour un agent, `requests` ne contient que ses
-        demandes, sans position (visite close).
+        demandes, sans position (visite close) et sans montant (`calculation`, `estimate`, `quote`,
+        `measuredCalculation` à `null`, ADR-037).
 
         `measurements` (facultatif, ADR-037) : mesures constatées par demande de la visite commune, validées comme une
         simulation (`measurements[1].answers.surface`) ; une demande hors de la visite ou citée deux fois :
@@ -5188,6 +5194,8 @@ paths:
         (`CLEANING_ZONE_NOT_COVERED`) ; la correction s’applique à toutes les demandes du groupe et aux missions non
         terminées. Tracée dans le journal d’audit, sans les coordonnées. Les devis déjà envoyés ne changent pas.
 
+        Agent seul (sans rôle de supervision) : aucun montant commercial dans la demande renvoyée (`calculation`, `estimate`, `quote`, `measuredCalculation` à `null`, ADR-037).
+
         Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/CorrectRequestLocation
       x-ksp-access: authenticated
@@ -5256,6 +5264,11 @@ paths:
         supervision voit tout. Une visite commune est une seule entrée avec ses demandes. Pour un agent, position, repère
         et adresse d’une visite terminée ou annulée sont `null`.
 
+        ADR-037 : chaque demande porte les réponses du client (`answers`, `selectedOptions`, `frequency`,
+        `pricingVersion`, `answerSummary`) et, s’il y en a, les mesures constatées (`measured*`), pour préremplir le
+        formulaire après la visite. Aucun montant pour un agent : `calculation` et `measuredCalculation` sont `null`
+        (le recalcul `POST …/quote-requests/{id}/estimate` lui reste ouvert).
+
         Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListVisits
       x-ksp-access: authenticated
@@ -5286,6 +5299,130 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CleaningVisitList'
+              example:
+                data:
+                  - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d8001
+                    groupVisitId: null
+                    groupId: null
+                    status: scheduled
+                    scheduledAt: 2026-11-04T09:00:00Z
+                    completedAt: null
+                    report: null
+                    agentId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7001
+                    agentName: Awa Dossou
+                    customerId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11
+                    customerName: Koffi Adjovi
+                    organizationName: null
+                    commune: Abomey-Calavi
+                    address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+                    location:
+                      latitude: 6.4489
+                      longitude: 2.3556
+                      accuracyMeters: 15
+                    landmark: Portail bleu
+                    geocodedAddress: Zogbadjè, Abomey-Calavi, Bénin
+                    placeType: house
+                    placeTypeLabel: Maison
+                    requests:
+                      - requestId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                        visitId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d8001
+                        serviceCode: home_cleaning
+                        serviceName: Nettoyage à domicile
+                        status: visit_scheduled
+                        placeType: house
+                        placeTypeLabel: Maison
+                        answers:
+                          housing_type: villa
+                          rooms: 6
+                          condition: normal
+                        selectedOptions:
+                          - code: windows
+                            answers:
+                              window_count: 8
+                        frequency: once
+                        pricingVersion: 3
+                        calculation: null
+                        answerSummary:
+                          fields:
+                            - code: housing_type
+                              label: Type de logement
+                              type: choice
+                              value: villa
+                              display: Villa
+                              unitLabel: null
+                            - code: rooms
+                              label: Nombre de pièces
+                              type: number
+                              value: 6
+                              display: 6 pièces
+                              unitLabel: pièces
+                            - code: condition
+                              label: État
+                              type: choice
+                              value: normal
+                              display: Normal
+                              unitLabel: null
+                          options:
+                            - optionCode: windows
+                              label: Vitres
+                              fields:
+                                - code: window_count
+                                  label: Nombre de fenêtres
+                                  type: number
+                                  value: 8
+                                  display: 8 fenêtres
+                                  unitLabel: fenêtres
+                          frequency:
+                            code: once
+                            label: Une fois
+                        measuredAnswers:
+                          housing_type: villa
+                          rooms: 8
+                          condition: very_dirty
+                        measuredOptions:
+                          - code: windows
+                            answers:
+                              window_count: 8
+                        measuredFrequency: once
+                        measuredCalculation: null
+                        measuredPricingVersion: 3
+                        measuredAt: 2026-11-04T10:00:00Z
+                        measuredBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7001
+                        measuredByName: Awa Dossou
+                        measuredSummary:
+                          fields:
+                            - code: housing_type
+                              label: Type de logement
+                              type: choice
+                              value: villa
+                              display: Villa
+                              unitLabel: null
+                            - code: rooms
+                              label: Nombre de pièces
+                              type: number
+                              value: 8
+                              display: 8 pièces
+                              unitLabel: pièces
+                            - code: condition
+                              label: État
+                              type: choice
+                              value: very_dirty
+                              display: Très sale
+                              unitLabel: null
+                          options:
+                            - optionCode: windows
+                              label: Vitres
+                              fields:
+                                - code: window_count
+                                  label: Nombre de fenêtres
+                                  type: number
+                                  value: 8
+                                  display: 8 fenêtres
+                                  unitLabel: fenêtres
+                          frequency:
+                            code: once
+                            label: Une fois
+                nextCursor: null
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -10138,7 +10275,7 @@ components:
           minimum: 1
           description: Version de la grille utilisée pour le calcul ; null pour une demande antérieure.
         calculation:
-          description: Détail du calcul au moment de la demande ; le devis est prérempli à partir de lui. Null pour une demande antérieure.
+          description: Détail du calcul au moment de la demande ; le devis est prérempli à partir de lui. Null pour une demande antérieure, et au back-office pour un agent seul (ADR-037).
           oneOf:
             - $ref: '#/components/schemas/CleaningPriceCalculation'
             - type: 'null'
@@ -10174,6 +10311,7 @@ components:
           type: integer
           minimum: 1
         estimate:
+          description: Fourchette du simulateur ; null sans prix, et au back-office pour un agent seul (ADR-037).
           oneOf:
             - $ref: '#/components/schemas/CleaningPriceRange'
             - type: 'null'
@@ -10182,6 +10320,7 @@ components:
             - $ref: '#/components/schemas/CleaningSiteVisit'
             - type: 'null'
         quote:
+          description: Devis envoyé ; null avant l’envoi, et au back-office pour un agent seul (ADR-037).
           oneOf:
             - $ref: '#/components/schemas/CleaningQuote'
             - type: 'null'
@@ -10283,7 +10422,7 @@ components:
         measuredCalculation:
           description: |
             Back-office — calcul des mesures (grille en vigueur et commune de la demande au moment de la saisie) ; le
-            devis sans lignes est prérempli depuis lui. Null sans mesure.
+            devis sans lignes est prérempli depuis lui. Null sans mesure, et pour un agent seul (ADR-037).
           oneOf:
             - $ref: '#/components/schemas/CleaningPriceCalculation'
             - type: 'null'
@@ -13406,12 +13545,33 @@ components:
           items:
             type: object
             additionalProperties: false
+            description: |
+              Demande de la visite, avec les réponses du client et les mesures constatées pour préremplir la saisie après
+              la visite (ADR-037). Pour un agent (`cleaning_agent` seul), aucun montant : `calculation` et
+              `measuredCalculation` sont `null` ; le recalcul `estimateCleaningQuoteRequest` reste ouvert.
             required:
               - requestId
               - visitId
               - serviceCode
               - serviceName
               - status
+              - placeType
+              - placeTypeLabel
+              - answers
+              - selectedOptions
+              - frequency
+              - pricingVersion
+              - calculation
+              - answerSummary
+              - measuredAnswers
+              - measuredOptions
+              - measuredFrequency
+              - measuredCalculation
+              - measuredPricingVersion
+              - measuredAt
+              - measuredBy
+              - measuredByName
+              - measuredSummary
             properties:
               requestId:
                 type: string
@@ -13428,6 +13588,90 @@ components:
                   - 'null'
               status:
                 type: string
+              placeType:
+                type:
+                  - string
+                  - 'null'
+                description: Type de lieu de la demande (ADR-034), null sans lieu.
+              placeTypeLabel:
+                type:
+                  - string
+                  - 'null'
+              answers:
+                description: Réponses du client (ADR-033), même forme que `CleaningQuoteRequest.answers` ; null pour une demande antérieure.
+                oneOf:
+                  - $ref: '#/components/schemas/CleaningAnswers'
+                  - type: 'null'
+              selectedOptions:
+                type: array
+                description: Options choisies par le client avec leurs réponses ; vide pour une demande antérieure.
+                items:
+                  $ref: '#/components/schemas/CleaningOptionSelection'
+              frequency:
+                type:
+                  - string
+                  - 'null'
+                description: Code de la fréquence choisie par le client, null si aucune.
+              pricingVersion:
+                type:
+                  - integer
+                  - 'null'
+                minimum: 1
+                description: Version de la grille du calcul de la demande ; null pour une demande antérieure.
+              calculation:
+                description: Détail du calcul de la demande ; null pour un agent et pour une demande antérieure.
+                oneOf:
+                  - $ref: '#/components/schemas/CleaningPriceCalculation'
+                  - type: 'null'
+              answerSummary:
+                description: Réponses du client, lisibles (version de grille de la demande) ; null si la demande n’a pas pu être décrite.
+                oneOf:
+                  - $ref: '#/components/schemas/CleaningAnswerSummary'
+                  - type: 'null'
+              measuredAnswers:
+                description: Mesures constatées (ADR-037), même forme que `answers` ; null sans mesure.
+                oneOf:
+                  - $ref: '#/components/schemas/CleaningAnswers'
+                  - type: 'null'
+              measuredOptions:
+                description: Options des mesures constatées ; null sans mesure.
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/CleaningOptionSelection'
+                  - type: 'null'
+              measuredFrequency:
+                type:
+                  - string
+                  - 'null'
+              measuredCalculation:
+                description: Calcul des mesures ; null sans mesure et pour un agent.
+                oneOf:
+                  - $ref: '#/components/schemas/CleaningPriceCalculation'
+                  - type: 'null'
+              measuredPricingVersion:
+                type:
+                  - integer
+                  - 'null'
+              measuredAt:
+                type:
+                  - string
+                  - 'null'
+                format: date-time
+              measuredBy:
+                type:
+                  - string
+                  - 'null'
+                format: uuid
+              measuredByName:
+                type:
+                  - string
+                  - 'null'
+              measuredSummary:
+                description: Mesures constatées, lisibles ; null sans mesure.
+                oneOf:
+                  - $ref: '#/components/schemas/CleaningAnswerSummary'
+                  - type: 'null'
     CleaningVisitList:
       type: object
       additionalProperties: false

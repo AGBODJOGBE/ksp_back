@@ -23,6 +23,7 @@ import {
   previousOutcome,
   requestForStaff,
   settle,
+  type StaffRequest,
 } from './group-support';
 
 /**
@@ -245,14 +246,23 @@ export interface ListVisitsInput {
 }
 
 /**
+ * Visite présentée : chaque demande porte les réponses du client et ses mesures (ADR-037), pour
+ * préremplir la saisie sur le terrain, sans montants pour un agent seul (`StaffRequest.withAmounts`).
+ */
+export interface VisitView extends VisitEntry {
+  requests: StaffRequest[];
+}
+
+/**
  * Visites techniques (ADR-035) : la supervision voit tout (filtres agent, période, état, groupe),
  * un agent seulement les siennes ; une visite commune est une seule entrée. Pour un agent, la
- * position, le repère et l'adresse d'une visite terminée ou annulée sont masqués.
+ * position, le repère et l'adresse d'une visite terminée ou annulée sont masqués, et aucun montant
+ * n'est donné (le recalcul EstimateRequestPrice lui reste ouvert).
  */
 export class ListVisitsUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
-  async execute(input: ListVisitsInput): Promise<PageResult<VisitEntry>> {
+  async execute(input: ListVisitsInput): Promise<PageResult<VisitView>> {
     const staff = requireStaff(FIELD_WORK);
     const filter: VisitFilter = {};
     if (!seesEverything(staff)) filter.agentId = staff.userId;

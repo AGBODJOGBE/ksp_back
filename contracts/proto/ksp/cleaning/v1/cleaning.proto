@@ -1446,6 +1446,25 @@ message VisitedRequest {
   string service_name = 4;
   // Même valeurs que QuoteRequest.status.
   string status = 5;
+  // Type de lieu de la demande et son libellé (ADR-034), vides pour une demande sans lieu.
+  string place_type = 6;
+  string place_type_label = 7;
+  // Réponses du client au formulaire de la prestation (ADR-033), pour préremplir la saisie des
+  // mesures (ADR-037) : mêmes valeurs que QuoteRequest.answers, option_selections, frequency et
+  // pricing_version.
+  AnswerSet answers = 8;
+  repeated OptionSelection option_selections = 9;
+  string frequency = 10;
+  int32 pricing_version = 11;
+  // Réponses du client, lisibles (même règle que QuoteRequest.answer_summary).
+  AnswerSummary answer_summary = 12;
+  // Détail du calcul de la demande ; absent pour une demande antérieure et pour cleaning_agent
+  // (aucun montant de la demande montré à l'agent ; le recalcul EstimateRequestPrice reste ouvert).
+  PriceCalculation calculation = 13;
+  // Mesures constatées (ADR-037), absentes sans mesure ; leur calcul est absent pour cleaning_agent.
+  RequestMeasurement measurement = 14;
+  // Mesures constatées, lisibles ; absent sans mesure.
+  AnswerSummary measured_summary = 15;
 }
 
 // Visite technique telle qu'un agent la voit : une ligne par visite commune ou par visite seule.

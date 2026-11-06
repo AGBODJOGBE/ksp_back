@@ -1,7 +1,6 @@
 import { isTerminalMission, type Mission } from '../../domain/mission';
-import { type QuoteRequest } from '../../domain/quote-request';
 import { type CleaningDeps, presentRequest } from '../deps';
-import { requestForStaff } from '../groups/group-support';
+import { requestForStaff, type StaffRequest } from '../groups/group-support';
 import { anyRequest } from '../requests/admin-requests.use-cases';
 import { FIELD_WORK, requireStaff, seesEverything } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
@@ -18,7 +17,8 @@ export interface CorrectLocationInput {
 }
 
 export interface CorrectedLocation {
-  request: QuoteRequest;
+  /** Sans montants pour un agent seul (ADR-037). */
+  request: StaffRequest;
   requestIds: string[];
   missionIds: string[];
 }
