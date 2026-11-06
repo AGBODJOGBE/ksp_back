@@ -482,7 +482,11 @@ export function presentOutcome(value: cleaningV1.RequestGroupOutcome | undefined
   };
 }
 
-/** Visite d'un agent ou de la supervision (ADR-035) : position nulle quand elle est masquée. */
+/**
+ * Visite d'un agent ou de la supervision (ADR-035) : position nulle quand elle est masquée. Chaque
+ * demande porte les réponses du client et les mesures (ADR-037) ; `calculation` et
+ * `measuredCalculation` sont null pour un agent (aucun montant).
+ */
 export function presentVisit(value: cleaningV1.VisitSummary) {
   return {
     id: value.id,
@@ -510,6 +514,16 @@ export function presentVisit(value: cleaningV1.VisitSummary) {
       serviceCode: request.serviceCode,
       serviceName: orNull(request.serviceName),
       status: request.status,
+      placeType: orNull(request.placeType),
+      placeTypeLabel: orNull(request.placeTypeLabel),
+      answers: request.answers ? answersFromProto(request.answers) : null,
+      selectedOptions: selectionsFromProto(request.optionSelections ?? []),
+      frequency: orNull(request.frequency),
+      pricingVersion: request.pricingVersion || null,
+      calculation: presentCalculation(request.calculation),
+      answerSummary: presentSummary(request.answerSummary),
+      ...presentMeasurement(request.measurement),
+      measuredSummary: presentSummary(request.measuredSummary),
     })),
   };
 }

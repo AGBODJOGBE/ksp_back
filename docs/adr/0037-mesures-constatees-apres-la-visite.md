@@ -37,6 +37,8 @@ Contraintes : contrats par ajout seulement (`buf breaking`) ; l'ADR-033 garde le
 - `cleaning` : domaine `answer-summary.ts` (résumés, ancien format), `Measurement` sur la demande ; cas d'usage `EstimateRequestPrice`, `SaveMeasurements`, compte rendu (par demande et commun) avec mesures, préremplissage du devis ; lecture d'une version de grille ; présentations (audience back-office ou client).
 - `gateway` : deux routes au manifeste, schémas zod, adaptateur et présentateurs (mesures à plat, résumés).
 - Back-office : écran « Après la visite » (formulaire prérempli, prix recalculé à chaque modification, enregistrement des mesures, devis prérempli) ; portail : affichage de `answerSummary`.
+- Complément du 2026-11-06 : l'agent n'ouvre pas la fiche d'une demande ; `GET /api/v1/admin/cleaning/visits` (`VisitedRequest`, champs 6 à 15 par ajout) porte donc, pour chaque demande, le type de lieu, les réponses du client (`answers`, `selectedOptions`, `frequency`, `pricingVersion`, `answerSummary`) et les mesures (`measured*`, `measuredSummary`) ; pour `cleaning_agent` seul, aucun montant (`calculation` et `measuredCalculation` à `null`), le recalcul restant ouvert ; le masquage de la position (ADR-035) s'applique toujours.
+- Complément du 2026-11-06 (règle des montants) : un agent de terrain seul, sans rôle de supervision, ne voit jamais les montants commerciaux d'une demande (`calculation`, `estimate`, `quote`, `measuredCalculation` à `null`) dans aucune réponse du back-office : liste des visites, compte rendu (par demande et commun), enregistrement des mesures, correction de position ; seul `POST …/quote-requests/{id}/estimate` lui renvoie le calcul, car c'est son outil de saisie et il doit y voir l'effet de ses mesures.
 
 ## À valider
 

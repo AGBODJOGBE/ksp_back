@@ -1,7 +1,12 @@
 import { type AppError } from '@ksp/platform';
 import { gardenService } from '../../domain/testing';
-import { CompleteGroupVisitUseCase, ScheduleGroupVisitUseCase } from '../groups/group-visits.use-cases';
+import {
+  CompleteGroupVisitUseCase,
+  ListVisitsUseCase,
+  ScheduleGroupVisitUseCase,
+} from '../groups/group-visits.use-cases';
 import { SendGroupQuotesUseCase } from '../groups/group-quotes.use-cases';
+import { GetRequestGroupUseCase } from '../groups/group-totals.use-case';
 import { DescribeRequestsUseCase } from '../places/request-labels.use-case';
 import { RequestQuoteGroupUseCase } from '../places/request-groups.use-cases';
 import {
@@ -159,8 +164,8 @@ describe('mesures constatées et recalcul après la visite (ADR-037)', () => {
     const done = await complete(MEASURED);
     expect(done.visit?.status).toBe('completed');
     expect(done.answers).toEqual(CLIENT.answers);
-    expect(done.calculation).toMatchObject({ computedPrice: 35_700 });
-    expect(done.measurement).toMatchObject({
+    expect(w.requests.requests.get(requestId)!.calculation).toMatchObject({ computedPrice: 35_700 });
+    expect(w.requests.requests.get(requestId)!.measurement).toMatchObject({
       answers: MEASURED.answers,
       optionSelections: MEASURED.optionSelections,
       frequency: 'once',
@@ -293,6 +298,62 @@ describe('mesures constatées et recalcul après la visite (ADR-037)', () => {
     expect(customer.audience).toBe('customer');
     expect(customer.summaries.get(requestId)).toMatchObject({ measured: null });
   });
+
+  it('agent seul : jamais de montant au compte rendu ni à la correction des mesures ; supervision : tout', async () => {
+    const done = await complete(MEASURED);
+    // L'agent reçoit ses réponses et ses mesures, sans calcul, fourchette ni devis.
+    expect(done).toMatchObject({
+      withAmounts: false,
+      calculation: null,
+      estimate: null,
+      quote: null,
+      measurement: { answers: MEASURED.answers, measuredBy: AGENT_ID },
+    });
+    const corrected = await save(CLIENT, asAgent);
+    expect(corrected).toMatchObject({ withAmounts: false, calculation: null, estimate: null, quote: null });
+    expect(corrected.measurement).toMatchObject({ answers: CLIENT.answers });
+    // Rien n'est perdu : la demande garde son calcul, et son outil de saisie lui donne le prix.
+    expect(w.requests.requests.get(requestId)!.calculation).toMatchObject({ computedPrice: 35_700 });
+    expect((await estimate(MEASURED, asAgent)).calculation.computedPrice).toBe(67_725);
+
+    const bySupervision = await save(MEASURED);
+    expect(bySupervision).toMatchObject({
+      withAmounts: true,
+      calculation: { computedPrice: 35_700 },
+      measurement: { calculation: { computedPrice: 67_725 } },
+    });
+  });
+
+  it('liste des visites : réponses du client et mesures ; montants à la supervision seulement', async () => {
+    await complete(MEASURED);
+    const PAGE = { limit: 20, cursor: null };
+
+    const forAgent = await asAgent(() => new ListVisitsUseCase(w).execute({ page: PAGE }));
+    expect(forAgent.items).toHaveLength(1);
+    const seen = forAgent.items[0]!.requests[0]!;
+    expect(seen).toMatchObject({
+      id: requestId,
+      withAmounts: false,
+      answers: CLIENT.answers,
+      optionSelections: CLIENT.optionSelections,
+      frequency: 'once',
+      pricingVersion: 3,
+      measurement: { answers: MEASURED.answers, frequency: 'once', measuredBy: AGENT_ID },
+      // Aucun montant de la demande pour l'agent ; le calcul des mesures est retiré à la présentation.
+      calculation: null,
+      estimate: null,
+      quote: null,
+    });
+    // Le recalcul reste ouvert à l'agent de la visite.
+    expect((await estimate(MEASURED, asAgent)).calculation.computedPrice).toBe(67_725);
+
+    const forSupervision = await asSupervisor(() => new ListVisitsUseCase(w).execute({ page: PAGE }));
+    expect(forSupervision.items[0]!.requests[0]).toMatchObject({
+      withAmounts: true,
+      calculation: { computedPrice: 35_700 },
+      measurement: { calculation: { computedPrice: 67_725 } },
+    });
+  });
 });
 
 describe('visite commune avec des mesures par demande (ADR-037)', () => {
@@ -378,6 +439,20 @@ describe('visite commune avec des mesures par demande (ADR-037)', () => {
         ['visit.completed', garden],
         ['request.measured', garden],
       ]),
+    );
+
+    // Réponse du compte rendu commun (groupe relu) : sans montants pour l'agent, complète pour la supervision.
+    const seenByAgent = await asAgent(() => new GetRequestGroupUseCase(w).execute(groupId));
+    expect(seenByAgent.requests.map((request) => [request.withAmounts, request.calculation])).toEqual([
+      [false, null],
+      [false, null],
+    ]);
+    expect(seenByAgent.requests.find((request) => request.id === garden)!.measurement).toMatchObject({
+      answers: { surface: 600, condition: 'overgrown' },
+    });
+    const seenBySupervision = await asSupervisor(() => new GetRequestGroupUseCase(w).execute(groupId));
+    expect(seenBySupervision.requests.every((request) => request.withAmounts && request.calculation)).toBe(
+      true,
     );
 
     // Envoi groupé : le jardin est prérempli depuis ses mesures (600 m² × 150 × 1,3).

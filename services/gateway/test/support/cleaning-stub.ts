@@ -454,6 +454,49 @@ export const protoOutcome: cleaningV1.RequestGroupOutcome = {
 const withOutcome = () => ({ outcome: protoOutcome, requests: protoGroup.requests });
 const withGroupOutcome = () => ({ outcome: protoOutcome, group: protoGroup });
 
+/** Visite commune vue par la supervision (ADR-035), demandes avec réponses et mesures (ADR-037). */
+export const protoVisit: cleaningV1.VisitSummary = {
+  id: IDS.groupVisit,
+  groupVisitId: IDS.groupVisit,
+  groupId: IDS.group,
+  status: 'scheduled',
+  scheduledAt: '2026-10-26T09:00:00.000Z',
+  completedAt: '',
+  report: '',
+  agentId: IDS.agent,
+  agentName: 'Awa Agent',
+  customerId: USER_ID,
+  customerName: 'Koffi Adjovi',
+  organizationName: '',
+  commune: 'Abomey-Calavi',
+  address: 'Portail bleu',
+  location: LOCATION,
+  landmark: 'Portail bleu',
+  geocodedAddress: 'Zogbadjè, Abomey-Calavi, Bénin',
+  placeType: 'house',
+  placeTypeLabel: 'Maison',
+  requests: [
+    {
+      requestId: IDS.request,
+      visitId: IDS.visit,
+      serviceCode: 'home_cleaning',
+      serviceName: 'Nettoyage à domicile',
+      status: 'visit_scheduled',
+      placeType: 'house',
+      placeTypeLabel: 'Maison',
+      answers: protoAnswers,
+      optionSelections: protoRequest.optionSelections,
+      frequency: 'once',
+      pricingVersion: 3,
+      answerSummary: protoAnswerSummary,
+      // Vue de la supervision : montants présents (absents pour un agent, voir le test).
+      calculation: protoCalculation,
+      measurement: protoMeasurement,
+      measuredSummary: protoAnswerSummary,
+    },
+  ],
+};
+
 const DEFAULTS: Record<Method, () => unknown> = {
   listServices: () => ({
     services: [
@@ -578,41 +621,7 @@ const DEFAULTS: Record<Method, () => unknown> = {
     updatedRequestIds: [IDS.request, IDS.sibling],
     updatedMissionIds: [IDS.mission],
   }),
-  listVisits: () => ({
-    visits: [
-      {
-        id: IDS.groupVisit,
-        groupVisitId: IDS.groupVisit,
-        groupId: IDS.group,
-        status: 'scheduled',
-        scheduledAt: '2026-10-26T09:00:00.000Z',
-        completedAt: '',
-        report: '',
-        agentId: IDS.agent,
-        agentName: 'Awa Agent',
-        customerId: USER_ID,
-        customerName: 'Koffi Adjovi',
-        organizationName: '',
-        commune: 'Abomey-Calavi',
-        address: 'Portail bleu',
-        location: LOCATION,
-        landmark: 'Portail bleu',
-        geocodedAddress: 'Zogbadjè, Abomey-Calavi, Bénin',
-        placeType: 'house',
-        placeTypeLabel: 'Maison',
-        requests: [
-          {
-            requestId: IDS.request,
-            visitId: IDS.visit,
-            serviceCode: 'home_cleaning',
-            serviceName: 'Nettoyage à domicile',
-            status: 'visit_scheduled',
-          },
-        ],
-      },
-    ],
-    nextCursor: '',
-  }),
+  listVisits: () => ({ visits: [protoVisit], nextCursor: '' }),
   scheduleGroupInterventions: () => ({
     groupId: IDS.group,
     scheduledMissionIds: [IDS.mission],

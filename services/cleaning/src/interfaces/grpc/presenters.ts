@@ -4,12 +4,9 @@ import { type NameBook, NO_NAMES } from '../../application/backoffice/backoffice
 import { type MissionView } from '../../application/deps';
 import { type PlaceTypeView } from '../../application/places/place-catalog.use-cases';
 import { NO_LABELS, type RequestLabels } from '../../application/places/request-labels.use-case';
-import {
-  type GroupOutcome,
-  type QuoteRequestGroupView,
-  type StoredSettings,
-  type VisitEntry,
-} from '../../application/ports';
+import { type GroupOutcome, type QuoteRequestGroupView, type StoredSettings } from '../../application/ports';
+import { type VisitView } from '../../application/groups/group-visits.use-cases';
+import { type StaffRequest } from '../../application/groups/group-support';
 import { type ZoneView } from '../../application/catalog/zones.use-cases';
 import { type GroupTotals } from '../../application/groups/group-totals.use-case';
 import { type GeoLocation } from '../../domain/location';
@@ -91,11 +88,13 @@ function presentQuote(quote: Quote): cleaningV1.Quote {
  * les libellés de prestation et de lieu et la taille du groupe viennent de `labels` (ADR-034).
  */
 export function presentRequest(
-  request: QuoteRequest,
+  request: QuoteRequest | StaffRequest,
   names: NameBook = NO_NAMES,
   labels: RequestLabels = NO_LABELS,
 ): cleaningV1.QuoteRequest {
   const backoffice = labels.audience === 'backoffice';
+  // Agent seul (ADR-037) : aucun montant, y compris le calcul des mesures.
+  const withAmounts = !('withAmounts' in request) || request.withAmounts;
   const summaries = labels.summaries.get(request.id);
   return {
     id: request.id,
@@ -114,9 +113,10 @@ export function presentRequest(
     recurrence: presentRecurrence(request.recurrence),
     requestedTeamSize: request.requestedTeamSize,
     recommendedTeamSize: request.recommendedTeamSize,
-    estimate: request.estimate
-      ? { low: money(request.estimate.low), high: money(request.estimate.high) }
-      : undefined,
+    estimate:
+      withAmounts && request.estimate
+        ? { low: money(request.estimate.low), high: money(request.estimate.high) }
+        : undefined,
     visit: request.visit
       ? {
           id: request.visit.id,
@@ -129,7 +129,7 @@ export function presentRequest(
           groupVisitId: text(request.visit.groupVisitId),
         }
       : undefined,
-    quote: request.quote ? presentQuote(request.quote) : undefined,
+    quote: withAmounts && request.quote ? presentQuote(request.quote) : undefined,
     missionId: text(request.missionId),
     closingReason: text(request.closingReason),
     createdAt: iso(request.createdAt),
@@ -141,7 +141,7 @@ export function presentRequest(
     optionSelections: selectionsToProto(request.optionSelections),
     frequency: text(request.frequency),
     pricingVersion: request.pricingVersion ?? 0,
-    calculation: request.calculation ? calculationToProto(request.calculation) : undefined,
+    calculation: withAmounts && request.calculation ? calculationToProto(request.calculation) : undefined,
     groupId: text(request.groupId),
     placeType: text(request.placeType),
     location: presentLocation(request.location),
@@ -153,18 +153,25 @@ export function presentRequest(
     geocodedAddress: text(request.geocodedAddress),
     // Mesures constatées (ADR-037) : au back-office seulement.
     measurement:
-      backoffice && request.measurement ? presentMeasurement(request.measurement, names) : undefined,
+      backoffice && request.measurement
+        ? presentMeasurement(request.measurement, names, withAmounts)
+        : undefined,
     answerSummary: summaries ? summaryToProto(summaries.answers) : undefined,
     measuredSummary: backoffice && summaries?.measured ? summaryToProto(summaries.measured) : undefined,
   };
 }
 
-function presentMeasurement(measurement: Measurement, names: NameBook): cleaningV1.RequestMeasurement {
+/** Mesures constatées ; sans leur calcul pour un agent seul dans la liste des visites. */
+function presentMeasurement(
+  measurement: Measurement,
+  names: NameBook,
+  withAmounts = true,
+): cleaningV1.RequestMeasurement {
   return {
     answers: answersToProto(measurement.answers),
     optionSelections: selectionsToProto(measurement.optionSelections),
     frequency: text(measurement.frequency),
-    calculation: calculationToProto(measurement.calculation),
+    calculation: withAmounts ? calculationToProto(measurement.calculation) : undefined,
     pricingVersion: measurement.pricingVersion,
     measuredAt: iso(measurement.measuredAt),
     measuredBy: measurement.measuredBy,
@@ -451,9 +458,12 @@ export function presentOutcome(outcome: GroupOutcome): cleaningV1.RequestGroupOu
   };
 }
 
-/** Visite vue d'un agent ou de la supervision (ADR-035) : une entrée par visite commune ou seule. */
+/**
+ * Visite vue d'un agent ou de la supervision (ADR-035) : une entrée par visite commune ou seule ;
+ * chaque demande porte les réponses du client et les mesures (ADR-037), sans montant pour un agent.
+ */
 export function presentVisit(
-  entry: VisitEntry,
+  entry: VisitView,
   names: NameBook = NO_NAMES,
   labels: RequestLabels = NO_LABELS,
 ): cleaningV1.VisitSummary {
@@ -479,12 +489,34 @@ export function presentVisit(
     geocodedAddress: text(lead?.geocodedAddress),
     placeType: text(lead?.placeType),
     placeTypeLabel: (lead?.placeType && labels.placeTypeLabels.get(lead.placeType)) || '',
-    requests: entry.requests.map((request) => ({
-      requestId: request.id,
-      visitId: request.visit?.id ?? '',
-      serviceCode: request.serviceCode,
-      serviceName: labels.serviceNames.get(request.serviceCode) ?? '',
-      status: request.status,
-    })),
+    requests: entry.requests.map((request) => presentVisitedRequest(request, names, labels)),
+  };
+}
+
+function presentVisitedRequest(
+  request: StaffRequest,
+  names: NameBook,
+  labels: RequestLabels,
+): cleaningV1.VisitedRequest {
+  const { withAmounts } = request;
+  const summaries = labels.summaries.get(request.id);
+  return {
+    requestId: request.id,
+    visitId: request.visit?.id ?? '',
+    serviceCode: request.serviceCode,
+    serviceName: labels.serviceNames.get(request.serviceCode) ?? '',
+    status: request.status,
+    placeType: text(request.placeType),
+    placeTypeLabel: (request.placeType && labels.placeTypeLabels.get(request.placeType)) || '',
+    answers: request.answers ? answersToProto(request.answers) : undefined,
+    optionSelections: selectionsToProto(request.optionSelections),
+    frequency: text(request.frequency),
+    pricingVersion: request.pricingVersion ?? 0,
+    answerSummary: summaries ? summaryToProto(summaries.answers) : undefined,
+    calculation: withAmounts && request.calculation ? calculationToProto(request.calculation) : undefined,
+    measurement: request.measurement
+      ? presentMeasurement(request.measurement, names, withAmounts)
+      : undefined,
+    measuredSummary: summaries?.measured ? summaryToProto(summaries.measured) : undefined,
   };
 }

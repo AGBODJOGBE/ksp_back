@@ -9,7 +9,7 @@ import {
 import { calculatePrice, type PriceCalculation } from '../../domain/simulator';
 import { resolveNewFormat } from '../catalog/pricing-input';
 import { type CleaningDeps, presentRequest } from '../deps';
-import { requestForStaff } from '../groups/group-support';
+import { requestForStaff, type StaffRequest } from '../groups/group-support';
 import { type AuditEntry } from '../ports';
 import { FIELD_WORK, requireStaff, seesEverything, type Staff } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
@@ -149,7 +149,7 @@ export class EstimateRequestPriceUseCase {
 export class SaveMeasurementsUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
-  async execute(input: MeasurementInput & { requestId: string }): Promise<QuoteRequest> {
+  async execute(input: MeasurementInput & { requestId: string }): Promise<StaffRequest> {
     const staff = requireStaff(FIELD_WORK);
     const request = await requestForMeasurement(this.deps, staff, input.requestId);
     const measured = await measure(this.deps, request, input, staff, 'correction');

@@ -686,7 +686,14 @@ describe('cleaning en gRPC', () => {
       pricingVersion: 3,
       measuredBy: AGENT,
       measuredByName: 'Awa',
-      calculation: { priced: true, computedPrice: { amount: 43000, currency: 'XOF' } },
+    });
+    // Agent seul : aucun montant dans la réponse du compte rendu (ADR-037), le recalcul reste ouvert.
+    expect(done.request?.measurement?.calculation ?? null).toBeNull();
+    expect(done.request?.calculation ?? null).toBeNull();
+    expect(done.request?.estimate ?? null).toBeNull();
+    expect(world.requests.requests.get(requestId)!.measurement?.calculation).toMatchObject({
+      priced: true,
+      computedPrice: 43000,
     });
     expect(done.request?.measuredSummary?.fields[1]).toMatchObject({
       code: 'rooms',
@@ -746,6 +753,53 @@ describe('cleaning en gRPC', () => {
       },
     ]);
     expect(corrected.request?.answerSummary?.frequency).toEqual({ code: 'once', label: 'Une fois' });
+
+    // Liste des visites : réponses du client et mesures pour préremplir la saisie ; montants à la
+    // supervision seulement.
+    const listVisits = (user: typeof staff) =>
+      call(
+        (m) =>
+          admin.listVisits(
+            { page: { limit: 10, cursor: '' }, agentId: '', from: '', to: '', status: '', groupId: '' },
+            m,
+          ),
+        user,
+      );
+    const forAgent = (await listVisits(agent)).visits.flatMap((visit) => visit.requests);
+    expect(forAgent).toHaveLength(1);
+    expect(forAgent[0]).toMatchObject({
+      requestId,
+      serviceCode: 'home_cleaning',
+      serviceName: 'Nettoyage à domicile',
+      answers: ANSWERS,
+      frequency: 'once',
+      pricingVersion: 3,
+      measurement: { answers: ANSWERS, frequency: 'once', measuredBy: staff.userId },
+    });
+    expect(forAgent[0]?.optionSelections.map((option) => option.code)).toEqual(['windows']);
+    expect(forAgent[0]?.answerSummary?.fields[1]?.display).toBe('6 pièces');
+    expect(forAgent[0]?.measuredSummary?.fields[1]?.display).toBe('6 pièces');
+    expect(forAgent[0]?.calculation ?? null).toBeNull();
+    expect(forAgent[0]?.measurement?.calculation ?? null).toBeNull();
+    const forSupervision = (await listVisits(staff)).visits.flatMap((visit) => visit.requests);
+    expect(forSupervision[0]?.calculation).toMatchObject({ priced: true });
+    expect(forSupervision[0]?.measurement?.calculation?.computedPrice).toEqual({
+      amount: 30000,
+      currency: 'XOF',
+    });
+
+    // Correction des mesures par l'agent : réponse sans montant.
+    const byAgent = await call(
+      (m) =>
+        admin.saveRequestMeasurements(
+          { requestId, answers: ANSWERS, optionSelections: [], frequency: 'once' },
+          m,
+        ),
+      agent,
+    );
+    expect(byAgent.request?.measurement).toMatchObject({ measuredBy: AGENT });
+    expect(byAgent.request?.measurement?.calculation ?? null).toBeNull();
+    expect(byAgent.request?.calculation ?? null).toBeNull();
 
     // Espace client : réponses lisibles, jamais les mesures.
     const mine = await call((m) => quotes.getRequest({ requestId }, m), asCustomer);

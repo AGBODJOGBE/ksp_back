@@ -1364,6 +1364,35 @@ export interface VisitedRequest {
   serviceName: string;
   /** Même valeurs que QuoteRequest.status. */
   status: string;
+  /** Type de lieu de la demande et son libellé (ADR-034), vides pour une demande sans lieu. */
+  placeType: string;
+  placeTypeLabel: string;
+  /**
+   * Réponses du client au formulaire de la prestation (ADR-033), pour préremplir la saisie des
+   * mesures (ADR-037) : mêmes valeurs que QuoteRequest.answers, option_selections, frequency et
+   * pricing_version.
+   */
+  answers?: AnswerSet | undefined;
+  optionSelections: OptionSelection[];
+  frequency: string;
+  pricingVersion: number;
+  /** Réponses du client, lisibles (même règle que QuoteRequest.answer_summary). */
+  answerSummary?:
+    | AnswerSummary
+    | undefined;
+  /**
+   * Détail du calcul de la demande ; absent pour une demande antérieure et pour cleaning_agent
+   * (aucun montant de la demande montré à l'agent ; le recalcul EstimateRequestPrice reste ouvert).
+   */
+  calculation?:
+    | PriceCalculation
+    | undefined;
+  /** Mesures constatées (ADR-037), absentes sans mesure ; leur calcul est absent pour cleaning_agent. */
+  measurement?:
+    | RequestMeasurement
+    | undefined;
+  /** Mesures constatées, lisibles ; absent sans mesure. */
+  measuredSummary?: AnswerSummary | undefined;
 }
 
 /** Visite technique telle qu'un agent la voit : une ligne par visite commune ou par visite seule. */

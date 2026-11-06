@@ -1,7 +1,7 @@
 import { groupQuotesTotal, groupRemainingDue } from '../../domain/request-group';
 import { type CleaningDeps, presentRequest } from '../deps';
 import { FIELD_WORK, requireStaff, seesEverything } from '../shared/access';
-import { anyGroup, requestForStaff } from './group-support';
+import { anyGroup, requestForStaff, type StaffRequest } from './group-support';
 import { type QuoteRequestGroupView } from '../ports';
 
 /** Totaux d'un groupe affichés au client (ADR-035) : entiers XOF, null quand inconnus. */
@@ -32,7 +32,9 @@ export class GroupTotalsUseCase {
 export class GetRequestGroupUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
-  async execute(groupId: string): Promise<QuoteRequestGroupView> {
+  async execute(
+    groupId: string,
+  ): Promise<Omit<QuoteRequestGroupView, 'requests'> & { requests: StaffRequest[] }> {
     const staff = requireStaff(FIELD_WORK);
     const view = await anyGroup(this.deps, groupId);
     const now = this.deps.clock.now();

@@ -89,6 +89,12 @@ Le même script ajoute, pour le parcours par lieu (ADR-034) : un type de lieu d�
 - **Réponses lisibles** : `answerSummary` (client et back-office) et `measuredSummary` (back-office), libellés
   résolus avec la version de grille utilisée ; type de locaux et quantité pour une demande à l'ancien format.
   Les mesures ne sont jamais montrées dans l'espace client.
+- **Liste des visites** : chaque demande de `GET /admin/cleaning/visits` porte les réponses du client
+  (`answers`, `selectedOptions`, `frequency`, `pricingVersion`, `answerSummary`), son type de lieu et, s'il y
+  en a, ses mesures (`measured*`), pour préremplir la saisie sur le terrain.
+- **Montants** : un agent seul (sans rôle de supervision) ne voit jamais `calculation`, `estimate`, `quote` ni
+  `measuredCalculation` (liste des visites, comptes rendus, mesures, correction de position : `requestForStaff`,
+  `withAmounts`) ; seul le recalcul (`estimate`) lui renvoie le calcul, c'est son outil de saisie.
 
 ## Suppression d'un compte (ADR-036)
 
