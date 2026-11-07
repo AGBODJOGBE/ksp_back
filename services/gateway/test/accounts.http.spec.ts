@@ -11,7 +11,7 @@ import {
 } from './support/harness';
 
 /**
- * Ce que la gateway transmet à identity pour l'administration des comptes (ADR-038) : utilisateur
+ * Ce que la gateway transmet à identity pour l'administration des comptes (ADR-043) : utilisateur
  * dans le contexte, champs absents en valeurs par défaut, énumérations converties, valeurs vides en
  * null ; refus avant tout appel hors des rôles du manifeste.
  */

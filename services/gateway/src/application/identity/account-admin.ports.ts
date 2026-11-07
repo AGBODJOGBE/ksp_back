@@ -7,7 +7,7 @@ import { type Json } from '../cleaning/cleaning.ports';
 export interface AccountAdminApi {
   /** Compte d'un numéro E.164 : identifiant, nom, numéro masqué et état ; jamais l'e-mail. */
   findByPhone(phone: string): Promise<Json>;
-  /** Administration des comptes (ADR-038) : chaque écriture renvoie la fiche à jour. */
+  /** Administration des comptes (ADR-043) : chaque écriture renvoie la fiche à jour. */
   search(input: { query?: string; limit?: number; cursor?: string }): Promise<Json>;
   get(userId: string): Promise<Json>;
   listAssignableRoles(): Promise<Json>;

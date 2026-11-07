@@ -1,7 +1,7 @@
 import { AppError } from '@ksp/platform';
 import { type AccountAction } from '../../domain/role/role-administration';
 
-/** Erreurs de l'administration des comptes (contrat identity.proto, AccountAdminService, ADR-038). */
+/** Erreurs de l'administration des comptes (contrat identity.proto, AccountAdminService, ADR-043). */
 export const accountAdminErrors = {
   invalid: (field: 'query' | 'reason', message: string) =>
     AppError.invalid('IDENTITY_ACCOUNT_ADMIN_INVALID', message, { field }),

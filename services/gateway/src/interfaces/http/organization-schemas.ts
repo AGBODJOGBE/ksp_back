@@ -21,12 +21,12 @@ export const organizationBodies = {
   suspendOrganization: reason,
 };
 
-/** Motif d'une action de l'administration des comptes (ADR-038), tracé par identity. */
+/** Motif d'une action de l'administration des comptes (ADR-043), tracé par identity. */
 const adminReason = z.strictObject({ reason: z.string().min(1).max(500) });
 
 /**
  * Comptes au back-office : recherche par numéro (ADR-029), administration des comptes et des rôles
- * (ADR-038). Le périmètre de l'appelant et la forme du motif restent contrôlés par identity.
+ * (ADR-043). Le périmètre de l'appelant et la forme du motif restent contrôlés par identity.
  */
 export const accountBodies = {
   findAccountByPhone: z.strictObject({ phone: z.string().regex(/^\+[1-9][0-9]{6,14}$/) }),

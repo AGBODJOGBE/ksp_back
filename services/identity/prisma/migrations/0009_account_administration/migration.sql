@@ -1,4 +1,4 @@
--- Administration des comptes et des rôles au back-office (ADR-038, UC-ID-18 à 20).
+-- Administration des comptes et des rôles au back-office (ADR-043, UC-ID-18 à 20).
 -- Générée par « prisma migrate diff » depuis schema.prisma. Colonnes ajoutées, toutes facultatives :
 -- aucune ligne existante à reprendre.
 

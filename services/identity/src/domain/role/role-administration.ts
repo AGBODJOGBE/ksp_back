@@ -2,7 +2,7 @@ import { PhoneNumber } from '../user/phone-number';
 import { type RoleDefinition, type RoleScopeType } from './role';
 
 /**
- * Administration des comptes et des rôles au back-office (ADR-038, UC-ID-18 à 20) : qui peut
+ * Administration des comptes et des rôles au back-office (ADR-043, UC-ID-18 à 20) : qui peut
  * attribuer quel rôle, qui peut agir sur un compte, et dans quel état.
  */
 

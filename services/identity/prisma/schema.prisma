@@ -82,7 +82,7 @@ model User {
   email                String?    @unique
   /// Confirmation de l'adresse par le code reçu à cette adresse.
   emailVerifiedAt      DateTime?  @map("email_verified_at") @db.Timestamptz(3)
-  /// Suspension en cours par un administrateur (ADR-038) ; effacée à la réactivation (historique dans audit_log).
+  /// Suspension en cours par un administrateur (ADR-043) ; effacée à la réactivation (historique dans audit_log).
   suspendedAt          DateTime?  @map("suspended_at") @db.Timestamptz(3)
   suspendedBy          String?    @map("suspended_by") @db.Uuid
   suspensionReason     String?    @map("suspension_reason")
@@ -239,7 +239,7 @@ model RoleAssignment {
   /// Vide : attribution d'amorçage (script roles:grant).
   grantedBy    String?       @map("granted_by") @db.Uuid
   grantedAt    DateTime      @map("granted_at") @db.Timestamptz(3)
-  /// Motif donné au back-office (ADR-038) ; vide pour une attribution d'amorçage.
+  /// Motif donné au back-office (ADR-043) ; vide pour une attribution d'amorçage.
   grantReason  String?       @map("grant_reason")
   revokedAt    DateTime?     @map("revoked_at") @db.Timestamptz(3)
   revokedBy    String?       @map("revoked_by") @db.Uuid
@@ -250,7 +250,7 @@ model RoleAssignment {
 
   /// Une seule attribution active par compte, rôle et portée : index partiel écrit dans la migration.
   @@index([userId, revokedAt])
-  /// Titulaires actifs d'un rôle : équipe d'un métier, super administrateurs restants (ADR-038).
+  /// Titulaires actifs d'un rôle : équipe d'un métier, super administrateurs restants (ADR-043).
   @@index([roleId, revokedAt])
   @@map("role_assignments")
 }

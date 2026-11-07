@@ -6,7 +6,7 @@ import { Route } from './route.decorator';
 import { parseBody, requestBodies } from './schemas';
 
 /**
- * Routes /api/v1/admin/identity/accounts et /roles (back-office, ADR-029, ADR-038) : rôles et double
+ * Routes /api/v1/admin/identity/accounts et /roles (back-office, ADR-029, ADR-043) : rôles et double
  * authentification contrôlés par le garde d'après le manifeste, puis revérifiés par identity, qui
  * applique aussi le périmètre de l'appelant. Numéro et recherche voyagent dans le corps, jamais
  * dans l'adresse (journalisée).

@@ -9,7 +9,7 @@ import { PrismaService } from '../src/infrastructure/prisma/prisma.service';
 import { PrismaRoleRepository } from '../src/infrastructure/role/prisma-role.repository';
 
 /**
- * Test d'intégration contre un vrai PostgreSQL : administration des comptes (ADR-038) — recherche,
+ * Test d'intégration contre un vrai PostgreSQL : administration des comptes (ADR-043) — recherche,
  * attribution et retrait avec événement et trace, dernier super administrateur protégé (verrou),
  * suspension conditionnelle qui ferme les sessions, réinitialisation de la double authentification.
  * Ignoré si TEST_DATABASE_URL n'est pas défini (la CI le fournit).

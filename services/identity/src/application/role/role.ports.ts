@@ -11,7 +11,7 @@ export interface RoleGrant {
   created: boolean;
 }
 
-/** Retrait d'une attribution depuis l'administration des comptes (ADR-038). */
+/** Retrait d'une attribution depuis l'administration des comptes (ADR-043). */
 export interface RoleRevocation {
   assignmentId: string;
   userId: string;
@@ -54,7 +54,7 @@ export interface RoleRepository {
     /** Null : attribution d'amorçage (« system » dans l'événement). */
     grantedBy: string | null;
     now: Date;
-    /** Attribution depuis le back-office : motif conservé et trace d'audit (ADR-038). */
+    /** Attribution depuis le back-office : motif conservé et trace d'audit (ADR-043). */
     audit?: { id: string; reason: string };
   }): Promise<RoleGrant>;
   /**

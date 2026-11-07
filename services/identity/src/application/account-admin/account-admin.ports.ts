@@ -2,7 +2,7 @@ import { type AccountAction, type AccountQuery } from '../../domain/role/role-ad
 import { type RoleDefinition, type RoleScopeType } from '../../domain/role/role';
 import { type UserStatusName } from '../session/session.ports';
 
-/** Un compte vu par l'administration (ADR-038). */
+/** Un compte vu par l'administration (ADR-043). */
 export interface AdminAccountView {
   id: string;
   status: UserStatusName;

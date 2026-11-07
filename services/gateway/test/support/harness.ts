@@ -93,7 +93,7 @@ export const protoOrganization: identityV1.Organization = {
 
 export const ACCOUNT_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002';
 
-/** Fiche d'un compte, telle qu'identity la renvoie (administration des comptes, ADR-038). */
+/** Fiche d'un compte, telle qu'identity la renvoie (administration des comptes, ADR-043). */
 export const protoAccountDetail: identityV1.AccountDetail = {
   account: {
     userId: ACCOUNT_ID,

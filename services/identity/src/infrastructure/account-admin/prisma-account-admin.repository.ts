@@ -66,7 +66,7 @@ function detail(details: Prisma.JsonValue, key: string): string | null {
 
 const STATUS_EVENTS = { suspend: 'user.suspended', reactivate: 'user.reactivated' } as const;
 
-/** Administration des comptes au back-office (ADR-038), en base identity. */
+/** Administration des comptes au back-office (ADR-043), en base identity. */
 @Injectable()
 export class PrismaAccountAdminRepository implements AccountAdminRepository {
   constructor(private readonly prisma: PrismaService) {}

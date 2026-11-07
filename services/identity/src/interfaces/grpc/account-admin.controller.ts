@@ -79,7 +79,7 @@ export function toAccountDetailMessage(detail: AccountDetailView): identityV1.Ac
 }
 
 /**
- * Adaptateur gRPC de l'administration des comptes au back-office (ADR-029, ADR-038), réservé à la
+ * Adaptateur gRPC de l'administration des comptes au back-office (ADR-029, ADR-043), réservé à la
  * gateway. Rôles, double authentification et périmètre revérifiés par les cas d'usage.
  */
 @Controller()

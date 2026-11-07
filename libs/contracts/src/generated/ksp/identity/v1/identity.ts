@@ -1921,7 +1921,7 @@ export const ORGANIZATION_ADMIN_SERVICE_NAME = "OrganizationAdminService";
  *   IDENTITY_USER_NOT_FOUND NOT_FOUND           aucun compte pour ce numéro (un compte supprimé
  *                                               est traité comme introuvable)
  *
- * Administration des comptes et des rôles (ADR-038, UC-ID-18 à 20) : rechercher un compte, lire sa
+ * Administration des comptes et des rôles (ADR-043, UC-ID-18 à 20) : rechercher un compte, lire sa
  * fiche (identité, état, double authentification, rôles et historique), attribuer ou retirer un rôle
  * du catalogue, suspendre ou réactiver le compte, réinitialiser sa double authentification. Chaque
  * écriture exige un motif, est tracée dans le journal d'audit d'identity et renvoie la fiche à jour.
@@ -2024,7 +2024,7 @@ export interface AccountAdminServiceClient {
  *   IDENTITY_USER_NOT_FOUND NOT_FOUND           aucun compte pour ce numéro (un compte supprimé
  *                                               est traité comme introuvable)
  *
- * Administration des comptes et des rôles (ADR-038, UC-ID-18 à 20) : rechercher un compte, lire sa
+ * Administration des comptes et des rôles (ADR-043, UC-ID-18 à 20) : rechercher un compte, lire sa
  * fiche (identité, état, double authentification, rôles et historique), attribuer ou retirer un rôle
  * du catalogue, suspendre ou réactiver le compte, réinitialiser sa double authentification. Chaque
  * écriture exige un motif, est tracée dans le journal d'audit d'identity et renvoie la fiche à jour.

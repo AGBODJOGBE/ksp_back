@@ -7,7 +7,7 @@ const ACCOUNT_ADMIN = 'ksp.identity.v1.AccountAdminService';
 const ACCOUNT_LOOKUP = ['cleaning_admin', 'super_admin'] as const;
 
 /**
- * Administration des comptes et des rôles (ADR-038) : la direction, et l'administrateur de chaque
+ * Administration des comptes et des rôles (ADR-043) : la direction, et l'administrateur de chaque
  * métier pour les rôles de son métier (périmètre revérifié par identity).
  */
 const ACCOUNT_ADMINS = ['cleaning_admin', 'recovery_admin', 'super_admin'] as const;

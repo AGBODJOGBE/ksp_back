@@ -1,5 +1,5 @@
 /**
- * Doublure en mémoire de l'administration des comptes (ADR-038), adossée aux rôles en mémoire :
+ * Doublure en mémoire de l'administration des comptes (ADR-043), adossée aux rôles en mémoire :
  * mêmes règles que le dépôt réel (transition conditionnelle, dernier super administrateur, audit).
  */
 import { type RoleDefinition } from '../../domain/role/role';

@@ -55,7 +55,7 @@ tags:
   - name: Comptes entreprise (back-office)
     description: Validation, refus, suspension des comptes entreprise (ADR-027)
   - name: Comptes (back-office)
-    description: Recherche d'un compte KSP par numéro (ADR-029) ; administration des comptes et des rôles (ADR-038)
+    description: Recherche d'un compte KSP par numéro (ADR-029) ; administration des comptes et des rôles (ADR-043)
   - name: Clés publiques
     description: Vérification des jetons d'accès (UC-ID-22)
   - name: Nettoyage
@@ -9871,7 +9871,7 @@ components:
     SearchAccountsRequest:
       type: object
       additionalProperties: false
-      description: Recherche de comptes (ADR-038). Tout champ absent prend sa valeur par défaut.
+      description: Recherche de comptes (ADR-043). Tout champ absent prend sa valeur par défaut.
       properties:
         query:
           type: string
@@ -9946,7 +9946,7 @@ components:
           suspensionReason,
           roles,
         ]
-      description: Compte vu par l'administration des comptes (ADR-038).
+      description: Compte vu par l'administration des comptes (ADR-043).
       properties:
         userId:
           type: string
@@ -10078,7 +10078,7 @@ components:
       type: object
       additionalProperties: false
       required: [account, mfa, roles, history, actions]
-      description: Fiche d'un compte, renvoyée par la lecture et par chaque écriture (ADR-038).
+      description: Fiche d'un compte, renvoyée par la lecture et par chaque écriture (ADR-043).
       properties:
         account:
           $ref: '#/components/schemas/AdminAccount'

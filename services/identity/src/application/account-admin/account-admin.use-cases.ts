@@ -34,7 +34,7 @@ import {
 } from './account-admin.ports';
 
 /**
- * Administration des comptes et des rôles au back-office (ADR-038, UC-ID-18 à 20). La gateway filtre
+ * Administration des comptes et des rôles au back-office (ADR-043, UC-ID-18 à 20). La gateway filtre
  * déjà selon son manifeste ; identity revérifie toujours le rôle, la double authentification faite
  * pendant la session du back-office et le périmètre de l'appelant.
  */
