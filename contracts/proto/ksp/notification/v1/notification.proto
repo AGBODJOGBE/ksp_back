@@ -30,7 +30,7 @@ service NotificationService {
   rpc SendNotification(SendNotificationRequest) returns (SendNotificationResponse);
 }
 
-// Centre de notifications de l'espace KSP (ADR-038), réservé à la gateway : l'utilisateur est lu
+// Centre de notifications de l'espace KSP (ADR-039), réservé à la gateway : l'utilisateur est lu
 // dans le contexte de la requête, chacun ne voit que ses propres notifications.
 //
 // Erreurs :
@@ -46,14 +46,14 @@ service InAppNotificationService {
   // Idempotent : une notification déjà lue garde sa date de lecture.
   rpc MarkNotificationRead(MarkNotificationReadRequest) returns (MarkNotificationReadResponse);
   rpc MarkAllNotificationsRead(MarkAllNotificationsReadRequest) returns (MarkAllNotificationsReadResponse);
-  // Canaux souhaités pour les messages facultatifs (ADR-038) ; WhatsApp et e-mail par défaut.
+  // Canaux souhaités pour les messages facultatifs (ADR-039) ; WhatsApp et e-mail par défaut.
   rpc GetMyNotificationPreferences(GetMyNotificationPreferencesRequest)
     returns (GetMyNotificationPreferencesResponse);
   rpc UpdateMyNotificationPreferences(UpdateMyNotificationPreferencesRequest)
     returns (UpdateMyNotificationPreferencesResponse);
 }
 
-// Back-office des notifications (ADR-038), réservé à la gateway : rôles super_admin et
+// Back-office des notifications (ADR-039), réservé à la gateway : rôles super_admin et
 // support_agent, double authentification faite pendant la session (12 heures au plus). Aucune
 // donnée personnelle en clair : destinataire masqué, jamais le texte ni les variables d'un envoi.
 //

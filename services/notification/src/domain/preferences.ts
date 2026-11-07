@@ -1,7 +1,7 @@
 import { isEventTemplate, type TemplateDefinition } from './template';
 
 /**
- * Canaux souhaités par un destinataire pour ses messages facultatifs (ADR-038). Sans choix
+ * Canaux souhaités par un destinataire pour ses messages facultatifs (ADR-039). Sans choix
  * enregistré : WhatsApp et e-mail, comme avant l'ajout des préférences.
  */
 export interface ChannelPreferences {

@@ -16,7 +16,7 @@ import {
 } from './support/harness';
 
 /**
- * Ce que la gateway transmet à notification (centre de notifications, ADR-038) : utilisateur dans
+ * Ce que la gateway transmet à notification (centre de notifications, ADR-039) : utilisateur dans
  * le contexte, filtres, valeurs vides converties en null ; refus avant tout appel quand le rôle,
  * la double authentification ou un paramètre manquent.
  */

@@ -192,7 +192,7 @@ export class InMemoryInbox implements EventInbox {
   }
 }
 
-/** Préférences en mémoire (ADR-038) : valeurs par défaut pour un compte sans choix. */
+/** Préférences en mémoire (ADR-039) : valeurs par défaut pour un compte sans choix. */
 export class InMemoryPreferences implements PreferencesStore {
   readonly rows = new Map<string, StoredPreferences>();
 

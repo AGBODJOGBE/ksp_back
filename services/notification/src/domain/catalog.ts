@@ -3,7 +3,7 @@ import { isOptionalMessage } from './preferences';
 import { allTemplates, isEventTemplate, type MessageKind, type TemplateDefinition } from './template';
 
 /**
- * Aperçu d'un modèle de message pour le back-office, en lecture seule (ADR-038). Le texte est
+ * Aperçu d'un modèle de message pour le back-office, en lecture seule (ADR-039). Le texte est
  * rendu avec le nom de chaque variable entre accolades : aucune valeur réelle, aucun code.
  */
 export interface TemplatePreview {
@@ -12,7 +12,7 @@ export interface TemplatePreview {
   kind: 'direct' | MessageKind;
   channels: ChannelName[];
   secret: boolean;
-  /** Soumis aux préférences du destinataire (ADR-038). */
+  /** Soumis aux préférences du destinataire (ADR-039). */
   optional: boolean;
   variables: string[];
   optionalVariables: string[];

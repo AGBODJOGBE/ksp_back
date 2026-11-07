@@ -327,7 +327,7 @@ export function NotificationServiceControllerMethods() {
 export const NOTIFICATION_SERVICE_NAME = "NotificationService";
 
 /**
- * Centre de notifications de l'espace KSP (ADR-038), réservé à la gateway : l'utilisateur est lu
+ * Centre de notifications de l'espace KSP (ADR-039), réservé à la gateway : l'utilisateur est lu
  * dans le contexte de la requête, chacun ne voit que ses propres notifications.
  *
  * Erreurs :
@@ -363,7 +363,7 @@ export interface InAppNotificationServiceClient {
     metadata?: Metadata,
   ): Observable<MarkAllNotificationsReadResponse>;
 
-  /** Canaux souhaités pour les messages facultatifs (ADR-038) ; WhatsApp et e-mail par défaut. */
+  /** Canaux souhaités pour les messages facultatifs (ADR-039) ; WhatsApp et e-mail par défaut. */
 
   getMyNotificationPreferences(
     request: GetMyNotificationPreferencesRequest,
@@ -377,7 +377,7 @@ export interface InAppNotificationServiceClient {
 }
 
 /**
- * Centre de notifications de l'espace KSP (ADR-038), réservé à la gateway : l'utilisateur est lu
+ * Centre de notifications de l'espace KSP (ADR-039), réservé à la gateway : l'utilisateur est lu
  * dans le contexte de la requête, chacun ne voit que ses propres notifications.
  *
  * Erreurs :
@@ -419,7 +419,7 @@ export interface InAppNotificationServiceController {
     | Observable<MarkAllNotificationsReadResponse>
     | MarkAllNotificationsReadResponse;
 
-  /** Canaux souhaités pour les messages facultatifs (ADR-038) ; WhatsApp et e-mail par défaut. */
+  /** Canaux souhaités pour les messages facultatifs (ADR-039) ; WhatsApp et e-mail par défaut. */
 
   getMyNotificationPreferences(
     request: GetMyNotificationPreferencesRequest,
@@ -465,7 +465,7 @@ export function InAppNotificationServiceControllerMethods() {
 export const IN_APP_NOTIFICATION_SERVICE_NAME = "InAppNotificationService";
 
 /**
- * Back-office des notifications (ADR-038), réservé à la gateway : rôles super_admin et
+ * Back-office des notifications (ADR-039), réservé à la gateway : rôles super_admin et
  * support_agent, double authentification faite pendant la session (12 heures au plus). Aucune
  * donnée personnelle en clair : destinataire masqué, jamais le texte ni les variables d'un envoi.
  *
@@ -491,7 +491,7 @@ export interface NotificationAdminServiceClient {
 }
 
 /**
- * Back-office des notifications (ADR-038), réservé à la gateway : rôles super_admin et
+ * Back-office des notifications (ADR-039), réservé à la gateway : rôles super_admin et
  * support_agent, double authentification faite pendant la session (12 heures au plus). Aucune
  * donnée personnelle en clair : destinataire masqué, jamais le texte ni les variables d'un envoi.
  *

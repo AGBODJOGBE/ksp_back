@@ -82,7 +82,7 @@ Le détail (corps, réponses, erreurs) est dans le contrat OpenAPI, étiquettes 
 
 Le **manifeste de routage** (`src/domain/routing/route-manifest.ts`) est la seule source des routes : le décorateur `@Route('<operationId>')` en tire chemin, méthode, exigence d'accès et limite. Un test (`test/openapi.contract.spec.ts`) vérifie qu'il correspond exactement au contrat OpenAPI, que chaque point d'entrée en vient, et que les réponses réelles (succès et erreurs) respectent les schémas du contrat.
 
-## Routes du centre de notifications (ADR-038)
+## Routes du centre de notifications (ADR-039)
 
 9 routes vers `notification` (`NOTIFICATION_GRPC_URL`, `localhost:50052` par défaut), déclarées dans `src/domain/routing/notification-routes.ts` :
 

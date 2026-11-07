@@ -1,4 +1,4 @@
-# ADR-038 — Centre de notifications : lecture dans l'espace KSP, préférences de canaux, historique au back-office
+# ADR-039 — Centre de notifications : lecture dans l'espace KSP, préférences de canaux, historique au back-office
 
 **Statut** : Proposé
 

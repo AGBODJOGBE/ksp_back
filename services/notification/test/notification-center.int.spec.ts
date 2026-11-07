@@ -8,7 +8,7 @@ import { PrismaPreferences } from '../src/infrastructure/center/prisma-preferenc
 import { PrismaService } from '../src/infrastructure/prisma/prisma.service';
 
 /**
- * Test d'intégration contre un vrai PostgreSQL : dépôts du centre de notifications (ADR-038) —
+ * Test d'intégration contre un vrai PostgreSQL : dépôts du centre de notifications (ADR-039) —
  * pagination par curseur, compte du propriétaire seul, préférences, filtres de l'historique.
  * Ignoré si TEST_DATABASE_URL n'est pas défini (la CI le fournit).
  */

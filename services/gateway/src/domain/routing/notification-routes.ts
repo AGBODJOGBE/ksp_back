@@ -4,7 +4,7 @@ import { type RouteDefinition } from './route-manifest';
 const CENTER = 'ksp.notification.v1.InAppNotificationService';
 const ADMIN = 'ksp.notification.v1.NotificationAdminService';
 
-/** Rôles du back-office des notifications (ADR-038) : direction et support client. */
+/** Rôles du back-office des notifications (ADR-039) : direction et support client. */
 const NOTIFICATION_STAFF = ['super_admin', 'support_agent'] as const;
 
 const customer = { level: 'authenticated' } as const;
@@ -15,7 +15,7 @@ const staff = {
 } as const;
 
 /**
- * Routes du centre de notifications (ADR-038) : espace KSP du client et back-office. Reprises des
+ * Routes du centre de notifications (ADR-039) : espace KSP du client et back-office. Reprises des
  * extensions x-ksp-* du contrat OpenAPI ; le test de conformité vérifie qu'elles restent identiques.
  */
 export const NOTIFICATION_ROUTES = [

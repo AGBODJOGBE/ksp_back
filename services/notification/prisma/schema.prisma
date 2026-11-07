@@ -83,7 +83,7 @@ model Notification {
 
   /// Envois d'un compte, retrouvés à son anonymisation (ADR-036).
   @@index([recipientUserId])
-  /// Historique du back-office, les plus récents d'abord (ADR-038).
+  /// Historique du back-office, les plus récents d'abord (ADR-039).
   @@index([createdAt(sort: Desc), id(sort: Desc)])
   @@map("notifications")
 }
@@ -106,12 +106,12 @@ model InAppNotification {
 
   @@unique([sourceEventId, userId, templateCode])
   @@index([userId, createdAt(sort: Desc)])
-  // Index partiel des non lues (pastille de l'espace KSP, ADR-038) : écrit à la main dans la
+  // Index partiel des non lues (pastille de l'espace KSP, ADR-039) : écrit à la main dans la
   // migration 0006, Prisma ne sait pas le décrire.
   @@map("in_app_notifications")
 }
 
-/// Canaux souhaités pour les messages facultatifs (ADR-038). Pas de ligne : WhatsApp et e-mail.
+/// Canaux souhaités pour les messages facultatifs (ADR-039). Pas de ligne : WhatsApp et e-mail.
 /// Supprimée à l'anonymisation du compte (ADR-036).
 model NotificationPreference {
   userId    String   @id @map("user_id") @db.Uuid

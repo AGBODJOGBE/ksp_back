@@ -2,7 +2,7 @@
 
 Contrat gRPC : `contracts/proto/ksp/notification/v1/notification.proto`. Événement publié : `notification.message.failed` (`contracts/events/notification/`). Événements écoutés : les 14 événements du Nettoyage (`contracts/events/cleaning/`), les 3 de la facturation (`contracts/events/billing/`) et 5 événements des comptes entreprise d'identity (`identity.organization.created`, `.validated`, `.rejected`, `.suspended`, `.reactivated`, ADR-027) et le paiement en ligne réussi (`payment.intent.succeeded`, ADR-031). Décisions : ADR-014 (codes par gRPC direct), ADR-021 (WhatsApp Cloud API de Meta), ADR-024 (e-mail par Brevo), ADR-025 (facturation des contrats d'entreprise), ADR-026 (e-mail vérifié), ADR-027 (comptes entreprise), ADR-028 (factures des entreprises), ADR-030 (suspension des organisations dans le Nettoyage), ADR-013 et ADR-022 (jetons de service).
 
-Centre de notifications (ADR-038) : lecture des notifications de l'espace KSP, préférences de canaux et back-office (historique des envois, modèles) — voir « Centre de notifications » ci-dessous. Le cahier des charges complet du service (appareils push, édition des modèles, notification en direct) reste à écrire. Ce service couvre le **lot 1** (envoi des codes de connexion d'identity) et le **lot 2** (messages des événements du Nettoyage et des factures mensuelles, par WhatsApp, e-mail et dans l'espace KSP).
+Centre de notifications (ADR-039) : lecture des notifications de l'espace KSP, préférences de canaux et back-office (historique des envois, modèles) — voir « Centre de notifications » ci-dessous. Le cahier des charges complet du service (appareils push, édition des modèles, notification en direct) reste à écrire. Ce service couvre le **lot 1** (envoi des codes de connexion d'identity) et le **lot 2** (messages des événements du Nettoyage et des factures mensuelles, par WhatsApp, e-mail et dans l'espace KSP).
 
 ## Démarrer en local
 
@@ -165,7 +165,7 @@ Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie
 
 `POST https://api.brevo.com/v3/smtp/email`, clé dans l'en-tête `api-key`, expéditeur `EMAIL_SENDER_NAME <EMAIL_SENDER_ADDRESS>` ; objet, texte brut et HTML échappé. L'identifiant `messageId` est gardé dans `provider_message_id`. Panne, 429 ou quota du jour épuisé (402) → `provider_unavailable` ; 400 `invalid_parameter` → `recipient_invalid` ; autres refus → `provider_rejected`. Les journaux ne contiennent ni la clé, ni l'adresse, ni le texte. Avec `NOTIFICATION_EMAIL_PROVIDER=console` (défaut hors production, refusé en production), l'e-mail est écrit dans le terminal avec l'adresse masquée.
 
-## Centre de notifications (ADR-038)
+## Centre de notifications (ADR-039)
 
 Deux services gRPC réservés à la gateway, dans `notification.proto` :
 
@@ -196,7 +196,7 @@ Deux services gRPC réservés à la gateway, dans `notification.proto` :
 | `src/domain/messages`             | Textes des messages des événements, mise en forme (montants, dates, durées)                              |
 | `src/application/send`            | `SendNotificationUseCase`, `MessageDispatcher` (envoi idempotent partagé), ports, erreurs                |
 | `src/application/events`          | `NotifyEventUseCase`, règles par événement, ports (annuaire, inbox)                                      |
-| `src/application/center`          | Centre de notifications (ADR-038) : espace KSP, préférences, historique et modèles du back-office, ports |
+| `src/application/center`          | Centre de notifications (ADR-039) : espace KSP, préférences, historique et modèles du back-office, ports |
 | `src/application/privacy`         | `EraseUserNotificationsUseCase` : effacement d'un compte anonymisé (ADR-036), port                       |
 | `src/application/testing`         | Doublures en mémoire des ports                                                                           |
 | `src/infrastructure/channels`     | Prestataires WhatsApp (Meta, console) et e-mail (Brevo, console), leur fabrique, modèles WhatsApp        |

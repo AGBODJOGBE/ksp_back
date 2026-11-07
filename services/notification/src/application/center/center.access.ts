@@ -2,7 +2,7 @@ import { AppError, hasRole, requireRecentMfa, requireUser } from '@ksp/platform'
 import { type PageRequest } from './center.ports';
 
 /**
- * Contrôles d'accès et validation du centre de notifications (ADR-038). La gateway filtre déjà
+ * Contrôles d'accès et validation du centre de notifications (ADR-039). La gateway filtre déjà
  * selon son manifeste ; le service revérifie toujours (cahier des charges Gateway, UC-GW-03).
  */
 

@@ -49,7 +49,7 @@ import { EventNotificationsConsumer } from './interfaces/messaging/event-notific
 const CHANNEL_PROVIDERS = Symbol('CHANNEL_PROVIDERS');
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 
-/** Cas d'usage du centre de notifications (ADR-038), reliés aux dépôts Prisma. */
+/** Cas d'usage du centre de notifications (ADR-039), reliés aux dépôts Prisma. */
 function centerUseCases(config: ServiceConfig) {
   const clock = new SystemClock();
   const withStore = <T>(UseCase: new (store: PrismaInAppNotifications, clock: SystemClock) => T) => ({
@@ -111,7 +111,7 @@ export class AppModule {
         PrismaInAppNotifications,
         PrismaPreferences,
         PrismaDeliveryHistory,
-        // Centre de notifications (ADR-038) : espace KSP, préférences, back-office.
+        // Centre de notifications (ADR-039) : espace KSP, préférences, back-office.
         ...centerUseCases(config),
         {
           // Lève une erreur (le service ne démarre pas) si un prestataire console est choisi en production.

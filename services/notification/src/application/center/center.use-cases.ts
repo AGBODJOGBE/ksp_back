@@ -84,7 +84,7 @@ export class MarkAllNotificationsReadUseCase {
   }
 }
 
-// --- Préférences de canaux (ADR-038) --------------------------------------------------------------
+// --- Préférences de canaux (ADR-039) --------------------------------------------------------------
 
 export class GetMyNotificationPreferencesUseCase {
   constructor(private readonly preferences: PreferencesStore) {}

@@ -32,7 +32,7 @@ const SELECT = {
   failedAt: true,
 } as const;
 
-/** Historique des envois (table notifications), en lecture seule pour le back-office (ADR-038). */
+/** Historique des envois (table notifications), en lecture seule pour le back-office (ADR-039). */
 @Injectable()
 export class PrismaDeliveryHistory implements DeliveryHistory {
   constructor(private readonly prisma: PrismaService) {}

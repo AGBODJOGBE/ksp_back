@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Corps et paramètres des routes du centre de notifications (ADR-038), repris du contrat OpenAPI :
+ * Corps et paramètres des routes du centre de notifications (ADR-039), repris du contrat OpenAPI :
  * tout champ inconnu est refusé. Les règles (canaux facultatifs, dates) restent dans notification.
  */
 export const notificationBodies = {

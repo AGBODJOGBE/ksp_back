@@ -71,9 +71,9 @@ tags:
   - name: Paiement (back-office)
     description: Suivi des paiements en ligne
   - name: Notifications
-    description: Notifications de l'espace KSP et préférences de canaux (ADR-038)
+    description: Notifications de l'espace KSP et préférences de canaux (ADR-039)
   - name: Notifications (back-office)
-    description: Historique des envois et modèles de messages, en lecture seule (ADR-038)
+    description: Historique des envois et modèles de messages, en lecture seule (ADR-039)
 
 # Valeurs proposées par le cahier des charges Gateway (partie 4), réglables par configuration.
 x-ksp-rate-limits:
@@ -8301,7 +8301,7 @@ paths:
       operationId: getMyNotificationPreferences
       summary: Mes préférences de notification
       description: |
-        Canaux souhaités pour les messages facultatifs (ADR-038) : WhatsApp et e-mail par défaut (`updatedAt` null).
+        Canaux souhaités pour les messages facultatifs (ADR-039) : WhatsApp et e-mail par défaut (`updatedAt` null).
         Partent toujours : codes de connexion, messages importants (impayés, suspension), suppression du compte ;
         la notification de l'espace KSP est toujours enregistrée.
       x-ksp-grpc: ksp.notification.v1.InAppNotificationService/GetMyNotificationPreferences
@@ -9267,7 +9267,7 @@ components:
           type: boolean
         optional:
           type: boolean
-          description: Soumis aux préférences du destinataire (ADR-038).
+          description: Soumis aux préférences du destinataire (ADR-039).
         variables:
           type: array
           items:

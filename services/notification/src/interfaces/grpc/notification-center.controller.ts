@@ -72,7 +72,7 @@ export function presentTemplate(value: TemplatePreview): notificationV1.MessageT
 }
 
 /**
- * Centre de notifications de l'espace KSP (ADR-038) : l'utilisateur vient du contexte de la
+ * Centre de notifications de l'espace KSP (ADR-039) : l'utilisateur vient du contexte de la
  * requête, posé par la gateway. Aucune règle métier ici.
  */
 @Controller()
@@ -128,7 +128,7 @@ export class InAppNotificationGrpcController implements notificationV1.InAppNoti
   }
 }
 
-/** Back-office des notifications (ADR-038) : droits vérifiés par les cas d'usage. */
+/** Back-office des notifications (ADR-039) : droits vérifiés par les cas d'usage. */
 @Controller()
 @notificationV1.NotificationAdminServiceControllerMethods()
 export class NotificationAdminGrpcController implements notificationV1.NotificationAdminServiceController {

@@ -11,7 +11,7 @@ type Query = Record<string, unknown>;
 
 /**
  * Routes /api/v1/notification/* (espace KSP) et /api/v1/admin/notification/* (back-office) du
- * centre de notifications (ADR-038). Rôles et double authentification contrôlés par le garde
+ * centre de notifications (ADR-039). Rôles et double authentification contrôlés par le garde
  * d'après le manifeste, puis revérifiés par notification.
  */
 @Controller()

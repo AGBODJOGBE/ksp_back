@@ -122,7 +122,7 @@ describe('centre de notifications de l’espace KSP', () => {
   });
 });
 
-describe('préférences de canaux (ADR-038)', () => {
+describe('préférences de canaux (ADR-039)', () => {
   it('valeurs par défaut, puis choix enregistré et daté', async () => {
     const preferences = new InMemoryPreferences();
     const get = new GetMyNotificationPreferencesUseCase(preferences);

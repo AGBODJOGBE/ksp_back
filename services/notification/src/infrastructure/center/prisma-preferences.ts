@@ -3,7 +3,7 @@ import { type PreferencesStore, type StoredPreferences } from '../../application
 import { type ChannelPreferences, DEFAULT_CHANNEL_PREFERENCES } from '../../domain/preferences';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** Préférences de canaux (table notification_preferences, ADR-038). */
+/** Préférences de canaux (table notification_preferences, ADR-039). */
 @Injectable()
 export class PrismaPreferences implements PreferencesStore {
   constructor(private readonly prisma: PrismaService) {}

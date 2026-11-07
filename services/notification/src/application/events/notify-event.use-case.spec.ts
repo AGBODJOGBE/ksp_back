@@ -1322,7 +1322,7 @@ describe('NotifyEventUseCase — paiement en ligne (ADR-031)', () => {
   });
 });
 
-describe('NotifyEventUseCase — préférences de canaux (ADR-038)', () => {
+describe('NotifyEventUseCase — préférences de canaux (ADR-039)', () => {
   const withEmail = contact(CUSTOMER, { email: 'koffi@example.com' });
   const at = new Date('2026-10-20T10:00:00Z');
 

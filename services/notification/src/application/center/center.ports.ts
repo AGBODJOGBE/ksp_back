@@ -97,7 +97,7 @@ export interface DeliveryHistory {
 }
 
 /**
- * Préférences des destinataires d'un événement (ADR-038) : sous-ensemble du dépôt utile à
+ * Préférences des destinataires d'un événement (ADR-039) : sous-ensemble du dépôt utile à
  * l'envoi des messages.
  */
 export type RecipientPreferences = Pick<PreferencesStore, 'findMany'>;

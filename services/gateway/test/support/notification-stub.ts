@@ -14,7 +14,7 @@ import { createLocalJWKSet } from 'jose';
 import { freePort, type TestKeys, USER_ID } from './harness';
 
 /**
- * Service notification simulé pour les tests de la gateway (centre de notifications, ADR-038) :
+ * Service notification simulé pour les tests de la gateway (centre de notifications, ADR-039) :
  * implémente les contrôleurs générés depuis notification.proto, vérifie le jeton de service comme
  * le vrai service, et répond des messages complets.
  */

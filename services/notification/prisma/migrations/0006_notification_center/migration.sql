@@ -1,4 +1,4 @@
--- Centre de notifications (ADR-038) : lecture des notifications de l'espace KSP, préférences de
+-- Centre de notifications (ADR-039) : lecture des notifications de l'espace KSP, préférences de
 -- canaux, historique des envois au back-office.
 
 -- CreateTable

@@ -1,7 +1,7 @@
 import { type Json, type Page } from '../cleaning/cleaning.ports';
 
 /**
- * Vue de la gateway sur le centre de notifications (ADR-038), indépendante de gRPC : l'adaptateur
+ * Vue de la gateway sur le centre de notifications (ADR-039), indépendante de gRPC : l'adaptateur
  * traduit les requêtes en messages protobuf et les réponses en JSON du contrat OpenAPI.
  * L'utilisateur voyage dans le contexte de la requête.
  */

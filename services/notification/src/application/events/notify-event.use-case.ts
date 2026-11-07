@@ -42,7 +42,7 @@ export interface NotifyEventResult {
   unreachable: number;
   /**
    * Messages facultatifs sans envoi externe parce que le destinataire a écarté ses canaux
-   * joignables (ADR-038) : notification dans l'espace seulement.
+   * joignables (ADR-039) : notification dans l'espace seulement.
    */
   optedOut: number;
   /** Notifications enregistrées dans l'espace KSP. */
@@ -63,7 +63,7 @@ const LOCALE = 'fr';
  *    d'identity lève une erreur : l'événement est repris plus tard (file de reprise, puis file
  *    d'erreurs).
  * 3. Chaque message part par les canaux que fixe sa nature (`eventDispatchPlans`), moins ceux que
- *    le destinataire a écartés pour un message facultatif (préférences, ADR-038), avec une clé
+ *    le destinataire a écartés pour un message facultatif (préférences, ADR-039), avec une clé
  *    d'idempotence `<événement>:<modèle>:<destinataire>` : une nouvelle livraison du même événement
  *    n'envoie rien deux fois.
  * 4. L'événement est marqué traité et les notifications dans l'espace sont enregistrées, dans la même
@@ -188,7 +188,7 @@ export class NotifyEventUseCase {
     return new Map(contacts.map((contact) => [contact.userId.toLowerCase(), contact]));
   }
 
-  /** Préférences des destinataires (ADR-038), par identifiant en minuscules ; absent : par défaut. */
+  /** Préférences des destinataires (ADR-039), par identifiant en minuscules ; absent : par défaut. */
   private async findPreferences(
     intents: readonly NotificationIntent[],
   ): Promise<Map<string, ChannelPreferences>> {
