@@ -911,6 +911,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           (path.includes('/payment') && !path.includes('/webhooks/')) ||
           path.includes('/organizations') ||
           path.includes('/accounts') ||
+          path === '/api/v1/admin/identity/roles' ||
           path === '/api/v1/identity/context',
       )
       .map(
@@ -1362,6 +1363,111 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         'findAccountByPhone',
         403,
         () => call('findAccountByPhone', { auth: 'customer' }),
+      ],
+      [
+        'administration des comptes : recherche trop courte',
+        'searchAccounts',
+        400,
+        () => {
+          fail(
+            'searchAccounts',
+            AppError.invalid('IDENTITY_ACCOUNT_ADMIN_INVALID', 'Recherche trop courte.', { field: 'query' }),
+          );
+          return call('searchAccounts', { body: { query: 'k' } });
+        },
+      ],
+      [
+        'administration des comptes : champ inconnu',
+        'searchAccounts',
+        400,
+        () => call('searchAccounts', { body: { phone: '+2290197000045' } }),
+      ],
+      [
+        'administration des comptes : réservée aux administrateurs',
+        'getAccount',
+        403,
+        () => call('getAccount', { auth: 'customer' }),
+      ],
+      [
+        'administration des comptes : compte introuvable',
+        'getAccount',
+        404,
+        () => {
+          fail('getAccount', AppError.notFound('IDENTITY_USER_NOT_FOUND', 'Compte introuvable.'));
+          return call('getAccount');
+        },
+      ],
+      [
+        'attribution : rôle hors du périmètre',
+        'grantAccountRole',
+        403,
+        () => {
+          fail('grantAccountRole', AppError.forbidden('IDENTITY_ROLE_FORBIDDEN', 'Rôle hors périmètre.'));
+          return call('grantAccountRole');
+        },
+      ],
+      [
+        'attribution sans motif',
+        'grantAccountRole',
+        400,
+        () => call('grantAccountRole', { body: { roleCode: 'cleaning_agent' } }),
+      ],
+      [
+        'retrait du dernier super administrateur',
+        'revokeAccountRole',
+        422,
+        () => {
+          fail(
+            'revokeAccountRole',
+            AppError.precondition('IDENTITY_LAST_SUPER_ADMIN', 'Dernier super administrateur.'),
+          );
+          return call('revokeAccountRole');
+        },
+      ],
+      [
+        'suspension de son propre compte',
+        'suspendAccount',
+        422,
+        () => {
+          fail(
+            'suspendAccount',
+            AppError.precondition('IDENTITY_SELF_ACTION_FORBIDDEN', 'Pas sur son propre compte.'),
+          );
+          return call('suspendAccount');
+        },
+      ],
+      [
+        'réactivation d’un compte actif',
+        'reactivateAccount',
+        422,
+        () => {
+          fail(
+            'reactivateAccount',
+            AppError.precondition('IDENTITY_ACCOUNT_INVALID_TRANSITION', 'Impossible.', {
+              from: 'active',
+              action: 'reactivate',
+            }),
+          );
+          return call('reactivateAccount');
+        },
+      ],
+      [
+        'réinitialisation sans double authentification',
+        'resetAccountMfa',
+        422,
+        () => {
+          fail(
+            'resetAccountMfa',
+            AppError.precondition('IDENTITY_MFA_NOT_ENROLLED', 'Rien à réinitialiser.'),
+          );
+          return call('resetAccountMfa');
+        },
+      ],
+      [
+        'catalogue des rôles sans double authentification',
+        'listAssignableRoles',
+        403,
+        () => call('listAssignableRoles', { auth: 'staff_no_mfa' }),
       ],
       [
         'paiement manuel avec Idempotency-Key (facultative)',

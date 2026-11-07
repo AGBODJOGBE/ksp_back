@@ -55,7 +55,7 @@ tags:
   - name: Comptes entreprise (back-office)
     description: Validation, refus, suspension des comptes entreprise (ADR-027)
   - name: Comptes (back-office)
-    description: Recherche d'un compte KSP par numéro de téléphone, par exemple pour rattacher un agent (ADR-029)
+    description: Recherche d'un compte KSP par numéro (ADR-029) ; administration des comptes et des rôles (ADR-038)
   - name: Clés publiques
     description: Vérification des jetons d'accès (UC-ID-22)
   - name: Nettoyage
@@ -1839,6 +1839,486 @@ paths:
           $ref: '#/components/responses/NotFound'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/accounts/search:
+    post:
+      tags: [Comptes (back-office)]
+      operationId: searchAccounts
+      summary: Rechercher des comptes
+      description: |
+        Recherche vide : comptes qui ont un rôle actif (l'équipe de son métier pour un administrateur de métier).
+        Numéro E.164 complet : ce compte, même hors de l'équipe. Sinon : nom (2 lettres au moins, chaque mot
+        dans le prénom ou le nom ; l'équipe seulement pour un administrateur de métier). Les plus récents
+        d'abord ; un compte supprimé n'apparaît jamais. La recherche voyage dans le corps, jamais dans
+        l'adresse (journalisée). Numéro complet pour `super_admin` seulement ; masqué pour les autres.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED`, `IDENTITY_ACCOUNT_ADMIN_INVALID` (400, `details.field = query`).
+
+        Rôles : `cleaning_admin`, `recovery_admin` (rôles de leur métier seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/SearchAccounts
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: account_lookup
+      x-ksp-roles:
+        - cleaning_admin
+        - recovery_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchAccountsRequest'
+            example:
+              query: Dossou
+              limit: 20
+      responses:
+        '200':
+          description: Comptes trouvés
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAccountList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/accounts/{id}:
+    get:
+      tags: [Comptes (back-office)]
+      operationId: getAccount
+      summary: Fiche d'un compte
+      description: |
+        Identité, état, double authentification (configurée ou non, codes de récupération restants), rôles
+        actifs puis retirés (portée, auteur, date, motif), historique des actions du back-office (50 dernières)
+        et actions permises à l'appelant (`actions`, `revocable`).
+
+        Erreurs : `IDENTITY_USER_NOT_FOUND` (404, compte inconnu ou supprimé).
+
+        Rôles : `cleaning_admin`, `recovery_admin` (rôles de leur métier seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/GetAccount
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - recovery_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Fiche du compte
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAccountDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/accounts/{id}/roles:
+    post:
+      tags: [Comptes (back-office)]
+      operationId: grantAccountRole
+      summary: Attribuer un rôle
+      description: |
+        Attribue un rôle du catalogue à un compte actif, avec la portée du rôle (globale, ou le métier qui le
+        déclare). Une attribution active identique est rendue sans écriture. Le rôle entre dans les jetons au
+        renouvellement suivant (15 minutes au plus) ; un compte sans double authentification la configure à sa
+        prochaine connexion au back-office. Motif tracé ; événement `identity.role.granted`. Renvoie la fiche.
+
+        Erreurs : `IDENTITY_ACCOUNT_ADMIN_INVALID` (400, motif), `IDENTITY_ROLE_SCOPE_INVALID` (400),
+        `IDENTITY_ROLE_FORBIDDEN` (403, rôle hors du périmètre), `IDENTITY_USER_NOT_FOUND`, `IDENTITY_ROLE_NOT_FOUND`
+        (404), `IDENTITY_ACCOUNT_NOT_ACTIVE` (422, `details.status`).
+
+        Rôles : `cleaning_admin`, `recovery_admin` (rôles de leur métier seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/GrantAccountRole
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - recovery_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantAccountRoleRequest'
+            example:
+              roleCode: cleaning_agent
+              reason: Recrutée comme agent de terrain à Cotonou.
+      responses:
+        '200':
+          description: Rôle attribué, fiche à jour
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAccountDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/accounts/{id}/roles/revoke:
+    post:
+      tags: [Comptes (back-office)]
+      operationId: revokeAccountRole
+      summary: Retirer un rôle
+      description: |
+        Retire une attribution active. Effet au renouvellement suivant (15 minutes au plus) ; une session du
+        back-office sans rôle restant est alors fermée. Jamais le dernier `super_admin` d'un compte actif. Motif
+        tracé et publié dans `identity.role.revoked`. Renvoie la fiche.
+
+        Erreurs : `IDENTITY_ACCOUNT_ADMIN_INVALID` (400, motif), `IDENTITY_ROLE_FORBIDDEN` (403),
+        `IDENTITY_USER_NOT_FOUND`, `IDENTITY_ROLE_ASSIGNMENT_NOT_FOUND` (404), `IDENTITY_ROLE_ALREADY_REVOKED`,
+        `IDENTITY_LAST_SUPER_ADMIN` (422).
+
+        Rôles : `cleaning_admin`, `recovery_admin` (rôles de leur métier seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/RevokeAccountRole
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - recovery_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeAccountRoleRequest'
+            example:
+              assignmentId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0b01
+              reason: A quitté l'équipe du Nettoyage.
+      responses:
+        '200':
+          description: Rôle retiré, fiche à jour
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAccountDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/accounts/{id}/suspend:
+    post:
+      tags: [Comptes (back-office)]
+      operationId: suspendAccount
+      summary: Suspendre un compte
+      description: |
+        Actif → suspendu : toutes les sessions sont fermées, la connexion et le renouvellement sont refusés
+        (`IDENTITY_ACCOUNT_SUSPENDED`) ; un jeton d'accès déjà émis expire seul (15 minutes au plus). Jamais son
+        propre compte, ni le dernier super administrateur actif. Motif tracé et publié dans
+        `identity.user.suspended`. Renvoie la fiche.
+
+        Erreurs : `IDENTITY_ACCOUNT_ADMIN_INVALID` (400, motif), `IDENTITY_USER_NOT_FOUND` (404),
+        `IDENTITY_ACCOUNT_INVALID_TRANSITION` (422, `details.from`), `IDENTITY_SELF_ACTION_FORBIDDEN`,
+        `IDENTITY_LAST_SUPER_ADMIN` (422).
+
+        Rôles : `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/SuspendAccount
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountAdminReasonRequest'
+            example:
+              reason: Téléphone volé, signalé par le titulaire.
+      responses:
+        '200':
+          description: Compte suspendu, fiche à jour
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAccountDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/accounts/{id}/reactivate:
+    post:
+      tags: [Comptes (back-office)]
+      operationId: reactivateAccount
+      summary: Réactiver un compte
+      description: |
+        Suspendu → actif (`identity.user.reactivated`). Motif tracé. Renvoie la fiche.
+
+        Erreurs : `IDENTITY_ACCOUNT_ADMIN_INVALID` (400, motif), `IDENTITY_USER_NOT_FOUND` (404),
+        `IDENTITY_ACCOUNT_INVALID_TRANSITION` (422, `details.from`).
+
+        Rôles : `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/ReactivateAccount
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountAdminReasonRequest'
+            example:
+              reason: Téléphone retrouvé, identité vérifiée.
+      responses:
+        '200':
+          description: Compte réactivé, fiche à jour
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAccountDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/accounts/{id}/mfa/reset:
+    post:
+      tags: [Comptes (back-office)]
+      operationId: resetAccountMfa
+      summary: Réinitialiser la double authentification
+      description: |
+        Téléphone perdu : l'application d'authentification et les codes de récupération sont effacés, les
+        sessions du back-office fermées ; la prochaine connexion au back-office impose une nouvelle
+        configuration. Jamais son propre compte. Motif tracé. Renvoie la fiche.
+
+        Erreurs : `IDENTITY_ACCOUNT_ADMIN_INVALID` (400, motif), `IDENTITY_USER_NOT_FOUND` (404),
+        `IDENTITY_MFA_NOT_ENROLLED`, `IDENTITY_SELF_ACTION_FORBIDDEN` (422).
+
+        Rôles : `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/ResetAccountMfa
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountAdminReasonRequest'
+            example:
+              reason: Téléphone perdu, identité vérifiée en personne.
+      responses:
+        '200':
+          description: Double authentification réinitialisée, fiche à jour
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAccountDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /api/v1/admin/identity/roles:
+    get:
+      tags: [Comptes (back-office)]
+      operationId: listAssignableRoles
+      summary: Catalogue des rôles
+      description: |
+        Rôles enregistrés par les services, avec ceux que l'appelant peut attribuer (`grantable`) : tous pour
+        `super_admin` ; ceux de son métier, sauf le sien, pour un administrateur de métier.
+
+        Rôles : `cleaning_admin`, `recovery_admin` (rôles de leur métier seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/ListAssignableRoles
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - recovery_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Catalogue
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignableRoleList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -8185,6 +8665,14 @@ components:
       schema:
         type: string
         format: uuid
+    AccountId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant du compte KSP (UUID).
+      schema:
+        type: string
+        format: uuid
     OrganizationStatus:
       name: status
       in: query
@@ -9379,6 +9867,285 @@ components:
         phoneMasked:
           type: string
           description: Indicatif et deux derniers chiffres, par exemple `+229********45`.
+
+    SearchAccountsRequest:
+      type: object
+      additionalProperties: false
+      description: Recherche de comptes (ADR-038). Tout champ absent prend sa valeur par défaut.
+      properties:
+        query:
+          type: string
+          maxLength: 100
+          description: Vide (comptes qui ont un rôle), numéro E.164 complet, ou nom (2 lettres au moins).
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+        cursor:
+          type: string
+          format: uuid
+          description: Valeur `nextCursor` de la page précédente.
+
+    GrantAccountRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [roleCode, reason]
+      properties:
+        roleCode:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,63}$
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Motif tracé dans le journal d'audit d'identity (une ligne).
+
+    RevokeAccountRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [assignmentId, reason]
+      properties:
+        assignmentId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Motif tracé et publié dans `identity.role.revoked` (une ligne).
+
+    AccountAdminReasonRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Motif tracé dans le journal d'audit d'identity (une ligne).
+
+    RoleScopeType:
+      type: string
+      enum: [global, domain, org, personal]
+
+    AdminAccount:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          userId,
+          status,
+          firstName,
+          lastName,
+          phone,
+          phoneMasked,
+          createdAt,
+          suspendedAt,
+          suspensionReason,
+          roles,
+        ]
+      description: Compte vu par l'administration des comptes (ADR-038).
+      properties:
+        userId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        firstName:
+          type: [string, 'null']
+        lastName:
+          type: [string, 'null']
+        phone:
+          type: [string, 'null']
+          description: Numéro complet pour `super_admin` ; null pour un administrateur de métier.
+        phoneMasked:
+          type: [string, 'null']
+          description: Indicatif et deux derniers chiffres ; null si le compte n'a pas de numéro.
+        createdAt:
+          type: string
+          format: date-time
+        suspendedAt:
+          type: [string, 'null']
+          format: date-time
+        suspensionReason:
+          type: [string, 'null']
+        roles:
+          type: array
+          description: Codes des rôles actifs, dans l'ordre d'attribution.
+          items:
+            type: string
+
+    AdminAccountList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminAccount'
+        nextCursor:
+          type: [string, 'null']
+          format: uuid
+
+    AdminRoleAssignment:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          roleCode,
+          roleDescription,
+          service,
+          scopeType,
+          scopeId,
+          grantedAt,
+          grantedBy,
+          grantedByName,
+          grantReason,
+          revokedAt,
+          revokedBy,
+          revokedByName,
+          revokeReason,
+          revocable,
+        ]
+      description: Une attribution de rôle, active (revokedAt null) ou retirée.
+      properties:
+        id:
+          type: string
+          format: uuid
+        roleCode:
+          type: string
+        roleDescription:
+          type: string
+        service:
+          type: string
+          description: Service qui déclare le rôle.
+        scopeType:
+          $ref: '#/components/schemas/RoleScopeType'
+        scopeId:
+          type: [string, 'null']
+          description: Métier pour une portée `domain` ; null pour une portée globale.
+        grantedAt:
+          type: string
+          format: date-time
+        grantedBy:
+          type: [string, 'null']
+          description: Null pour une attribution d'amorçage (script `roles:grant`).
+        grantedByName:
+          type: [string, 'null']
+        grantReason:
+          type: [string, 'null']
+        revokedAt:
+          type: [string, 'null']
+          format: date-time
+        revokedBy:
+          type: [string, 'null']
+        revokedByName:
+          type: [string, 'null']
+        revokeReason:
+          type: [string, 'null']
+        revocable:
+          type: boolean
+          description: L'appelant peut retirer ce rôle.
+
+    AdminAccountAuditEntry:
+      type: object
+      additionalProperties: false
+      required: [id, action, at, actorId, actorName, roleCode, reason]
+      properties:
+        id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          description: '`user.role_granted`, `user.role_revoked`, `user.suspended`, `user.reactivated`, `user.mfa_reset`.'
+        at:
+          type: string
+          format: date-time
+        actorId:
+          type: string
+        actorName:
+          type: [string, 'null']
+        roleCode:
+          type: [string, 'null']
+        reason:
+          type: [string, 'null']
+
+    AdminAccountDetail:
+      type: object
+      additionalProperties: false
+      required: [account, mfa, roles, history, actions]
+      description: Fiche d'un compte, renvoyée par la lecture et par chaque écriture (ADR-038).
+      properties:
+        account:
+          $ref: '#/components/schemas/AdminAccount'
+        mfa:
+          type: object
+          additionalProperties: false
+          required: [configured, configuredAt, recoveryCodesRemaining]
+          properties:
+            configured:
+              type: boolean
+              description: Application d'authentification configurée et confirmée.
+            configuredAt:
+              type: [string, 'null']
+              format: date-time
+            recoveryCodesRemaining:
+              type: integer
+              minimum: 0
+        roles:
+          type: array
+          description: Rôles actifs d'abord, puis retirés, les plus récents d'abord.
+          items:
+            $ref: '#/components/schemas/AdminRoleAssignment'
+        history:
+          type: array
+          description: Actions du back-office sur ce compte, les plus récentes d'abord (50 au plus).
+          items:
+            $ref: '#/components/schemas/AdminAccountAuditEntry'
+        actions:
+          type: object
+          additionalProperties: false
+          required: [grantRole, suspend, reactivate, resetMfa]
+          description: Actions permises à l'appelant dans l'état actuel du compte.
+          properties:
+            grantRole:
+              type: boolean
+            suspend:
+              type: boolean
+            reactivate:
+              type: boolean
+            resetMfa:
+              type: boolean
+
+    AssignableRoleList:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, service, scopeType, description, backofficeAccess, grantable]
+            properties:
+              code:
+                type: string
+              service:
+                type: string
+              scopeType:
+                $ref: '#/components/schemas/RoleScopeType'
+              description:
+                type: string
+              backofficeAccess:
+                type: boolean
+              grantable:
+                type: boolean
+                description: L'appelant peut attribuer ce rôle.
 
     Jwks:
       type: object
