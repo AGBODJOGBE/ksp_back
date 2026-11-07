@@ -49,6 +49,33 @@ paiement du même objet, quel que soit le payeur ou la part, jusqu'à ce que la 
 obligatoire) : date, auteur et note sont enregistrés, le statut reste `amount_mismatch`, le blocage est
 levé. Écarts à traiter : `GET /api/v1/admin/payment/payments?underReview=true`.
 
+## Liens de paiement (ADR-038)
+
+Pour un payeur **sans compte KSP** (débiteur du Recouvrement). Un service émetteur autorisé
+(`PAYMENT_LINK_ISSUERS`, `recovery` au lancement, jeton de service) crée le lien par
+`PaymentLinkService.CreatePaymentLink` (objet `subjectType`/`subjectId` à lui, montant XOF fixe,
+bénéficiaire affiché, libellé, échéance, expiration de 1 heure à 180 jours, nom et téléphone du
+payeur facultatifs, jamais journalisés) et reçoit l'adresse `<PAYMENT_LINK_BASE_URL>/<jeton>` à
+envoyer par SMS ou WhatsApp. Jeton : HMAC-SHA256 de l'identifiant (secret `PAYMENT_LINK_TOKEN_SECRET`),
+43 caractères ; seule son empreinte est en base. Révocation : `RevokePaymentLink`.
+
+Page publique (gateway) : `GET /api/v1/payment/links/{token}` (résumé sans donnée personnelle) et
+`POST /api/v1/payment/links/{token}/pay` (`Idempotency-Key`). Chaque essai est un paiement ordinaire
+sans payeur connecté (`payment_link_id`), confirmé par le prestataire. Réussite :
+`payment.link.paid` (jamais `payment.intent.succeeded`). Refus : objet déjà payé (409
+`PAYMENT_LINK_ALREADY_PAID`), écart de montant non traité (409 `PAYMENT_UNDER_REVIEW`), lien révoqué
+ou expiré (422), plus de `PAYMENT_LINK_ATTEMPTS_PER_HOUR` essais par heure (429).
+
+## Reversements (ADR-039)
+
+`PayoutService.RequestPayout` (émetteurs `PAYMENT_PAYOUT_ISSUERS`, `wallet` au lancement) : montant,
+bénéficiaire Mobile Money (numéro +229, opérateur `mtn`/`moov`/`celtiis`, nom), référence, clé
+d'idempotence. `PAYOUT_PROVIDER=manual` (défaut) : la finance fait le virement puis le confirme
+(`POST /api/v1/admin/payment/payouts/{id}/confirm`, référence du virement) ou le déclare en échec
+(`…/fail`, raison) ; `fedapay` : créé puis lancé chez FedaPay, relu par le rapprochement et par les
+notifications `payout.*` (à valider avec le compte avant activation). Issues :
+`payment.payout.completed`, `payment.payout.failed` (code seulement, ni numéro ni raison).
+
 ## Suppression d'un compte (ADR-036)
 
 `ksp.common.v1.ObligationService` : un paiement du compte en attente (`pending_payment`) ou en écart

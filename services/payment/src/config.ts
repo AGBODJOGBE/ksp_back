@@ -4,6 +4,20 @@ import { z } from 'zod';
 /** Variable vide (ligne « NOM= » d'un fichier .env) : considérée comme absente. */
 const unset = (value: unknown) => (value === '' ? undefined : value);
 const optionalText = z.preprocess(unset, z.string().min(1).optional());
+/** Liste de noms de services séparés par des virgules (« recovery,realestate »). */
+const serviceList = (fallback: string) =>
+  z
+    .preprocess(unset, z.string().default(fallback))
+    .transform((value) =>
+      value
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean),
+    )
+    .pipe(z.array(z.string().regex(/^[a-z][a-z0-9-]*$/)).min(1));
+
+/** Secret de développement des jetons de lien : refusé en production. */
+export const DEV_LINK_TOKEN_SECRET = 'ksp-dev-payment-link-secret-not-for-production';
 
 /**
  * Configuration du service : variables communes, plus celles propres à payment (ADR-031).
@@ -45,6 +59,21 @@ export const configSchema = baseServiceConfigSchema
     PAYMENT_UNRECORDED_GRACE_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
     /** Rapprochement planifié des paiements en attente (2 minutes) ; 0 : désactivé. */
     PAYMENT_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(0).default(120_000),
+    /** Page publique d'un lien de paiement (portail) : <adresse>/<jeton> (ADR-038). */
+    PAYMENT_LINK_BASE_URL: z.url().default('http://localhost:3010/payer'),
+    /** Secret des jetons de lien (32 caractères au moins), fourni par le coffre ; jamais journalisé. */
+    PAYMENT_LINK_TOKEN_SECRET: z.preprocess(unset, z.string().min(32).default(DEV_LINK_TOKEN_SECRET)),
+    /** Services autorisés à créer des liens de paiement (jeton de service). */
+    PAYMENT_LINK_ISSUERS: serviceList('recovery'),
+    /** Essais de paiement acceptés par lien et par heure. */
+    PAYMENT_LINK_ATTEMPTS_PER_HOUR: z.coerce.number().int().min(1).max(100).default(10),
+    /**
+     * Exécution des reversements (ADR-039) : `manual` (la finance fait le virement et le confirme au
+     * back-office), ou `fedapay` (API de reversement, à activer une fois validée avec le compte).
+     */
+    PAYOUT_PROVIDER: z.enum(['manual', 'fedapay']).default('manual'),
+    /** Services autorisés à demander des reversements (jeton de service). */
+    PAYMENT_PAYOUT_ISSUERS: serviceList('wallet'),
     /** Adresses gRPC de cleaning et billing (montants dus). */
     CLEANING_GRPC_URL: z.string().min(1).default('localhost:50053'),
     BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
@@ -68,7 +97,16 @@ export const configSchema = baseServiceConfigSchema
         );
       }
     }
+    if (cfg.PAYOUT_PROVIDER === 'fedapay' && !cfg.FEDAPAY_SECRET_KEY) {
+      fail('FEDAPAY_SECRET_KEY', 'Obligatoire avec PAYOUT_PROVIDER=fedapay.');
+    }
     if (cfg.NODE_ENV !== 'production') return;
+    if (cfg.PAYMENT_LINK_TOKEN_SECRET === DEV_LINK_TOKEN_SECRET) {
+      fail('PAYMENT_LINK_TOKEN_SECRET', 'Secret propre à la production obligatoire (coffre).');
+    }
+    if (!cfg.PAYMENT_LINK_BASE_URL.startsWith('https://')) {
+      fail('PAYMENT_LINK_BASE_URL', 'Adresse HTTPS obligatoire en production.');
+    }
     if (cfg.PAYMENT_PROVIDER !== 'fedapay') {
       fail('PAYMENT_PROVIDER', 'Le prestataire simulé est interdit en production.');
     }

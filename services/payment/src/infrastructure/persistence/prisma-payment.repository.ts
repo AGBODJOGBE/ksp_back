@@ -26,7 +26,7 @@ function toDomain(row: PaymentRow): PaymentIntent {
   return {
     id: row.id,
     subject: {
-      type: row.subjectType as SubjectType,
+      type: row.subjectType,
       id: row.subjectId,
       part: (row.part as MissionPart | null) ?? null,
       reference: row.subjectReference,
@@ -34,6 +34,7 @@ function toDomain(row: PaymentRow): PaymentIntent {
     amount: row.amount,
     customerId: row.customerId,
     organizationId: row.organizationId,
+    paymentLinkId: row.paymentLinkId,
     status: row.status as PaymentStatus,
     provider: row.provider as ProviderName,
     providerTransactionId: row.providerTransactionId,
@@ -110,6 +111,7 @@ export class PrismaPaymentRepository implements PaymentRepository {
           currency: 'XOF',
           customerId: intent.customerId,
           organizationId: intent.organizationId,
+          paymentLinkId: intent.paymentLinkId,
           provider: intent.provider,
           idempotencyKey: intent.idempotencyKey,
           createdAt: intent.createdAt,
@@ -122,7 +124,11 @@ export class PrismaPaymentRepository implements PaymentRepository {
     } catch (error) {
       // Envoi concurrent avec la même clé : le premier enregistré fait foi.
       if (!isUniqueViolation(error)) throw error;
-      const existing = await this.findByIdempotencyKey(intent.customerId, intent.idempotencyKey);
+      const existing = intent.paymentLinkId
+        ? await this.findByLinkKey(intent.paymentLinkId, intent.idempotencyKey)
+        : intent.customerId
+          ? await this.findByIdempotencyKey(intent.customerId, intent.idempotencyKey)
+          : null;
       if (!existing) throw error;
       return { created: false, intent: existing };
     }
@@ -138,6 +144,21 @@ export class PrismaPaymentRepository implements PaymentRepository {
       where: { customerId_idempotencyKey: { customerId, idempotencyKey } },
     });
     return row ? toDomain(row) : null;
+  }
+
+  async findByLinkKey(paymentLinkId: string, idempotencyKey: string): Promise<PaymentIntent | null> {
+    const row = await this.prisma.paymentIntent.findUnique({
+      where: { paymentLinkId_idempotencyKey: { paymentLinkId, idempotencyKey } },
+    });
+    return row ? toDomain(row) : null;
+  }
+
+  async listForLink(paymentLinkId: string): Promise<PaymentIntent[]> {
+    const rows = await this.prisma.paymentIntent.findMany({
+      where: { paymentLinkId },
+      orderBy: { id: 'asc' },
+    });
+    return rows.map(toDomain);
   }
 
   async findByTransaction(provider: ProviderName, transactionId: string): Promise<PaymentIntent | null> {
@@ -168,7 +189,7 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return row ? toDomain(row) : null;
   }
 
-  async listSucceeded(input: { subjectType: SubjectType; subjectId: string }): Promise<SucceededPayment[]> {
+  async listSucceeded(input: { subjectType: string; subjectId: string }): Promise<SucceededPayment[]> {
     const rows = await this.prisma.paymentIntent.findMany({
       where: { subjectType: input.subjectType, subjectId: input.subjectId, status: 'succeeded' },
       select: { id: true, completedAt: true, updatedAt: true },
@@ -177,7 +198,7 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return rows.map((row) => ({ id: row.id, succeededAt: row.completedAt ?? row.updatedAt }));
   }
 
-  async listUnresolvedMismatches(input: { subjectType: SubjectType; subjectId: string }): Promise<string[]> {
+  async listUnresolvedMismatches(input: { subjectType: string; subjectId: string }): Promise<string[]> {
     const rows = await this.prisma.paymentIntent.findMany({
       where: { subjectType: input.subjectType, subjectId: input.subjectId, ...UNDER_REVIEW },
       select: { id: true },

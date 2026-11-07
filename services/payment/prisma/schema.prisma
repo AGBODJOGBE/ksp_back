@@ -43,42 +43,46 @@ model ProcessedEvent {
 /// Paiement en ligne par Mobile Money (ADR-031). Montant en entiers de FCFA (XOF), lu dans cleaning
 /// ou billing à la création ; statut confirmé par le prestataire seulement.
 model PaymentIntent {
-  id                     String    @id @db.Uuid
-  /// cleaning_mission ou billing_invoice.
-  subjectType            String    @map("subject_type")
-  subjectId              String    @map("subject_id") @db.Uuid
+  id                     String       @id @db.Uuid
+  /// cleaning_mission, billing_invoice, ou type de l'émetteur d'un lien (recovery_installment…).
+  subjectType            String       @map("subject_type")
+  subjectId              String       @map("subject_id") @db.Uuid
   /// Mission : deposit ou balance ; null pour une facture.
   part                   String?
   /// Numéro de la facture ; null pour une mission.
-  subjectReference       String?   @map("subject_reference")
+  subjectReference       String?      @map("subject_reference")
   amount                 Int
-  currency               String    @default("XOF")
-  /// Payeur : compte connecté qui a créé le paiement.
-  customerId             String    @map("customer_id") @db.Uuid
-  organizationId         String?   @map("organization_id") @db.Uuid
+  currency               String       @default("XOF")
+  /// Payeur : compte connecté qui a créé le paiement ; null pour un paiement par lien (ADR-038).
+  customerId             String?      @map("customer_id") @db.Uuid
+  organizationId         String?      @map("organization_id") @db.Uuid
   /// pending, succeeded, failed, expired, cancelled ou amount_mismatch.
   status                 String
   /// fedapay ou simulated.
   provider               String
-  providerTransactionId  String?   @map("provider_transaction_id")
-  providerReference      String?   @map("provider_reference")
-  checkoutUrl            String?   @map("checkout_url")
-  idempotencyKey         String    @map("idempotency_key")
-  failureReason          String?   @map("failure_reason")
-  createdAt              DateTime  @map("created_at") @db.Timestamptz(3)
-  updatedAt              DateTime  @map("updated_at") @db.Timestamptz(3)
-  expiresAt              DateTime  @map("expires_at") @db.Timestamptz(3)
-  completedAt            DateTime? @map("completed_at") @db.Timestamptz(3)
-  lastCheckedAt          DateTime? @map("last_checked_at") @db.Timestamptz(3)
+  providerTransactionId  String?      @map("provider_transaction_id")
+  providerReference      String?      @map("provider_reference")
+  checkoutUrl            String?      @map("checkout_url")
+  idempotencyKey         String       @map("idempotency_key")
+  failureReason          String?      @map("failure_reason")
+  createdAt              DateTime     @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime     @map("updated_at") @db.Timestamptz(3)
+  expiresAt              DateTime     @map("expires_at") @db.Timestamptz(3)
+  completedAt            DateTime?    @map("completed_at") @db.Timestamptz(3)
+  lastCheckedAt          DateTime?    @map("last_checked_at") @db.Timestamptz(3)
   /// Écart de montant traité par la finance (ADR-032) : date, compte du back-office, note, clé
   /// d'idempotence facultative. Vides tant qu'il n'est pas traité (et pour tout autre statut).
-  mismatchResolvedAt     DateTime? @map("mismatch_resolved_at") @db.Timestamptz(3)
-  mismatchResolvedBy     String?   @map("mismatch_resolved_by") @db.Uuid
-  mismatchResolutionNote String?   @map("mismatch_resolution_note")
-  mismatchResolutionKey  String?   @map("mismatch_resolution_key")
-  version                Int       @default(0)
+  mismatchResolvedAt     DateTime?    @map("mismatch_resolved_at") @db.Timestamptz(3)
+  mismatchResolvedBy     String?      @map("mismatch_resolved_by") @db.Uuid
+  mismatchResolutionNote String?      @map("mismatch_resolution_note")
+  mismatchResolutionKey  String?      @map("mismatch_resolution_key")
+  version                Int          @default(0)
+  /// Lien de paiement payé (payeur sans compte) ; exactement un des deux : payeur ou lien.
+  paymentLinkId          String?      @map("payment_link_id") @db.Uuid
+  paymentLink            PaymentLink? @relation(fields: [paymentLinkId], references: [id])
 
   @@unique([customerId, idempotencyKey])
+  @@unique([paymentLinkId, idempotencyKey])
   @@unique([provider, providerTransactionId])
   @@index([customerId, id])
   @@index([organizationId, id])
@@ -102,4 +106,71 @@ model ProviderNotification {
   @@index([paymentId])
   @@index([receivedAt])
   @@map("provider_notifications")
+}
+
+/// Lien de paiement (ADR-038) : payeur sans compte. Le jeton n'est jamais enregistré, seulement son
+/// empreinte SHA-256 ; nom et téléphone du payeur facultatifs, jamais journalisés.
+model PaymentLink {
+  id              String          @id @db.Uuid
+  tokenHash       String          @unique @map("token_hash")
+  issuer          String
+  idempotencyKey  String          @map("idempotency_key")
+  subjectType     String          @map("subject_type")
+  subjectId       String          @map("subject_id") @db.Uuid
+  reference       String
+  beneficiaryName String          @map("beneficiary_name")
+  description     String
+  amount          Int
+  currency        String          @default("XOF")
+  /// Échéance affichée (AAAA-MM-JJ).
+  dueDate         String?         @map("due_date")
+  payerName       String?         @map("payer_name")
+  payerPhone      String?         @map("payer_phone")
+  expiresAt       DateTime        @map("expires_at") @db.Timestamptz(3)
+  revokedAt       DateTime?       @map("revoked_at") @db.Timestamptz(3)
+  revokedReason   String?         @map("revoked_reason")
+  createdAt       DateTime        @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime        @map("updated_at") @db.Timestamptz(3)
+  version         Int             @default(0)
+  intents         PaymentIntent[]
+
+  @@unique([issuer, idempotencyKey])
+  @@index([subjectType, subjectId])
+  @@map("payment_links")
+}
+
+/// Reversement par Mobile Money (ADR-039). Numéro et nom du bénéficiaire : jamais journalisés, jamais
+/// dans les événements.
+model Payout {
+  id                  String    @id @db.Uuid
+  issuer              String
+  idempotencyKey      String    @map("idempotency_key")
+  reference           String
+  amount              Int
+  currency            String    @default("XOF")
+  beneficiaryPhone    String    @map("beneficiary_phone")
+  beneficiaryOperator String    @map("beneficiary_operator")
+  beneficiaryName     String    @map("beneficiary_name")
+  /// requested, processing, completed ou failed.
+  status              String
+  /// fedapay ou manual.
+  provider            String
+  providerPayoutId    String?   @map("provider_payout_id")
+  providerReference   String?   @map("provider_reference")
+  failureCode         String?   @map("failure_code")
+  failureReason       String?   @map("failure_reason")
+  settledBy           String?   @map("settled_by") @db.Uuid
+  settlementKey       String?   @map("settlement_key")
+  createdAt           DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime  @map("updated_at") @db.Timestamptz(3)
+  submittedAt         DateTime? @map("submitted_at") @db.Timestamptz(3)
+  completedAt         DateTime? @map("completed_at") @db.Timestamptz(3)
+  failedAt            DateTime? @map("failed_at") @db.Timestamptz(3)
+  lastCheckedAt       DateTime? @map("last_checked_at") @db.Timestamptz(3)
+  version             Int       @default(0)
+
+  @@unique([issuer, idempotencyKey])
+  @@unique([provider, providerPayoutId])
+  @@index([status, lastCheckedAt])
+  @@map("payouts")
 }

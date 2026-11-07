@@ -1,5 +1,6 @@
 import { type PaymentEventPayloads, type PaymentEventType } from '@ksp/contracts';
 import { type InvoiceDue, type MissionDue, type SucceededPayment } from '../domain/amount-due';
+import { type PaymentLink } from '../domain/payment-link';
 import {
   type PaymentIntent,
   type PaymentStatus,
@@ -7,6 +8,13 @@ import {
   type ProviderStatus,
   type SubjectType,
 } from '../domain/payment-intent';
+import {
+  type Payout,
+  type PayoutBeneficiary,
+  type PayoutProviderName,
+  type PayoutStatus,
+  type ProviderPayoutStatus,
+} from '../domain/payout';
 
 /**
  * Ports du service payment. Les événements sont écrits dans l'outbox, dans la transaction qui
@@ -37,7 +45,7 @@ export interface IdGenerator {
 
 export interface PaymentFilter {
   status?: PaymentStatus;
-  subjectType?: SubjectType;
+  subjectType?: string;
   subjectId?: string;
   customerId?: string;
   /** null : paiements sans organisation (contexte personnel). */
@@ -55,6 +63,10 @@ export interface PaymentRepository {
   findById(id: string): Promise<PaymentIntent | null>;
   findByIdempotencyKey(customerId: string, idempotencyKey: string): Promise<PaymentIntent | null>;
   findByTransaction(provider: ProviderName, transactionId: string): Promise<PaymentIntent | null>;
+  /** Essai de paiement d'un lien enregistré avec cette clé (rejeu), null sinon. */
+  findByLinkKey(paymentLinkId: string, idempotencyKey: string): Promise<PaymentIntent | null>;
+  /** Essais de paiement d'un lien, les plus anciens d'abord (peu nombreux : limités par heure). */
+  listForLink(paymentLinkId: string): Promise<PaymentIntent[]>;
   /** Paiement en attente, non expiré, du même payeur pour le même objet (réutilisable). */
   findOpen(input: {
     customerId: string;
@@ -67,12 +79,12 @@ export interface PaymentRepository {
    * Paiements réussis (`succeeded`) d'un objet, quel que soit le payeur ou la part, avec l'instant de
    * leur réussite.
    */
-  listSucceeded(input: { subjectType: SubjectType; subjectId: string }): Promise<SucceededPayment[]>;
+  listSucceeded(input: { subjectType: string; subjectId: string }): Promise<SucceededPayment[]>;
   /**
    * Identifiants des paiements `amount_mismatch` d'un objet que la finance n'a pas encore traités,
    * quel que soit le payeur ou la part (ADR-032).
    */
-  listUnresolvedMismatches(input: { subjectType: SubjectType; subjectId: string }): Promise<string[]>;
+  listUnresolvedMismatches(input: { subjectType: string; subjectId: string }): Promise<string[]>;
   /**
    * Paiements du payeur pas encore réglés : en attente, ou écart de montant pas encore traité par
    * la finance (« en vérification »), les plus anciens d'abord. Ils bloquent la suppression de son
@@ -105,6 +117,88 @@ export interface PaymentRepository {
     limit: number;
   }): Promise<PaymentIntent[]>;
 }
+
+/** Liens de paiement (ADR-038). */
+export interface PaymentLinkRepository {
+  /**
+   * Enregistre un nouveau lien. Idempotent par (émetteur, clé) : si la clé existe déjà (envoi
+   * concurrent), renvoie le lien enregistré avec `created: false`.
+   */
+  create(link: PaymentLink, tokenHash: string): Promise<{ created: boolean; link: PaymentLink }>;
+  findById(id: string): Promise<PaymentLink | null>;
+  findByTokenHash(tokenHash: string): Promise<PaymentLink | null>;
+  findByIssuerKey(issuer: string, idempotencyKey: string): Promise<PaymentLink | null>;
+  /** Liens d'un même objet, les plus récents d'abord. */
+  listForSubject(subjectType: string, subjectId: string): Promise<PaymentLink[]>;
+  /** Enregistre le lien si sa version n'a pas changé depuis la lecture ; sinon false. */
+  save(link: PaymentLink): Promise<boolean>;
+}
+
+/**
+ * Jetons des liens : longs et imprévisibles, dérivés d'un secret du service et de l'identifiant du
+ * lien (l'émetteur peut le relire, par exemple pour renvoyer le message) ; seule l'empreinte est
+ * enregistrée, et c'est elle qui sert à retrouver le lien.
+ */
+export interface LinkTokens {
+  issue(linkId: string): string;
+  /** Empreinte d'un jeton reçu (format déjà vérifié). */
+  hash(token: string): string;
+}
+
+export interface PayoutFilter {
+  status?: PayoutStatus;
+  issuer?: string;
+}
+
+/** Reversements (ADR-039). */
+export interface PayoutRepository {
+  /** Idempotent par (émetteur, clé) : un envoi concurrent renvoie le reversement enregistré. */
+  create(payout: Payout): Promise<{ created: boolean; payout: Payout }>;
+  findById(id: string): Promise<Payout | null>;
+  findByIssuerKey(issuer: string, idempotencyKey: string): Promise<Payout | null>;
+  findByProviderPayoutId(provider: PayoutProviderName, providerPayoutId: string): Promise<Payout | null>;
+  /** Enregistre le reversement et ses événements (outbox) si sa version n'a pas changé ; sinon false. */
+  save(payout: Payout, events: OutboxMessage[]): Promise<boolean>;
+  list(filter: PayoutFilter, page: PageRequest): Promise<PageResult<Payout>>;
+  /**
+   * Reversements à faire avancer chez le prestataire : `requested` (à créer ou à lancer), ou
+   * `processing` pas relus depuis `checkedBefore` ; jamais relus d'abord.
+   */
+  listToReconcile(input: {
+    provider: PayoutProviderName;
+    checkedBefore: Date;
+    limit: number;
+  }): Promise<Payout[]>;
+}
+
+export interface ProviderPayout {
+  providerPayoutId: string;
+  status: ProviderPayoutStatus;
+  reference: string | null;
+  amount: number;
+  currency: string;
+}
+
+/**
+ * Exécution des reversements : prestataire (créer sans envoyer, puis lancer, relire), ou mode manuel
+ * (aucun appel : la finance fait le virement et le confirme au back-office).
+ */
+export type PayoutProvider =
+  | { readonly name: 'manual'; readonly automatic: false }
+  | {
+      readonly name: 'fedapay';
+      readonly automatic: true;
+      /** Crée le reversement chez le prestataire, sans l'envoyer. Panne : AppError UNAVAILABLE. */
+      createPayout(request: {
+        payoutId: string;
+        amount: number;
+        currency: 'XOF';
+        beneficiary: PayoutBeneficiary;
+      }): Promise<{ providerPayoutId: string; reference: string | null }>;
+      /** Lance l'envoi d'un reversement créé. */
+      startPayout(providerPayoutId: string): Promise<void>;
+      getPayout(providerPayoutId: string): Promise<ProviderPayout>;
+    };
 
 /** Issue du traitement d'une notification du prestataire (journal, réponse au webhook). */
 export type NotificationOutcome =
@@ -166,6 +260,9 @@ export interface ProviderTransaction {
 export interface ProviderNotification {
   eventName: string;
   eventId: string | null;
+  /** Objet de la notification : transaction (paiement) ou reversement (ADR-039). */
+  entity: 'transaction' | 'payout';
+  /** Identifiant chez le prestataire de la transaction ou du reversement. */
   transactionId: string | null;
 }
 
@@ -214,6 +311,14 @@ export interface PaymentSettings {
   lateSuccessWindowHours: number;
   /** Intervalle entre deux relectures d'un paiement non abouti (réussite tardive), en minutes. */
   lateSuccessRecheckMinutes: number;
+  /** Adresse publique des liens : <linkBaseUrl>/<jeton> (page du portail, ADR-038). */
+  linkBaseUrl: string;
+  /** Services autorisés à créer des liens (jeton de service). */
+  linkIssuers: readonly string[];
+  /** Essais de paiement acceptés par lien et par heure (au-delà : 429). */
+  linkAttemptsPerHour: number;
+  /** Services autorisés à demander des reversements (jeton de service). */
+  payoutIssuers: readonly string[];
 }
 
 /**
@@ -249,6 +354,17 @@ export interface PaymentAlerts {
    * traité par la finance (ADR-032) : à chaque refus.
    */
   paymentUnderReview(input: { subjectType: string; subjectId: string; paymentIds: string[] }): void;
+  /**
+   * Reversement relu chez le prestataire pour un autre montant ou une autre devise (ADR-039) : son
+   * statut n'est pas appliqué, la finance vérifie.
+   */
+  payoutMismatch(input: {
+    payoutId: string;
+    providerPayoutId: string;
+    expectedAmount: number;
+    reportedAmount: number;
+    currency: string;
+  }): void;
 }
 
 /**
@@ -269,6 +385,10 @@ export interface NameBook {
 
 export interface PaymentDeps {
   payments: PaymentRepository;
+  links: PaymentLinkRepository;
+  linkTokens: LinkTokens;
+  payouts: PayoutRepository;
+  payoutProvider: PayoutProvider;
   people: PeopleDirectory;
   notifications: ProviderNotificationLog;
   dues: AmountDueDirectory;

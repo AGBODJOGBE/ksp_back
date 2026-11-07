@@ -109,9 +109,12 @@ export class FedapayProvider implements PaymentProvider {
     const entity = (event['entity'] ?? {}) as Json;
     const id = (value: unknown) =>
       typeof value === 'number' || (typeof value === 'string' && value) ? String(value) : null;
+    const eventName = typeof event['name'] === 'string' ? event['name'] : 'unknown';
     return {
-      eventName: typeof event['name'] === 'string' ? event['name'] : 'unknown',
+      eventName,
       eventId: id(event['id']),
+      // Reversements (ADR-039) : événements payout.* sur le même webhook.
+      entity: eventName.startsWith('payout.') ? 'payout' : 'transaction',
       transactionId: id(entity['id']),
     };
   }

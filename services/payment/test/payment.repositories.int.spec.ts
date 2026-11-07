@@ -62,6 +62,7 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
       amount: 15000,
       customerId: CUSTOMER,
       organizationId: null,
+      paymentLinkId: null,
       status: 'pending',
       provider: 'fedapay',
       providerTransactionId: null,

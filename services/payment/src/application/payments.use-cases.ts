@@ -1,4 +1,5 @@
 import { type DueRefusal, invoiceAmount, missionAmount, unrecordedSuccesses } from '../domain/amount-due';
+import { isLinkSubjectType } from '../domain/payment-link';
 import {
   MISSION_PARTS,
   type MissionPart,
@@ -28,6 +29,7 @@ import {
   requireText,
   requireUuid,
 } from './shared/validation';
+import { PayoutSync } from './payout-sync';
 import { PaymentSync } from './sync';
 
 const MINUTE_MS = 60_000;
@@ -133,6 +135,7 @@ export class CreatePaymentUseCase {
       amount,
       customerId: payer.userId,
       organizationId,
+      paymentLinkId: null,
       status: 'pending',
       provider: this.deps.provider.name,
       providerTransactionId: null,
@@ -262,7 +265,11 @@ export class ListPaymentsUseCase {
   }): Promise<PageResult<PaymentIntent> & { names: NameBook }> {
     requireStaff(PAYMENT_STAFF);
     const status = optionalOneOf('status', input.status, PAYMENT_STATUSES);
-    const subjectType = optionalOneOf('subjectType', input.subjectType, SUBJECT_TYPES);
+    // Types du paiement par compte, ou type choisi par l'émetteur d'un lien (ADR-038).
+    if (input.subjectType && !(SUBJECT_TYPES as readonly string[]).includes(input.subjectType)) {
+      if (!isLinkSubjectType(input.subjectType)) throw PaymentErrors.invalid('subjectType');
+    }
+    const subjectType = input.subjectType || undefined;
     const subjectId = optionalUuid('subjectId', input.subjectId);
     const customerId = optionalUuid('customerId', input.customerId);
     const organizationId = optionalUuid('organizationId', input.organizationId);
@@ -342,9 +349,11 @@ function refusedResolution(reason: 'not_mismatch' | 'already_resolved') {
  */
 export class ReceiveProviderNotificationUseCase {
   private readonly sync: PaymentSync;
+  private readonly payouts: PayoutSync;
 
   constructor(private readonly deps: PaymentDeps) {
     this.sync = new PaymentSync(deps);
+    this.payouts = new PayoutSync(deps);
   }
 
   async execute(input: {
@@ -361,7 +370,19 @@ export class ReceiveProviderNotificationUseCase {
     const notification = provider.verifyNotification(input.payload, input.signature, receivedAt);
     let outcome: NotificationOutcome = 'ignored';
     let paymentId: string | null = null;
-    if (notification.transactionId) {
+    if (notification.transactionId && notification.entity === 'payout') {
+      // Reversement (ADR-039) : relu chez le prestataire, comme une transaction.
+      const payoutProvider = this.deps.payoutProvider;
+      const payout =
+        payoutProvider.automatic && payoutProvider.name === provider.name
+          ? await this.deps.payouts.findByProviderPayoutId(payoutProvider.name, notification.transactionId)
+          : null;
+      if (!payout) outcome = 'unknown_transaction';
+      else {
+        const refreshed = await this.payouts.refresh(payout);
+        outcome = refreshed.status !== payout.status ? 'applied' : 'no_change';
+      }
+    } else if (notification.transactionId) {
       const intent = await this.deps.payments.findByTransaction(provider.name, notification.transactionId);
       if (!intent) outcome = 'unknown_transaction';
       else {
