@@ -8,7 +8,9 @@ import "ksp/common/v1/money.proto";
 // (ADR-031). Il sert :
 // - au particulier, pour l'acompte ou le solde d'une mission du Nettoyage (montant dû lu dans
 //   cleaning) ;
-// - à l'entreprise (ou au particulier), pour le reste dû d'une facture mensuelle (lu dans billing).
+// - à l'entreprise (ou au particulier), pour le reste dû d'une facture mensuelle (lu dans billing) ;
+// - à un payeur sans compte KSP (débiteur du Recouvrement), par un lien de paiement (ADR-038) ;
+// - aux reversements par Mobile Money (créanciers payés depuis leur solde wallet, ADR-039).
 //
 // - PaymentService : espace client (créer un paiement, le suivre, mes paiements) et, en
 //   développement seulement, la confirmation simulée.
@@ -16,6 +18,10 @@ import "ksp/common/v1/money.proto";
 //   signature vérifiée par payment).
 // - PaymentAdminService : back-office (liste et filtres, traitement d'un écart de montant par la
 //   finance).
+// - PaymentLinkService : liens de paiement, réservés aux services émetteurs (recovery).
+// - PaymentLinkPublicService : page publique d'un lien (résumé, paiement), réservée à la gateway.
+// - PayoutService : reversements demandés par un service (wallet) ; PayoutAdminService : leur suivi
+//   et, en mode manuel, leur confirmation par la finance.
 //
 // Règles :
 // - le montant dû vient toujours de cleaning ou de billing, jamais du client ;
@@ -53,6 +59,15 @@ import "ksp/common/v1/money.proto";
 //   PAYMENT_CONCURRENT_UPDATE           ALREADY_EXISTS      paiement modifié en même temps par un autre appel
 //   PAYMENT_PROVIDER_UNAVAILABLE        UNAVAILABLE         prestataire injoignable : réessayer avec la même clé
 //   PAYMENT_CALLER_FORBIDDEN            PERMISSION_DENIED   méthode réservée à un autre service
+//   PAYMENT_LINK_NOT_FOUND              NOT_FOUND           lien inconnu (jeton faux ou mal formé), ou d'un autre émetteur
+//   PAYMENT_LINK_ALREADY_PAID           ALREADY_EXISTS      lien (ou objet du lien) déjà payé
+//   PAYMENT_LINK_ALREADY_ACTIVE         ALREADY_EXISTS      un lien encore payable existe pour le même objet : le révoquer
+//   PAYMENT_LINK_REVOKED                FAILED_PRECONDITION lien révoqué par son émetteur
+//   PAYMENT_LINK_EXPIRED                FAILED_PRECONDITION lien expiré
+//   PAYMENT_LINK_TOO_MANY_ATTEMPTS      RESOURCE_EXHAUSTED  trop de tentatives de paiement sur ce lien (par heure)
+//   PAYMENT_PAYOUT_NOT_FOUND            NOT_FOUND           reversement inconnu, ou d'un autre émetteur
+//   PAYMENT_PAYOUT_NOT_MANUAL           FAILED_PRECONDITION confirmation à la main d'un reversement exécuté par le prestataire
+//   PAYMENT_PAYOUT_ALREADY_SETTLED      ALREADY_EXISTS      reversement déjà terminé (autre issue, autre référence)
 //   AUTH_REQUIRED                       UNAUTHENTICATED
 //   AUTH_FORBIDDEN                      PERMISSION_DENIED   rôle du back-office manquant
 //   AUTH_MFA_REQUIRED                   PERMISSION_DENIED   double authentification absente
@@ -90,13 +105,15 @@ message Page {
 
 // Objet payé.
 message PaymentSubject {
-  // "cleaning_mission" ou "billing_invoice".
+  // "cleaning_mission" ou "billing_invoice" ; paiement par lien : type choisi par l'émetteur (par
+  // exemple "recovery_installment", ADR-038).
   string type = 1;
   // Mission (cleaning) ou facture (billing).
   string id = 2;
   // Mission seulement : "deposit" (acompte) ou "balance" (reste dû) ; vide pour une facture.
   string part = 3;
-  // Référence lisible : numéro de la facture ; vide pour une mission.
+  // Référence lisible : numéro de la facture ; référence de l'émetteur pour un lien ; vide pour une
+  // mission.
   string reference = 4;
 }
 
@@ -108,7 +125,8 @@ message Payment {
   PaymentSubject subject = 3;
   // Montant dû au moment de la création, lu dans cleaning ou billing.
   ksp.common.v1.Money amount = 4;
-  // Payeur : le compte connecté qui a créé le paiement.
+  // Payeur : le compte connecté qui a créé le paiement ; vide pour un paiement par lien (payeur sans
+  // compte, ADR-038).
   string customer_id = 5;
   // Organisation payeuse (facture d'entreprise), vide sinon.
   string organization_id = 6;
@@ -140,6 +158,8 @@ message Payment {
   string mismatch_resolved_at = 19;
   string mismatch_resolved_by = 20;
   string mismatch_resolution_note = 21;
+  // Paiement par lien (ADR-038) : lien payé, payeur sans compte (customer_id vide). Vide sinon.
+  string payment_link_id = 22;
 }
 
 message CreatePaymentRequest {
@@ -233,4 +253,286 @@ message ResolveAmountMismatchRequest {
 
 message ResolveAmountMismatchResponse {
   Payment payment = 1;
+}
+
+// Liens de paiement (ADR-038), réservés aux services émetteurs autorisés (PAYMENT_LINK_ISSUERS :
+// recovery au lancement ; jeton de service obligatoire). Un lien porte un objet de l'émetteur (type
+// extensible, par exemple "recovery_installment"), un montant fixe en XOF, le bénéficiaire affiché et
+// une date d'expiration ; le payeur n'a pas de compte. L'émetteur ne voit que ses propres liens.
+service PaymentLinkService {
+  // Crée le lien (ou renvoie celui de la même clé d'idempotence) et son adresse publique.
+  rpc CreatePaymentLink(CreatePaymentLinkRequest) returns (CreatePaymentLinkResponse);
+  rpc GetPaymentLink(GetPaymentLinkRequest) returns (GetPaymentLinkResponse);
+  // Le lien ne peut plus être payé ; une tentative en attente est annulée. Rejouable sans effet.
+  rpc RevokePaymentLink(RevokePaymentLinkRequest) returns (RevokePaymentLinkResponse);
+}
+
+// Page publique d'un lien de paiement, réservée à la gateway (routes publiques, sans compte). Aucune
+// donnée personnelle du payeur n'y figure.
+service PaymentLinkPublicService {
+  // Résumé du lien ; une tentative en attente est vérifiée auprès du prestataire au passage.
+  rpc GetPublicPaymentLink(GetPublicPaymentLinkRequest) returns (GetPublicPaymentLinkResponse);
+  // Lance le paiement chez le prestataire (idempotent par clé) et renvoie sa page de paiement.
+  rpc PayPaymentLink(PayPaymentLinkRequest) returns (PayPaymentLinkResponse);
+  // Développement seulement (prestataire simulé, hors production), comme SimulatePayment.
+  rpc SimulatePaymentLinkPayment(SimulatePaymentLinkPaymentRequest) returns (SimulatePaymentLinkPaymentResponse);
+}
+
+// Reversements par Mobile Money (ADR-039), réservés aux services autorisés (PAYMENT_PAYOUT_ISSUERS :
+// wallet au lancement ; jeton de service obligatoire). Exécution par le prestataire (FedaPay) ou, en
+// mode manuel, par la finance qui confirme le virement au back-office. Événements
+// payment.payout.completed et payment.payout.failed.
+service PayoutService {
+  // Enregistre le reversement (ou renvoie celui de la même clé) et le lance chez le prestataire.
+  rpc RequestPayout(RequestPayoutRequest) returns (RequestPayoutResponse);
+  rpc GetPayout(GetPayoutRequest) returns (GetPayoutResponse);
+}
+
+// Back-office des reversements : finance_officer, super_admin, avec double authentification.
+service PayoutAdminService {
+  rpc ListPayouts(ListPayoutsRequest) returns (ListPayoutsResponse);
+  // Mode manuel : la finance a fait le virement (référence obligatoire).
+  rpc ConfirmPayout(ConfirmPayoutRequest) returns (ConfirmPayoutResponse);
+  // Mode manuel : le virement n'a pas pu être fait (raison obligatoire) ; le solde est rendu.
+  rpc FailPayout(FailPayoutRequest) returns (FailPayoutResponse);
+}
+
+// Lien de paiement, vu par son émetteur.
+message PaymentLink {
+  string id = 1;
+  // "active" (payable), "paid", "under_review" (paiement en écart de montant à traiter par la
+  // finance), "revoked" ou "expired".
+  string status = 2;
+  // Objet de l'émetteur : type ("recovery_installment"…) et identifiant.
+  string subject_type = 3;
+  string subject_id = 4;
+  // Référence lisible de l'émetteur (affichée au payeur, transmise au prestataire).
+  string reference = 5;
+  // Bénéficiaire affiché au payeur (créancier).
+  string beneficiary_name = 6;
+  // Libellé affiché au payeur, par exemple "Échéance 2 sur 6".
+  string description = 7;
+  ksp.common.v1.Money amount = 8;
+  // Échéance affichée (AAAA-MM-JJ), vide si aucune.
+  string due_date = 9;
+  // Au-delà, le lien ne peut plus être payé.
+  string expires_at = 10;
+  // Adresse publique à envoyer au payeur (<PAYMENT_LINK_BASE_URL>/<jeton>) et le jeton seul.
+  string url = 11;
+  string token = 12;
+  // Payeur, facultatifs ; jamais journalisés, jamais montrés sur la page publique.
+  string payer_name = 13;
+  string payer_phone = 14;
+  // Paiement réussi et sa date, vides sinon.
+  string paid_payment_id = 15;
+  string paid_at = 16;
+  string revoked_at = 17;
+  string revoked_reason = 18;
+  string created_at = 19;
+  string updated_at = 20;
+  // Dernière tentative de paiement et son statut ("pending", "succeeded"…), vides si aucune.
+  string last_payment_id = 21;
+  string last_payment_status = 22;
+}
+
+message CreatePaymentLinkRequest {
+  // Obligatoire (8 à 100 caractères : lettres, chiffres, "_" et "-"), propre à l'émetteur.
+  string idempotency_key = 1;
+  // Minuscules, chiffres et "_", 3 à 50 caractères ; "cleaning_mission" et "billing_invoice" sont
+  // réservés au paiement par compte.
+  string subject_type = 2;
+  // UUID.
+  string subject_id = 3;
+  // 1 à 60 caractères.
+  string reference = 4;
+  // 1 à 120 caractères.
+  string beneficiary_name = 5;
+  // 1 à 140 caractères.
+  string description = 6;
+  // Entier en XOF, 1 à 1 000 000 000.
+  ksp.common.v1.Money amount = 7;
+  // Facultative (AAAA-MM-JJ).
+  string due_date = 8;
+  // Obligatoire : entre 1 heure et 180 jours après la création.
+  string expires_at = 9;
+  // Facultatifs : nom (120 caractères au plus) et téléphone E.164 du payeur.
+  string payer_name = 10;
+  string payer_phone = 11;
+}
+
+message CreatePaymentLinkResponse {
+  PaymentLink link = 1;
+  // false : lien déjà créé avec cette clé.
+  bool created = 2;
+}
+
+message GetPaymentLinkRequest {
+  string link_id = 1;
+}
+
+message GetPaymentLinkResponse {
+  PaymentLink link = 1;
+}
+
+message RevokePaymentLinkRequest {
+  string link_id = 1;
+  // Facultative, 200 caractères au plus.
+  string reason = 2;
+}
+
+message RevokePaymentLinkResponse {
+  PaymentLink link = 1;
+}
+
+// Lien vu par le payeur (page publique) : aucune donnée personnelle du payeur, aucun identifiant
+// de l'objet.
+message PublicPaymentLink {
+  // "active", "paid", "under_review", "revoked" ou "expired".
+  string status = 1;
+  string beneficiary_name = 2;
+  string description = 3;
+  string reference = 4;
+  ksp.common.v1.Money amount = 5;
+  string due_date = 6;
+  string expires_at = 7;
+  string paid_at = 8;
+  // Dernière tentative de paiement, absente si aucune.
+  PublicLinkPayment payment = 9;
+}
+
+// Tentative de paiement d'un lien.
+message PublicLinkPayment {
+  string id = 1;
+  // "pending", "succeeded", "failed", "expired", "cancelled" ou "amount_mismatch".
+  string status = 2;
+  // Page de paiement du prestataire, en attente seulement.
+  string checkout_url = 3;
+  string expires_at = 4;
+  // "declined", "cancelled", "expired" ; vide sinon.
+  string failure_reason = 5;
+}
+
+message GetPublicPaymentLinkRequest {
+  // Jeton du lien (43 caractères : lettres, chiffres, "_" et "-").
+  string token = 1;
+}
+
+message GetPublicPaymentLinkResponse {
+  PublicPaymentLink link = 1;
+}
+
+message PayPaymentLinkRequest {
+  string token = 1;
+  // En-tête Idempotency-Key, obligatoire.
+  string idempotency_key = 2;
+}
+
+message PayPaymentLinkResponse {
+  PublicLinkPayment payment = 1;
+  // false : tentative déjà créée avec cette clé, ou tentative en attente réutilisée.
+  bool created = 2;
+}
+
+message SimulatePaymentLinkPaymentRequest {
+  string token = 1;
+  // "succeeded" ou "failed".
+  string outcome = 2;
+}
+
+message SimulatePaymentLinkPaymentResponse {
+  PublicLinkPayment payment = 1;
+}
+
+// Bénéficiaire d'un reversement par Mobile Money.
+message PayoutBeneficiary {
+  // Numéro E.164 (+229…).
+  string phone = 1;
+  // "mtn", "moov" ou "celtiis".
+  string operator = 2;
+  // Nom du titulaire du compte Mobile Money, 1 à 120 caractères.
+  string name = 3;
+}
+
+message Payout {
+  string id = 1;
+  // "requested" (enregistré), "processing" (lancé chez le prestataire), "completed" ou "failed".
+  string status = 2;
+  // Service qui l'a demandé ("wallet").
+  string issuer = 3;
+  // Référence de l'émetteur (100 caractères au plus).
+  string reference = 4;
+  ksp.common.v1.Money amount = 5;
+  PayoutBeneficiary beneficiary = 6;
+  // "fedapay" ou "manual" (virement fait par la finance).
+  string provider = 7;
+  // Référence du virement : chez le prestataire, ou saisie par la finance ; vide sinon.
+  string provider_reference = 8;
+  // Échec : raison (prestataire, ou note de la finance) ; vide sinon.
+  string failure_reason = 9;
+  string created_at = 10;
+  string updated_at = 11;
+  string completed_at = 12;
+  string failed_at = 13;
+  // Mode manuel : compte du back-office qui l'a confirmé ou mis en échec.
+  string settled_by = 14;
+}
+
+message RequestPayoutRequest {
+  // Obligatoire (8 à 100 caractères : lettres, chiffres, "_" et "-"), propre à l'émetteur.
+  string idempotency_key = 1;
+  // Référence de l'émetteur, reprise dans les événements (1 à 100 caractères).
+  string reference = 2;
+  // Entier en XOF, 1 à 1 000 000 000.
+  ksp.common.v1.Money amount = 3;
+  PayoutBeneficiary beneficiary = 4;
+}
+
+message RequestPayoutResponse {
+  Payout payout = 1;
+  // false : reversement déjà demandé avec cette clé.
+  bool created = 2;
+}
+
+message GetPayoutRequest {
+  string payout_id = 1;
+}
+
+message GetPayoutResponse {
+  Payout payout = 1;
+}
+
+message ListPayoutsRequest {
+  Page page = 1;
+  // Filtres facultatifs : statut, émetteur.
+  string status = 2;
+  string issuer = 3;
+}
+
+message ListPayoutsResponse {
+  repeated Payout payouts = 1;
+  string next_cursor = 2;
+}
+
+message ConfirmPayoutRequest {
+  string payout_id = 1;
+  // Référence du virement Mobile Money fait par la finance, 1 à 100 caractères.
+  string transfer_reference = 2;
+  // En-tête Idempotency-Key, facultatif.
+  string idempotency_key = 3;
+}
+
+message ConfirmPayoutResponse {
+  Payout payout = 1;
+}
+
+message FailPayoutRequest {
+  string payout_id = 1;
+  // Raison, 1 à 500 caractères (jamais transmise dans les événements).
+  string reason = 2;
+  // En-tête Idempotency-Key, facultatif.
+  string idempotency_key = 3;
+}
+
+message FailPayoutResponse {
+  Payout payout = 1;
 }
