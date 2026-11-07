@@ -1,5 +1,6 @@
 /**
- * Amorçage des comptes internes, tant que l'écran d'administration n'existe pas (UC-ID-18, UC-ID-19) :
+ * Amorçage du premier super administrateur ; ensuite, les rôles se gèrent au back-office
+ * (Administration → Comptes, ADR-038) :
  *   pnpm --filter @ksp/identity-service build
  *   pnpm --filter @ksp/identity-service roles:grant <+229…> <rôle>
  * Le compte doit exister (une première connexion par téléphone sur le site ou l'application).

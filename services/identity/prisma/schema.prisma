@@ -62,26 +62,30 @@ enum OtpPurpose {
 
 /// Le compte : une personne = un compte.
 model User {
-  id                  String     @id @db.Uuid
-  status              UserStatus
-  firstName           String?    @map("first_name")
-  lastName            String?    @map("last_name")
-  preferredLanguage   String     @default("fr") @map("preferred_language")
-  createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                   String     @id @db.Uuid
+  status               UserStatus
+  firstName            String?    @map("first_name")
+  lastName             String?    @map("last_name")
+  preferredLanguage    String     @default("fr") @map("preferred_language")
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
   /// Suppression demandée (UC-ID-11, ADR-036) : compte gelé (deletion_pending) jusqu'à deletion_scheduled_for.
-  deletionRequestedAt DateTime?  @map("deletion_requested_at") @db.Timestamptz(3)
+  deletionRequestedAt  DateTime?  @map("deletion_requested_at") @db.Timestamptz(3)
   /// Date prévue de l'anonymisation, fixée à la demande (demande + délai de suppression).
-  deletionScheduledFor DateTime? @map("deletion_scheduled_for") @db.Timestamptz(3)
+  deletionScheduledFor DateTime?  @map("deletion_scheduled_for") @db.Timestamptz(3)
   /// Dernier contrôle des obligations à l'échéance, quand l'anonymisation a été reportée.
-  deletionCheckedAt   DateTime?  @map("deletion_checked_at") @db.Timestamptz(3)
+  deletionCheckedAt    DateTime?  @map("deletion_checked_at") @db.Timestamptz(3)
   /// Obligations trouvées au dernier contrôle de l'échéance : [{ service, kind, reference, description }].
-  deletionPostponedBy Json?      @map("deletion_postponed_by")
-  anonymizedAt        DateTime?  @map("anonymized_at") @db.Timestamptz(3)
+  deletionPostponedBy  Json?      @map("deletion_postponed_by")
+  anonymizedAt         DateTime?  @map("anonymized_at") @db.Timestamptz(3)
   /// Adresse e-mail en minuscules, enregistrée seulement après confirmation par code ; unique entre comptes.
-  email               String?    @unique
+  email                String?    @unique
   /// Confirmation de l'adresse par le code reçu à cette adresse.
-  emailVerifiedAt     DateTime?  @map("email_verified_at") @db.Timestamptz(3)
+  emailVerifiedAt      DateTime?  @map("email_verified_at") @db.Timestamptz(3)
+  /// Suspension en cours par un administrateur (ADR-038) ; effacée à la réactivation (historique dans audit_log).
+  suspendedAt          DateTime?  @map("suspended_at") @db.Timestamptz(3)
+  suspendedBy          String?    @map("suspended_by") @db.Uuid
+  suspensionReason     String?    @map("suspension_reason")
 
   phones             UserPhone[]
   sessions           Session[]
@@ -226,22 +230,28 @@ model Role {
 
 /// Qui a quel rôle, et où. Une attribution retirée garde sa ligne (revoked_at) pour l'historique.
 model RoleAssignment {
-  id        String        @id @db.Uuid
-  userId    String        @map("user_id") @db.Uuid
-  roleId    String        @map("role_id") @db.Uuid
-  scopeType RoleScopeType @map("scope_type")
+  id           String        @id @db.Uuid
+  userId       String        @map("user_id") @db.Uuid
+  roleId       String        @map("role_id") @db.Uuid
+  scopeType    RoleScopeType @map("scope_type")
   /// Service pour une portée domain, organisation pour une portée org ; vide sinon.
-  scopeId   String?       @map("scope_id")
+  scopeId      String?       @map("scope_id")
   /// Vide : attribution d'amorçage (script roles:grant).
-  grantedBy String?       @map("granted_by") @db.Uuid
-  grantedAt DateTime      @map("granted_at") @db.Timestamptz(3)
-  revokedAt DateTime?     @map("revoked_at") @db.Timestamptz(3)
+  grantedBy    String?       @map("granted_by") @db.Uuid
+  grantedAt    DateTime      @map("granted_at") @db.Timestamptz(3)
+  /// Motif donné au back-office (ADR-038) ; vide pour une attribution d'amorçage.
+  grantReason  String?       @map("grant_reason")
+  revokedAt    DateTime?     @map("revoked_at") @db.Timestamptz(3)
+  revokedBy    String?       @map("revoked_by") @db.Uuid
+  revokeReason String?       @map("revoke_reason")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
   /// Une seule attribution active par compte, rôle et portée : index partiel écrit dans la migration.
   @@index([userId, revokedAt])
+  /// Titulaires actifs d'un rôle : équipe d'un métier, super administrateurs restants (ADR-038).
+  @@index([roleId, revokedAt])
   @@map("role_assignments")
 }
 
