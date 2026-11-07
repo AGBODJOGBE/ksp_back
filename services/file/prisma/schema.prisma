@@ -1,0 +1,77 @@
+// Base de données du service file. Aucun autre service n'y accède (règle d'or n° 1).
+
+generator client {
+  provider = "prisma-client-js"
+  // Client propre à ce service : plusieurs services cohabitent dans le dépôt.
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Événements à publier (pattern outbox, règle d'or n° 4). Écrits dans la même transaction que la donnée métier.
+model OutboxEvent {
+  id            String    @id @db.Uuid
+  eventType     String    @map("event_type")
+  payload       Json
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  publishedAt   DateTime? @map("published_at") @db.Timestamptz(3)
+  attempts      Int       @default(0)
+  /// Prochaine tentative après un échec (délai croissant, ADR-032).
+  nextAttemptAt DateTime? @map("next_attempt_at") @db.Timestamptz(3)
+  /// Mis de côté après 24 h d'échecs : rejouable par pnpm outbox:replay (ADR-032).
+  parkedAt      DateTime? @map("parked_at") @db.Timestamptz(3)
+  lastError     String?   @map("last_error")
+  /// Premier échec de publication : mise de côté après 24 h d'échecs (ADR-032).
+  firstFailedAt DateTime? @map("first_failed_at") @db.Timestamptz(3)
+
+  @@map("outbox")
+}
+
+/// Événements déjà traités par ce service (inbox) : un événement reçu deux fois n'a qu'un effet.
+model ProcessedEvent {
+  eventId     String   @map("event_id") @db.Uuid
+  consumer    String
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@id([eventId, consumer])
+  @@map("processed_events")
+}
+
+/// Fichier stocké (ADR-038). Le contenu vit dans le stockage objet sous storage_key (finalité et
+/// identifiant, aucune donnée personnelle) ; la base ne garde que ses métadonnées.
+model StoredFile {
+  id              String    @id @db.Uuid
+  /// recovery_evidence, cleaning_intervention_photo, generated_document ou avatar.
+  purpose         String
+  /// Nom d'origine nettoyé ; remplacé par un nom neutre quand le compte est supprimé (ADR-036).
+  fileName        String    @map("file_name")
+  contentType     String    @map("content_type")
+  /// Taille déclarée, vérifiée à la confirmation (octets).
+  sizeBytes       Int       @map("size_bytes")
+  storageKey      String    @unique @map("storage_key")
+  /// pending, available, rejected ou deleted.
+  status          String
+  /// size_mismatch, type_mismatch ou malware (fichier rejeté).
+  rejectionReason String?   @map("rejection_reason")
+  /// Compte qui a envoyé le fichier ; null pour un fichier de service ou d'un compte supprimé.
+  ownerId         String?   @map("owner_id") @db.Uuid
+  /// Objet métier rattaché (type et identifiant), et service qui l'a rattaché.
+  subjectType     String?   @map("subject_type")
+  subjectId       String?   @map("subject_id")
+  attachedBy      String?   @map("attached_by")
+  attachedAt      DateTime? @map("attached_at") @db.Timestamptz(3)
+  createdAt       DateTime  @map("created_at") @db.Timestamptz(3)
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz(3)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(3)
+  /// upload_expired, never_attached, deleted_by_service ou account_deleted.
+  deletionReason  String?   @map("deletion_reason")
+  /// Effacement physique (contenu, puis ligne) à partir de cette date.
+  eraseAfter      DateTime? @map("erase_after") @db.Timestamptz(3)
+
+  @@index([ownerId, createdAt])
+  @@index([subjectType, subjectId])
+  @@map("files")
+}

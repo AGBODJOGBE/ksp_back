@@ -9,4 +9,5 @@ export * from './tokens/service-token';
 export * as cleaningV1 from './generated/ksp/cleaning/v1/cleaning';
 export * as billingV1 from './generated/ksp/billing/v1/billing';
 export * as paymentV1 from './generated/ksp/payment/v1/payment';
+export * as fileV1 from './generated/ksp/file/v1/file';
 // new-service:exports (le générateur de service ajoute les nouveaux contrats ici)

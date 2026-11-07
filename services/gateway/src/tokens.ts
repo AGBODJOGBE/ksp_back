@@ -13,3 +13,5 @@ export const PAYMENT_GRPC_CLIENT = Symbol('PAYMENT_GRPC_CLIENT');
 export const PAYMENT_API = Symbol('PAYMENT_API');
 /** Route de simulation des paiements ouverte (hors production, ADR-031). */
 export const PAYMENT_SIMULATION_ROUTE = Symbol('PAYMENT_SIMULATION_ROUTE');
+export const FILE_GRPC_CLIENT = Symbol('FILE_GRPC_CLIENT');
+export const FILE_API = Symbol('FILE_API');
