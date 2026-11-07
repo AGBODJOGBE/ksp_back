@@ -1,7 +1,14 @@
 import { type KspEventType } from '@ksp/contracts';
 import { eventDispatchPlans } from '../../domain/channel';
+import {
+  type ChannelPreferences,
+  contactWithPreferences,
+  DEFAULT_CHANNEL_PREFERENCES,
+  isOptionalMessage,
+} from '../../domain/preferences';
 import { EmailAddress, PhoneNumber } from '../../domain/recipient';
 import { findTemplate, invalidVariables, isEventTemplate } from '../../domain/template';
+import { type RecipientPreferences } from '../center/center.ports';
 import { type MessageDispatcher } from '../send/message-dispatcher';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import {
@@ -33,6 +40,11 @@ export interface NotifyEventResult {
   recipientsNotFound: number;
   /** Destinataires sans téléphone ni e-mail : notification dans l'espace seulement. */
   unreachable: number;
+  /**
+   * Messages facultatifs sans envoi externe parce que le destinataire a écarté ses canaux
+   * joignables (ADR-038) : notification dans l'espace seulement.
+   */
+  optedOut: number;
   /** Notifications enregistrées dans l'espace KSP. */
   inApp: number;
 }
@@ -50,7 +62,8 @@ const LOCALE = 'fr';
  *    d'une entreprise : il remplace l'adresse du destinataire pour l'e-mail seulement). Une panne
  *    d'identity lève une erreur : l'événement est repris plus tard (file de reprise, puis file
  *    d'erreurs).
- * 3. Chaque message part par les canaux que fixe sa nature (`eventDispatchPlans`), avec une clé
+ * 3. Chaque message part par les canaux que fixe sa nature (`eventDispatchPlans`), moins ceux que
+ *    le destinataire a écartés pour un message facultatif (préférences, ADR-038), avec une clé
  *    d'idempotence `<événement>:<modèle>:<destinataire>` : une nouvelle livraison du même événement
  *    n'envoie rien deux fois.
  * 4. L'événement est marqué traité et les notifications dans l'espace sont enregistrées, dans la même
@@ -62,6 +75,7 @@ export class NotifyEventUseCase {
     private readonly dispatcher: MessageDispatcher,
     private readonly directory: RecipientDirectory,
     private readonly organizations: OrganizationDirectory,
+    private readonly preferences: RecipientPreferences,
     private readonly inbox: EventInbox,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
@@ -76,6 +90,7 @@ export class NotifyEventUseCase {
       replayed: 0,
       recipientsNotFound: 0,
       unreachable: 0,
+      optedOut: 0,
       inApp: 0,
     };
     const rule = this.rules[event.type as KspEventType] as EventRule<KspEventType> | undefined;
@@ -85,6 +100,7 @@ export class NotifyEventUseCase {
     const intents = rule(event.payload as never, this.context);
     const contacts = await this.findContacts(intents);
     const organizations = await this.findOrganizations(intents);
+    const preferences = await this.findPreferences(intents);
     const inApp: InAppNotification[] = [];
 
     for (const intent of intents) {
@@ -113,9 +129,16 @@ export class NotifyEventUseCase {
       const phone = PhoneNumber.parse(contact.phoneE164 ?? '');
       // E-mail de facturation vérifié de l'organisation, sinon adresse vérifiée du destinataire.
       const email = EmailAddress.parse(organization?.billingEmail) ?? EmailAddress.parse(contact.email);
-      const plans = eventDispatchPlans(template.kind, { hasPhone: phone !== null, hasEmail: email !== null });
+      const reachable = { hasPhone: phone !== null, hasEmail: email !== null };
+      const wanted = contactWithPreferences(
+        reachable,
+        preferences.get(contact.userId.toLowerCase()) ?? DEFAULT_CHANNEL_PREFERENCES,
+        isOptionalMessage(template),
+      );
+      const plans = eventDispatchPlans(template.kind, wanted);
       if (plans.length === 0) {
-        result.unreachable += 1;
+        if (reachable.hasPhone || reachable.hasEmail) result.optedOut += 1;
+        else result.unreachable += 1;
         continue;
       }
       for (const plan of plans) {
@@ -163,6 +186,16 @@ export class NotifyEventUseCase {
     if (userIds.length === 0) return new Map();
     const contacts = await this.directory.findContacts(userIds);
     return new Map(contacts.map((contact) => [contact.userId.toLowerCase(), contact]));
+  }
+
+  /** Préférences des destinataires (ADR-038), par identifiant en minuscules ; absent : par défaut. */
+  private async findPreferences(
+    intents: readonly NotificationIntent[],
+  ): Promise<Map<string, ChannelPreferences>> {
+    const userIds = [...new Set(intents.map((intent) => intent.userId.toLowerCase()))];
+    if (userIds.length === 0) return new Map();
+    const found = await this.preferences.findMany(userIds);
+    return new Map([...found].map(([userId, value]) => [userId.toLowerCase(), value]));
   }
 
   /** Fiches de facturation des organisations citées par les messages, par identifiant en minuscules. */

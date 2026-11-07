@@ -26,6 +26,8 @@ export class PrismaUserNotificationsEraser implements UserNotificationsEraser {
     let deliveries = 0;
     const status = await this.store.runOnce(inbox.eventId, inbox.consumer, async (tx: SqlExecutor) => {
       inApp = await tx.$executeRawUnsafe('DELETE FROM in_app_notifications WHERE user_id = $1::uuid', userId);
+      // Préférences de canaux (ADR-038) : sans objet pour un compte anonymisé.
+      await tx.$executeRawUnsafe('DELETE FROM notification_preferences WHERE user_id = $1::uuid', userId);
       // La clé d'idempotence contient l'identifiant du compte : remplacée par une valeur unique sans
       // lien avec lui. Un événement rejoué ensuite ne renvoie rien (le compte n'a plus de coordonnées).
       deliveries = await tx.$executeRawUnsafe(
