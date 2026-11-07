@@ -34,7 +34,7 @@ ksp-backend/
 | Immobilier                         | `realestate`                                                                                              | 2     |
 | Marketplace, impression, livraison | `catalog`, `order`, `print`, `delivery`                                                                   | 3     |
 
-Services présents dans le dépôt : `gateway`, `identity` et `notification` (lot 1 : inscription par téléphone, envoi des codes par WhatsApp).
+Services présents dans le dépôt : `gateway`, `identity`, `notification`, `cleaning`, `billing`, `payment` et `file` (stockage des pièces jointes par adresses présignées, ADR-038). Ports réservés : `tools/services.json`.
 
 ## Démarrer
 
@@ -52,14 +52,14 @@ pnpm --filter @ksp/identity-service dev
 
 Chaque service expose :
 
-- gRPC sur son port (`identity` : 50051, `notification` : 50052) ;
-- HTTP technique (`identity` : 3101, `notification` : 3102) : `/health/live`, `/health/ready`, `/metrics`.
+- gRPC sur son port (`identity` : 50051, `notification` : 50052… `file` : 50056, voir `tools/services.json`) ;
+- HTTP technique (`identity` : 3101, `notification` : 3102… `file` : 3106) : `/health/live`, `/health/ready`, `/metrics`.
 
 La `gateway` n'a ni gRPC entrant ni base : elle sert l'API REST des fronts sur le port 3000 (`/api/v1/…`, `/.well-known/jwks.json`), avec les mêmes sondes et métriques (voir `services/gateway/README.md`).
 
 En développement, `notification` n'envoie aucun message : le code de connexion s'affiche dans son terminal (voir `services/notification/README.md`).
 
-Consoles locales : RabbitMQ http://localhost:15672 (ksp / ksp), MinIO http://localhost:9001, traces Jaeger http://localhost:16686.
+Consoles locales : RabbitMQ http://localhost:15672 (ksp / ksp), MinIO http://localhost:9001 (ksp / ksp-local-secret ; le bucket `ksp-files` est créé par `file` au démarrage en développement), traces Jaeger http://localhost:16686.
 
 ## Commandes
 

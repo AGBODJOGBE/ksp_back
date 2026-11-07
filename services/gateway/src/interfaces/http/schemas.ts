@@ -2,6 +2,7 @@ import { AppError } from '@ksp/platform';
 import { z } from 'zod';
 import { billingBodies } from './billing-schemas';
 import { cleaningBodies } from './cleaning-schemas';
+import { fileBodies } from './file-schemas';
 import { accountBodies, organizationBodies } from './organization-schemas';
 import { paymentBodies } from './payment-schemas';
 
@@ -48,6 +49,7 @@ export const requestBodies = {
   ...cleaningBodies,
   ...billingBodies,
   ...paymentBodies,
+  ...fileBodies,
 };
 
 /** Champ refusé et raison, sans reprendre la valeur envoyée (elle peut être un code ou un jeton). */

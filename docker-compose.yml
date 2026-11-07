@@ -46,7 +46,8 @@ services:
       interval: 5s
       retries: 10
 
-  # Stockage objet compatible S3 (service file). Version figée : à revoir lors du choix de l'hébergeur (ADR-018).
+  # Stockage objet compatible S3 (service file, ADR-038). Version figée : à revoir lors du choix de l'hébergeur (ADR-018).
+  # Le bucket ksp-files est créé par le service file au démarrage (FILE_STORAGE_CREATE_BUCKET=true, développement).
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address ':9001'

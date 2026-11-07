@@ -70,6 +70,8 @@ tags:
     description: Paiement en ligne par Mobile Money (FedaPay) d'un acompte, d'un solde de mission ou d'une facture (ADR-031)
   - name: Paiement (back-office)
     description: Suivi des paiements en ligne
+  - name: Fichiers
+    description: Envoi et lecture des pièces jointes du compte connecté, directement dans le stockage par adresses présignées (ADR-038)
 
 # Valeurs proposées par le cahier des charges Gateway (partie 4), réglables par configuration.
 x-ksp-rate-limits:
@@ -136,6 +138,11 @@ x-ksp-rate-limits:
     per: minute
     key: ip
     description: Notifications du prestataire de paiement (route publique, signature vérifiée par payment).
+  file_upload:
+    limit: 30
+    per: minute
+    key: user
+    description: Déclaration d'un envoi de fichier (ADR-038) ; file limite aussi les envois en attente et le volume par jour.
 
 # Préfixes réservés, sans route pour l'instant.
 x-ksp-reserved-prefixes:
@@ -8588,6 +8595,261 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/file/uploads:
+    post:
+      tags:
+        - Fichiers
+      operationId: createFileUpload
+      summary: Préparer l’envoi d’un fichier
+      description: |
+        Déclare un fichier (finalité, nom, type, taille) et renvoie une **adresse d'envoi présignée** de courte
+        durée (15 minutes) : le contenu est envoyé **directement au stockage**, jamais à la gateway (ADR-038).
+
+        1. Envoyer le contenu : `PUT upload.url` avec exactement les en-têtes `upload.headers` (`Content-Type`) et
+           la taille déclarée. Type et taille sont signés : le stockage refuse un autre contenu (403).
+        2. Confirmer : `POST /api/v1/file/files/{id}/complete`.
+        3. Transmettre l'identifiant au service métier concerné, qui rattache le fichier à son objet (mission,
+           dossier…). Un fichier jamais rattaché est purgé après 24 heures ; un envoi jamais confirmé aussi.
+
+        Le propriétaire est le compte connecté. Finalités, types et tailles maximales :
+
+        | Finalité | Types | Taille max |
+        | --- | --- | --- |
+        | `recovery_evidence` | PDF, JPEG, PNG, WebP | 10 Mo |
+        | `cleaning_intervention_photo` | JPEG, PNG, WebP | 8 Mo |
+        | `avatar` | JPEG, PNG, WebP | 2 Mo |
+
+        `generated_document` est réservé aux services (`FILE_PURPOSE_FORBIDDEN`). Quota par compte : 20 envois
+        en attente et 500 Mo déclarés sur 24 heures (`FILE_QUOTA_EXCEEDED`).
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED`, `FILE_VALIDATION_FAILED`, `FILE_TYPE_NOT_ALLOWED` (`details.allowed`),
+        `FILE_TOO_LARGE` (`details.maxBytes`) (400), `FILE_PURPOSE_FORBIDDEN` (403), `FILE_QUOTA_EXCEEDED` (422,
+        `details.limit` : `pending_uploads` ou `daily_bytes`), `FILE_STORAGE_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.file.v1.FileService/CreateUpload
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: file_upload
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFileUploadRequest'
+            example:
+              purpose: cleaning_intervention_photo
+              fileName: salon-avant.jpg
+              contentType: image/jpeg
+              sizeBytes: 1843200
+      responses:
+        '200':
+          description: Fichier déclaré, en attente de son contenu
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUpload'
+              example:
+                file:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6001
+                  purpose: cleaning_intervention_photo
+                  fileName: salon-avant.jpg
+                  contentType: image/jpeg
+                  sizeBytes: 1843200
+                  status: pending
+                  rejectionReason: null
+                  subject: null
+                  createdAt: 2026-11-07T09:00:00Z
+                  completedAt: null
+                upload:
+                  url: https://files.ksp.bj/ksp-files/cleaning_intervention_photo/0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6001?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=900&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=3f1c
+                  method: PUT
+                  headers:
+                    Content-Type: image/jpeg
+                  expiresAt: 2026-11-07T09:15:00Z
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/file/files/{id}/complete:
+    post:
+      tags:
+        - Fichiers
+      operationId: completeFileUpload
+      summary: Confirmer l’envoi d’un fichier
+      description: |
+        Sans corps. file relit le contenu reçu par le stockage : présence, taille réelle égale à la taille
+        déclarée, type enregistré, **signature binaire** du type déclaré (une page HTML renommée en `.jpg` est
+        refusée), puis antivirus (point d'extension, ADR-038). Conforme : `status` = `available`. Idempotente.
+
+        - Contenu pas encore reçu : `FILE_NOT_UPLOADED` (422), le fichier reste en attente : terminer l'envoi
+          puis confirmer de nouveau.
+        - Contenu refusé : `FILE_UPLOAD_REJECTED` (422, `details.reason` : `size_mismatch`, `type_mismatch`,
+          `malware`) ; le fichier passe en `rejected` et son contenu est effacé. Recommencer par une nouvelle
+          déclaration.
+
+        Fichier d'un autre compte : 404, sans révéler son existence.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `FILE_NOT_FOUND` (404), `FILE_NOT_UPLOADED`,
+        `FILE_UPLOAD_REJECTED` (422), `FILE_STORAGE_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.file.v1.FileService/CompleteUpload
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: Fichier disponible
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoredFile'
+              example:
+                id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6001
+                purpose: cleaning_intervention_photo
+                fileName: salon-avant.jpg
+                contentType: image/jpeg
+                sizeBytes: 1843200
+                status: available
+                rejectionReason: null
+                subject: null
+                createdAt: 2026-11-07T09:00:00Z
+                completedAt: 2026-11-07T09:00:12Z
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/file/files/{id}:
+    get:
+      tags:
+        - Fichiers
+      operationId: getMyFile
+      summary: Un de mes fichiers
+      description: |
+        Métadonnées d'un fichier envoyé par le compte connecté (statut, motif d'un rejet, objet rattaché). Un
+        fichier d'un autre compte, ou supprimé, est introuvable (404). Les autres personnes autorisées (par
+        exemple le superviseur d'une mission) le lisent par les routes du service métier concerné.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `FILE_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.file.v1.FileService/GetMyFile
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoredFile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/file/files/{id}/download-url:
+    get:
+      tags:
+        - Fichiers
+      operationId: getMyFileDownloadUrl
+      summary: Adresse de lecture d’un de mes fichiers
+      description: |
+        Adresse présignée de **courte durée** (5 minutes) pour lire un fichier disponible du compte connecté,
+        directement dans le stockage (servi avec son type et son nom). À demander juste avant l'affichage ; ne
+        jamais l'enregistrer ni la partager.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `FILE_NOT_FOUND` (404), `FILE_NOT_AVAILABLE` (422, fichier
+        en attente ou rejeté), `FILE_STORAGE_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.file.v1.FileService/CreateMyDownloadUrl
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileDownloadUrl'
+              example:
+                url: https://files.ksp.bj/ksp-files/cleaning_intervention_photo/0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6001?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=300&X-Amz-Signature=9a0e
+                expiresAt: 2026-11-07T09:05:00Z
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 components:
   securitySchemes:
     bearerAuth:
@@ -8642,6 +8904,14 @@ components:
       in: path
       required: true
       description: Identifiant du paiement (UUID).
+      schema:
+        type: string
+        format: uuid
+    FileId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant du fichier (UUID).
       schema:
         type: string
         format: uuid
@@ -14660,3 +14930,152 @@ components:
           items:
             type: string
             pattern: ^[a-z][a-z0-9_]{1,49}$
+    FilePurpose:
+      description: |
+        Finalité du fichier (ADR-038), liste fermée et extensible : `recovery_evidence` (pièce justificative du
+        Recouvrement), `cleaning_intervention_photo` (photo d'un passage du Nettoyage), `generated_document`
+        (PDF produit par KSP, réservé aux services), `avatar` (photo de profil).
+      enum:
+        - recovery_evidence
+        - cleaning_intervention_photo
+        - generated_document
+        - avatar
+    CreateFileUploadRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - purpose
+        - fileName
+        - contentType
+        - sizeBytes
+      properties:
+        purpose:
+          $ref: '#/components/schemas/FilePurpose'
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Nom d'origine ; nettoyé par file (sans chemin ni caractère de contrôle, 200 caractères au plus).
+        contentType:
+          type: string
+          minLength: 3
+          maxLength: 100
+          description: Type MIME, accepté selon la finalité (`application/pdf`, `image/jpeg`, `image/png`, `image/webp`).
+        sizeBytes:
+          type: integer
+          minimum: 1
+          maximum: 104857600
+          description: Taille exacte du contenu, en octets ; plafonnée par la finalité.
+    StoredFile:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - purpose
+        - fileName
+        - contentType
+        - sizeBytes
+        - status
+        - rejectionReason
+        - subject
+        - createdAt
+        - completedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        purpose:
+          $ref: '#/components/schemas/FilePurpose'
+        fileName:
+          type: string
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 1
+        status:
+          description: '`pending` (contenu attendu), `available` (vérifié) ou `rejected` (refusé, contenu effacé).'
+          enum:
+            - pending
+            - available
+            - rejected
+        rejectionReason:
+          description: Motif d'un rejet ; null sinon.
+          oneOf:
+            - enum:
+                - size_mismatch
+                - type_mismatch
+                - malware
+            - type: 'null'
+        subject:
+          description: Objet métier auquel le service responsable a rattaché le fichier ; null avant le rattachement.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required:
+                - type
+                - id
+              properties:
+                type:
+                  type: string
+                  description: Type d'objet, par exemple `cleaning_intervention` ou `recovery_case`.
+                id:
+                  type: string
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          description: Confirmation du contenu ; null tant que le fichier est en attente.
+          type:
+            - string
+            - 'null'
+          format: date-time
+    FileUpload:
+      type: object
+      additionalProperties: false
+      required:
+        - file
+        - upload
+      properties:
+        file:
+          $ref: '#/components/schemas/StoredFile'
+        upload:
+          type: object
+          additionalProperties: false
+          required:
+            - url
+            - method
+            - headers
+            - expiresAt
+          description: Envoi du contenu, directement au stockage, avant `expiresAt`.
+          properties:
+            url:
+              type: string
+              format: uri
+              description: Adresse présignée (secret de courte durée, à ne jamais journaliser).
+            method:
+              enum:
+                - PUT
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+              description: En-têtes à envoyer tels quels (signés).
+            expiresAt:
+              type: string
+              format: date-time
+    FileDownloadUrl:
+      type: object
+      additionalProperties: false
+      required:
+        - url
+        - expiresAt
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Adresse présignée de lecture (secret de courte durée, à ne jamais enregistrer).
+        expiresAt:
+          type: string
+          format: date-time

@@ -15,6 +15,7 @@ import { AccountAdminHttpController } from '../src/interfaces/http/account-admin
 import { BillingHttpController } from '../src/interfaces/http/billing.controller';
 import { CleaningAdminHttpController } from '../src/interfaces/http/cleaning-admin.controller';
 import { CleaningHttpController } from '../src/interfaces/http/cleaning.controller';
+import { FileHttpController } from '../src/interfaces/http/file.controller';
 import { IdentityHttpController } from '../src/interfaces/http/identity.controller';
 import { JwksHttpController } from '../src/interfaces/http/jwks.controller';
 import { OrganizationAdminHttpController } from '../src/interfaces/http/organizations-admin.controller';
@@ -25,6 +26,7 @@ import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
 import { requestBodies } from '../src/interfaces/http/schemas';
 import { type BillingServer, startBillingStub } from './support/billing-stub';
 import { type CleaningServer, startCleaningStub } from './support/cleaning-stub';
+import { type FileServer, startFileStub } from './support/file-stub';
 import { type PaymentServer, startPaymentStub } from './support/payment-stub';
 import {
   type IdentityServer,
@@ -185,6 +187,7 @@ describe('contrat OpenAPI : manifeste de routage', () => {
       CleaningAdminHttpController,
       BillingHttpController,
       PaymentHttpController,
+      FileHttpController,
     ]) {
       expect(Reflect.getMetadata(PATH_METADATA, controller)).toBe('/');
       for (const handler of handlers(controller)) {
@@ -273,6 +276,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   let cleaning: CleaningServer;
   let billing: BillingServer;
   let payment: PaymentServer;
+  let file: FileServer;
   let app: NestExpressApplication;
   let token: string;
   let staffToken: string;
@@ -285,8 +289,10 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     cleaning = await startCleaningStub(keys);
     billing = await startBillingStub(keys);
     payment = await startPaymentStub(keys);
+    file = await startFileStub(keys);
     app = await startGateway({
       paymentUrl: payment.url,
+      fileUrl: file.url,
       identityUrl: identity.url,
       cleaningUrl: cleaning.url,
       billingUrl: billing.url,
@@ -314,6 +320,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     await cleaning?.close();
     await billing?.close();
     await payment?.close();
+    await file?.close();
   });
 
   beforeEach(() => {
@@ -321,6 +328,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     cleaning.stub.reset();
     billing.stub.reset();
     payment.stub.reset();
+    file.stub.reset();
   });
 
   const http = () => request(app.getHttpServer());
@@ -909,6 +917,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           path.includes('/cleaning') ||
           path.includes('/billing') ||
           (path.includes('/payment') && !path.includes('/webhooks/')) ||
+          path.startsWith('/api/v1/file/') ||
           path.includes('/organizations') ||
           path.includes('/accounts') ||
           path === '/api/v1/admin/identity/roles' ||
@@ -927,7 +936,93 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
             },
           ] as (typeof scenarios)[number],
       );
+    const fileFails = (method: Parameters<typeof file.stub.on>[0], error: AppError) =>
+      file.stub.on(method, () => Promise.reject(error));
     const errors: typeof scenarios = [
+      [
+        'fichier : type refusé pour la finalité',
+        'createFileUpload',
+        400,
+        () => {
+          fileFails(
+            'createUpload',
+            AppError.invalid('FILE_TYPE_NOT_ALLOWED', 'Type refusé.', { allowed: ['image/jpeg'] }),
+          );
+          return call('createFileUpload');
+        },
+      ],
+      [
+        'fichier : finalité inconnue refusée par la gateway',
+        'createFileUpload',
+        400,
+        () =>
+          call('createFileUpload', {
+            body: { purpose: 'selfie', fileName: 'a.jpg', contentType: 'image/jpeg', sizeBytes: 10 },
+          }),
+      ],
+      [
+        'fichier : quota atteint',
+        'createFileUpload',
+        422,
+        () => {
+          fileFails(
+            'createUpload',
+            AppError.precondition('FILE_QUOTA_EXCEEDED', 'Quota atteint.', {
+              limit: 'pending_uploads',
+              value: 20,
+            }),
+          );
+          return call('createFileUpload');
+        },
+      ],
+      [
+        'fichier : finalité réservée aux services',
+        'createFileUpload',
+        403,
+        () => {
+          fileFails('createUpload', AppError.forbidden('FILE_PURPOSE_FORBIDDEN', 'Réservé.'));
+          return call('createFileUpload');
+        },
+      ],
+      [
+        'fichier : contenu refusé à la confirmation',
+        'completeFileUpload',
+        422,
+        () => {
+          fileFails(
+            'completeUpload',
+            AppError.precondition('FILE_UPLOAD_REJECTED', 'Contenu refusé.', { reason: 'type_mismatch' }),
+          );
+          return call('completeFileUpload');
+        },
+      ],
+      [
+        'fichier : stockage injoignable',
+        'completeFileUpload',
+        503,
+        () => {
+          fileFails('completeUpload', AppError.unavailable('FILE_STORAGE_UNAVAILABLE', 'Indisponible.'));
+          return call('completeFileUpload');
+        },
+      ],
+      [
+        'fichier d’un autre compte',
+        'getMyFile',
+        404,
+        () => {
+          fileFails('getMyFile', AppError.notFound('FILE_NOT_FOUND', 'Introuvable.'));
+          return call('getMyFile');
+        },
+      ],
+      [
+        'fichier pas encore disponible',
+        'getMyFileDownloadUrl',
+        422,
+        () => {
+          fileFails('createMyDownloadUrl', AppError.precondition('FILE_NOT_AVAILABLE', 'Indisponible.'));
+          return call('getMyFileDownloadUrl');
+        },
+      ],
       [
         'succès receiveFedapayWebhook',
         'receiveFedapayWebhook',
