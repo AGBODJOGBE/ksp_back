@@ -537,6 +537,8 @@ export async function startGateway(options: {
   billingUrl?: string;
   /** Service payment simulé (payment-stub.ts) ; sans lui, les routes du paiement répondent 503. */
   paymentUrl?: string;
+  /** Service notification simulé (notification-stub.ts) ; sans lui, ses routes répondent 503. */
+  notificationUrl?: string;
   keys: TestKeys;
   env?: Record<string, string>;
   jwks?: JwksSource;
@@ -548,6 +550,7 @@ export async function startGateway(options: {
     ...(options.cleaningUrl ? { CLEANING_GRPC_URL: options.cleaningUrl } : {}),
     ...(options.billingUrl ? { BILLING_GRPC_URL: options.billingUrl } : {}),
     ...(options.paymentUrl ? { PAYMENT_GRPC_URL: options.paymentUrl } : {}),
+    ...(options.notificationUrl ? { NOTIFICATION_GRPC_URL: options.notificationUrl } : {}),
     CORS_WEB_ORIGINS: `${ORIGINS.web},https://shop.ksp.bj,https://print.ksp.bj`,
     CORS_BACKOFFICE_ORIGINS: ORIGINS.backoffice,
     ...options.env,

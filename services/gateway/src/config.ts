@@ -53,6 +53,8 @@ export const configSchema = z
     BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
     /** Adresse gRPC de payment (paiement en ligne, ADR-031). */
     PAYMENT_GRPC_URL: z.string().min(1).default('localhost:50055'),
+    /** Adresse gRPC de notification (centre de notifications, ADR-038). */
+    NOTIFICATION_GRPC_URL: z.string().min(1).default('localhost:50052'),
     JWKS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(600),
     JWKS_RELOAD_COOLDOWN_SECONDS: z.coerce.number().int().nonnegative().default(30),
 

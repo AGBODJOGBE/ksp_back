@@ -1,4 +1,4 @@
-import { billingV1, cleaningV1, identityV1, paymentV1 } from '@ksp/contracts';
+import { billingV1, cleaningV1, identityV1, notificationV1, paymentV1 } from '@ksp/contracts';
 import {
   AccessTokenVerifier,
   createLoggerModule,
@@ -17,6 +17,7 @@ import { type BillingApi } from './application/billing/billing.ports';
 import { type CleaningApi } from './application/cleaning/cleaning.ports';
 import { type AccountAdminApi } from './application/identity/account-admin.ports';
 import { type OrganizationsApi } from './application/identity/organizations.ports';
+import { type NotificationApi } from './application/notification/notification.ports';
 import { type PaymentApi } from './application/payment/payment.ports';
 import { RequestCleaningQuoteUseCase } from './application/cleaning/request-cleaning-quote.use-case';
 import { AuthorizeRequestUseCase } from './application/access/authorize-request.use-case';
@@ -42,6 +43,7 @@ import { BillingGrpcAdapter } from './infrastructure/grpc/billing-grpc.adapter';
 import { CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
 import { IdentityGrpcAdapter } from './infrastructure/grpc/identity-grpc.adapter';
 import { OrganizationsGrpcAdapter } from './infrastructure/grpc/organizations-grpc.adapter';
+import { NotificationGrpcAdapter } from './infrastructure/grpc/notification-grpc.adapter';
 import { PaymentGrpcAdapter } from './infrastructure/grpc/payment-grpc.adapter';
 import { HttpJwksSource } from './infrastructure/keys/http-jwks.source';
 import { KeysReadiness } from './infrastructure/keys/keys-readiness';
@@ -56,6 +58,7 @@ import { IdentityHttpController } from './interfaces/http/identity.controller';
 import { JwksHttpController } from './interfaces/http/jwks.controller';
 import { OrganizationAdminHttpController } from './interfaces/http/organizations-admin.controller';
 import { OrganizationHttpController } from './interfaces/http/organizations.controller';
+import { NotificationHttpController } from './interfaces/http/notification.controller';
 import { PaymentHttpController } from './interfaces/http/payment.controller';
 import { RefreshCookies } from './interfaces/http/refresh-cookie';
 import { RouteGuard } from './interfaces/http/route.guard';
@@ -68,6 +71,8 @@ import {
   CLOCK,
   IDENTITY_GRPC_CLIENT,
   JWKS_SOURCE,
+  NOTIFICATION_API,
+  NOTIFICATION_GRPC_CLIENT,
   ORGANIZATIONS_API,
   PAYMENT_API,
   PAYMENT_GRPC_CLIENT,
@@ -94,6 +99,7 @@ export class AppModule {
           grpcClientOptions(CLEANING_GRPC_CLIENT, 'cleaning', config.CLEANING_GRPC_URL),
           grpcClientOptions(BILLING_GRPC_CLIENT, 'billing', config.BILLING_GRPC_URL),
           grpcClientOptions(PAYMENT_GRPC_CLIENT, 'payment', config.PAYMENT_GRPC_URL),
+          grpcClientOptions(NOTIFICATION_GRPC_CLIENT, 'notification', config.NOTIFICATION_GRPC_URL),
         ]),
       ],
       controllers: [
@@ -107,6 +113,7 @@ export class AppModule {
         CleaningAdminHttpController,
         BillingHttpController,
         PaymentHttpController,
+        NotificationHttpController,
       ],
       providers: [
         ReadinessRegistry,
@@ -256,6 +263,27 @@ export class AppModule {
               // Coupe-circuit propre à payment : une panne n'affecte pas les autres routes (UC-GW-07).
               new GrpcCaller({
                 target: 'payment',
+                defaultDeadlineMs: config.GRPC_DEADLINE_MS,
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        {
+          provide: NOTIFICATION_API,
+          inject: [NOTIFICATION_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
+          useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): NotificationApi =>
+            new NotificationGrpcAdapter(
+              {
+                center: grpc.getService<notificationV1.InAppNotificationServiceClient>(
+                  notificationV1.IN_APP_NOTIFICATION_SERVICE_NAME,
+                ),
+                admin: grpc.getService<notificationV1.NotificationAdminServiceClient>(
+                  notificationV1.NOTIFICATION_ADMIN_SERVICE_NAME,
+                ),
+              },
+              // Coupe-circuit propre à notification : une panne n'affecte pas les autres routes (UC-GW-07).
+              new GrpcCaller({
+                target: 'notification',
                 defaultDeadlineMs: config.GRPC_DEADLINE_MS,
                 ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
               }),
