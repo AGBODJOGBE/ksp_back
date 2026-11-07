@@ -265,7 +265,7 @@ export class ListPaymentsUseCase {
   }): Promise<PageResult<PaymentIntent> & { names: NameBook }> {
     requireStaff(PAYMENT_STAFF);
     const status = optionalOneOf('status', input.status, PAYMENT_STATUSES);
-    // Types du paiement par compte, ou type choisi par l'émetteur d'un lien (ADR-038).
+    // Types du paiement par compte, ou type choisi par l'émetteur d'un lien (ADR-040).
     if (input.subjectType && !(SUBJECT_TYPES as readonly string[]).includes(input.subjectType)) {
       if (!isLinkSubjectType(input.subjectType)) throw PaymentErrors.invalid('subjectType');
     }
@@ -371,7 +371,7 @@ export class ReceiveProviderNotificationUseCase {
     let outcome: NotificationOutcome = 'ignored';
     let paymentId: string | null = null;
     if (notification.transactionId && notification.entity === 'payout') {
-      // Reversement (ADR-039) : relu chez le prestataire, comme une transaction.
+      // Reversement (ADR-041) : relu chez le prestataire, comme une transaction.
       const payoutProvider = this.deps.payoutProvider;
       const payout =
         payoutProvider.automatic && payoutProvider.name === provider.name

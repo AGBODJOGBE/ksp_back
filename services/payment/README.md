@@ -49,7 +49,7 @@ paiement du même objet, quel que soit le payeur ou la part, jusqu'à ce que la 
 obligatoire) : date, auteur et note sont enregistrés, le statut reste `amount_mismatch`, le blocage est
 levé. Écarts à traiter : `GET /api/v1/admin/payment/payments?underReview=true`.
 
-## Liens de paiement (ADR-038)
+## Liens de paiement (ADR-040)
 
 Pour un payeur **sans compte KSP** (débiteur du Recouvrement). Un service émetteur autorisé
 (`PAYMENT_LINK_ISSUERS`, `recovery` au lancement, jeton de service) crée le lien par
@@ -66,7 +66,7 @@ sans payeur connecté (`payment_link_id`), confirmé par le prestataire. Réussi
 `PAYMENT_LINK_ALREADY_PAID`), écart de montant non traité (409 `PAYMENT_UNDER_REVIEW`), lien révoqué
 ou expiré (422), plus de `PAYMENT_LINK_ATTEMPTS_PER_HOUR` essais par heure (429).
 
-## Reversements (ADR-039)
+## Reversements (ADR-041)
 
 `PayoutService.RequestPayout` (émetteurs `PAYMENT_PAYOUT_ISSUERS`, `wallet` au lancement) : montant,
 bénéficiaire Mobile Money (numéro +229, opérateur `mtn`/`moov`/`celtiis`, nom), référence, clé

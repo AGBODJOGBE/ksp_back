@@ -63,7 +63,7 @@ export function createProvider(config: ServiceConfig): PaymentProvider {
   return new SimulatedProvider(config.PAYMENT_SIMULATION_CHECKOUT_URL);
 }
 
-/** Exécution des reversements (ADR-039) : manuelle par défaut, FedaPay une fois validé. */
+/** Exécution des reversements (ADR-041) : manuelle par défaut, FedaPay une fois validé. */
 export function createPayoutProvider(config: ServiceConfig): PayoutProvider {
   if (config.PAYOUT_PROVIDER === 'fedapay') {
     return new FedapayPayoutProvider({

@@ -55,7 +55,7 @@ function isOutage(error: unknown): boolean {
 }
 
 /**
- * Fait avancer un reversement chez le prestataire (ADR-039) et enregistre chaque changement sous
+ * Fait avancer un reversement chez le prestataire (ADR-041) et enregistre chaque changement sous
  * contrôle de version, avec son événement (outbox) : une issue n'est publiée qu'une fois.
  */
 export class PayoutSync {

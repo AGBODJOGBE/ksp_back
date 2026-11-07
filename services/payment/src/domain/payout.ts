@@ -1,5 +1,5 @@
 /**
- * Reversement par Mobile Money (ADR-039) : un service autorisé (wallet) fait verser un montant à un
+ * Reversement par Mobile Money (ADR-041) : un service autorisé (wallet) fait verser un montant à un
  * bénéficiaire (créancier). Exécution par le prestataire (FedaPay) ou, en mode manuel, par la
  * finance qui fait le virement et le confirme au back-office.
  *

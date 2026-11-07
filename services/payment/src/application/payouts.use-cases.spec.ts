@@ -30,7 +30,7 @@ const request = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-describe('reversements (cas d’usage, ADR-039)', () => {
+describe('reversements (cas d’usage, ADR-041)', () => {
   let deps: ReturnType<typeof makeDeps>;
   let useCases: ReturnType<typeof createUseCases>;
   const payouts = () => deps.payouts as InMemoryPayouts;

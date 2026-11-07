@@ -113,7 +113,7 @@ export class FedapayProvider implements PaymentProvider {
     return {
       eventName,
       eventId: id(event['id']),
-      // Reversements (ADR-039) : événements payout.* sur le même webhook.
+      // Reversements (ADR-041) : événements payout.* sur le même webhook.
       entity: eventName.startsWith('payout.') ? 'payout' : 'transaction',
       transactionId: id(entity['id']),
     };

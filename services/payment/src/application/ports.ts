@@ -118,7 +118,7 @@ export interface PaymentRepository {
   }): Promise<PaymentIntent[]>;
 }
 
-/** Liens de paiement (ADR-038). */
+/** Liens de paiement (ADR-040). */
 export interface PaymentLinkRepository {
   /**
    * Enregistre un nouveau lien. Idempotent par (émetteur, clé) : si la clé existe déjà (envoi
@@ -150,7 +150,7 @@ export interface PayoutFilter {
   issuer?: string;
 }
 
-/** Reversements (ADR-039). */
+/** Reversements (ADR-041). */
 export interface PayoutRepository {
   /** Idempotent par (émetteur, clé) : un envoi concurrent renvoie le reversement enregistré. */
   create(payout: Payout): Promise<{ created: boolean; payout: Payout }>;
@@ -260,7 +260,7 @@ export interface ProviderTransaction {
 export interface ProviderNotification {
   eventName: string;
   eventId: string | null;
-  /** Objet de la notification : transaction (paiement) ou reversement (ADR-039). */
+  /** Objet de la notification : transaction (paiement) ou reversement (ADR-041). */
   entity: 'transaction' | 'payout';
   /** Identifiant chez le prestataire de la transaction ou du reversement. */
   transactionId: string | null;
@@ -311,7 +311,7 @@ export interface PaymentSettings {
   lateSuccessWindowHours: number;
   /** Intervalle entre deux relectures d'un paiement non abouti (réussite tardive), en minutes. */
   lateSuccessRecheckMinutes: number;
-  /** Adresse publique des liens : <linkBaseUrl>/<jeton> (page du portail, ADR-038). */
+  /** Adresse publique des liens : <linkBaseUrl>/<jeton> (page du portail, ADR-040). */
   linkBaseUrl: string;
   /** Services autorisés à créer des liens (jeton de service). */
   linkIssuers: readonly string[];
@@ -355,7 +355,7 @@ export interface PaymentAlerts {
    */
   paymentUnderReview(input: { subjectType: string; subjectId: string; paymentIds: string[] }): void;
   /**
-   * Reversement relu chez le prestataire pour un autre montant ou une autre devise (ADR-039) : son
+   * Reversement relu chez le prestataire pour un autre montant ou une autre devise (ADR-041) : son
    * statut n'est pas appliqué, la finance vérifie.
    */
   payoutMismatch(input: {

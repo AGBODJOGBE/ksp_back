@@ -59,7 +59,7 @@ export const configSchema = baseServiceConfigSchema
     PAYMENT_UNRECORDED_GRACE_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
     /** Rapprochement planifié des paiements en attente (2 minutes) ; 0 : désactivé. */
     PAYMENT_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(0).default(120_000),
-    /** Page publique d'un lien de paiement (portail) : <adresse>/<jeton> (ADR-038). */
+    /** Page publique d'un lien de paiement (portail) : <adresse>/<jeton> (ADR-040). */
     PAYMENT_LINK_BASE_URL: z.url().default('http://localhost:3010/payer'),
     /** Secret des jetons de lien (32 caractères au moins), fourni par le coffre ; jamais journalisé. */
     PAYMENT_LINK_TOKEN_SECRET: z.preprocess(unset, z.string().min(32).default(DEV_LINK_TOKEN_SECRET)),
@@ -68,7 +68,7 @@ export const configSchema = baseServiceConfigSchema
     /** Essais de paiement acceptés par lien et par heure. */
     PAYMENT_LINK_ATTEMPTS_PER_HOUR: z.coerce.number().int().min(1).max(100).default(10),
     /**
-     * Exécution des reversements (ADR-039) : `manual` (la finance fait le virement et le confirme au
+     * Exécution des reversements (ADR-041) : `manual` (la finance fait le virement et le confirme au
      * back-office), ou `fedapay` (API de reversement, à activer une fois validée avec le compte).
      */
     PAYOUT_PROVIDER: z.enum(['manual', 'fedapay']).default('manual'),

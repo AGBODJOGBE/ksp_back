@@ -74,7 +74,7 @@ describe('configuration de payment', () => {
     expect(production).toThrow(/PAYMENT_LINK_BASE_URL/);
   });
 
-  it('liens et reversements : émetteurs autorisés, reversements manuels par défaut (ADR-038, ADR-039)', () => {
+  it('liens et reversements : émetteurs autorisés, reversements manuels par défaut (ADR-040, ADR-041)', () => {
     const config = loadConfig(configSchema, { ...BASE, PAYMENT_LINK_ISSUERS: 'recovery, realestate' });
     expect(config.PAYMENT_LINK_ISSUERS).toEqual(['recovery', 'realestate']);
     expect(config.PAYMENT_PAYOUT_ISSUERS).toEqual(['wallet']);

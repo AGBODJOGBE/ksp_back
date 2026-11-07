@@ -9,8 +9,8 @@ import "ksp/common/v1/money.proto";
 // - au particulier, pour l'acompte ou le solde d'une mission du Nettoyage (montant dû lu dans
 //   cleaning) ;
 // - à l'entreprise (ou au particulier), pour le reste dû d'une facture mensuelle (lu dans billing) ;
-// - à un payeur sans compte KSP (débiteur du Recouvrement), par un lien de paiement (ADR-038) ;
-// - aux reversements par Mobile Money (créanciers payés depuis leur solde wallet, ADR-039).
+// - à un payeur sans compte KSP (débiteur du Recouvrement), par un lien de paiement (ADR-040) ;
+// - aux reversements par Mobile Money (créanciers payés depuis leur solde wallet, ADR-041).
 //
 // - PaymentService : espace client (créer un paiement, le suivre, mes paiements) et, en
 //   développement seulement, la confirmation simulée.
@@ -106,7 +106,7 @@ message Page {
 // Objet payé.
 message PaymentSubject {
   // "cleaning_mission" ou "billing_invoice" ; paiement par lien : type choisi par l'émetteur (par
-  // exemple "recovery_installment", ADR-038).
+  // exemple "recovery_installment", ADR-040).
   string type = 1;
   // Mission (cleaning) ou facture (billing).
   string id = 2;
@@ -126,7 +126,7 @@ message Payment {
   // Montant dû au moment de la création, lu dans cleaning ou billing.
   ksp.common.v1.Money amount = 4;
   // Payeur : le compte connecté qui a créé le paiement ; vide pour un paiement par lien (payeur sans
-  // compte, ADR-038).
+  // compte, ADR-040).
   string customer_id = 5;
   // Organisation payeuse (facture d'entreprise), vide sinon.
   string organization_id = 6;
@@ -158,7 +158,7 @@ message Payment {
   string mismatch_resolved_at = 19;
   string mismatch_resolved_by = 20;
   string mismatch_resolution_note = 21;
-  // Paiement par lien (ADR-038) : lien payé, payeur sans compte (customer_id vide). Vide sinon.
+  // Paiement par lien (ADR-040) : lien payé, payeur sans compte (customer_id vide). Vide sinon.
   string payment_link_id = 22;
 }
 
@@ -255,7 +255,7 @@ message ResolveAmountMismatchResponse {
   Payment payment = 1;
 }
 
-// Liens de paiement (ADR-038), réservés aux services émetteurs autorisés (PAYMENT_LINK_ISSUERS :
+// Liens de paiement (ADR-040), réservés aux services émetteurs autorisés (PAYMENT_LINK_ISSUERS :
 // recovery au lancement ; jeton de service obligatoire). Un lien porte un objet de l'émetteur (type
 // extensible, par exemple "recovery_installment"), un montant fixe en XOF, le bénéficiaire affiché et
 // une date d'expiration ; le payeur n'a pas de compte. L'émetteur ne voit que ses propres liens.
@@ -278,7 +278,7 @@ service PaymentLinkPublicService {
   rpc SimulatePaymentLinkPayment(SimulatePaymentLinkPaymentRequest) returns (SimulatePaymentLinkPaymentResponse);
 }
 
-// Reversements par Mobile Money (ADR-039), réservés aux services autorisés (PAYMENT_PAYOUT_ISSUERS :
+// Reversements par Mobile Money (ADR-041), réservés aux services autorisés (PAYMENT_PAYOUT_ISSUERS :
 // wallet au lancement ; jeton de service obligatoire). Exécution par le prestataire (FedaPay) ou, en
 // mode manuel, par la finance qui confirme le virement au back-office. Événements
 // payment.payout.completed et payment.payout.failed.

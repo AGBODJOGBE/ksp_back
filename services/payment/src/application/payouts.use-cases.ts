@@ -34,7 +34,7 @@ function sameRequest(payout: Payout, amount: number, beneficiary: PayoutBenefici
 }
 
 /**
- * Demande de reversement par un service autorisé (wallet, ADR-039) : idempotente par (émetteur, clé).
+ * Demande de reversement par un service autorisé (wallet, ADR-041) : idempotente par (émetteur, clé).
  * Le reversement est enregistré `requested`, puis lancé aussitôt chez le prestataire automatique ;
  * une panne n'empêche pas l'enregistrement (le rapprochement planifié le lancera). Mode manuel : il
  * attend la confirmation de la finance au back-office.

@@ -20,7 +20,7 @@ export interface Page {
 export interface PaymentSubject {
   /**
    * "cleaning_mission" ou "billing_invoice" ; paiement par lien : type choisi par l'émetteur (par
-   * exemple "recovery_installment", ADR-038).
+   * exemple "recovery_installment", ADR-040).
    */
   type: string;
   /** Mission (cleaning) ou facture (billing). */
@@ -50,7 +50,7 @@ export interface Payment {
     | undefined;
   /**
    * Payeur : le compte connecté qui a créé le paiement ; vide pour un paiement par lien (payeur sans
-   * compte, ADR-038).
+   * compte, ADR-040).
    */
   customerId: string;
   /** Organisation payeuse (facture d'entreprise), vide sinon. */
@@ -89,7 +89,7 @@ export interface Payment {
   mismatchResolvedAt: string;
   mismatchResolvedBy: string;
   mismatchResolutionNote: string;
-  /** Paiement par lien (ADR-038) : lien payé, payeur sans compte (customer_id vide). Vide sinon. */
+  /** Paiement par lien (ADR-040) : lien payé, payeur sans compte (customer_id vide). Vide sinon. */
   paymentLinkId: string;
 }
 
@@ -628,7 +628,7 @@ export function PaymentAdminServiceControllerMethods() {
 export const PAYMENT_ADMIN_SERVICE_NAME = "PaymentAdminService";
 
 /**
- * Liens de paiement (ADR-038), réservés aux services émetteurs autorisés (PAYMENT_LINK_ISSUERS :
+ * Liens de paiement (ADR-040), réservés aux services émetteurs autorisés (PAYMENT_LINK_ISSUERS :
  * recovery au lancement ; jeton de service obligatoire). Un lien porte un objet de l'émetteur (type
  * extensible, par exemple "recovery_installment"), un montant fixe en XOF, le bénéficiaire affiché et
  * une date d'expiration ; le payeur n'a pas de compte. L'émetteur ne voit que ses propres liens.
@@ -647,7 +647,7 @@ export interface PaymentLinkServiceClient {
 }
 
 /**
- * Liens de paiement (ADR-038), réservés aux services émetteurs autorisés (PAYMENT_LINK_ISSUERS :
+ * Liens de paiement (ADR-040), réservés aux services émetteurs autorisés (PAYMENT_LINK_ISSUERS :
  * recovery au lancement ; jeton de service obligatoire). Un lien porte un objet de l'émetteur (type
  * extensible, par exemple "recovery_installment"), un montant fixe en XOF, le bénéficiaire affiché et
  * une date d'expiration ; le payeur n'a pas de compte. L'émetteur ne voit que ses propres liens.
@@ -769,7 +769,7 @@ export function PaymentLinkPublicServiceControllerMethods() {
 export const PAYMENT_LINK_PUBLIC_SERVICE_NAME = "PaymentLinkPublicService";
 
 /**
- * Reversements par Mobile Money (ADR-039), réservés aux services autorisés (PAYMENT_PAYOUT_ISSUERS :
+ * Reversements par Mobile Money (ADR-041), réservés aux services autorisés (PAYMENT_PAYOUT_ISSUERS :
  * wallet au lancement ; jeton de service obligatoire). Exécution par le prestataire (FedaPay) ou, en
  * mode manuel, par la finance qui confirme le virement au back-office. Événements
  * payment.payout.completed et payment.payout.failed.
@@ -784,7 +784,7 @@ export interface PayoutServiceClient {
 }
 
 /**
- * Reversements par Mobile Money (ADR-039), réservés aux services autorisés (PAYMENT_PAYOUT_ISSUERS :
+ * Reversements par Mobile Money (ADR-041), réservés aux services autorisés (PAYMENT_PAYOUT_ISSUERS :
  * wallet au lancement ; jeton de service obligatoire). Exécution par le prestataire (FedaPay) ou, en
  * mode manuel, par la finance qui confirme le virement au back-office. Événements
  * payment.payout.completed et payment.payout.failed.

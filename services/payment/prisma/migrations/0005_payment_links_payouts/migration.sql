@@ -1,4 +1,4 @@
--- ADR-038 : liens de paiement (payeur sans compte KSP). ADR-039 : reversements par Mobile Money.
+-- ADR-040 : liens de paiement (payeur sans compte KSP). ADR-041 : reversements par Mobile Money.
 
 -- CreateTable
 CREATE TABLE "payment_links" (

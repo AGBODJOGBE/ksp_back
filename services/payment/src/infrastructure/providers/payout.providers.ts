@@ -3,7 +3,7 @@ import { type PayoutProvider, type ProviderPayout } from '../../application/port
 import { PaymentErrors } from '../../application/shared/errors';
 import { type PayoutBeneficiary, type PayoutOperator, type ProviderPayoutStatus } from '../../domain/payout';
 
-/** Mode manuel (ADR-039) : aucun appel, la finance fait le virement et le confirme au back-office. */
+/** Mode manuel (ADR-041) : aucun appel, la finance fait le virement et le confirme au back-office. */
 export const MANUAL_PAYOUTS: PayoutProvider = { name: 'manual', automatic: false };
 
 /**

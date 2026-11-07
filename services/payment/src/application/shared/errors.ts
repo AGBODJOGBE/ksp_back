@@ -74,7 +74,7 @@ export const PaymentErrors = {
   callerForbidden: () =>
     AppError.forbidden('PAYMENT_CALLER_FORBIDDEN', "Ce service n'est pas autorisé à appeler cette méthode."),
 
-  // --- Liens de paiement (ADR-038) ---------------------------------------------------------------
+  // --- Liens de paiement (ADR-040) ---------------------------------------------------------------
   /** Jeton inconnu ou mal formé, ou lien d'un autre émetteur : rien n'est révélé. */
   linkNotFound: () => AppError.notFound('PAYMENT_LINK_NOT_FOUND', 'Ce lien de paiement est introuvable.'),
   linkAlreadyPaid: () =>
@@ -103,7 +103,7 @@ export const PaymentErrors = {
       'Trop de tentatives de paiement sur ce lien. Réessayez dans une heure.',
     ),
 
-  // --- Reversements (ADR-039) --------------------------------------------------------------------
+  // --- Reversements (ADR-041) --------------------------------------------------------------------
   payoutNotFound: () => AppError.notFound('PAYMENT_PAYOUT_NOT_FOUND', 'Ce reversement est introuvable.'),
   payoutNotManual: () =>
     AppError.precondition(

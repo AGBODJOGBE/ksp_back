@@ -88,7 +88,7 @@ export function presentPayout(payout: Payout): paymentV1.Payout {
   };
 }
 
-/** Liens de paiement des services émetteurs (ADR-038). Droits vérifiés par les cas d'usage. */
+/** Liens de paiement des services émetteurs (ADR-040). Droits vérifiés par les cas d'usage. */
 @Controller()
 @paymentV1.PaymentLinkServiceControllerMethods()
 export class PaymentLinkGrpcController implements paymentV1.PaymentLinkServiceController {
@@ -159,7 +159,7 @@ export class PaymentLinkPublicGrpcController implements paymentV1.PaymentLinkPub
   }
 }
 
-/** Reversements demandés par un service (ADR-039). */
+/** Reversements demandés par un service (ADR-041). */
 @Controller()
 @paymentV1.PayoutServiceControllerMethods()
 export class PayoutGrpcController implements paymentV1.PayoutServiceController {

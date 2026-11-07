@@ -1,7 +1,7 @@
 import { isUnderReview, type PaymentIntent, SUBJECT_TYPES } from './payment-intent';
 
 /**
- * Lien de paiement (ADR-038) : un service émetteur (recovery) demande à faire payer un objet à lui
+ * Lien de paiement (ADR-040) : un service émetteur (recovery) demande à faire payer un objet à lui
  * (une échéance d'un dossier de recouvrement…) par une personne qui n'a pas de compte KSP. Le lien
  * porte un montant fixe en XOF, le bénéficiaire affiché, une date d'expiration ; son adresse
  * publique contient un jeton long et imprévisible, dont seule l'empreinte est enregistrée.

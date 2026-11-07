@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/payment/payment.link.paid.v1.schema.json",
   "title": "payment.link.paid",
-  "description": "Lien de paiement payé : paiement par un payeur sans compte KSP (débiteur du Recouvrement), confirmé par le prestataire comme tout paiement en ligne (ADR-031), jamais par le navigateur (ADR-038). Publié une seule fois par paiement réussi, y compris pour un lien révoqué ou expiré entre-temps (réussite tardive : l'argent reçu est toujours enregistré). Écouté par le service émetteur, selon subjectType (recovery pour recovery_installment). Distinct de payment.intent.succeeded, qui ne concerne que les paiements par compte. Identifiants et montants seulement : ni nom ni téléphone du payeur.",
+  "description": "Lien de paiement payé : paiement par un payeur sans compte KSP (débiteur du Recouvrement), confirmé par le prestataire comme tout paiement en ligne (ADR-031), jamais par le navigateur (ADR-040). Publié une seule fois par paiement réussi, y compris pour un lien révoqué ou expiré entre-temps (réussite tardive : l'argent reçu est toujours enregistré). Écouté par le service émetteur, selon subjectType (recovery pour recovery_installment). Distinct de payment.intent.succeeded, qui ne concerne que les paiements par compte. Identifiants et montants seulement : ni nom ni téléphone du payeur.",
   "x-event-type": "payment.link.paid",
   "x-event-version": 1,
   "type": "object",

@@ -43,7 +43,7 @@ export const ONLINE_METHOD = 'mobile_money_online';
 export interface PaymentSubject {
   /**
    * `cleaning_mission` ou `billing_invoice` (paiement par compte) ; pour un lien de paiement, type
-   * choisi par l'émetteur (`recovery_installment`…, ADR-038).
+   * choisi par l'émetteur (`recovery_installment`…, ADR-040).
    */
   type: SubjectType | (string & {});
   /** Mission (cleaning), facture (billing) ou objet de l'émetteur d'un lien. */
@@ -75,7 +75,7 @@ export interface PaymentIntent {
   /** Organisation payeuse (facture d'entreprise), null sinon. */
   organizationId: string | null;
   /**
-   * Lien de paiement payé (payeur sans compte, ADR-038) ; null pour un paiement par compte. Un
+   * Lien de paiement payé (payeur sans compte, ADR-040) ; null pour un paiement par compte. Un
    * paiement a toujours un payeur connecté ou un lien, jamais les deux.
    */
   paymentLinkId: string | null;

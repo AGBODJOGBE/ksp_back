@@ -15,7 +15,7 @@ import { PrismaService } from '../src/infrastructure/prisma/prisma.service';
 import { UuidV7Generator } from '../src/infrastructure/system/system';
 
 /**
- * Intégration contre un vrai PostgreSQL (ADR-038, ADR-039) : migrations du service dans un schéma
+ * Intégration contre un vrai PostgreSQL (ADR-040, ADR-041) : migrations du service dans un schéma
  * jetable, lien retrouvé par l'empreinte de son jeton, idempotence par (émetteur, clé) sous envois
  * simultanés, essai de paiement sans payeur rattaché au lien (contrainte « payeur ou lien »),
  * reversement et son événement écrits dans la même transaction. Ignoré sans TEST_DATABASE_URL.

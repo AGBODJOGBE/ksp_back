@@ -53,7 +53,7 @@ model PaymentIntent {
   subjectReference       String?      @map("subject_reference")
   amount                 Int
   currency               String       @default("XOF")
-  /// Payeur : compte connecté qui a créé le paiement ; null pour un paiement par lien (ADR-038).
+  /// Payeur : compte connecté qui a créé le paiement ; null pour un paiement par lien (ADR-040).
   customerId             String?      @map("customer_id") @db.Uuid
   organizationId         String?      @map("organization_id") @db.Uuid
   /// pending, succeeded, failed, expired, cancelled ou amount_mismatch.
@@ -108,7 +108,7 @@ model ProviderNotification {
   @@map("provider_notifications")
 }
 
-/// Lien de paiement (ADR-038) : payeur sans compte. Le jeton n'est jamais enregistré, seulement son
+/// Lien de paiement (ADR-040) : payeur sans compte. Le jeton n'est jamais enregistré, seulement son
 /// empreinte SHA-256 ; nom et téléphone du payeur facultatifs, jamais journalisés.
 model PaymentLink {
   id              String          @id @db.Uuid
@@ -139,7 +139,7 @@ model PaymentLink {
   @@map("payment_links")
 }
 
-/// Reversement par Mobile Money (ADR-039). Numéro et nom du bénéficiaire : jamais journalisés, jamais
+/// Reversement par Mobile Money (ADR-041). Numéro et nom du bénéficiaire : jamais journalisés, jamais
 /// dans les événements.
 model Payout {
   id                  String    @id @db.Uuid

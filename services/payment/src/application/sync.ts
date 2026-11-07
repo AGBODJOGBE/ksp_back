@@ -30,7 +30,7 @@ const MAX_ATTEMPTS = 3;
  * Événements d'un changement d'état : réussite ou échec, identifiants et montants seulement. Un
  * montant approuvé différent n'en publie aucun : rien ne doit être enregistré chez cleaning ni billing.
  *
- * Paiement par lien (ADR-038) : la réussite publie `payment.link.paid` (et jamais
+ * Paiement par lien (ADR-040) : la réussite publie `payment.link.paid` (et jamais
  * `payment.intent.succeeded`, réservé aux paiements par compte et écouté par cleaning, billing et
  * notification) ; un échec ne publie rien (le payeur réessaie depuis la page du lien).
  */

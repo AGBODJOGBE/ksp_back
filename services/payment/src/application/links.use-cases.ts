@@ -100,7 +100,7 @@ class Links {
 }
 
 /**
- * Création d'un lien de paiement par un service émetteur (ADR-038). Idempotente par (émetteur, clé) :
+ * Création d'un lien de paiement par un service émetteur (ADR-040). Idempotente par (émetteur, clé) :
  * le rejeu rend le même lien et le même jeton. Refusée si l'objet est déjà payé, ou si un lien encore
  * payable (ou en vérification) existe pour lui : l'émetteur révoque l'ancien d'abord, pour qu'un seul
  * lien soit payable par objet.

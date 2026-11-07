@@ -9,7 +9,7 @@ import { PaymentErrors } from './errors';
  */
 export const PAYMENT_STAFF = ['finance_officer', 'cleaning_admin', 'super_admin'] as const;
 
-/** Rôles du back-office des reversements (ADR-039) : la finance seulement. */
+/** Rôles du back-office des reversements (ADR-041) : la finance seulement. */
 export const PAYOUT_STAFF = ['finance_officer', 'super_admin'] as const;
 
 /** Double authentification faite pendant la session back-office en cours (12 heures au plus). */

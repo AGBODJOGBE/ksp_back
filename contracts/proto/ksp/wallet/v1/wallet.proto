@@ -5,7 +5,7 @@ package ksp.wallet.v1;
 import "ksp/common/v1/money.proto";
 
 // Contrats du service wallet : grand livre en double entrée des fonds que KSP détient pour le
-// compte de ses clients (créanciers du Recouvrement), ADR-040.
+// compte de ses clients (créanciers du Recouvrement), ADR-042.
 //
 // - WalletService : opérations des services métier (recovery au lancement, WALLET_LEDGER_CALLERS ;
 //   jeton de service obligatoire) : encaissement crédité au titulaire avec prélèvement de la

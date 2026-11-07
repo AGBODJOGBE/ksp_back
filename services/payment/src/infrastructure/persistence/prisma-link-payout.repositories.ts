@@ -46,7 +46,7 @@ function linkToDomain(row: LinkRow): PaymentLink {
   };
 }
 
-/** Liens de paiement (ADR-038) : seul l'état de révocation change après la création. */
+/** Liens de paiement (ADR-040) : seul l'état de révocation change après la création. */
 @Injectable()
 export class PrismaPaymentLinkRepository implements PaymentLinkRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -174,7 +174,7 @@ function mutablePayoutColumns(payout: Payout) {
   };
 }
 
-/** Reversements (ADR-039) : chaque changement d'état avec son événement, sous contrôle de version. */
+/** Reversements (ADR-041) : chaque changement d'état avec son événement, sous contrôle de version. */
 @Injectable()
 export class PrismaPayoutRepository implements PayoutRepository {
   constructor(private readonly prisma: PrismaService) {}

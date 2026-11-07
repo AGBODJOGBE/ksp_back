@@ -25,7 +25,7 @@ async function rejection(promise: Promise<unknown>): Promise<AppError> {
   throw new Error('rejet attendu');
 }
 
-describe('liens de paiement (cas d’usage, ADR-038)', () => {
+describe('liens de paiement (cas d’usage, ADR-040)', () => {
   let deps: ReturnType<typeof makeDeps>;
   let useCases: ReturnType<typeof createUseCases>;
   const payments = () => deps.payments as InMemoryPayments;

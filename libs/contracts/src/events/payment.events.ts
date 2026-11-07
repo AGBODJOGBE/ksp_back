@@ -41,7 +41,7 @@ export interface PaymentEventPayloads {
     failedAt: string;
   };
   /**
-   * Lien de paiement payé par un payeur sans compte (ADR-038) ; distinct de payment.intent.succeeded,
+   * Lien de paiement payé par un payeur sans compte (ADR-040) ; distinct de payment.intent.succeeded,
    * réservé aux paiements par compte. Écouté par l'émetteur du lien selon `subjectType`.
    */
   'payment.link.paid': {
@@ -58,12 +58,12 @@ export interface PaymentEventPayloads {
     providerReference: string | null;
     paidAt: string;
   };
-  /** Reversement terminé (prestataire, ou virement confirmé par la finance), ADR-039. */
+  /** Reversement terminé (prestataire, ou virement confirmé par la finance), ADR-041. */
   'payment.payout.completed': PayoutRef & {
     providerReference: string | null;
     completedAt: string;
   };
-  /** Reversement en échec : aucun argent n'est parti (ADR-039). */
+  /** Reversement en échec : aucun argent n'est parti (ADR-041). */
   'payment.payout.failed': PayoutRef & {
     failureCode: 'provider_failed' | 'rejected_by_finance';
     failedAt: string;
