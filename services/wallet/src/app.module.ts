@@ -12,6 +12,7 @@ import { createUseCases, WALLET_USE_CASES } from './application/use-cases';
 import { type ServiceConfig } from './config';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { GrpcPayoutExecutor } from './infrastructure/payment/grpc-payout-executor';
+import { GrpcTopUpPayments } from './infrastructure/payment/grpc-top-up-payments';
 import { PrismaLedgerStore } from './infrastructure/persistence/prisma-ledger.store';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { SUBMIT_INTERVAL_MS, SubmitPayoutsService } from './infrastructure/scheduling/submit-payouts.service';
@@ -22,6 +23,7 @@ import {
   WalletGrpcController,
 } from './interfaces/grpc/wallet.controllers';
 import { PayoutEventsConsumer } from './interfaces/messaging/payout-events.consumer';
+import { PrepaidEventsConsumer } from './interfaces/messaging/prepaid-events.consumer';
 
 const PAYMENT_CLIENT = Symbol('PAYMENT_CLIENT');
 
@@ -41,6 +43,7 @@ export class AppModule {
         OutboxRelayService,
         PrismaLedgerStore,
         PayoutEventsConsumer,
+        PrepaidEventsConsumer,
         SubmitPayoutsService,
         { provide: SUBMIT_INTERVAL_MS, useValue: config.WALLET_PAYOUT_SUBMIT_INTERVAL_MS },
         {
@@ -67,7 +70,18 @@ export class AppModule {
                 payment.getService<paymentV1.PayoutServiceClient>(paymentV1.PAYOUT_SERVICE_NAME),
                 caller,
               ),
-              settings: { ledgerCallers: config.WALLET_LEDGER_CALLERS },
+              topUps: new GrpcTopUpPayments(
+                payment.getService<paymentV1.TopUpPaymentServiceClient>(
+                  paymentV1.TOP_UP_PAYMENT_SERVICE_NAME,
+                ),
+                caller,
+              ),
+              settings: {
+                ledgerCallers: config.WALLET_LEDGER_CALLERS,
+                debitCallers: config.WALLET_DEBIT_CALLERS,
+                topUpMin: config.WALLET_TOP_UP_MIN,
+                topUpMax: config.WALLET_TOP_UP_MAX,
+              },
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
             });

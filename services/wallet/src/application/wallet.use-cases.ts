@@ -38,30 +38,28 @@ import {
   requireText,
   requireUuid,
   requireXof,
+  statementAccounts,
   WalletErrors,
 } from './shared';
 
-/** Écritures propres à wallet (retenue, solde, restitution d'un reversement). */
-const WALLET = 'wallet';
+/** Écritures propres à wallet (retenue, solde, restitution d'un reversement, recharges, crédits). */
+export const WALLET = 'wallet';
 
-function transaction(
+/** Champs facultatifs d'une écriture, nuls par défaut. */
+type OptionalFields =
+  | 'grossAmount'
+  | 'commission'
+  | 'commissionRateBps'
+  | 'reversesTransactionId'
+  | 'payoutId'
+  | 'actorId'
+  | 'object';
+
+/** Nouvelle écriture : identifiant, date et champs facultatifs nuls. */
+export function transaction(
   deps: WalletDeps,
-  fields: Omit<
-    LedgerTransaction,
-    | 'id'
-    | 'createdAt'
-    | 'grossAmount'
-    | 'commission'
-    | 'commissionRateBps'
-    | 'reversesTransactionId'
-    | 'payoutId'
-  > &
-    Partial<
-      Pick<
-        LedgerTransaction,
-        'grossAmount' | 'commission' | 'commissionRateBps' | 'reversesTransactionId' | 'payoutId'
-      >
-    >,
+  fields: Omit<LedgerTransaction, 'id' | 'createdAt' | OptionalFields> &
+    Partial<Pick<LedgerTransaction, OptionalFields>>,
 ): LedgerTransaction {
   return {
     id: deps.ids.next(),
@@ -71,6 +69,8 @@ function transaction(
     commissionRateBps: null,
     reversesTransactionId: null,
     payoutId: null,
+    actorId: null,
+    object: null,
     ...fields,
   };
 }
@@ -359,6 +359,7 @@ export class GetBalanceUseCase {
   }
 }
 
+/** Relevé des fonds dus à un titulaire (créancier), pour un service appelant (recovery). */
 export class ListStatementUseCase {
   constructor(private readonly deps: WalletDeps) {}
 
@@ -367,24 +368,33 @@ export class ListStatementUseCase {
     page: PageRequest,
   ): Promise<PageResult<StatementLine>> {
     requireCaller(this.deps.settings.ledgerCallers);
-    return this.deps.ledger.statement(requireHolder('holder', holder), page);
+    return this.deps.ledger.statement(requireHolder('holder', holder), ['collections'], page);
   }
 }
 
-/** Espace du titulaire connecté : son compte, ou son organisation active. */
+/**
+ * Espace du titulaire connecté : son compte, ou son organisation active ; fonds dus et portefeuille
+ * prépayé, avec les montants de recharge acceptés.
+ */
 export class GetMyWalletUseCase {
   constructor(private readonly deps: WalletDeps) {}
 
-  async execute(): Promise<WalletSummary> {
-    return this.deps.ledger.summary(currentHolder());
+  async execute(): Promise<{ wallet: WalletSummary; topUpLimits: { min: number; max: number } }> {
+    const { topUpMin, topUpMax } = this.deps.settings;
+    return {
+      wallet: await this.deps.ledger.summary(currentHolder()),
+      topUpLimits: { min: topUpMin, max: topUpMax },
+    };
   }
 }
 
+/** Relevé du connecté : ses deux comptes (les plus récentes d'abord), ou celui demandé. */
 export class ListMyStatementUseCase {
   constructor(private readonly deps: WalletDeps) {}
 
-  async execute(page: PageRequest): Promise<PageResult<StatementLine>> {
-    return this.deps.ledger.statement(currentHolder(), page);
+  async execute(input: { page: PageRequest; account: string }): Promise<PageResult<StatementLine>> {
+    const accounts = statementAccounts(input.account);
+    return this.deps.ledger.statement(currentHolder(), accounts, input.page);
   }
 }
 
@@ -411,12 +421,14 @@ export class GetHolderWalletUseCase {
 export class ListHolderStatementUseCase {
   constructor(private readonly deps: WalletDeps) {}
 
-  async execute(
-    holder: { type: string; id: string } | undefined,
-    page: PageRequest,
-  ): Promise<PageResult<StatementLine>> {
+  async execute(input: {
+    holder: { type: string; id: string } | undefined;
+    page: PageRequest;
+    account: string;
+  }): Promise<PageResult<StatementLine>> {
     requireStaff();
-    return this.deps.ledger.statement(requireHolder('holder', holder), page);
+    const holder = requireHolder('holder', input.holder);
+    return this.deps.ledger.statement(holder, statementAccounts(input.account), input.page);
   }
 }
 
