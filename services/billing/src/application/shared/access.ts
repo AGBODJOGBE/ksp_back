@@ -27,6 +27,29 @@ export function currentCustomer(): CustomerScope {
   return { userId: user.userId, organizationId };
 }
 
+/** Membres d'une organisation qui peuvent payer depuis son portefeuille ; org_viewer : lecture seule. */
+const ORGANIZATION_PAYERS = ['org_admin', 'org_member'] as const;
+
+/**
+ * Client qui paie (ADR-046) : lui-même, ou son organisation active s'il y est org_admin ou
+ * org_member (rôle de portée org du jeton, ADR-027).
+ */
+export function currentPayer(): CustomerScope {
+  const scope = currentCustomer();
+  const user = requireUser();
+  const organizationId = scope.organizationId;
+  if (
+    organizationId &&
+    !ORGANIZATION_PAYERS.some((role) => hasRole(user, role, { type: 'org', id: organizationId }))
+  ) {
+    throw AppError.forbidden(
+      'AUTH_FORBIDDEN',
+      'Votre rôle dans cette organisation ne permet pas de payer ses factures.',
+    );
+  }
+  return scope;
+}
+
 export function requireStaff(allowed: readonly string[], nowMs?: number): { userId: string } {
   const user = requireUser();
   if (!allowed.some((role) => hasRole(user, role))) {

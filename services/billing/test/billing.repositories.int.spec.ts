@@ -7,6 +7,7 @@ import {
   asStaff,
   CUSTOMER_ID,
   FixedClock,
+  FakeWallet,
   InMemoryOrganizations,
   ORGANIZATION_ID,
   ORGANIZATION_PROFILE,
@@ -59,6 +60,7 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
       invoices: new PrismaInvoiceRepository(prisma),
       settings: new PrismaSettingsRepository(prisma),
       organizations,
+      wallet: new FakeWallet(),
       clock: new FixedClock(new Date('2026-10-23T08:00:00Z')),
       ids: new UuidV7Generator(),
     };

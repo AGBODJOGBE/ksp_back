@@ -1,4 +1,4 @@
-import { type RoleClaim, runWithContext } from '@ksp/platform';
+import { AppError, type RoleClaim, runWithContext } from '@ksp/platform';
 import { type BillingContract, contractPeriods } from '../../domain/contract';
 import { formatInvoiceNumber, type Invoice, type InvoicePayment } from '../../domain/invoice';
 import { type BillingSettings, DEFAULT_BILLING_SETTINGS } from '../../domain/settings';
@@ -15,6 +15,8 @@ import {
   type PageRequest,
   type SettingsRepository,
   type StoredBillingSettings,
+  type WalletDebit,
+  type WalletLedger,
 } from '../ports';
 
 /** Doublures en mémoire des ports de billing, pour les tests de l'application. */
@@ -187,8 +189,38 @@ export class InMemoryOrganizations implements OrganizationDirectory {
   }
 }
 
+/**
+ * Portefeuille simulé (ADR-046) : solde par titulaire, débits idempotents par clé, remboursements
+ * notés ; solde insuffisant refusé comme wallet (WALLET_INSUFFICIENT_FUNDS, montant manquant).
+ */
+export class FakeWallet implements WalletLedger {
+  readonly balances = new Map<string, number>();
+  readonly debits = new Map<string, { transactionId: string; amount: number; holderId: string }>();
+  readonly refunds: string[] = [];
+
+  async debit(input: Parameters<WalletLedger['debit']>[0]): Promise<WalletDebit> {
+    const known = this.debits.get(input.idempotencyKey);
+    if (known) return { transactionId: known.transactionId, amount: known.amount, created: false };
+    const balance = this.balances.get(input.holder.id) ?? 0;
+    if (balance < input.amount) {
+      throw AppError.precondition('WALLET_INSUFFICIENT_FUNDS', 'Solde du portefeuille insuffisant.', {
+        missing: { amount: input.amount - balance, currency: 'XOF' },
+      });
+    }
+    this.balances.set(input.holder.id, balance - input.amount);
+    const transactionId = `0192f1c4-0000-7000-d000-${String(this.debits.size + 1).padStart(12, '0')}`;
+    this.debits.set(input.idempotencyKey, { transactionId, amount: input.amount, holderId: input.holder.id });
+    return { transactionId, amount: input.amount, created: true };
+  }
+
+  async refund(input: { transactionId: string; reason: string }): Promise<void> {
+    this.refunds.push(input.transactionId);
+  }
+}
+
 export interface TestWorld extends BillingDeps {
   recorder: Recorder;
+  wallet: FakeWallet;
   clock: FixedClock;
   contracts: InMemoryContracts;
   invoices: InMemoryInvoices;
@@ -207,6 +239,7 @@ export function testWorld(): TestWorld {
     invoices,
     settings: new InMemorySettings(),
     organizations: withOrganization(new InMemoryOrganizations()),
+    wallet: new FakeWallet(),
   };
 }
 
@@ -233,9 +266,12 @@ function withOrganization(organizations: InMemoryOrganizations): InMemoryOrganiz
 export function as<T>(
   userId: string,
   fn: () => T,
-  options: { roles?: string[]; mfa?: boolean; activeContext?: string } = {},
+  options: { roles?: string[]; mfa?: boolean; activeContext?: string; orgRole?: string } = {},
 ): T {
   const roles: RoleClaim[] = (options.roles ?? ['customer']).map((role) => ({ role, scopeType: 'global' }));
+  if (options.orgRole && options.activeContext) {
+    roles.push({ role: options.orgRole, scopeType: 'org', scopeId: options.activeContext });
+  }
   return runWithContext(
     {
       correlationId: 'c-test',

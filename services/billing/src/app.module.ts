@@ -1,4 +1,5 @@
-import { identityV1 } from '@ksp/contracts';
+import { identityV1, walletV1 } from '@ksp/contracts';
+import { GrpcWalletLedger } from './infrastructure/wallet/grpc-wallet-ledger';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -31,6 +32,7 @@ import {
 } from './interfaces/grpc/billing.controller';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
+const WALLET_CLIENT = Symbol('WALLET_CLIENT');
 
 /**
  * Délais croissants de nouvel essai des événements reçus, environ 1 h au total (ADR-032) : une
@@ -49,7 +51,10 @@ export class AppModule {
       module: AppModule,
       imports: [
         PlatformModule.forRoot(config, { consumerRetryDelaysMs: CONSUMER_RETRY_DELAYS_MS }),
-        ClientsModule.register([grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL)]),
+        ClientsModule.register([
+          grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
+          grpcClientOptions(WALLET_CLIENT, 'wallet', config.WALLET_GRPC_URL),
+        ]),
       ],
       controllers: [
         BillingGrpcController,
@@ -74,6 +79,7 @@ export class AppModule {
             PrismaInvoiceRepository,
             PrismaSettingsRepository,
             IDENTITY_CLIENT,
+            WALLET_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
           ],
           useFactory: (
@@ -81,11 +87,12 @@ export class AppModule {
             invoices: PrismaInvoiceRepository,
             settings: PrismaSettingsRepository,
             grpc: ClientGrpc,
+            walletGrpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
           ) => {
             if (!serviceTokens) {
               new Logger('Billing').warn(
-                'Aucun jeton de service : appels vers identity non authentifiés (développement uniquement).',
+                'Aucun jeton de service : appels vers identity et wallet non authentifiés (développement uniquement).',
               );
             }
             return createUseCases({
@@ -96,6 +103,13 @@ export class AppModule {
                 grpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
                 new GrpcCaller({
                   target: 'identity',
+                  ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+                }),
+              ),
+              wallet: new GrpcWalletLedger(
+                walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
+                new GrpcCaller({
+                  target: 'wallet',
                   ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
                 }),
               ),

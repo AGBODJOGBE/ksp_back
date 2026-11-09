@@ -12,7 +12,9 @@ export const INVOICE_STATUSES: readonly InvoiceStatus[] = ['pending_payment', 'o
  * Moyens de paiement : ceux du back-office (MANUAL_PAYMENT_METHODS), et `mobile_money_online`,
  * paiement en ligne confirmé par le prestataire et enregistré par le système (ADR-031).
  */
-export type PaymentMethod = 'cash' | 'bank_transfer' | 'mobile_money_offline' | 'mobile_money_online';
+/** `wallet` : reste dû payé depuis le portefeuille prépayé (ADR-046 ; reference = débit). */
+export type PaymentMethod =
+  'cash' | 'bank_transfer' | 'mobile_money_offline' | 'mobile_money_online' | 'wallet';
 export const MANUAL_PAYMENT_METHODS: readonly PaymentMethod[] = [
   'cash',
   'bank_transfer',

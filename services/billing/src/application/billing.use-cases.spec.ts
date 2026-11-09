@@ -601,3 +601,68 @@ describe('paiement en ligne d’une facture (ADR-031)', () => {
     expect(invoice().status).toBe('paid');
   });
 });
+
+describe('facture payée par le portefeuille prépayé (ADR-046)', () => {
+  let world: TestWorld;
+  let useCases: ReturnType<typeof createUseCases>;
+  const KEY = 'wallet-pay-0001';
+
+  beforeEach(async () => {
+    world = testWorld();
+    useCases = createUseCases(world);
+    await useCases.registerContract.execute(booking(ORGANIZATION_ID));
+    world.clock.current = new Date('2026-12-01T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    world.wallet.balances.set(ORGANIZATION_ID, 150_000);
+    world.recorder.events.length = 0;
+  });
+
+  const invoice = () => [...world.invoices.invoices.values()][0]!;
+  const pay = (orgRole = 'org_member', key = KEY, activeContext = ORGANIZATION_ID) =>
+    as(
+      CUSTOMER_ID,
+      () => useCases.payMyInvoiceFromWallet.execute({ invoiceId: invoice().id, idempotencyKey: key }),
+      { activeContext, orgRole },
+    );
+
+  it('reste dû débité du portefeuille de l’organisation, facture payée ; même clé sans second débit', async () => {
+    const paid = await pay();
+    expect(paid).toMatchObject({ status: 'paid' });
+    expect(invoice().payments).toEqual([
+      expect.objectContaining({ amount: 100_000, method: 'wallet', recordedBy: CUSTOMER_ID }),
+    ]);
+    expect(invoice().payments[0]!.reference).toBe([...world.wallet.debits.values()][0]!.transactionId);
+    expect([...world.wallet.debits.keys()]).toEqual([`${invoice().id}:${KEY}`]);
+    expect(world.wallet.balances.get(ORGANIZATION_ID)).toBe(50_000);
+    expect(world.recorder.events.map((e) => e.type)).toEqual(['billing.invoice.paid']);
+    expect(await pay()).toMatchObject({ status: 'paid' });
+    expect(invoice().payments).toHaveLength(1);
+    expect(await code(pay('org_member', 'wallet-pay-0002'))).toBe('BILLING_INVALID_TRANSITION');
+  });
+
+  it('membre lecteur refusé ; facture hors périmètre introuvable ; portefeuille insuffisant', async () => {
+    expect(await code(pay('org_viewer'))).toBe('AUTH_FORBIDDEN');
+    expect(await code(pay('org_admin', KEY, 'personal'))).toBe('BILLING_INVOICE_NOT_FOUND');
+    world.wallet.balances.set(ORGANIZATION_ID, 40_000);
+    expect(await code(pay())).toBe('WALLET_INSUFFICIENT_FUNDS');
+    expect(invoice().payments).toEqual([]);
+  });
+
+  it('réglée entre-temps : le débit est remboursé aussitôt', async () => {
+    const debit = world.wallet.debit.bind(world.wallet);
+    world.wallet.debit = async (input) => {
+      const result = await debit(input);
+      await asStaff(() =>
+        useCases.recordInvoicePayment.execute({
+          invoiceId: invoice().id,
+          amount: 100_000,
+          method: 'bank_transfer',
+          reference: 'VIR-1',
+        }),
+      );
+      return result;
+    };
+    expect(await code(pay())).toBe('BILLING_INVALID_TRANSITION');
+    expect(world.wallet.refunds).toHaveLength(1);
+  });
+});
