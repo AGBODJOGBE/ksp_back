@@ -33,7 +33,7 @@
   },
   "properties": {
     "paymentId": { "type": "string", "format": "uuid" },
-    "subjectType": { "enum": ["cleaning_mission", "billing_invoice"] },
+    "subjectType": { "enum": ["cleaning_mission", "billing_invoice", "wallet_top_up"] },
     "subjectId": { "type": "string", "format": "uuid" },
     "part": { "enum": ["deposit", "balance", null] },
     "subjectReference": { "type": ["string", "null"], "pattern": "^FAC-[0-9]{4}-[0-9]{6}$" },

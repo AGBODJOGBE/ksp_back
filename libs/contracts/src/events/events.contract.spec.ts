@@ -8,6 +8,7 @@ import { type DocumentEventPayloads, type DocumentEventType } from './document.e
 import { type IdentityEventPayloads, type IdentityEventType } from './identity.events';
 import { type NotificationEventPayloads, type NotificationEventType } from './notification.events';
 import { type PaymentEventPayloads, type PaymentEventType } from './payment.events';
+import { type WalletEventPayloads, type WalletEventType } from './wallet.events';
 
 const EVENTS_ROOT = resolve(__dirname, '..', '..', '..', '..', 'contracts', 'events');
 
@@ -283,6 +284,13 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     interventionIds: [uuid],
     failedCount: 1,
   },
+  'cleaning.mission.refunded': {
+    missionId: uuid,
+    customerId: uuid,
+    refunds: [{ paymentRecordId: uuid, walletTransactionId: uuid, amount: xof(15000) }],
+    reason: 'mission_cancelled',
+    refundedAt: '2026-11-09T10:00:00Z',
+  },
 };
 
 describe('Contrats des événements cleaning', () => {
@@ -556,10 +564,19 @@ describe('Contrats des événements payment', () => {
     expect(validate({ ...succeeded, part: 'all' })).toBe(false);
   });
 
+  it('une recharge du portefeuille désigne son titulaire, sans part ni référence (ADR-046)', () => {
+    const validate = ajv.compile(schemas.get('payment.intent.succeeded')!);
+    const succeeded = paymentExamples['payment.intent.succeeded'];
+    expect(validate({ ...succeeded, subjectType: 'wallet_top_up', part: null })).toBe(true);
+    const failed = ajv.compile(schemas.get('payment.intent.failed')!);
+    expect(failed({ ...paymentExamples['payment.intent.failed'], subjectType: 'wallet_top_up' })).toBe(true);
+  });
+
   it('un lien ne porte jamais un type d’objet réservé au paiement par compte', () => {
     const validate = ajv.compile(schemas.get('payment.link.paid')!);
     const paid = paymentExamples['payment.link.paid'];
     expect(validate({ ...paid, subjectType: 'billing_invoice' })).toBe(false);
+    expect(validate({ ...paid, subjectType: 'wallet_top_up' })).toBe(false);
     expect(validate({ ...paid, subjectType: 'Recovery Installment' })).toBe(false);
     expect(validate({ ...paid, customerId: uuid })).toBe(false);
   });
@@ -633,5 +650,62 @@ describe('Contrats des événements document', () => {
     expect(validate({ ...payload, code: '123456' })).toBe(false);
     expect(validate({ ...payload, documentSha256: 'ABC' })).toBe(false);
     expect(validate({ ...payload, method: 'handwritten' })).toBe(false);
+  });
+});
+
+const walletHolder = { type: 'user' as const, id: uuid };
+
+const walletExamples: { [K in WalletEventType]: WalletEventPayloads[K] } = {
+  'wallet.prepaid.debited': {
+    transactionId: uuid,
+    holder: walletHolder,
+    userId: uuid,
+    amount: xof(15000),
+    balanceAfter: xof(0),
+    service: 'cleaning',
+    objectType: 'cleaning_mission',
+    objectId: uuid,
+    part: 'deposit',
+    description: 'Nettoyage de maison — acompte',
+    debitedAt: '2026-11-09T10:00:00Z',
+  },
+  'wallet.prepaid.credited': {
+    transactionId: uuid,
+    kind: 'refund',
+    origin: 'service',
+    holder: walletHolder,
+    userId: uuid,
+    amount: xof(15000),
+    balanceAfter: xof(15000),
+    description: 'Remboursement : mission annulée',
+    paymentId: null,
+    refundedTransactionId: uuid,
+    creditedAt: '2026-11-09T11:00:00Z',
+  },
+};
+
+describe('Contrats des événements wallet', () => {
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  addFormats(ajv);
+  ajv.addKeyword('x-event-type').addKeyword('x-event-version');
+  const schemas = loadSchemas('wallet');
+
+  it('chaque type TypeScript a un schéma, et inversement', () => {
+    expect([...schemas.keys()].sort()).toEqual(Object.keys(walletExamples).sort());
+  });
+
+  it.each(Object.entries(walletExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
+    const validate = ajv.compile(schemas.get(type)!);
+    expect(validate(payload)).toBe(true);
+  });
+
+  it('montants entiers en XOF, solde jamais négatif, aucune donnée personnelle', () => {
+    for (const [type, payload] of Object.entries(walletExamples)) {
+      const validate = ajv.compile(schemas.get(type)!);
+      expect(validate({ ...payload, amount: xof(0) })).toBe(false);
+      expect(validate({ ...payload, amount: { amount: 10.5, currency: 'XOF' } })).toBe(false);
+      expect(validate({ ...payload, balanceAfter: { amount: -1, currency: 'XOF' } })).toBe(false);
+      expect(validate({ ...payload, phone: '+2290197000045' })).toBe(false);
+    }
   });
 });

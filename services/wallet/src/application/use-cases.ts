@@ -1,5 +1,14 @@
 import { type WalletDeps } from './ports';
 import {
+  CreateTopUpUseCase,
+  CreditPrepaidWalletUseCase,
+  CreditTopUpUseCase,
+  DebitPrepaidUseCase,
+  GetPrepaidBalanceUseCase,
+  RefundDebitUseCase,
+  RefundFromEventUseCase,
+} from './prepaid.use-cases';
+import {
   GetBalanceUseCase,
   GetHolderWalletUseCase,
   GetLedgerOverviewUseCase,
@@ -33,6 +42,13 @@ export function createUseCases(deps: WalletDeps) {
     listWalletPayouts: new ListWalletPayoutsUseCase(deps),
     getLedgerOverview: new GetLedgerOverviewUseCase(deps),
     settlePayout: new SettlePayoutUseCase(deps),
+    debitPrepaid: new DebitPrepaidUseCase(deps),
+    refundDebit: new RefundDebitUseCase(deps),
+    refundFromEvent: new RefundFromEventUseCase(deps),
+    getPrepaidBalance: new GetPrepaidBalanceUseCase(deps),
+    createTopUp: new CreateTopUpUseCase(deps),
+    creditTopUp: new CreditTopUpUseCase(deps),
+    creditPrepaidWallet: new CreditPrepaidWalletUseCase(deps),
   };
 }
 

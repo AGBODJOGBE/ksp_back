@@ -1,3 +1,4 @@
+import { appendToOutbox, createEnvelope, type SqlExecutor } from '@ksp/platform';
 import { Injectable } from '@nestjs/common';
 import {
   Prisma,
@@ -10,6 +11,7 @@ import {
   type PageRequest,
   type PageResult,
   type PayoutFilter,
+  type PrepaidSummary,
   type RecordOutcome,
   type StatementLine,
   type WalletPayoutRepository,
@@ -17,13 +19,17 @@ import {
 } from '../../application/ports';
 import {
   type AccountCode,
+  accountOf,
   type Direction,
   type Holder,
   holderAccount,
+  holderAccountKind,
   type HolderType,
   INTERNAL_ACCOUNTS,
   isBalanced,
   type LedgerTransaction,
+  prepaidAccount,
+  type StatementAccount,
   type TransactionKind,
 } from '../../domain/ledger';
 import { type Operator, type WalletPayout, type WalletPayoutStatus } from '../../domain/wallet-payout';
@@ -99,6 +105,11 @@ async function withEntries(db: Reader, rows: TransactionRow[]): Promise<LedgerTr
     description: row.description,
     reversesTransactionId: row.reversesTransactionId,
     payoutId: row.payoutId,
+    actorId: row.actorId,
+    object:
+      row.objectType && row.objectId
+        ? { type: row.objectType, id: row.objectId, part: row.objectPart }
+        : null,
     createdAt: row.createdAt,
     entries: entries
       .filter((entry) => entry.transactionId === row.id)
@@ -140,12 +151,14 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
           );
           if (inserted === 0) throw new Abort({ kind: 'already_processed' });
         }
-        const holderCode = holderAccount(tx.holder);
+        // Compte touché : fonds dus au titulaire, ou son portefeuille prépayé (ADR-046).
+        const holderCode = accountOf(tx);
         // Compte du titulaire créé au besoin, puis verrouillé : le solde contrôlé ne bouge plus.
         await db.$executeRawUnsafe(
           'INSERT INTO ledger_accounts (code, kind, holder_type, holder_id, normal_side) ' +
-            "VALUES ($1, 'holder', $2, $3::uuid, 'credit') ON CONFLICT (code) DO NOTHING",
+            "VALUES ($1, $2, $3, $4::uuid, 'credit') ON CONFLICT (code) DO NOTHING",
           holderCode,
+          holderAccountKind(tx.kind),
           tx.holder.type,
           tx.holder.id,
         );
@@ -172,6 +185,10 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
             description: tx.description,
             reversesTransactionId: tx.reversesTransactionId,
             payoutId: tx.payoutId,
+            actorId: tx.actorId,
+            objectType: tx.object?.type ?? null,
+            objectId: tx.object?.id ?? null,
+            objectPart: tx.object?.part ?? null,
             createdAt: tx.createdAt,
           },
         });
@@ -218,7 +235,14 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
           'SELECT balance FROM ledger_accounts WHERE code = $1',
           holderCode,
         );
-        return { kind: 'recorded', transaction: tx, holderBalance: Number(after?.balance ?? 0) } as const;
+        const holderBalance = Number(after?.balance ?? 0);
+        for (const event of input.events?.(holderBalance) ?? []) {
+          await appendToOutbox(
+            db as unknown as SqlExecutor,
+            createEnvelope(event.type, event.payload as never, { producer: 'wallet' }),
+          );
+        }
+        return { kind: 'recorded', transaction: tx, holderBalance } as const;
       });
     } catch (error) {
       if (error instanceof Abort) return error.outcome;
@@ -278,12 +302,33 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
       totalCollected: sum(collected._sum.amount) - sum(reversed._sum.amount),
       totalPaidOut: sum(paidOut._sum.amount),
       lastEntryAt: last?.createdAt ?? null,
+      prepaid: await this.prepaidSummary(holder),
     };
   }
 
-  async statement(holder: Holder, page: PageRequest): Promise<PageResult<StatementLine>> {
+  async prepaidSummary(holder: Holder): Promise<PrepaidSummary> {
+    const code = prepaidAccount(holder);
+    const [account, last] = await Promise.all([
+      this.prisma.ledgerAccount.findUnique({ where: { code } }),
+      this.prisma.ledgerEntry.findFirst({ where: { accountCode: code }, orderBy: { id: 'desc' } }),
+    ]);
+    return { holder, balance: Number(account?.balance ?? 0n), lastEntryAt: last?.createdAt ?? null };
+  }
+
+  /** Écritures des comptes demandés, les plus récentes d'abord (identifiants UUID v7 triables). */
+  async statement(
+    holder: Holder,
+    accounts: readonly StatementAccount[],
+    page: PageRequest,
+  ): Promise<PageResult<StatementLine>> {
+    const codes = new Map<string, StatementAccount>(
+      accounts.map((account) => [
+        account === 'prepaid' ? prepaidAccount(holder) : holderAccount(holder),
+        account,
+      ]),
+    );
     const entries = await this.prisma.ledgerEntry.findMany({
-      where: { accountCode: holderAccount(holder), ...(page.cursor ? { id: { lt: page.cursor } } : {}) },
+      where: { accountCode: { in: [...codes.keys()] }, ...(page.cursor ? { id: { lt: page.cursor } } : {}) },
       orderBy: { id: 'desc' },
       take: page.limit + 1,
     });
@@ -303,6 +348,7 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
       const transaction = transactions.get(entry.transactionId)!;
       return {
         entryId: entry.id,
+        account: codes.get(entry.accountCode)!,
         transaction,
         direction: entry.direction as Direction,
         amount: Number(entry.amount),
@@ -314,10 +360,15 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
   }
 
   async overview(): Promise<LedgerOverview> {
-    const [internal, holders] = await Promise.all([
+    const [internal, holders, customers] = await Promise.all([
       this.prisma.ledgerAccount.findMany({ where: { kind: 'internal' } }),
       this.prisma.ledgerAccount.aggregate({
         where: { kind: 'holder' },
+        _sum: { balance: true },
+        _count: true,
+      }),
+      this.prisma.ledgerAccount.aggregate({
+        where: { kind: 'prepaid' },
         _sum: { balance: true },
         _count: true,
       }),
@@ -327,6 +378,8 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
       internal: INTERNAL_ACCOUNTS.map((account) => ({ account, balance: balances.get(account) ?? 0 })),
       owedToHolders: Number(holders._sum.balance ?? 0n),
       holdersCount: holders._count,
+      owedToCustomers: Number(customers._sum.balance ?? 0n),
+      customersCount: customers._count,
     };
   }
 

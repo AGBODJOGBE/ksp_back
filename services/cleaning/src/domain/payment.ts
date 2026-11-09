@@ -4,16 +4,21 @@ import { isWholeAmount, percentOf } from './money';
  * Paiement d'une mission (décision du 2026-10-21) : le client choisit acompte (30 % réglable)
  * ou totalité, avant ou après la mission, en espèces ou par Mobile Money. Le superviseur coche
  * les paiements manuels ; un paiement en ligne est enregistré par le système, à réception de
- * payment.intent.succeeded (service payment, ADR-031).
+ * payment.intent.succeeded (service payment, ADR-031). Le client peut aussi payer l'acompte ou le
+ * solde depuis son portefeuille prépayé (moyen `wallet`, ADR-046) ; remboursé dans le portefeuille
+ * à l'annulation, un tel paiement ne compte plus dans le montant payé.
  */
 export type PaymentOption = 'deposit' | 'full';
 export type PaymentTiming = 'before' | 'after';
-export type PaymentMethod = 'cash' | 'mobile_money_offline' | 'mobile_money_online';
+/** Moyens proposés dans l'option de paiement choisie par le client. */
+export type PlanPaymentMethod = 'cash' | 'mobile_money_offline' | 'mobile_money_online';
+/** Moyens d'un paiement enregistré : ceux de l'option, ou le portefeuille prépayé (ADR-046). */
+export type PaymentMethod = PlanPaymentMethod | 'wallet';
 export type PaymentStatus = 'due' | 'deposit_received' | 'paid';
 
 export const PAYMENT_OPTIONS: readonly PaymentOption[] = ['deposit', 'full'];
 export const PAYMENT_TIMINGS: readonly PaymentTiming[] = ['before', 'after'];
-export const PAYMENT_METHODS: readonly PaymentMethod[] = [
+export const PAYMENT_METHODS: readonly PlanPaymentMethod[] = [
   'cash',
   'mobile_money_offline',
   'mobile_money_online',
@@ -24,7 +29,7 @@ export const MANUAL_PAYMENT_METHODS: readonly PaymentMethod[] = ['cash', 'mobile
 export interface PaymentPlan {
   option: PaymentOption;
   timing: PaymentTiming;
-  method: PaymentMethod;
+  method: PlanPaymentMethod;
 }
 
 export interface PaymentRecord {
@@ -36,6 +41,11 @@ export interface PaymentRecord {
   recordedAt: Date;
   /** Clé d'idempotence du paiement manuel (Idempotency-Key), null sans clé. */
   idempotencyKey: string | null;
+  /**
+   * Paiement par portefeuille remboursé dans le portefeuille (ADR-046) : il ne compte plus dans le
+   * montant payé. Null sinon (un paiement en espèces ou Mobile Money n'est jamais remboursé ici).
+   */
+  refundedAt: Date | null;
 }
 
 export interface PaymentState {
@@ -60,8 +70,11 @@ export function newPaymentState(plan: PaymentPlan, total: number, depositPercent
   return { plan, total, depositPercent: percent, depositAmount: percentOf(total, percent), payments: [] };
 }
 
+/** Montant payé : paiements enregistrés, sauf ceux remboursés dans le portefeuille. */
 export function paidAmount(state: Pick<PaymentState, 'payments'>): number {
-  return state.payments.reduce((sum, payment) => sum + payment.amount, 0);
+  return state.payments
+    .filter((payment) => payment.refundedAt === null)
+    .reduce((sum, payment) => sum + payment.amount, 0);
 }
 
 export function paymentStatus(state: PaymentState): PaymentStatus {
@@ -90,6 +103,20 @@ export function depositDue(state: PaymentState): number {
 /** Clé d'idempotence d'un paiement en ligne : celle du paiement du service payment (ADR-031). */
 export function onlinePaymentKey(paymentId: string): string {
   return `online-${paymentId}`;
+}
+
+/** Part d'une mission payée par le client : acompte encore dû, ou reste dû. */
+export type MissionPart = 'deposit' | 'balance';
+export const MISSION_PARTS: readonly MissionPart[] = ['deposit', 'balance'];
+
+/** Clé d'idempotence d'un paiement par portefeuille (ADR-046) : celle du client, préfixée. */
+export function walletPaymentKey(idempotencyKey: string): string {
+  return `wallet-${idempotencyKey}`;
+}
+
+/** Paiements par portefeuille pas encore remboursés (reference = débit du portefeuille). */
+export function unrefundedWalletPayments(state: Pick<PaymentState, 'payments'>): PaymentRecord[] {
+  return state.payments.filter((payment) => payment.method === 'wallet' && payment.refundedAt === null);
 }
 
 /** Paiements en ligne enregistrés (identifiants du service payment), dans l'ordre d'enregistrement. */

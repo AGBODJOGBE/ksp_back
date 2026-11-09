@@ -40,11 +40,12 @@ model ProcessedEvent {
   @@map("processed_events")
 }
 
-/// Comptes du grand livre (ADR-042) : un par titulaire, et les comptes internes de KSP. Le solde est
-/// tenu par la base à chaque écriture (déclencheur), jamais saisi.
+/// Comptes du grand livre (ADR-042) : par titulaire, ses fonds dus (holder) et son portefeuille
+/// prépayé (prepaid, ADR-046, jamais négatif), et les comptes internes de KSP. Le solde est tenu par
+/// la base à chaque écriture (déclencheur), jamais saisi.
 model LedgerAccount {
   code       String   @id
-  /// internal ou holder.
+  /// internal, holder ou prepaid.
   kind       String
   holderType String?  @map("holder_type")
   holderId   String?  @map("holder_id") @db.Uuid
@@ -53,14 +54,15 @@ model LedgerAccount {
   balance    BigInt   @default(0)
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  @@unique([holderType, holderId])
+  @@unique([kind, holderType, holderId])
   @@map("ledger_accounts")
 }
 
 /// Transaction du grand livre : immuable, équilibrée (contrôlée par la base à la validation).
 model LedgerTransaction {
   id                    String   @id @db.Uuid
-  /// collection, payout_hold, payout_settlement, payout_release ou reversal.
+  /// collection, payout_hold, payout_settlement, payout_release ou reversal ; portefeuille prépayé
+  /// (ADR-046) : top_up, service_payment ou refund.
   kind                  String
   caller                String
   reference             String
@@ -73,10 +75,17 @@ model LedgerTransaction {
   description           String
   reversesTransactionId String?  @unique @map("reverses_transaction_id") @db.Uuid
   payoutId              String?  @map("payout_id") @db.Uuid
+  /// Client qui paie ou recharge, membre de la finance qui crédite (ADR-046) ; null sinon.
+  actorId               String?  @map("actor_id") @db.Uuid
+  /// Paiement d'un service et son remboursement : objet payé chez le service appelant.
+  objectType            String?  @map("object_type")
+  objectId              String?  @map("object_id") @db.Uuid
+  objectPart            String?  @map("object_part")
   createdAt             DateTime @map("created_at") @db.Timestamptz(3)
 
   @@unique([caller, reference])
   @@index([holderType, holderId])
+  @@index([objectType, objectId])
   @@map("ledger_transactions")
 }
 

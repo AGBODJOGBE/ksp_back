@@ -14,7 +14,8 @@ const staff = {
 
 /**
  * Routes du portefeuille (ADR-042) : espace du titulaire connecté (son compte, ou son organisation
- * active) et back-office de la finance. Lecture seule : les écritures viennent des services métier.
+ * active) et back-office de la finance. Portefeuille prépayé (ADR-046) : recharge par Mobile Money
+ * et crédit manuel de la finance ; les débits viennent des services métier (Nettoyage, factures).
  */
 export const WALLET_ROUTES = [
   {
@@ -34,6 +35,16 @@ export const WALLET_ROUTES = [
     access: { level: 'authenticated' },
     rateLimit: 'authenticated',
     requiresKnownClient: false,
+  },
+  {
+    operationId: 'createWalletTopUp',
+    method: 'POST',
+    path: '/api/v1/wallet/me/top-ups',
+    grpc: `${ACCOUNT}/CreateTopUp`,
+    access: { level: 'authenticated' },
+    rateLimit: 'payment_create',
+    requiresKnownClient: false,
+    idempotencyKey: 'required',
   },
   {
     operationId: 'listMyWalletPayouts',
@@ -61,6 +72,16 @@ export const WALLET_ROUTES = [
     access: staff,
     rateLimit: 'authenticated',
     requiresKnownClient: false,
+  },
+  {
+    operationId: 'creditPrepaidWallet',
+    method: 'POST',
+    path: '/api/v1/admin/wallet/holders/{type}/{id}/credits',
+    grpc: `${ADMIN}/CreditPrepaidWallet`,
+    access: staff,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+    idempotencyKey: 'required',
   },
   {
     operationId: 'listWalletPayouts',

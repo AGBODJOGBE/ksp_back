@@ -251,6 +251,7 @@ describe('paiement', () => {
     recordedBy: 'sup',
     recordedAt: NOW,
     idempotencyKey: null,
+    refundedAt: null,
   });
 
   it('acompte de 30 % : dû, acompte reçu, payé', () => {

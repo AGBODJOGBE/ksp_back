@@ -1,5 +1,12 @@
 import { AppError, currentContext, hasRole, requireRecentMfa, requireUser } from '@ksp/platform';
-import { HOLDER_TYPES, type Holder, type HolderType, MAX_AMOUNT } from '../domain/ledger';
+import {
+  HOLDER_TYPES,
+  type Holder,
+  type HolderType,
+  MAX_AMOUNT,
+  STATEMENT_ACCOUNTS,
+  type StatementAccount,
+} from '../domain/ledger';
 import { type PageRequest } from './ports';
 
 /** Erreurs du service (en-tête de wallet.proto). Messages en français. */
@@ -31,7 +38,42 @@ export const WalletErrors = {
     AppError.conflict('WALLET_CONCURRENT_UPDATE', 'Le portefeuille a été modifié en même temps. Réessayez.'),
   callerForbidden: () =>
     AppError.forbidden('WALLET_CALLER_FORBIDDEN', "Ce service n'est pas autorisé à appeler cette méthode."),
+  /** Portefeuille prépayé insuffisant (ADR-046) : le montant manquant est rappelé. */
+  insufficientFunds: (balance: number, amount: number) =>
+    AppError.precondition(
+      'WALLET_INSUFFICIENT_FUNDS',
+      `Solde du portefeuille insuffisant : il manque ${formatXof(amount - balance)}. Rechargez votre portefeuille.`,
+      {
+        balance: { amount: balance, currency: 'XOF' },
+        missing: { amount: amount - balance, currency: 'XOF' },
+      },
+    ),
+  debitRefunded: () =>
+    AppError.precondition(
+      'WALLET_DEBIT_REFUNDED',
+      'Ce paiement a déjà été remboursé dans le portefeuille. Recommencez le paiement.',
+    ),
+  notRefundable: () =>
+    AppError.precondition(
+      'WALLET_TRANSACTION_NOT_REVERSIBLE',
+      'Seul le paiement d’un service par le portefeuille peut être remboursé par cette méthode.',
+    ),
+  topUpAlreadyCredited: () =>
+    AppError.conflict(
+      'WALLET_IDEMPOTENCY_KEY_REUSED',
+      'Ce paiement a déjà été crédité sur un portefeuille, pour un autre montant ou un autre titulaire.',
+    ),
+  viewerForbidden: () =>
+    AppError.forbidden(
+      'AUTH_FORBIDDEN',
+      'Votre rôle dans cette organisation ne permet pas d’utiliser son portefeuille.',
+    ),
 };
+
+/** 150000 → « 150 000 FCFA » (espace insécable). */
+export function formatXof(amount: number): string {
+  return `${String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0')}\u00a0FCFA`;
+}
 
 /** Back-office du portefeuille : la finance (rôles du domaine wallet). */
 export const WALLET_STAFF = ['finance_officer', 'super_admin'] as const;
@@ -70,9 +112,33 @@ export function currentHolder(): Holder {
     : { type: 'user', id: user.userId };
 }
 
+/** Membres d'une organisation qui peuvent utiliser son portefeuille ; org_viewer : lecture seule. */
+const ORGANIZATION_SPENDERS = ['org_admin', 'org_member'] as const;
+
+/**
+ * Titulaire du connecté, autorisé à utiliser le portefeuille (recharge) : lui-même, ou son
+ * organisation active s'il y est org_admin ou org_member (rôle de portée org du jeton, ADR-027).
+ */
+export function currentSpender(): { holder: Holder; userId: string } {
+  const user = requireUser();
+  const holder = currentHolder();
+  if (
+    holder.type === 'organization' &&
+    !ORGANIZATION_SPENDERS.some((role) => hasRole(user, role, { type: 'org', id: holder.id }))
+  ) {
+    throw WalletErrors.viewerForbidden();
+  }
+  return { holder, userId: user.userId };
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Clé d'idempotence d'un reversement : 8 à 100 caractères, lettres, chiffres, « _ » et « - ». */
 export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,100}$/;
+/** Clé d'un débit (service appelant) : 8 à 150 caractères, lettres, chiffres, « : », « _ » et « - ». */
+export const DEBIT_KEY = /^[A-Za-z0-9:_-]{8,150}$/;
+/** Type d'objet payé chez le service, et sa part. */
+export const OBJECT_TYPE = /^[a-z][a-z0-9_]{2,49}$/;
+export const OBJECT_PART = /^[a-z][a-z0-9_]{0,29}$/;
 /** Référence d'une écriture : 1 à 100 caractères, lettres, chiffres, « : », « _ » et « - ». */
 export const REFERENCE = /^[A-Za-z0-9:_-]{1,100}$/;
 
@@ -102,6 +168,11 @@ export function requireXof(field: string, money: { amount: number; currency: str
     throw WalletErrors.invalid(field, `Montant entier en XOF attendu, de 1 à ${MAX_AMOUNT}.`);
   }
   return amount;
+}
+
+/** Comptes du relevé : celui demandé, ou les deux (vide). */
+export function statementAccounts(value: string | undefined): readonly StatementAccount[] {
+  return value ? [oneOf('account', value, STATEMENT_ACCOUNTS)] : STATEMENT_ACCOUNTS;
 }
 
 export function oneOf<T extends string>(field: string, value: string, allowed: readonly T[]): T {

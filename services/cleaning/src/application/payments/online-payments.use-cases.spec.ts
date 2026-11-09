@@ -103,6 +103,7 @@ describe('paiement en ligne d’une mission (ADR-031)', () => {
               recordedBy: CUSTOMER_ID,
               recordedAt: new Date('2026-10-25T09:00:00Z'),
               idempotencyKey: 'manuel-0001',
+              refundedAt: null,
             },
           ],
         },

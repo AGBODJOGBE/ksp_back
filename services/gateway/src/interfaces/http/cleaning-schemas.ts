@@ -310,6 +310,8 @@ export const cleaningBodies = {
   declineCleaningQuote: optionalReason,
   cancelCleaningRequest: optionalReason,
   cancelMyCleaningMission: optionalReason,
+  /** Part payée depuis le portefeuille prépayé (ADR-046) ; le montant vient de cleaning. */
+  payMyCleaningMissionFromWallet: z.strictObject({ part: z.enum(['deposit', 'balance']) }),
   rejectCleaningQuoteRequest: requiredReason,
   scheduleCleaningVisit: z.strictObject({ scheduledAt: dateTime, agentId: uuid }),
   completeCleaningVisit: z.strictObject({

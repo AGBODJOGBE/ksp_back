@@ -19,11 +19,15 @@ export interface Page {
 /** Objet payé. */
 export interface PaymentSubject {
   /**
-   * "cleaning_mission" ou "billing_invoice" ; paiement par lien : type choisi par l'émetteur (par
-   * exemple "recovery_installment", ADR-040).
+   * "cleaning_mission", "billing_invoice" ou "wallet_top_up" (recharge du portefeuille prépayé,
+   * ADR-046) ; paiement par lien : type choisi par l'émetteur (par exemple "recovery_installment",
+   * ADR-040).
    */
   type: string;
-  /** Mission (cleaning) ou facture (billing). */
+  /**
+   * Mission (cleaning), facture (billing) ou titulaire du portefeuille rechargé (l'organisation
+   * payeuse, sinon le payeur).
+   */
   id: string;
   /** Mission seulement : "deposit" (acompte) ou "balance" (reste dû) ; vide pour une facture. */
   part: string;
@@ -460,6 +464,21 @@ export interface FailPayoutResponse {
   payout?: Payout | undefined;
 }
 
+export interface CreateTopUpPaymentRequest {
+  /** Clé d'idempotence du client (8 à 100 caractères), propre au payeur. */
+  idempotencyKey: string;
+  /** Entier en XOF, 1 à 1 000 000 000 (limites de recharge contrôlées par wallet). */
+  amount?: Money | undefined;
+}
+
+export interface CreateTopUpPaymentResponse {
+  payment?:
+    | Payment
+    | undefined;
+  /** false : paiement déjà créé avec cette clé, ou page encore ouverte réutilisée. */
+  created: boolean;
+}
+
 /** Espace client : paiements du client connecté (contexte personnel) ou de son organisation active. */
 
 export interface PaymentServiceClient {
@@ -878,3 +897,55 @@ export function PayoutAdminServiceControllerMethods() {
 }
 
 export const PAYOUT_ADMIN_SERVICE_NAME = "PayoutAdminService";
+
+/**
+ * Recharge du portefeuille prépayé d'un client (ADR-046), réservée à wallet (jeton de service). Le
+ * payeur est l'utilisateur transmis dans les métadonnées (son organisation active, sinon lui-même) ;
+ * le montant est choisi par le client et contrôlé par wallet (limites de recharge). L'objet payé est
+ * "wallet_top_up" (identifiant : titulaire du portefeuille) ; une page encore ouverte du même payeur
+ * est réutilisée pour le même montant, remplacée sinon. Les protections d'ADR-032 propres à un
+ * montant dû (paiement non enregistré, écart non traité) ne s'appliquent pas : chaque recharge est un
+ * nouvel argent. La réussite publie payment.intent.succeeded, sur lequel wallet crédite le
+ * portefeuille ; un écart de montant reste "amount_mismatch" (rien n'est crédité, la finance tranche).
+ */
+
+export interface TopUpPaymentServiceClient {
+  createTopUpPayment(request: CreateTopUpPaymentRequest, metadata?: Metadata): Observable<CreateTopUpPaymentResponse>;
+}
+
+/**
+ * Recharge du portefeuille prépayé d'un client (ADR-046), réservée à wallet (jeton de service). Le
+ * payeur est l'utilisateur transmis dans les métadonnées (son organisation active, sinon lui-même) ;
+ * le montant est choisi par le client et contrôlé par wallet (limites de recharge). L'objet payé est
+ * "wallet_top_up" (identifiant : titulaire du portefeuille) ; une page encore ouverte du même payeur
+ * est réutilisée pour le même montant, remplacée sinon. Les protections d'ADR-032 propres à un
+ * montant dû (paiement non enregistré, écart non traité) ne s'appliquent pas : chaque recharge est un
+ * nouvel argent. La réussite publie payment.intent.succeeded, sur lequel wallet crédite le
+ * portefeuille ; un écart de montant reste "amount_mismatch" (rien n'est crédité, la finance tranche).
+ */
+
+export interface TopUpPaymentServiceController {
+  createTopUpPayment(
+    request: CreateTopUpPaymentRequest,
+    metadata?: Metadata,
+  ): Promise<CreateTopUpPaymentResponse> | Observable<CreateTopUpPaymentResponse> | CreateTopUpPaymentResponse;
+}
+
+export function TopUpPaymentServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["createTopUpPayment"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("TopUpPaymentService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("TopUpPaymentService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const TOP_UP_PAYMENT_SERVICE_NAME = "TopUpPaymentService";

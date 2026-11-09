@@ -10,7 +10,9 @@ import "ksp/common/v1/money.proto";
 //   cleaning) ;
 // - à l'entreprise (ou au particulier), pour le reste dû d'une facture mensuelle (lu dans billing) ;
 // - à un payeur sans compte KSP (débiteur du Recouvrement), par un lien de paiement (ADR-040) ;
-// - aux reversements par Mobile Money (créanciers payés depuis leur solde wallet, ADR-041).
+// - aux reversements par Mobile Money (créanciers payés depuis leur solde wallet, ADR-041) ;
+// - à la recharge du portefeuille prépayé d'un client (objet "wallet_top_up", ADR-046), demandée par
+//   wallet seulement.
 //
 // - PaymentService : espace client (créer un paiement, le suivre, mes paiements) et, en
 //   développement seulement, la confirmation simulée.
@@ -22,6 +24,7 @@ import "ksp/common/v1/money.proto";
 // - PaymentLinkPublicService : page publique d'un lien (résumé, paiement), réservée à la gateway.
 // - PayoutService : reversements demandés par un service (wallet) ; PayoutAdminService : leur suivi
 //   et, en mode manuel, leur confirmation par la finance.
+// - TopUpPaymentService : recharge du portefeuille prépayé, réservée à wallet (ADR-046).
 //
 // Règles :
 // - le montant dû vient toujours de cleaning ou de billing, jamais du client ;
@@ -105,10 +108,12 @@ message Page {
 
 // Objet payé.
 message PaymentSubject {
-  // "cleaning_mission" ou "billing_invoice" ; paiement par lien : type choisi par l'émetteur (par
-  // exemple "recovery_installment", ADR-040).
+  // "cleaning_mission", "billing_invoice" ou "wallet_top_up" (recharge du portefeuille prépayé,
+  // ADR-046) ; paiement par lien : type choisi par l'émetteur (par exemple "recovery_installment",
+  // ADR-040).
   string type = 1;
-  // Mission (cleaning) ou facture (billing).
+  // Mission (cleaning), facture (billing) ou titulaire du portefeuille rechargé (l'organisation
+  // payeuse, sinon le payeur).
   string id = 2;
   // Mission seulement : "deposit" (acompte) ou "balance" (reste dû) ; vide pour une facture.
   string part = 3;
@@ -535,4 +540,29 @@ message FailPayoutRequest {
 
 message FailPayoutResponse {
   Payout payout = 1;
+}
+
+// Recharge du portefeuille prépayé d'un client (ADR-046), réservée à wallet (jeton de service). Le
+// payeur est l'utilisateur transmis dans les métadonnées (son organisation active, sinon lui-même) ;
+// le montant est choisi par le client et contrôlé par wallet (limites de recharge). L'objet payé est
+// "wallet_top_up" (identifiant : titulaire du portefeuille) ; une page encore ouverte du même payeur
+// est réutilisée pour le même montant, remplacée sinon. Les protections d'ADR-032 propres à un
+// montant dû (paiement non enregistré, écart non traité) ne s'appliquent pas : chaque recharge est un
+// nouvel argent. La réussite publie payment.intent.succeeded, sur lequel wallet crédite le
+// portefeuille ; un écart de montant reste "amount_mismatch" (rien n'est crédité, la finance tranche).
+service TopUpPaymentService {
+  rpc CreateTopUpPayment(CreateTopUpPaymentRequest) returns (CreateTopUpPaymentResponse);
+}
+
+message CreateTopUpPaymentRequest {
+  // Clé d'idempotence du client (8 à 100 caractères), propre au payeur.
+  string idempotency_key = 1;
+  // Entier en XOF, 1 à 1 000 000 000 (limites de recharge contrôlées par wallet).
+  ksp.common.v1.Money amount = 2;
+}
+
+message CreateTopUpPaymentResponse {
+  Payment payment = 1;
+  // false : paiement déjà créé avec cette clé, ou page encore ouverte réutilisée.
+  bool created = 2;
 }

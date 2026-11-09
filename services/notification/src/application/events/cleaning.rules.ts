@@ -71,7 +71,13 @@ function customer(
   return { userId, templateCode, variables: { ...variables, link }, link };
 }
 
-export const CLEANING_RULES: { readonly [T in CleaningEventType]: EventRule<T> } = {
+/**
+ * Tous les événements du Nettoyage, sauf cleaning.mission.refunded (ADR-046) : le remboursement est
+ * annoncé par wallet quand il est crédité (wallet.prepaid.credited).
+ */
+type NotifiedCleaningEvent = Exclude<CleaningEventType, 'cleaning.mission.refunded'>;
+
+export const CLEANING_RULES: { readonly [T in NotifiedCleaningEvent]: EventRule<T> } = {
   'cleaning.quote.requested': (event, context) =>
     event.summarizedByGroup
       ? []

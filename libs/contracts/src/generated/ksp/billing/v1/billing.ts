@@ -31,7 +31,8 @@ export interface InvoicePayment {
   /**
    * "cash", "bank_transfer" ou "mobile_money_offline" (enregistrés au back-office), ou
    * "mobile_money_online" (paiement en ligne confirmé par le prestataire, ADR-031 ; recorded_by
-   * vaut alors "system").
+   * vaut alors "system"), ou "wallet" (portefeuille prépayé, ADR-046 ; reference = transaction du
+   * portefeuille, recorded_by = le membre qui a payé).
    */
   method: string;
   reference: string;
@@ -212,6 +213,16 @@ export interface GetInvoiceAmountDueResponse {
   onlinePaymentIds: string[];
 }
 
+export interface PayMyInvoiceFromWalletRequest {
+  invoiceId: string;
+  /** En-tête Idempotency-Key (8 à 100 caractères : lettres, chiffres, "_" et "-"), obligatoire. */
+  idempotencyKey: string;
+}
+
+export interface PayMyInvoiceFromWalletResponse {
+  invoice?: Invoice | undefined;
+}
+
 /**
  * Espace client : factures du client connecté (contexte personnel) ou de son organisation
  * active (contexte entreprise).
@@ -221,6 +232,17 @@ export interface BillingServiceClient {
   listMyInvoices(request: ListMyInvoicesRequest, metadata?: Metadata): Observable<ListMyInvoicesResponse>;
 
   getMyInvoice(request: GetMyInvoiceRequest, metadata?: Metadata): Observable<GetMyInvoiceResponse>;
+
+  /**
+   * Reste dû payé depuis le portefeuille prépayé (ADR-046) : celui de l'organisation active
+   * (membre org_admin ou org_member), sinon celui du client. Débit du reste dû en entier, puis
+   * paiement enregistré (moyen "wallet") ; payée au total : billing.invoice.paid. Idempotent par clé.
+   */
+
+  payMyInvoiceFromWallet(
+    request: PayMyInvoiceFromWalletRequest,
+    metadata?: Metadata,
+  ): Observable<PayMyInvoiceFromWalletResponse>;
 }
 
 /**
@@ -238,11 +260,25 @@ export interface BillingServiceController {
     request: GetMyInvoiceRequest,
     metadata?: Metadata,
   ): Promise<GetMyInvoiceResponse> | Observable<GetMyInvoiceResponse> | GetMyInvoiceResponse;
+
+  /**
+   * Reste dû payé depuis le portefeuille prépayé (ADR-046) : celui de l'organisation active
+   * (membre org_admin ou org_member), sinon celui du client. Débit du reste dû en entier, puis
+   * paiement enregistré (moyen "wallet") ; payée au total : billing.invoice.paid. Idempotent par clé.
+   */
+
+  payMyInvoiceFromWallet(
+    request: PayMyInvoiceFromWalletRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<PayMyInvoiceFromWalletResponse>
+    | Observable<PayMyInvoiceFromWalletResponse>
+    | PayMyInvoiceFromWalletResponse;
 }
 
 export function BillingServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["listMyInvoices", "getMyInvoice"];
+    const grpcMethods: string[] = ["listMyInvoices", "getMyInvoice", "payMyInvoiceFromWallet"];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("BillingService", method)(constructor.prototype[method], method, descriptor);

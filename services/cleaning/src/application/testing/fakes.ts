@@ -1,5 +1,5 @@
 import { INITIAL_ZONES, type Zone, zoneCode } from '../../domain/zone';
-import { type RoleClaim, runWithContext } from '@ksp/platform';
+import { AppError, type RoleClaim, runWithContext } from '@ksp/platform';
 import { type Agent, type Team, type Unavailability } from '../../domain/agent';
 import { type ServiceDefinition } from '../../domain/catalog';
 import { homeCleaningService } from '../../domain/testing';
@@ -27,6 +27,8 @@ import {
   type AgentRepository,
   type CatalogRepository,
   type Changes,
+  type WalletDebit,
+  type WalletLedger,
   type ContractInvoiceRepository,
   type ContractInvoiceStatus,
   type CreateResult,
@@ -630,8 +632,40 @@ export class InMemoryPeople implements PeopleDirectory {
   }
 }
 
+/**
+ * Portefeuille simulé (ADR-046) : solde par client, débits idempotents par clé, remboursements
+ * uniques ; solde insuffisant refusé comme wallet (WALLET_INSUFFICIENT_FUNDS, montant manquant).
+ */
+export class FakeWallet implements WalletLedger {
+  readonly balances = new Map<string, number>();
+  readonly debits = new Map<string, { transactionId: string; amount: number; refunded: boolean }>();
+  readonly refunds: string[] = [];
+  private n = 0;
+
+  async debit(input: Parameters<WalletLedger['debit']>[0]): Promise<WalletDebit> {
+    const known = this.debits.get(input.idempotencyKey);
+    if (known) return { transactionId: known.transactionId, amount: known.amount, created: false };
+    const balance = this.balances.get(input.holder.id) ?? 0;
+    if (balance < input.amount) {
+      throw AppError.precondition('WALLET_INSUFFICIENT_FUNDS', 'Solde du portefeuille insuffisant.', {
+        missing: { amount: input.amount - balance, currency: 'XOF' },
+      });
+    }
+    this.balances.set(input.holder.id, balance - input.amount);
+    this.n += 1;
+    const transactionId = `0192f1c4-0000-7000-d000-${String(this.n).padStart(12, '0')}`;
+    this.debits.set(input.idempotencyKey, { transactionId, amount: input.amount, refunded: false });
+    return { transactionId, amount: input.amount, created: true };
+  }
+
+  async refund(input: { transactionId: string; reason: string }): Promise<void> {
+    this.refunds.push(input.transactionId);
+  }
+}
+
 export interface TestWorld extends CleaningDeps {
   recorder: Recorder;
+  wallet: FakeWallet;
   clock: FixedClock;
   catalog: InMemoryCatalog;
   requests: InMemoryRequests;
@@ -659,6 +693,7 @@ export function testWorld(): TestWorld {
     invoices: new InMemoryContractInvoices(),
     organizations,
     people: new InMemoryPeople(),
+    wallet: new FakeWallet(),
     geocoder: new FakeGeocoder(),
     fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
   };

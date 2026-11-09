@@ -38,6 +38,16 @@ export class BillingGrpcController implements billingV1.BillingServiceController
   async getMyInvoice(request: billingV1.GetMyInvoiceRequest): Promise<billingV1.GetMyInvoiceResponse> {
     return { invoice: presentInvoice(await this.useCases.getMyInvoice.execute(request.invoiceId)) };
   }
+
+  async payMyInvoiceFromWallet(
+    request: billingV1.PayMyInvoiceFromWalletRequest,
+  ): Promise<billingV1.PayMyInvoiceFromWalletResponse> {
+    const invoice = await this.useCases.payMyInvoiceFromWallet.execute({
+      invoiceId: request.invoiceId,
+      idempotencyKey: request.idempotencyKey,
+    });
+    return { invoice: presentInvoice(invoice) };
+  }
 }
 
 /** Adaptateur gRPC du back-office : factures, paiement manuel, réglages. Droits vérifiés par les cas d'usage. */

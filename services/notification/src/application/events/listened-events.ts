@@ -5,6 +5,7 @@ import { CLEANING_RULES } from './cleaning.rules';
 import { type EventRules } from './event-rules';
 import { ORGANIZATION_RULES } from './organization.rules';
 import { PAYMENT_RULES } from './payment.rules';
+import { WALLET_RULES } from './wallet.rules';
 
 /**
  * Événements écoutés par notification, avec leur règle. Chaque événement a sa file
@@ -17,7 +18,9 @@ import { PAYMENT_RULES } from './payment.rules';
  * Comptes entreprise (identity) : nouvelle demande (équipe KSP), validation, refus, suspension et
  * réactivation (demandeur).
  * Suppression du compte (identity, ADR-036) : demande enregistrée et annulation (titulaire).
- * Paiement en ligne (ADR-031) : reçu au payeur (payment.intent.succeeded).
+ * Paiement en ligne (ADR-031) : reçu au payeur (payment.intent.succeeded), recharge du portefeuille
+ * comprise (ADR-046).
+ * Portefeuille prépayé (ADR-046) : paiement effectué depuis le portefeuille, portefeuille crédité.
  */
 export const EVENT_RULES: EventRules = {
   ...CLEANING_RULES,
@@ -25,6 +28,7 @@ export const EVENT_RULES: EventRules = {
   ...ORGANIZATION_RULES,
   ...ACCOUNT_RULES,
   ...PAYMENT_RULES,
+  ...WALLET_RULES,
 };
 
 export const LISTENED_EVENTS = Object.keys(EVENT_RULES) as KspEventType[];

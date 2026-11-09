@@ -27,6 +27,36 @@ export const protoWallet: walletV1.Wallet = {
   totalCollected: xof(30625),
   totalPaidOut: xof(0),
   lastEntryAt: '2026-11-07T10:05:00.000Z',
+  prepaid: {
+    holder: { type: 'organization', id: HOLDER_ID },
+    balance: xof(5000),
+    lastEntryAt: '2026-11-08T09:00:00.000Z',
+  },
+};
+
+/** Paiement de l'acompte d'une mission depuis le portefeuille prépayé (ADR-046). */
+export const protoPrepaidLine: walletV1.StatementLine = {
+  transactionId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7010',
+  kind: 'service_payment',
+  direction: 'debit',
+  amount: xof(15000),
+  balanceAfter: xof(5000),
+  reference: 'debit:0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000:deposit:cle-0001',
+  description: 'Nettoyage de maison — acompte',
+  grossAmount: undefined,
+  commission: undefined,
+  commissionRateBps: 0,
+  payoutId: '',
+  payoutStatus: '',
+  reversesTransactionId: '',
+  createdAt: '2026-11-08T09:00:00.000Z',
+  account: 'prepaid',
+  object: {
+    service: 'cleaning',
+    objectType: 'cleaning_mission',
+    objectId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000',
+    part: 'deposit',
+  },
 };
 
 export const protoStatement: walletV1.StatementPage = {
@@ -46,6 +76,8 @@ export const protoStatement: walletV1.StatementPage = {
       payoutStatus: 'submitted',
       reversesTransactionId: '',
       createdAt: '2026-11-07T10:05:00.000Z',
+      account: 'collections',
+      object: undefined,
     },
     {
       transactionId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7000',
@@ -62,6 +94,8 @@ export const protoStatement: walletV1.StatementPage = {
       payoutStatus: '',
       reversesTransactionId: '',
       createdAt: '2026-11-07T10:00:00.000Z',
+      account: 'collections',
+      object: undefined,
     },
   ],
   nextCursor: '',
@@ -84,11 +118,45 @@ export const protoWalletPayout: walletV1.WalletPayout = {
 };
 
 type Method = keyof walletV1.WalletAccountServiceController | keyof walletV1.WalletAdminServiceController;
-const ACCOUNT_METHODS: readonly Method[] = ['getMyWallet', 'listMyStatement', 'listMyPayouts'];
+const ACCOUNT_METHODS: readonly Method[] = ['getMyWallet', 'listMyStatement', 'listMyPayouts', 'createTopUp'];
 
 const DEFAULTS: Record<Method, () => unknown> = {
-  getMyWallet: () => ({ wallet: protoWallet }),
+  getMyWallet: () => ({ wallet: protoWallet, topUpLimits: { min: xof(500), max: xof(1000000) } }),
   listMyStatement: () => ({ statement: protoStatement }),
+  createTopUp: () => ({
+    topUp: {
+      paymentId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5009',
+      holder: { type: 'organization', id: HOLDER_ID },
+      amount: xof(20000),
+      status: 'pending',
+      checkoutUrl: 'https://process.fedapay.com/tok9',
+      expiresAt: '2026-11-08T09:30:00.000Z',
+    },
+    created: true,
+  }),
+  creditPrepaidWallet: () => ({
+    transaction: {
+      id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7011',
+      kind: 'refund',
+      reference: 'credit:cle-0192f1c4-0001',
+      holder: { type: 'organization', id: HOLDER_ID },
+      amount: xof(5000),
+      grossAmount: undefined,
+      commission: undefined,
+      commissionRateBps: 0,
+      description: 'Passage du 3 novembre non effectué',
+      reversesTransactionId: '',
+      createdAt: '2026-11-08T10:00:00.000Z',
+      entries: [],
+      object: undefined,
+    },
+    wallet: {
+      holder: { type: 'organization', id: HOLDER_ID },
+      balance: xof(10000),
+      lastEntryAt: '2026-11-08T10:00:00.000Z',
+    },
+    created: true,
+  }),
   listMyPayouts: () => ({ payouts: [protoWalletPayout], nextCursor: '' }),
   getHolderWallet: () => ({ wallet: protoWallet }),
   listHolderStatement: () => ({ statement: protoStatement }),
@@ -101,6 +169,8 @@ const DEFAULTS: Record<Method, () => unknown> = {
     ],
     owedToHolders: xof(8750),
     holdersCount: 1,
+    owedToCustomers: xof(5000),
+    customersCount: 1,
   }),
 };
 

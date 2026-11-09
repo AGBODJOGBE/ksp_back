@@ -12,19 +12,26 @@ import { eventDate } from './rule-dates';
  * d'une facture d'organisation : l'e-mail part à l'e-mail de facturation vérifié de l'organisation,
  * sinon à l'adresse vérifiée du payeur (comme les factures, ADR-026 et ADR-028).
  *
- * Lien : la mission (/mon-espace/nettoyage/missions/<id>) ou la facture (/mon-espace/factures/<id>).
+ * Lien : la mission (/mon-espace/nettoyage/missions/<id>), la facture (/mon-espace/factures/<id>) ou,
+ * pour une recharge du portefeuille prépayé (ADR-046), le portefeuille (/mon-espace/portefeuille) ;
+ * ce reçu est le message « recharge réussie ».
  */
 export const PAYMENT_RULES: { readonly [T in PaymentEventType]?: EventRule<T> } = {
   'payment.intent.succeeded': (event, context) => {
     const invoice = event.subjectType === 'billing_invoice';
+    const topUp = event.subjectType === 'wallet_top_up';
     const link = invoice
       ? `${context.portalBaseUrl}/mon-espace/factures/${encodeURIComponent(event.subjectId)}`
-      : `${context.portalBaseUrl}/mon-espace/nettoyage/missions/${encodeURIComponent(event.subjectId)}`;
+      : topUp
+        ? `${context.portalBaseUrl}/mon-espace/portefeuille`
+        : `${context.portalBaseUrl}/mon-espace/nettoyage/missions/${encodeURIComponent(event.subjectId)}`;
     const object = invoice
       ? `la facture ${event.subjectReference ?? ''}`.trim()
-      : event.part === 'deposit'
-        ? "l'acompte de votre prestation de nettoyage"
-        : 'le solde de votre prestation de nettoyage';
+      : topUp
+        ? 'la recharge de votre portefeuille KSP'
+        : event.part === 'deposit'
+          ? "l'acompte de votre prestation de nettoyage"
+          : 'le solde de votre prestation de nettoyage';
     return [
       {
         userId: event.customerId,

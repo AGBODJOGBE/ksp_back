@@ -1,12 +1,15 @@
 import { AppError, type RoleClaim, runWithContext } from '@ksp/platform';
 import {
   type AccountCode,
+  accountOf,
   balanceDelta,
   type Holder,
   holderAccount,
   INTERNAL_ACCOUNTS,
   isBalanced,
   type LedgerTransaction,
+  prepaidAccount,
+  type StatementAccount,
 } from '../../domain/ledger';
 import { type WalletPayout } from '../../domain/wallet-payout';
 import {
@@ -18,9 +21,13 @@ import {
   type PageResult,
   type PayoutExecutor,
   type PayoutFilter,
+  type PrepaidSummary,
   type RecordOutcome,
   type StatementLine,
+  type TopUpPayment,
+  type TopUpPayments,
   type WalletDeps,
+  type WalletOutboxMessage,
   type WalletPayoutRepository,
   type WalletSummary,
 } from '../ports';
@@ -66,6 +73,8 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
   readonly balances = new Map<AccountCode, number>();
   readonly payoutRows = new Map<string, WalletPayout>();
   readonly inbox = new Set<string>();
+  /** Événements écrits avec les écritures (outbox). */
+  readonly events: WalletOutboxMessage[] = [];
   private n = 0;
 
   async record(input: Parameters<LedgerStore['record']>[0]): Promise<RecordOutcome> {
@@ -87,7 +96,7 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
             p.idempotencyKey === input.createPayout!.idempotencyKey,
         ));
     if (duplicate) return { kind: 'duplicate' };
-    const holderCode = holderAccount(tx.holder);
+    const holderCode = accountOf(tx);
     const balance = this.balances.get(holderCode) ?? 0;
     if (input.requireHolderBalance !== undefined && balance < input.requireHolderBalance) {
       return { kind: 'insufficient', balance };
@@ -113,7 +122,9 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
       });
     }
     if (input.inbox) this.inbox.add(`${input.inbox.eventId}:${input.inbox.consumer}`);
-    return { kind: 'recorded', transaction: tx, holderBalance: this.balances.get(holderCode) ?? 0 };
+    const holderBalance = this.balances.get(holderCode) ?? 0;
+    this.events.push(...(input.events?.(holderBalance) ?? []));
+    return { kind: 'recorded', transaction: tx, holderBalance };
   }
 
   async findTransaction(id: string) {
@@ -146,12 +157,28 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
         txs.filter((t) => t.kind === 'reversal').reduce((sum, t) => sum + t.amount, 0),
       totalPaidOut: payouts.filter((p) => p.status === 'completed').reduce((sum, p) => sum + p.amount, 0),
       lastEntryAt: last ? this.transactions.get(last.transactionId)!.createdAt : null,
+      prepaid: await this.prepaidSummary(holder),
     };
   }
-  async statement(holder: Holder, page: PageRequest): Promise<PageResult<StatementLine>> {
-    const code = holderAccount(holder);
+  async prepaidSummary(holder: Holder): Promise<PrepaidSummary> {
+    const code = prepaidAccount(holder);
+    const last = this.entries.filter((e) => e.account === code).at(-1);
+    return {
+      holder,
+      balance: this.balances.get(code) ?? 0,
+      lastEntryAt: last ? this.transactions.get(last.transactionId)!.createdAt : null,
+    };
+  }
+  async statement(
+    holder: Holder,
+    accounts: readonly StatementAccount[],
+    page: PageRequest,
+  ): Promise<PageResult<StatementLine>> {
+    const codes = new Map<string, StatementAccount>(
+      accounts.map((a) => [a === 'prepaid' ? prepaidAccount(holder) : holderAccount(holder), a]),
+    );
     const lines = this.entries
-      .filter((e) => e.account === code)
+      .filter((e) => codes.has(e.account))
       .reverse()
       .filter((e) => !page.cursor || e.id < page.cursor)
       .map((e) => {
@@ -159,6 +186,7 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
         const payout = transaction.payoutId ? this.payoutRows.get(transaction.payoutId) : undefined;
         return {
           entryId: e.id,
+          account: codes.get(e.account)!,
           transaction,
           direction: e.direction,
           amount: e.amount,
@@ -172,11 +200,15 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
     };
   }
   async overview(): Promise<LedgerOverview> {
-    const holders = [...this.balances.entries()].filter(([code]) => code.startsWith('holder:'));
+    const of = (prefix: string) => [...this.balances.entries()].filter(([code]) => code.startsWith(prefix));
+    const holders = of('holder:');
+    const customers = of('prepaid:');
     return {
       internal: INTERNAL_ACCOUNTS.map((account) => ({ account, balance: this.balances.get(account) ?? 0 })),
       owedToHolders: holders.reduce((sum, [, balance]) => sum + balance, 0),
       holdersCount: holders.length,
+      owedToCustomers: customers.reduce((sum, [, balance]) => sum + balance, 0),
+      customersCount: customers.length,
     };
   }
 
@@ -225,15 +257,43 @@ export class FakeExecutor implements PayoutExecutor {
   }
 }
 
+/** payment simulé : recharges créées (une par clé), panne simulable. */
+export class FakeTopUps implements TopUpPayments {
+  readonly requests: { idempotencyKey: string; amount: number }[] = [];
+  down = false;
+  async create(input: { idempotencyKey: string; amount: number }): Promise<TopUpPayment> {
+    if (this.down) throw AppError.unavailable('PAYMENT_PROVIDER_UNAVAILABLE', 'prestataire injoignable');
+    const known = this.requests.findIndex((r) => r.idempotencyKey === input.idempotencyKey);
+    if (known < 0) this.requests.push(input);
+    const n = (known < 0 ? this.requests.length : known + 1).toString().padStart(12, '0');
+    return {
+      paymentId: `0192f1c4-0000-7000-b000-${n}`,
+      amount: input.amount,
+      status: 'pending',
+      checkoutUrl: `https://pay.example/${n}`,
+      expiresAt: new Date('2026-11-07T09:30:00.000Z'),
+      created: known < 0,
+    };
+  }
+}
+
 export function makeDeps(overrides: Partial<WalletDeps> = {}) {
   const store = new InMemoryWallet();
+  const topUps = new FakeTopUps();
   return {
     store,
+    topUps,
     deps: {
       ledger: store,
       payouts: store,
       executor: new FakeExecutor(),
-      settings: { ledgerCallers: ['recovery'] as readonly string[] },
+      topUps,
+      settings: {
+        ledgerCallers: ['recovery'] as readonly string[],
+        debitCallers: ['cleaning', 'billing'] as readonly string[],
+        topUpMin: 500,
+        topUpMax: 1_000_000,
+      },
       clock: new FixedClock(),
       ids: new SequenceIds(),
       ...overrides,
@@ -244,9 +304,12 @@ export function makeDeps(overrides: Partial<WalletDeps> = {}) {
 function as<T>(
   userId: string,
   fn: () => Promise<T>,
-  options: { roles?: string[]; mfa?: boolean; activeContext?: string } = {},
+  options: { roles?: string[]; mfa?: boolean; activeContext?: string; orgRole?: string } = {},
 ): Promise<T> {
   const roles: RoleClaim[] = (options.roles ?? ['customer']).map((role) => ({ role, scopeType: 'global' }));
+  if (options.orgRole && options.activeContext) {
+    roles.push({ role: options.orgRole, scopeType: 'org', scopeId: options.activeContext });
+  }
   return runWithContext(
     {
       correlationId: 'c-test',
@@ -263,8 +326,25 @@ function as<T>(
   );
 }
 
-export function asCustomer<T>(fn: () => Promise<T>, organizationId?: string): Promise<T> {
-  return as(USER_ID, fn, organizationId ? { activeContext: organizationId } : {});
+/** Client connecté ; dans le contexte d'une organisation, avec son rôle de membre (org_admin par défaut). */
+export function asCustomer<T>(
+  fn: () => Promise<T>,
+  organizationId?: string,
+  orgRole = 'org_admin',
+): Promise<T> {
+  return as(USER_ID, fn, organizationId ? { activeContext: organizationId, orgRole } : {});
+}
+
+/** Service appelant, agissant pour un client connecté (métadonnées transmises par le kit). */
+export function asServiceFor<T>(service: string, userId: string, fn: () => Promise<T>): Promise<T> {
+  return runWithContext(
+    {
+      correlationId: 'c-test',
+      callerService: service,
+      user: { userId, sessionId: 's-test', activeContext: 'personal', roles: [], mfa: false },
+    },
+    fn,
+  );
 }
 
 export function asStaff<T>(fn: () => Promise<T>, role = 'finance_officer', mfa = true): Promise<T> {

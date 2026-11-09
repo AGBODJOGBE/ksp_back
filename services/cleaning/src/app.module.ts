@@ -1,4 +1,4 @@
-import { geoV1, identityV1 } from '@ksp/contracts';
+import { geoV1, identityV1, walletV1 } from '@ksp/contracts';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -14,6 +14,7 @@ import { type ServiceConfig } from './config';
 import { createGeocoder } from './infrastructure/geocoding/fallback.geocoder';
 import { GeoServiceGeocoder } from './infrastructure/geocoding/geo-service.geocoder';
 import { IdentityPeopleDirectory } from './infrastructure/identity/identity-people-directory';
+import { GrpcWalletLedger } from './infrastructure/wallet/grpc-wallet-ledger';
 import { BillingEventsConsumer } from './infrastructure/messaging/billing-events.consumer';
 import { IdentityEventsConsumer } from './infrastructure/messaging/identity-events.consumer';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
@@ -44,6 +45,7 @@ import {
 } from './interfaces/grpc/customer.controllers';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
+const WALLET_CLIENT = Symbol('WALLET_CLIENT');
 const GEO_CLIENT = Symbol('GEO_CLIENT');
 
 /**
@@ -84,6 +86,7 @@ export class AppModule {
         PlatformModule.forRoot(config),
         ClientsModule.register([
           grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
+          grpcClientOptions(WALLET_CLIENT, 'wallet', config.WALLET_GRPC_URL),
           ...(config.GEO_GRPC_URL ? [grpcClientOptions(GEO_CLIENT, 'geo', config.GEO_GRPC_URL)] : []),
         ]),
       ],
@@ -121,6 +124,7 @@ export class AppModule {
             PrismaContractInvoiceRepository,
             PrismaOrganizationStandingRepository,
             IDENTITY_CLIENT,
+            WALLET_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
             { token: GEO_CLIENT, optional: true },
           ],
@@ -132,13 +136,14 @@ export class AppModule {
             invoices: PrismaContractInvoiceRepository,
             organizations: PrismaOrganizationStandingRepository,
             grpc: ClientGrpc,
+            walletGrpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
             geoGrpc: ClientGrpc | undefined,
           ) => {
             const geocoder = selectGeocoder(config, geoGrpc, serviceTokens);
             if (!serviceTokens) {
               new Logger('Cleaning').warn(
-                'Aucun jeton de service : appels vers identity non authentifiés (développement uniquement).',
+                'Aucun jeton de service : appels vers identity et wallet non authentifiés (développement uniquement).',
               );
             }
             return createUseCases({
@@ -152,6 +157,13 @@ export class AppModule {
                 grpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
                 new GrpcCaller({
                   target: 'identity',
+                  ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+                }),
+              ),
+              wallet: new GrpcWalletLedger(
+                walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
+                new GrpcCaller({
+                  target: 'wallet',
                   ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
                 }),
               ),

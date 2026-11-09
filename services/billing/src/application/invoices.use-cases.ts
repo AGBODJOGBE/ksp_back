@@ -1,6 +1,8 @@
 import {
   INVOICE_STATUSES,
+  balance,
   type Invoice,
+  type InvoicePayment,
   type InvoiceStatus,
   paymentRefusal,
   withPayment,
@@ -19,6 +21,7 @@ import {
   BILLING_SETTINGS_ADMINS,
   BILLING_STAFF,
   currentCustomer,
+  currentPayer,
   type CustomerScope,
   requireStaff,
 } from './shared/access';
@@ -203,6 +206,91 @@ export class RecordInvoicePaymentUseCase {
 
 function hasPaymentKey(invoice: Invoice, key: string): boolean {
   return invoice.payments.some((payment) => payment.idempotencyKey === key);
+}
+
+const MAX_ATTEMPTS = 3;
+const isClosed = (invoice: Invoice) => invoice.status === 'paid' || invoice.status === 'cancelled';
+
+/**
+ * « Mes factures » : reste dû payé depuis le portefeuille prépayé (ADR-046) — celui de
+ * l'organisation de la facture (membre org_admin ou org_member dans son contexte), sinon celui du
+ * client. Le reste dû est débité en entier par wallet, puis enregistré comme un paiement (moyen
+ * `wallet`, reference = débit, auteur = le membre) : la facture devient payée
+ * (billing.invoice.paid), ce qui lève une suspension selon les règles en place. Solde insuffisant :
+ * WALLET_INSUFFICIENT_FUNDS (montant manquant), rien n'est débité ni enregistré.
+ *
+ * Idempotent par la clé du client (un seul débit, un seul paiement ; après une panne, la même clé
+ * reprend le débit). Facture réglée ou annulée entre-temps : le débit est remboursé aussitôt.
+ */
+export class PayMyInvoiceFromWalletUseCase {
+  constructor(private readonly deps: BillingDeps) {}
+
+  async execute(input: { invoiceId: string; idempotencyKey: string }): Promise<Invoice> {
+    const scope = currentPayer();
+    if (!IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
+      throw BillingErrors.invalid('idempotencyKey', 'Clé d’idempotence invalide (8 à 100 caractères).');
+    }
+    const key = `wallet-${input.idempotencyKey}`;
+    let invoice = await this.visible(requireUuid('invoiceId', input.invoiceId), scope);
+    if (hasPaymentKey(invoice, key)) return invoice;
+    if (isClosed(invoice)) throw BillingErrors.invalidTransition(invoice.status, 'paid');
+
+    const debit = await this.deps.wallet.debit({
+      idempotencyKey: `${invoice.id}:${input.idempotencyKey}`,
+      holder: invoice.organizationId
+        ? { type: 'organization', id: invoice.organizationId }
+        : { type: 'user', id: invoice.customerId },
+      amount: balance(invoice),
+      object: { objectType: 'billing_invoice', objectId: invoice.id, part: '' },
+      description: `Facture ${invoice.number}`,
+    });
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) {
+        invoice = await this.visible(invoice.id, scope);
+        if (hasPaymentKey(invoice, key)) return invoice;
+      }
+      if (isClosed(invoice) || debit.amount > balance(invoice)) break;
+      const now = this.deps.clock.now();
+      const payment: InvoicePayment = {
+        id: this.deps.ids.next(),
+        amount: debit.amount,
+        method: 'wallet',
+        reference: debit.transactionId,
+        recordedBy: scope.userId,
+        recordedAt: now,
+        idempotencyKey: key,
+      };
+      const updated = withPayment(invoice, payment);
+      let saved = false;
+      try {
+        saved = await this.deps.invoices.recordPayment(updated, payment, (overdueCount) =>
+          updated.status === 'paid'
+            ? [
+                {
+                  type: 'billing.invoice.paid',
+                  payload: { ...invoiceReference(updated), paidAt: now.toISOString(), overdueCount },
+                },
+              ]
+            : [],
+        );
+      } catch {
+        // Unicité facture + clé : un envoi concurrent de la même clé vient d'être enregistré.
+        saved = false;
+      }
+      if (saved) return { ...updated, version: updated.version + 1 };
+    }
+    // Modifiée sans cesse en même temps : la même clé reprendra ce débit.
+    if (!isClosed(invoice) && debit.amount <= balance(invoice)) throw BillingErrors.concurrentUpdate();
+    await this.deps.wallet.refund({ transactionId: debit.transactionId, reason: 'paiement non enregistré' });
+    throw BillingErrors.invalidTransition(invoice.status, 'paid');
+  }
+
+  private async visible(invoiceId: string, scope: CustomerScope): Promise<Invoice> {
+    const invoice = await this.deps.invoices.findById(invoiceId);
+    if (!invoice || !isVisibleTo(invoice, scope)) throw BillingErrors.invoiceNotFound();
+    return invoice;
+  }
 }
 
 export class GetBillingSettingsUseCase {

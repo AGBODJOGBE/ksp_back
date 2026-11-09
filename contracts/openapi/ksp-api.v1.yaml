@@ -4408,6 +4408,7 @@ paths:
                         reference: Reçu 0042
                         recordedBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001
                         recordedAt: 2026-10-24T09:00:00Z
+                        refundedAt: null
                   cancellationReason: null
                   daysPerWeek: null
                   suspension: null
@@ -4638,6 +4639,7 @@ paths:
                           reference: Reçu 0042
                           recordedBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001
                           recordedAt: 2026-10-24T09:00:00Z
+                          refundedAt: null
                     cancellationReason: null
                     daysPerWeek: null
                     suspension: null
@@ -4751,6 +4753,7 @@ paths:
                       reference: Reçu 0042
                       recordedBy: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001
                       recordedAt: 2026-10-24T09:00:00Z
+                      refundedAt: null
                 cancellationReason: null
                 daysPerWeek: null
                 suspension: null
@@ -4815,6 +4818,78 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/missions/{id}/pay:
+    post:
+      tags:
+        - Nettoyage
+      operationId: payMyCleaningMissionFromWallet
+      summary: Payer une mission avec mon portefeuille
+      description: |
+        Acompte (`deposit` : acompte encore dû) ou solde (`balance` : reste dû) d'une de mes missions, payé depuis
+        mon portefeuille prépayé (ADR-046). Le montant n'est jamais envoyé : cleaning le calcule, wallet le débite
+        **en entier** (jamais de débit partiel), puis le paiement est enregistré sur la mission (moyen `wallet`)
+        avec les mêmes effets qu'un paiement enregistré : reste dû, statut, levée d'une suspension pour impayés.
+
+        Solde insuffisant : `WALLET_INSUFFICIENT_FUNDS` (422) avec `details.missing` (montant manquant) et
+        `details.balance` : proposer de recharger (`POST /api/v1/wallet/me/top-ups`). Rien n'est débité.
+
+        Idempotent : la même clé ne débite qu'une fois et renvoie la mission ; après une erreur réseau ou un 409
+        `CLEANING_CONCURRENT_UPDATE`, réessayer avec la **même** clé. Si la mission est payée ou annulée
+        entre-temps, le débit est remboursé aussitôt dans le portefeuille. Une mission annulée sans passage
+        commencé est remboursée dans le portefeuille (`refundedAt` sur le paiement).
+
+        Erreurs : `CLEANING_VALIDATION_FAILED` (400), `CLEANING_MISSION_NOT_FOUND` (404),
+        `CLEANING_CONCURRENT_UPDATE` (409), `CLEANING_NOTHING_DUE`, `CLEANING_PAYMENT_VIA_INVOICE`,
+        `CLEANING_INVALID_TRANSITION`, `CLEANING_PAYMENT_INVALID`, `WALLET_INSUFFICIENT_FUNDS`,
+        `WALLET_DEBIT_REFUNDED` (422 : ce paiement a été remboursé, recommencer avec une nouvelle clé).
+      x-ksp-grpc: ksp.cleaning.v1.MissionService/PayMissionFromWallet
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: payment_create
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningWalletPaymentRequest'
+            example:
+              part: deposit
+      responses:
+        '200':
+          description: Paiement enregistré (ou déjà enregistré avec cette clé) ; la mission à jour
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
@@ -7818,6 +7893,64 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/billing/invoices/{id}/pay:
+    post:
+      tags:
+        - Facturation
+      operationId: payMyInvoiceFromWallet
+      summary: Payer une facture avec le portefeuille
+      description: |
+        Reste dû d'une de mes factures payé depuis le portefeuille prépayé (ADR-046) : celui de l'organisation
+        active (contexte entreprise ; membre `org_admin` ou `org_member`, un `org_viewer` est refusé) ou le mien
+        (facture personnelle). Le reste dû est débité **en entier**, puis enregistré comme un paiement (moyen
+        `wallet`) : la facture passe « payée » (`billing.invoice.paid`), ce qui lève une suspension selon les
+        règles en place.
+
+        Solde insuffisant : `WALLET_INSUFFICIENT_FUNDS` (422) avec `details.missing` : proposer de recharger.
+        Idempotent : la même clé ne débite qu'une fois ; réessayer avec la même clé après une erreur réseau ou un
+        409. Facture réglée ou annulée entre-temps : le débit est remboursé aussitôt.
+
+        Erreurs : `BILLING_VALIDATION_FAILED` (400), `AUTH_FORBIDDEN` (403, membre lecteur),
+        `BILLING_INVOICE_NOT_FOUND` (404), `BILLING_CONCURRENT_UPDATE` (409), `BILLING_INVALID_TRANSITION`
+        (422, facture déjà payée ou annulée), `WALLET_INSUFFICIENT_FUNDS`, `WALLET_DEBIT_REFUNDED` (422).
+      x-ksp-grpc: ksp.billing.v1.BillingService/PayMyInvoiceFromWallet
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: payment_create
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Paiement enregistré (ou déjà enregistré avec cette clé) ; la facture à jour
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/admin/billing/invoices:
     get:
       tags:
@@ -8133,7 +8266,13 @@ paths:
         - Paiement
       operationId: createPayment
       summary: Payer en ligne par Mobile Money
+      deprecated: true
       description: |
+        **Déprécié au profit du portefeuille prépayé (ADR-046)** : le client recharge son portefeuille
+        (`POST /api/v1/wallet/me/top-ups`) puis paie la mission (`POST /api/v1/cleaning/missions/{id}/pay`) ou la
+        facture (`POST /api/v1/billing/invoices/{id}/pay`). Cette route reste fonctionnelle tant que le portail
+        l'utilise.
+
         Crée un paiement par Mobile Money (MTN, Moov) via FedaPay et renvoie la page de paiement du prestataire
         (`checkoutUrl`), où le client saisit son numéro et valide sur son téléphone (ADR-031).
 
@@ -9014,6 +9153,10 @@ paths:
         (contexte entreprise) ou son compte (contexte personnel). `balance` = encaissements nets (commission de KSP
         déduite) moins les reversements demandés ; `payoutsInProgress` = reversements pas encore terminés (déjà
         déduits). Un compte sans écriture rend des montants nuls.
+
+        **Portefeuille prépayé** (ADR-046) : `prepaid.balance` = ce que le titulaire peut dépenser sur la
+        plateforme (recharges, moins les paiements, plus les remboursements), jamais négatif, distinct de `balance`
+        (fonds de créancier, reversables). `topUpLimits` : montants de recharge acceptés.
       x-ksp-grpc: ksp.wallet.v1.WalletAccountService/GetMyWallet
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -9048,9 +9191,11 @@ paths:
       operationId: listMyWalletStatement
       summary: Relevé de mon portefeuille
       description: |
-        Écritures du compte du titulaire connecté, les plus récentes d'abord, avec le solde après chacune :
-        encaissements (montant brut, commission et taux), reversements (et leur statut), montants rendus après un
-        reversement en échec, annulations.
+        Écritures des comptes du titulaire connecté, les plus récentes d'abord, avec le solde du compte après
+        chacune : encaissements (montant brut, commission et taux), reversements (et leur statut), montants rendus
+        après un reversement en échec, annulations (`account` = `collections`) ; recharges, paiements d'un service
+        (`object` : mission, facture ; libellé lisible, par exemple « Nettoyage de maison — acompte ») et
+        remboursements du portefeuille prépayé (`account` = `prepaid`, ADR-046). Filtre `account` facultatif.
       x-ksp-grpc: ksp.wallet.v1.WalletAccountService/ListMyStatement
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -9059,6 +9204,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/WalletStatementAccount'
       responses:
         '200':
           description: Succès
@@ -9075,6 +9221,73 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/wallet/me/top-ups:
+    post:
+      tags:
+        - Portefeuille
+      operationId: createWalletTopUp
+      summary: Recharger mon portefeuille
+      description: |
+        Recharge du portefeuille prépayé du titulaire connecté (son organisation active, membre `org_admin` ou
+        `org_member` ; sinon son compte) par Mobile Money (ADR-046). Le montant est choisi par le client, entre
+        les limites rendues par `GET /api/v1/wallet/me` (`topUpLimits`, réglables). payment crée la page de
+        paiement du prestataire (`checkoutUrl`) : rediriger le client, puis suivre le paiement par
+        `GET /api/v1/payment/payments/{paymentId}`. Le portefeuille est crédité **à la confirmation par le
+        prestataire** (jamais au retour du navigateur), une seule fois ; relire alors `GET /api/v1/wallet/me`.
+
+        Idempotent : la même clé renvoie la même recharge ; une page encore ouverte pour le même montant est
+        réutilisée, remplacée pour un autre montant. Prestataire injoignable : 503, réessayer avec la même clé.
+        Montant approuvé différent chez le prestataire (`amount_mismatch`) : rien n'est crédité, la finance
+        vérifie puis crédite le montant réellement reçu (`POST /api/v1/admin/wallet/holders/{type}/{id}/credits`).
+
+        Erreurs : `WALLET_VALIDATION_FAILED` (400, montant hors limites), `AUTH_FORBIDDEN` (403, membre lecteur),
+        `PAYMENT_IDEMPOTENCY_KEY_REUSED` (409, clé déjà utilisée pour un autre montant),
+        `PAYMENT_PROVIDER_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.wallet.v1.WalletAccountService/CreateTopUp
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: payment_create
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalletTopUpRequest'
+            example:
+              amount:
+                amount: 20000
+                currency: XOF
+      responses:
+        '200':
+          description: Recharge créée (ou déjà créée avec cette clé) ; page de paiement du prestataire
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletTopUp'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9178,7 +9391,7 @@ paths:
       operationId: listHolderWalletStatement
       summary: Relevé d’un titulaire
       description: |
-        Relevé d'un titulaire, comme `GET /api/v1/wallet/me/statement`.
+        Relevé d'un titulaire (fonds dus et portefeuille prépayé), comme `GET /api/v1/wallet/me/statement`.
 
         Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.wallet.v1.WalletAdminService/ListHolderStatement
@@ -9195,6 +9408,7 @@ paths:
         - $ref: '#/components/parameters/HolderId'
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/WalletStatementAccount'
       responses:
         '200':
           description: Succès
@@ -9211,6 +9425,80 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/holders/{type}/{id}/credits:
+    post:
+      tags:
+        - Portefeuille (back-office)
+      operationId: creditPrepaidWallet
+      summary: Créditer le portefeuille prépayé d’un client
+      description: |
+        Crédit manuel du portefeuille prépayé d'un titulaire, avec motif (ADR-046) ; l'auteur est gardé dans le
+        grand livre (écriture immuable) et le client est prévenu (notification « crédit sur votre portefeuille »
+        pour un compte ; aucune pour une organisation).
+
+        - `refund` : remboursement (service non rendu, passage manqué, geste commercial).
+        - `top_up` : recharge Mobile Money reçue mais non créditée — écart de montant (`amount_mismatch`) traité
+          par la finance : `paymentId` obligatoire, montant réellement reçu. Une recharge n'est créditée qu'une
+          fois, automatiquement ou ici (`WALLET_IDEMPOTENCY_KEY_REUSED`, 409, si elle l'est déjà).
+
+        Idempotent : la même clé (ou, pour `top_up`, le même paiement) renvoie le même crédit (`created: false`).
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `WALLET_VALIDATION_FAILED` (400), `WALLET_IDEMPOTENCY_KEY_REUSED` (409).
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/CreditPrepaidWallet
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/HolderType'
+        - $ref: '#/components/parameters/HolderId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalletCreditRequest'
+            example:
+              kind: refund
+              amount:
+                amount: 5000
+                currency: XOF
+              reason: Passage du 3 novembre non effectué
+      responses:
+        '200':
+          description: Portefeuille crédité (ou déjà crédité avec cette clé)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletCredit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9289,6 +9577,10 @@ paths:
         Soldes des comptes internes de KSP — `ksp:collections` (fonds encaissés et détenus), `ksp:commission`
         (commissions acquises), `ksp:payouts_in_transit` (reversements demandés, pas encore terminés) — et total dû
         aux titulaires. Invariant : collections = dû aux titulaires + commission + en transit.
+
+        Portefeuille prépayé (ADR-046) : `ksp:prepaid_funds` (recharges reçues), `ksp:service_revenue` (services
+        payés depuis un portefeuille), `owedToCustomers` (somme des portefeuilles). Invariant : recharges reçues =
+        portefeuilles + services payés.
 
         Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.wallet.v1.WalletAdminService/GetLedgerOverview
@@ -10519,6 +10811,15 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/WalletHolderType'
+    WalletStatementAccount:
+      name: account
+      in: query
+      required: false
+      description: '`collections` (fonds dus au titulaire, ADR-042) ou `prepaid` (portefeuille prépayé, ADR-046) ; absent : les deux.'
+      schema:
+        enum:
+          - collections
+          - prepaid
     HolderId:
       name: id
       in: path
@@ -13586,6 +13887,7 @@ components:
         - reference
         - recordedBy
         - recordedAt
+        - refundedAt
       properties:
         id:
           type: string
@@ -13593,10 +13895,18 @@ components:
         amount:
           $ref: '#/components/schemas/Money'
         method:
+          description: '`wallet` : payé depuis le portefeuille prépayé (ADR-046) ; `reference` = débit du portefeuille.'
           enum:
             - cash
             - mobile_money_offline
             - mobile_money_online
+            - wallet
+        refundedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Paiement par portefeuille remboursé dans le portefeuille (mission annulée) ; il ne compte plus dans `paid`.
         reference:
           type:
             - string
@@ -14466,6 +14776,17 @@ components:
           description: |
             Obligatoire pour un particulier (`CLEANING_VALIDATION_FAILED` s’il manque) ; ignoré pour une entreprise,
             qui règle par sa facture mensuelle.
+    CleaningWalletPaymentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - part
+      properties:
+        part:
+          description: '`deposit` : acompte encore dû ; `balance` : reste dû (ADR-046).'
+          enum:
+            - deposit
+            - balance
     CleaningOptionalReasonRequest:
       type: object
       additionalProperties: false
@@ -15252,13 +15573,15 @@ components:
           format: date-time
     InvoiceRecordedPaymentMethod:
       description: |
-        Moyen d'un paiement enregistré sur une facture : ceux du back-office (`InvoicePaymentMethod`), ou
-        `mobile_money_online` (paiement en ligne confirmé par le prestataire, `recordedBy` = `system`, ADR-031).
+        Moyen d'un paiement enregistré sur une facture : ceux du back-office (`InvoicePaymentMethod`),
+        `mobile_money_online` (paiement en ligne confirmé par le prestataire, `recordedBy` = `system`, ADR-031) ou
+        `wallet` (portefeuille prépayé, `recordedBy` = le membre qui a payé, `reference` = débit, ADR-046).
       enum:
         - cash
         - bank_transfer
         - mobile_money_offline
         - mobile_money_online
+        - wallet
     PaymentStatus:
       description: |
         `pending` : en attente de la confirmation du prestataire ; `succeeded` : réglé ; `failed` : refusé ;
@@ -15292,12 +15615,13 @@ components:
           type: string
           pattern: ^[a-z][a-z0-9_]{2,49}$
           description: |
-            `cleaning_mission` ou `billing_invoice` (paiement par compte) ; pour un paiement par lien, type choisi par
-            l'émetteur du lien, par exemple `recovery_installment` (ADR-040).
+            `cleaning_mission`, `billing_invoice` ou `wallet_top_up` (recharge du portefeuille, ADR-046 ; paiement par
+            compte) ; pour un paiement par lien, type choisi par l'émetteur du lien, par exemple
+            `recovery_installment` (ADR-040).
         id:
           type: string
           format: uuid
-          description: Mission (Nettoyage), facture, ou objet de l'émetteur d'un lien.
+          description: Mission (Nettoyage), facture, titulaire du portefeuille rechargé, ou objet de l'émetteur d'un lien.
         part:
           description: Mission seulement — `deposit` (acompte) ou `balance` (reste dû) ; null pour une facture.
           enum:
@@ -15765,6 +16089,64 @@ components:
             - string
             - 'null'
           format: date-time
+        prepaid:
+          $ref: '#/components/schemas/PrepaidWallet'
+        topUpLimits:
+          description: '`GET /api/v1/wallet/me` seulement : montants de recharge acceptés (réglables).'
+          type: object
+          additionalProperties: false
+          required:
+            - min
+            - max
+          properties:
+            min:
+              $ref: '#/components/schemas/Money'
+            max:
+              $ref: '#/components/schemas/Money'
+    PrepaidWallet:
+      type: object
+      additionalProperties: false
+      description: |
+        Portefeuille prépayé d'un titulaire (ADR-046) : rechargé par Mobile Money, débité par les services
+        (Nettoyage, factures), crédité des remboursements. Jamais négatif ; jamais reversé.
+      required:
+        - holder
+        - balance
+        - lastEntryAt
+      properties:
+        holder:
+          $ref: '#/components/schemas/WalletHolder'
+        balance:
+          $ref: '#/components/schemas/Money'
+        lastEntryAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    WalletObjectReference:
+      type: object
+      additionalProperties: false
+      description: Objet payé par le portefeuille, chez le service qui l'a débité.
+      required:
+        - service
+        - objectType
+        - objectId
+        - part
+      properties:
+        service:
+          type: string
+          description: Service qui a débité (`cleaning`, `billing`).
+        objectType:
+          type: string
+          description: '`cleaning_mission` (lien : `/mon-espace/nettoyage/missions/{objectId}`) ou `billing_invoice` (`/mon-espace/factures/{objectId}`).'
+        objectId:
+          type: string
+          format: uuid
+        part:
+          type:
+            - string
+            - 'null'
+          description: Mission — `deposit` (acompte) ou `balance` (solde) ; null sinon.
     WalletStatementLine:
       type: object
       additionalProperties: false
@@ -15783,19 +16165,35 @@ components:
         - payoutStatus
         - reversesTransactionId
         - createdAt
+        - account
+        - object
       properties:
+        account:
+          description: '`collections` (fonds dus au titulaire) ou `prepaid` (portefeuille prépayé, ADR-046).'
+          enum:
+            - collections
+            - prepaid
+        object:
+          description: Paiement d'un service et son remboursement — objet payé ; null sinon.
+          oneOf:
+            - $ref: '#/components/schemas/WalletObjectReference'
+            - type: 'null'
         transactionId:
           type: string
           format: uuid
         kind:
           description: |
             `collection` (encaissement), `payout` (reversement retenu), `payout_release` (reversement en échec :
-            montant rendu) ou `reversal` (annulation d'un encaissement).
+            montant rendu) ou `reversal` (annulation d'un encaissement) ; portefeuille prépayé (ADR-046) : `top_up`
+            (recharge), `service_payment` (paiement d'un service) ou `refund` (remboursement).
           enum:
             - collection
             - payout
             - payout_release
             - reversal
+            - top_up
+            - service_payment
+            - refund
         direction:
           description: '`credit` : en faveur du titulaire.'
           enum:
@@ -15958,6 +16356,8 @@ components:
                   - ksp:collections
                   - ksp:commission
                   - ksp:payouts_in_transit
+                  - ksp:prepaid_funds
+                  - ksp:service_revenue
               balance:
                 $ref: '#/components/schemas/Money'
         owedToHolders:
@@ -15965,6 +16365,107 @@ components:
         holdersCount:
           type: integer
           minimum: 0
+        owedToCustomers:
+          $ref: '#/components/schemas/Money'
+          description: Somme des portefeuilles prépayés (ADR-046).
+        customersCount:
+          type: integer
+          minimum: 0
+    WalletTopUpRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - amount
+      properties:
+        amount:
+          $ref: '#/components/schemas/Money'
+    WalletTopUp:
+      type: object
+      additionalProperties: false
+      description: Recharge en cours (paiement Mobile Money de l'objet `wallet_top_up`, ADR-046).
+      required:
+        - paymentId
+        - holder
+        - amount
+        - status
+        - checkoutUrl
+        - expiresAt
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+          description: Suivi par `GET /api/v1/payment/payments/{id}`.
+        holder:
+          $ref: '#/components/schemas/WalletHolder'
+        amount:
+          $ref: '#/components/schemas/Money'
+        status:
+          $ref: '#/components/schemas/PaymentStatus'
+        checkoutUrl:
+          type:
+            - string
+            - 'null'
+          description: Page de paiement du prestataire ; null si elle n'a pas pu être créée (réessayer, même clé).
+        expiresAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    WalletCreditRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - amount
+        - reason
+      properties:
+        kind:
+          description: '`refund` (remboursement) ou `top_up` (recharge reçue mais non créditée, `paymentId` obligatoire).'
+          enum:
+            - refund
+            - top_up
+        amount:
+          $ref: '#/components/schemas/Money'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Motif, visible dans le relevé du client.
+        paymentId:
+          type: string
+          format: uuid
+          description: '`top_up` seulement : paiement Mobile Money reçu (écart de montant traité).'
+    WalletCredit:
+      type: object
+      additionalProperties: false
+      required:
+        - transactionId
+        - kind
+        - amount
+        - description
+        - createdAt
+        - wallet
+        - created
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        kind:
+          enum:
+            - refund
+            - top_up
+        amount:
+          $ref: '#/components/schemas/Money'
+        description:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        wallet:
+          $ref: '#/components/schemas/PrepaidWallet'
+        created:
+          type: boolean
+          description: false si le crédit existait déjà (même clé, ou même paiement).
     PaymentWebhookAck:
       type: object
       additionalProperties: false

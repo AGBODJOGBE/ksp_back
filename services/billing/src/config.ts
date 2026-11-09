@@ -8,6 +8,8 @@ export const configSchema = baseServiceConfigSchema
     BILLING_SCHEDULER_INTERVAL_MS: z.coerce.number().int().min(0).default(900_000),
     /** Adresse gRPC d'identity : en-tête des factures d'organisation (GetOrganizationsByIds). */
     IDENTITY_GRPC_URL: z.string().min(1).default('localhost:50051'),
+    /** Adresse gRPC de wallet : facture payée par le portefeuille prépayé (ADR-046). */
+    WALLET_GRPC_URL: z.string().min(1).default('localhost:50057'),
   })
   .refine(
     (cfg) =>

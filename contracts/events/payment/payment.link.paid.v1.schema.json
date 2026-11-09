@@ -36,7 +36,7 @@
     "subjectType": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]{2,49}$",
-      "not": { "enum": ["cleaning_mission", "billing_invoice"] },
+      "not": { "enum": ["cleaning_mission", "billing_invoice", "wallet_top_up"] },
       "description": "Type d'objet choisi par l'émetteur du lien, par exemple recovery_installment"
     },
     "subjectId": { "type": "string", "format": "uuid", "description": "Objet de l'émetteur (échéance…)" },

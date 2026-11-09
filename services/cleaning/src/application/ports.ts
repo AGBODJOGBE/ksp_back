@@ -46,6 +46,29 @@ export interface AuditEntry {
   details?: Record<string, unknown>;
 }
 
+/** Débit du portefeuille prépayé d'un client (wallet.Debit, ADR-046). */
+export interface WalletDebit {
+  transactionId: string;
+  amount: number;
+  created: boolean;
+}
+
+/**
+ * Portefeuille prépayé (service wallet, jeton de service, ADR-046). Débit jamais partiel :
+ * solde insuffisant → AppError WALLET_INSUFFICIENT_FUNDS (montant manquant), transmise telle quelle
+ * au client. Idempotent par clé. Remboursement d'un débit : une seule fois.
+ */
+export interface WalletLedger {
+  debit(input: {
+    idempotencyKey: string;
+    holder: { type: 'user' | 'organization'; id: string };
+    amount: number;
+    object: { objectType: string; objectId: string; part: string };
+    description: string;
+  }): Promise<WalletDebit>;
+  refund(input: { transactionId: string; reason: string }): Promise<void>;
+}
+
 export interface Changes {
   events: OutboxMessage[];
   audit: AuditEntry[];

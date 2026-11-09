@@ -144,8 +144,15 @@ service QuoteService {
 service MissionService {
   rpc ListMyMissions(ListMyMissionsRequest) returns (ListMyMissionsResponse);
   rpc GetMission(GetMissionRequest) returns (GetMissionResponse);
-  // Sans frais jusqu'au délai limite avant le premier passage ; au-delà, refus (support).
+  // Sans frais jusqu'au délai limite avant le premier passage ; au-delà, refus (support). Les
+  // paiements par portefeuille d'une mission sans passage commencé sont remboursés dans le
+  // portefeuille (ADR-046).
   rpc CancelMission(CancelMissionRequest) returns (CancelMissionResponse);
+  // Acompte ou solde payé depuis le portefeuille prépayé du client (ADR-046) : débit du montant dû
+  // (jamais partiel) puis paiement enregistré sur la mission (moyen "wallet"), avec les mêmes effets
+  // qu'un paiement enregistré (reste dû, statut, levée d'une suspension). Idempotent par clé.
+  // Solde insuffisant : WALLET_INSUFFICIENT_FUNDS (details.missing : montant manquant).
+  rpc PayMissionFromWallet(PayMissionFromWalletRequest) returns (PayMissionFromWalletResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -305,13 +312,17 @@ message PaymentPlan {
 message PaymentRecord {
   string id = 1;
   ksp.common.v1.Money amount = 2;
-  // "cash", "mobile_money_offline" ou "mobile_money_online".
+  // "cash", "mobile_money_offline", "mobile_money_online" ou "wallet" (portefeuille prépayé,
+  // ADR-046 ; reference = transaction du portefeuille).
   string method = 3;
   string reference = 4;
   string recorded_by = 5;
   string recorded_at = 6;
   // Back-office : nom affiché de la personne qui a enregistré le paiement (ADR-029).
   string recorded_by_name = 7;
+  // Paiement par portefeuille remboursé dans le portefeuille (mission annulée, ADR-046) : il ne
+  // compte plus dans le montant payé. Vide sinon.
+  string refunded_at = 8;
 }
 
 message PaymentState {
@@ -1980,4 +1991,16 @@ message GetMissionAmountDueResponse {
   // Paiements en ligne déjà enregistrés sur la mission (identifiants du service payment) : payment
   // refuse un nouveau paiement tant qu'un paiement réussi n'y figure pas encore (ADR-032).
   repeated string online_payment_ids = 10;
+}
+
+message PayMissionFromWalletRequest {
+  string mission_id = 1;
+  // "deposit" (acompte encore dû) ou "balance" (reste dû).
+  string part = 2;
+  // En-tête Idempotency-Key (8 à 100 caractères : lettres, chiffres, "_" et "-"), obligatoire.
+  string idempotency_key = 3;
+}
+
+message PayMissionFromWalletResponse {
+  Mission mission = 1;
 }

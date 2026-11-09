@@ -41,6 +41,31 @@ pnpm --filter @ksp/wallet-service dev
 Idempotence : encaissement et annulation par (appelant, référence), reversement par (appelant, clé) ;
 événements de payment par l'inbox, dans la même transaction que l'écriture.
 
+## Portefeuille prépayé des clients (ADR-046)
+
+Second compte par titulaire, `prepaid:<user|organization>:<id>`, distinct des fonds dus au créancier :
+dépensable sur la plateforme, **jamais reversé, jamais négatif** (contrôle sous verrou, puis contrainte
+en base). Comptes internes `ksp:prepaid_funds` (recharges reçues) et `ksp:service_revenue` (services
+payés). Invariant : recharges reçues = Σ portefeuilles + services payés.
+
+| Opération                                              | Écritures                                           |
+| ------------------------------------------------------ | --------------------------------------------------- |
+| Recharge (`payment.intent.succeeded`, `wallet_top_up`) | D recharges / C portefeuille, une fois par paiement |
+| `Debit` (cleaning, billing)                            | D portefeuille / C services — jamais partiel        |
+| `Refund`, `cleaning.mission.refunded`                  | écriture inverse du débit, une seule fois           |
+| Crédit de la finance (`refund` ou `top_up`)            | D services (ou D recharges) / C portefeuille, motif |
+
+- `WalletAccountService.CreateTopUp` : limites `WALLET_TOP_UP_MIN`/`MAX`, rôle `org_admin` ou
+  `org_member` pour une organisation, puis `TopUpPaymentService.CreateTopUpPayment` chez payment (le
+  payeur est l'utilisateur transmis dans les métadonnées). Rien n'est écrit avant la confirmation.
+- `Debit` : `WALLET_INSUFFICIENT_FUNDS` (montant manquant) ; idempotent par (appelant, clé) ; un débit
+  remboursé n'est jamais rejoué (`WALLET_DEBIT_REFUNDED`).
+- Écart de montant d'une recharge : rien n'est crédité ; la finance crédite le montant reçu
+  (`CreditPrepaidWallet`, `kind: top_up`, `paymentId`), une seule fois par paiement.
+- Événements : `wallet.prepaid.debited`, `wallet.prepaid.credited` (outbox, même transaction).
+- Appelants : `WALLET_DEBIT_CALLERS` (`cleaning,billing`). Jetons de service : `cleaning` et `billing`
+  → audience `wallet`.
+
 ## Reversements
 
 `RequestPayout` retient le montant et crée le reversement dans la même transaction, puis le transmet à

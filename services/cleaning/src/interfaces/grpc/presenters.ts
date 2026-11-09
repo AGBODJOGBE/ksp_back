@@ -300,6 +300,7 @@ export function presentMission(
         recordedBy: record.recordedBy,
         recordedAt: iso(record.recordedAt),
         recordedByName: userName(names, record.recordedBy),
+        refundedAt: record.refundedAt ? iso(record.refundedAt) : '',
       })),
     },
     cancellationReason: text(mission.cancellationReason),

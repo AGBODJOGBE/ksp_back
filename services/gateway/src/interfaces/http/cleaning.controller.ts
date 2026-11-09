@@ -160,4 +160,12 @@ export class CleaningHttpController {
     const input = optionalBody<{ reason?: string }>(requestBodies.cancelMyCleaningMission, body);
     return this.cleaning.cancelMyMission(missionId, input.reason);
   }
+
+  @Route('payMyCleaningMissionFromWallet')
+  payFromWallet(@Param('id') id: unknown, @Body() body: unknown, @Headers('idempotency-key') key: unknown) {
+    const missionId = idFrom(id);
+    const idempotencyKey = keyFrom(key);
+    const { part } = parseBody(requestBodies.payMyCleaningMissionFromWallet, body) as { part: string };
+    return this.cleaning.payMissionFromWallet(missionId, part, idempotencyKey);
+  }
 }

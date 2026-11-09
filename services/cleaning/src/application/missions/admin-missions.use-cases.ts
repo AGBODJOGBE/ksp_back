@@ -35,7 +35,7 @@ import {
 } from '../shared/validation';
 import { isBusinessContract } from '../../domain/standing';
 import { EvaluateStandingUseCase } from '../standing/standing.use-cases';
-import { cancelled, saveMission } from './customer-missions.use-cases';
+import { cancelled, refundOnCancellation, saveMission } from './customer-missions.use-cases';
 import { missionForStaff } from '../groups/group-support';
 
 const MISSION_STATUSES: readonly MissionStatus[] = [
@@ -438,6 +438,7 @@ export class RecordPaymentUseCase {
       recordedBy: staff.userId,
       recordedAt: now,
       idempotencyKey: key || null,
+      refundedAt: null,
     };
     const payment = { ...mission.payment, payments: [...mission.payment.payments, record] };
     const view = await this.save({ ...mission, payment }, key, {
@@ -488,8 +489,10 @@ export class CancelMissionAsSupervisorUseCase {
     const reason = requiredText('reason', input.reason, 500);
     const now = this.deps.clock.now();
     const subject = await eventSubject(this.deps, mission);
-    return saveMission(this.deps, cancelled(mission, reason, now), {
+    const { mission: refunded, events: refunds } = refundOnCancellation(cancelled(mission, reason, now), now);
+    return saveMission(this.deps, refunded, {
       events: [
+        ...refunds,
         {
           type: 'cleaning.request.cancelled',
           payload: {

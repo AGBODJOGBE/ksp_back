@@ -5,14 +5,19 @@ package ksp.wallet.v1;
 import "ksp/common/v1/money.proto";
 
 // Contrats du service wallet : grand livre en double entrée des fonds que KSP détient pour le
-// compte de ses clients (créanciers du Recouvrement), ADR-042.
+// compte de ses clients (créanciers du Recouvrement), ADR-042, et portefeuille prépayé de chaque
+// client (ADR-046) : rechargé par Mobile Money, débité par les services (Nettoyage, factures).
 //
 // - WalletService : opérations des services métier (recovery au lancement, WALLET_LEDGER_CALLERS ;
 //   jeton de service obligatoire) : encaissement crédité au titulaire avec prélèvement de la
 //   commission, reversement demandé depuis le solde, annulation d'un encaissement par écriture
 //   inverse, solde et relevé d'un titulaire.
-// - WalletAccountService : espace du titulaire connecté (son compte, ou son organisation active).
-// - WalletAdminService : back-office (finance_officer, super_admin, double authentification).
+//   Portefeuille prépayé (ADR-046, WALLET_DEBIT_CALLERS : cleaning et billing au lancement) : débit
+//   pour le paiement d'un service, remboursement d'un débit, lecture du solde.
+// - WalletAccountService : espace du titulaire connecté (son compte, ou son organisation active),
+//   dont la recharge de son portefeuille prépayé.
+// - WalletAdminService : back-office (finance_officer, super_admin, double authentification), dont
+//   le crédit manuel d'un portefeuille prépayé (remboursement, recharge reçue non créditée).
 //
 // Règles :
 // - écritures immuables : une transaction équilibrée (débits = crédits) ne se modifie jamais, une
@@ -27,6 +32,11 @@ import "ksp/common/v1/money.proto";
 // "ksp:collections" (fonds encaissés et détenus par KSP), "ksp:commission" (commissions acquises),
 // "ksp:payouts_in_transit" (reversements demandés, pas encore confirmés).
 //
+// Portefeuille prépayé (ADR-046) : un second compte par titulaire, distinct du précédent, dépensable
+// et jamais reversé ; son solde n'est jamais négatif (contrôlé sous verrou, puis par la base).
+// Comptes internes : "ksp:prepaid_funds" (recharges reçues par Mobile Money) et
+// "ksp:service_revenue" (services payés depuis un portefeuille). Un débit n'est jamais partiel.
+//
 // L'utilisateur connecté n'est jamais dans les messages : la gateway le transmet dans les
 // métadonnées gRPC. Dates ISO 8601 en UTC (chaîne vide = absente).
 //
@@ -35,12 +45,15 @@ import "ksp/common/v1/money.proto";
 //   WALLET_TRANSACTION_NOT_FOUND         NOT_FOUND           transaction inconnue
 //   WALLET_PAYOUT_NOT_FOUND              NOT_FOUND           reversement inconnu
 //   WALLET_INSUFFICIENT_BALANCE          FAILED_PRECONDITION solde disponible inférieur au reversement demandé
+//   WALLET_INSUFFICIENT_FUNDS            FAILED_PRECONDITION solde prépayé inférieur au débit demandé ;
+//                                                            details.balance et details.missing (montant manquant)
+//   WALLET_DEBIT_REFUNDED                FAILED_PRECONDITION débit rejoué (même clé) déjà remboursé : nouvelle clé
 //   WALLET_TRANSACTION_NOT_REVERSIBLE    FAILED_PRECONDITION seul un encaissement s'annule par cette méthode
 //   WALLET_IDEMPOTENCY_KEY_REUSED        ALREADY_EXISTS      référence ou clé déjà utilisée pour une autre opération
 //   WALLET_TRANSACTION_ALREADY_REVERSED  ALREADY_EXISTS      encaissement déjà annulé (par une autre demande)
 //   WALLET_CALLER_FORBIDDEN              PERMISSION_DENIED   méthode réservée à un autre service
 //   AUTH_REQUIRED                        UNAUTHENTICATED
-//   AUTH_FORBIDDEN                       PERMISSION_DENIED   rôle du back-office manquant
+//   AUTH_FORBIDDEN                       PERMISSION_DENIED   rôle du back-office manquant ; membre lecteur (org_viewer)
 //   AUTH_MFA_REQUIRED                    PERMISSION_DENIED   double authentification absente
 
 // Opérations des services métier (recovery), jeton de service obligatoire.
@@ -53,6 +66,12 @@ service WalletService {
   rpc ReverseTransaction(ReverseTransactionRequest) returns (ReverseTransactionResponse);
   rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
   rpc ListStatement(ListStatementRequest) returns (ListStatementResponse);
+  // Portefeuille prépayé (ADR-046), services de WALLET_DEBIT_CALLERS : paiement d'un service débité
+  // du portefeuille (jamais partiel, jamais au-delà du solde), idempotent par (appelant, clé).
+  rpc Debit(DebitRequest) returns (DebitResponse);
+  // Remboursement d'un débit de l'appelant : écriture inverse, le montant est recrédité (une fois).
+  rpc Refund(RefundRequest) returns (RefundResponse);
+  rpc GetPrepaidBalance(GetPrepaidBalanceRequest) returns (GetPrepaidBalanceResponse);
 }
 
 // Espace du titulaire connecté : son compte (contexte personnel) ou son organisation active.
@@ -60,6 +79,9 @@ service WalletAccountService {
   rpc GetMyWallet(GetMyWalletRequest) returns (GetMyWalletResponse);
   rpc ListMyStatement(ListMyStatementRequest) returns (ListMyStatementResponse);
   rpc ListMyPayouts(ListMyPayoutsRequest) returns (ListMyPayoutsResponse);
+  // Recharge du portefeuille prépayé par Mobile Money (ADR-046) : page de paiement créée par payment ;
+  // le portefeuille est crédité à la confirmation du paiement (payment.intent.succeeded).
+  rpc CreateTopUp(CreateTopUpRequest) returns (CreateTopUpResponse);
 }
 
 // Back-office : finance_officer, super_admin, avec double authentification.
@@ -69,6 +91,9 @@ service WalletAdminService {
   rpc ListWalletPayouts(ListWalletPayoutsRequest) returns (ListWalletPayoutsResponse);
   // Soldes des comptes internes de KSP et total dû aux titulaires.
   rpc GetLedgerOverview(GetLedgerOverviewRequest) returns (GetLedgerOverviewResponse);
+  // Crédit manuel d'un portefeuille prépayé avec motif (ADR-046) : remboursement, ou recharge reçue
+  // mais non créditée (écart de montant traité par la finance). Auteur gardé dans le grand livre.
+  rpc CreditPrepaidWallet(CreditPrepaidWalletRequest) returns (CreditPrepaidWalletResponse);
 }
 
 message Page {
@@ -96,6 +121,29 @@ message Wallet {
   ksp.common.v1.Money total_paid_out = 5;
   // Dernière écriture, vide si le compte n'en a aucune.
   string last_entry_at = 6;
+  // Portefeuille prépayé du même titulaire (ADR-046), distinct du solde ci-dessus.
+  PrepaidWallet prepaid = 7;
+}
+
+// Portefeuille prépayé d'un titulaire (ADR-046) : dépensable sur la plateforme, jamais négatif.
+message PrepaidWallet {
+  Holder holder = 1;
+  ksp.common.v1.Money balance = 2;
+  // Dernière écriture, vide si le portefeuille n'en a aucune.
+  string last_entry_at = 3;
+}
+
+// Objet payé par un débit du portefeuille prépayé, chez le service appelant.
+message ObjectReference {
+  // Service appelant (jeton de service) ; renseigné par wallet, ignoré dans une demande.
+  string service = 1;
+  // Type d'objet du service ("cleaning_mission", "billing_invoice"…) : minuscules, chiffres et "_",
+  // 3 à 50 caractères.
+  string object_type = 2;
+  // UUID de l'objet chez l'appelant.
+  string object_id = 3;
+  // Part payée (par exemple "deposit" ou "balance"), vide sinon.
+  string part = 4;
 }
 
 // Une ligne du relevé d'un titulaire (une écriture sur son compte), les plus récentes d'abord.
@@ -119,9 +167,15 @@ message StatementLine {
   // Reversement : son identifiant wallet et son statut.
   string payout_id = 11;
   string payout_status = 12;
-  // Annulation : encaissement annulé.
+  // Annulation : encaissement annulé ; remboursement : débit remboursé.
   string reverses_transaction_id = 13;
   string created_at = 14;
+  // Compte de la ligne : "collections" (fonds dus au titulaire, ADR-042) ou "prepaid" (portefeuille
+  // prépayé, ADR-046, kind "top_up" : recharge, "service_payment" : paiement d'un service, "refund" :
+  // remboursement).
+  string account = 15;
+  // Paiement d'un service et son remboursement : objet payé.
+  ObjectReference object = 16;
 }
 
 message StatementPage {
@@ -132,7 +186,8 @@ message StatementPage {
 // Écriture d'une transaction : compte, sens, montant.
 message LedgerEntry {
   // "holder:user:<id>", "holder:organization:<id>", "ksp:collections", "ksp:commission" ou
-  // "ksp:payouts_in_transit".
+  // "ksp:payouts_in_transit" ; portefeuille prépayé (ADR-046) : "prepaid:user:<id>",
+  // "prepaid:organization:<id>", "ksp:prepaid_funds" ou "ksp:service_revenue".
   string account = 1;
   // "debit" ou "credit".
   string direction = 2;
@@ -141,7 +196,8 @@ message LedgerEntry {
 
 message LedgerTransaction {
   string id = 1;
-  // "collection", "payout_hold", "payout_settlement", "payout_release" ou "reversal".
+  // "collection", "payout_hold", "payout_settlement", "payout_release" ou "reversal" ;
+  // portefeuille prépayé (ADR-046) : "top_up", "service_payment" ou "refund".
   string kind = 2;
   // Référence d'idempotence de l'appelant.
   string reference = 3;
@@ -156,6 +212,8 @@ message LedgerTransaction {
   string created_at = 11;
   // Écritures équilibrées (somme des débits = somme des crédits).
   repeated LedgerEntry entries = 12;
+  // Paiement d'un service et son remboursement : objet payé.
+  ObjectReference object = 13;
 }
 
 // Bénéficiaire d'un reversement par Mobile Money.
@@ -263,10 +321,19 @@ message GetMyWalletRequest {}
 
 message GetMyWalletResponse {
   Wallet wallet = 1;
+  // Montants de recharge acceptés (réglables), pour le formulaire du portail.
+  TopUpLimits top_up_limits = 2;
+}
+
+message TopUpLimits {
+  ksp.common.v1.Money min = 1;
+  ksp.common.v1.Money max = 2;
 }
 
 message ListMyStatementRequest {
   Page page = 1;
+  // Filtre facultatif : "collections" ou "prepaid" ; vide : les deux, les plus récentes d'abord.
+  string account = 2;
 }
 
 message ListMyStatementResponse {
@@ -295,6 +362,8 @@ message GetHolderWalletResponse {
 message ListHolderStatementRequest {
   Holder holder = 1;
   Page page = 2;
+  // Filtre facultatif : "collections" ou "prepaid" ; vide : les deux.
+  string account = 3;
 }
 
 message ListHolderStatementResponse {
@@ -316,7 +385,8 @@ message ListWalletPayoutsResponse {
 message GetLedgerOverviewRequest {}
 
 message AccountBalance {
-  // "ksp:collections", "ksp:commission" ou "ksp:payouts_in_transit".
+  // "ksp:collections", "ksp:commission", "ksp:payouts_in_transit", "ksp:prepaid_funds" ou
+  // "ksp:service_revenue".
   string account = 1;
   // Solde dans le sens naturel du compte (positif en temps normal).
   ksp.common.v1.Money balance = 2;
@@ -327,4 +397,98 @@ message GetLedgerOverviewResponse {
   // Somme des soldes des titulaires (ce que KSP leur doit).
   ksp.common.v1.Money owed_to_holders = 2;
   int32 holders_count = 3;
+  // Somme des portefeuilles prépayés (ce que KSP doit encore en services) et leur nombre (ADR-046).
+  ksp.common.v1.Money owed_to_customers = 4;
+  int32 customers_count = 5;
+}
+
+message DebitRequest {
+  // Obligatoire (8 à 150 caractères : lettres, chiffres, ":", "_" et "-"), propre à l'appelant : une
+  // seconde demande identique renvoie le même débit ; une demande différente est refusée.
+  string idempotency_key = 1;
+  // Titulaire débité : le client ("user") ou son organisation ("organization").
+  Holder holder = 2;
+  // Entier en XOF, 1 à 1 000 000 000 ; jamais de débit partiel.
+  ksp.common.v1.Money amount = 3;
+  // Objet payé chez l'appelant.
+  ObjectReference object = 4;
+  // Libellé du relevé, 1 à 140 caractères (par exemple « Nettoyage de maison — acompte »).
+  string description = 5;
+}
+
+message DebitResponse {
+  LedgerTransaction transaction = 1;
+  PrepaidWallet wallet = 2;
+  // false : débit déjà enregistré avec cette clé.
+  bool created = 3;
+}
+
+message RefundRequest {
+  // Débit (paiement d'un service) de l'appelant, remboursé en entier.
+  string transaction_id = 1;
+  // Raison, 1 à 200 caractères (aucune donnée personnelle), visible dans le relevé.
+  string reason = 2;
+}
+
+message RefundResponse {
+  LedgerTransaction transaction = 1;
+  PrepaidWallet wallet = 2;
+  // false : débit déjà remboursé (le même remboursement est renvoyé).
+  bool created = 3;
+}
+
+message GetPrepaidBalanceRequest {
+  Holder holder = 1;
+}
+
+message GetPrepaidBalanceResponse {
+  PrepaidWallet wallet = 1;
+}
+
+message CreateTopUpRequest {
+  // Clé d'idempotence (en-tête Idempotency-Key), 8 à 100 caractères.
+  string idempotency_key = 1;
+  // Entier en XOF, entre les limites de recharge (WALLET_TOP_UP_MIN et WALLET_TOP_UP_MAX).
+  ksp.common.v1.Money amount = 2;
+}
+
+message CreateTopUpResponse {
+  TopUp top_up = 1;
+  // false : recharge déjà demandée avec cette clé, ou page encore ouverte réutilisée.
+  bool created = 2;
+}
+
+// Recharge : paiement Mobile Money créé par payment (objet "wallet_top_up").
+message TopUp {
+  // Paiement chez payment, suivi par GET /api/v1/payment/payments/{id}.
+  string payment_id = 1;
+  Holder holder = 2;
+  ksp.common.v1.Money amount = 3;
+  // Statut du paiement : "pending", "succeeded", "failed", "cancelled", "expired" ou
+  // "amount_mismatch".
+  string status = 4;
+  // Page de paiement du prestataire ; vide si elle n'a pas pu être créée (réessayer, même clé).
+  string checkout_url = 5;
+  string expires_at = 6;
+}
+
+message CreditPrepaidWalletRequest {
+  // Obligatoire (en-tête Idempotency-Key), 8 à 100 caractères.
+  string idempotency_key = 1;
+  Holder holder = 2;
+  // "refund" (remboursement d'un service, geste commercial) ou "top_up" (recharge reçue par Mobile
+  // Money mais non créditée : écart de montant traité par la finance ; payment_id obligatoire, un
+  // seul crédit par paiement, automatique ou manuel).
+  string kind = 3;
+  ksp.common.v1.Money amount = 4;
+  // Motif, 1 à 200 caractères, visible dans le relevé du client.
+  string reason = 5;
+  string payment_id = 6;
+}
+
+message CreditPrepaidWalletResponse {
+  LedgerTransaction transaction = 1;
+  PrepaidWallet wallet = 2;
+  // false : crédit déjà enregistré avec cette clé (ou ce paiement).
+  bool created = 3;
 }

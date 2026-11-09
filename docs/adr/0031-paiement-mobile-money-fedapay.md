@@ -31,6 +31,8 @@ Le CDC Nettoyage (décisions du 2026-10-21) laisse le particulier payer l'acompt
 
 ## Conséquences
 
+- **Déprécié par ADR-046** (2026-11-09) pour les missions et les factures : le client recharge son portefeuille prépayé (seule page Mobile Money restante, objet `wallet_top_up`) puis paie depuis lui. `POST /api/v1/payment/payments` reste fonctionnel (`deprecated: true` dans l'OpenAPI) tant que le portail l'utilise.
+
 - Secrets FedaPay (`FEDAPAY_SECRET_KEY`, `FEDAPAY_WEBHOOK_SECRET`) dans le coffre ; jamais journalisés.
 - **À valider avec le compte de test FedaPay** : format exact de la signature, noms des événements, devise de la transaction (`currency.iso`, `currency_id` du XOF à reporter dans `FEDAPAY_XOF_CURRENCY_ID` ; obligatoire avec `PAYMENT_PROVIDER=fedapay` : le service refuse de démarrer sans lui), **la relecture d'une transaction (`GET /transactions/{id}`) doit renvoyer `custom_metadata.payment_id`, sinon chaque confirmation donne `transaction_mismatch` et aucun paiement n'aboutit**, existence d'une annulation de transaction par le marchand, durée de validité de la page.
 - **Différé** : remboursements (excédent tracé chez `cleaning` dans son audit, chez `billing` dans son journal d'avertissements ; écart `amount_mismatch` traité à la main par la finance), rapprochement comptable avec les relevés FedaPay au-delà de la fenêtre de réussite tardive, frais du prestataire, paiement direct sans page (push USSD).

@@ -25,8 +25,17 @@ export const PAYMENT_STATUSES: readonly PaymentStatus[] = [
 /** Paiements non aboutis qu'une réussite tardive chez le prestataire peut encore régler. */
 export const LATE_SUCCESS_STATUSES: readonly PaymentStatus[] = ['failed', 'expired', 'cancelled'];
 
-export type SubjectType = 'cleaning_mission' | 'billing_invoice';
-export const SUBJECT_TYPES: readonly SubjectType[] = ['cleaning_mission', 'billing_invoice'];
+/**
+ * Objets payés par un compte connecté : acompte ou solde d'une mission, facture, ou recharge du
+ * portefeuille prépayé (ADR-046, demandée par wallet seulement). Réservés : un lien ne les porte
+ * jamais.
+ */
+export type SubjectType = 'cleaning_mission' | 'billing_invoice' | 'wallet_top_up';
+export const SUBJECT_TYPES: readonly SubjectType[] = ['cleaning_mission', 'billing_invoice', 'wallet_top_up'];
+
+/** Objets dont le montant dû est lu dans le service qui les porte (CreatePayment, ADR-031). */
+export type DueSubjectType = 'cleaning_mission' | 'billing_invoice';
+export const DUE_SUBJECT_TYPES: readonly DueSubjectType[] = ['cleaning_mission', 'billing_invoice'];
 
 /** Mission : acompte ou reste dû. */
 export type MissionPart = 'deposit' | 'balance';
@@ -237,6 +246,7 @@ export function providerDescription(subject: PaymentSubject): string {
   if (subject.type === 'cleaning_mission') {
     return subject.part === 'deposit' ? 'KSP Nettoyage - Acompte' : 'KSP Nettoyage - Solde';
   }
+  if (subject.type === 'wallet_top_up') return 'KSP - Recharge du portefeuille';
   // Lien de paiement : référence de l'émetteur (dossier, échéance), jamais le nom du payeur.
   return `KSP - Paiement ${subject.reference ?? ''}`.trim();
 }

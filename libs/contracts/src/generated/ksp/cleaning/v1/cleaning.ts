@@ -59,13 +59,21 @@ export interface PaymentRecord {
   amount?:
     | Money
     | undefined;
-  /** "cash", "mobile_money_offline" ou "mobile_money_online". */
+  /**
+   * "cash", "mobile_money_offline", "mobile_money_online" ou "wallet" (portefeuille prépayé,
+   * ADR-046 ; reference = transaction du portefeuille).
+   */
   method: string;
   reference: string;
   recordedBy: string;
   recordedAt: string;
   /** Back-office : nom affiché de la personne qui a enregistré le paiement (ADR-029). */
   recordedByName: string;
+  /**
+   * Paiement par portefeuille remboursé dans le portefeuille (mission annulée, ADR-046) : il ne
+   * compte plus dans le montant payé. Vide sinon.
+   */
+  refundedAt: string;
 }
 
 export interface PaymentState {
@@ -1969,6 +1977,18 @@ export interface GetMissionAmountDueResponse {
   onlinePaymentIds: string[];
 }
 
+export interface PayMissionFromWalletRequest {
+  missionId: string;
+  /** "deposit" (acompte encore dû) ou "balance" (reste dû). */
+  part: string;
+  /** En-tête Idempotency-Key (8 à 100 caractères : lettres, chiffres, "_" et "-"), obligatoire. */
+  idempotencyKey: string;
+}
+
+export interface PayMissionFromWalletResponse {
+  mission?: Mission | undefined;
+}
+
 /**
  * ---------------------------------------------------------------------------
  * Catalogue et simulateur — public (UC-CL-01).
@@ -2298,9 +2318,25 @@ export interface MissionServiceClient {
 
   getMission(request: GetMissionRequest, metadata?: Metadata): Observable<GetMissionResponse>;
 
-  /** Sans frais jusqu'au délai limite avant le premier passage ; au-delà, refus (support). */
+  /**
+   * Sans frais jusqu'au délai limite avant le premier passage ; au-delà, refus (support). Les
+   * paiements par portefeuille d'une mission sans passage commencé sont remboursés dans le
+   * portefeuille (ADR-046).
+   */
 
   cancelMission(request: CancelMissionRequest, metadata?: Metadata): Observable<CancelMissionResponse>;
+
+  /**
+   * Acompte ou solde payé depuis le portefeuille prépayé du client (ADR-046) : débit du montant dû
+   * (jamais partiel) puis paiement enregistré sur la mission (moyen "wallet"), avec les mêmes effets
+   * qu'un paiement enregistré (reste dû, statut, levée d'une suspension). Idempotent par clé.
+   * Solde insuffisant : WALLET_INSUFFICIENT_FUNDS (details.missing : montant manquant).
+   */
+
+  payMissionFromWallet(
+    request: PayMissionFromWalletRequest,
+    metadata?: Metadata,
+  ): Observable<PayMissionFromWalletResponse>;
 }
 
 /**
@@ -2320,17 +2356,33 @@ export interface MissionServiceController {
     metadata?: Metadata,
   ): Promise<GetMissionResponse> | Observable<GetMissionResponse> | GetMissionResponse;
 
-  /** Sans frais jusqu'au délai limite avant le premier passage ; au-delà, refus (support). */
+  /**
+   * Sans frais jusqu'au délai limite avant le premier passage ; au-delà, refus (support). Les
+   * paiements par portefeuille d'une mission sans passage commencé sont remboursés dans le
+   * portefeuille (ADR-046).
+   */
 
   cancelMission(
     request: CancelMissionRequest,
     metadata?: Metadata,
   ): Promise<CancelMissionResponse> | Observable<CancelMissionResponse> | CancelMissionResponse;
+
+  /**
+   * Acompte ou solde payé depuis le portefeuille prépayé du client (ADR-046) : débit du montant dû
+   * (jamais partiel) puis paiement enregistré sur la mission (moyen "wallet"), avec les mêmes effets
+   * qu'un paiement enregistré (reste dû, statut, levée d'une suspension). Idempotent par clé.
+   * Solde insuffisant : WALLET_INSUFFICIENT_FUNDS (details.missing : montant manquant).
+   */
+
+  payMissionFromWallet(
+    request: PayMissionFromWalletRequest,
+    metadata?: Metadata,
+  ): Promise<PayMissionFromWalletResponse> | Observable<PayMissionFromWalletResponse> | PayMissionFromWalletResponse;
 }
 
 export function MissionServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["listMyMissions", "getMission", "cancelMission"];
+    const grpcMethods: string[] = ["listMyMissions", "getMission", "cancelMission", "payMissionFromWallet"];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("MissionService", method)(constructor.prototype[method], method, descriptor);

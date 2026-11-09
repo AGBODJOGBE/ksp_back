@@ -1,6 +1,11 @@
 import { walletV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
-import { type PageResult, type StatementLine, type WalletSummary } from '../../application/ports';
+import {
+  type PageResult,
+  type PrepaidSummary,
+  type StatementLine,
+  type WalletSummary,
+} from '../../application/ports';
 import { parsePage } from '../../application/shared';
 import { WALLET_USE_CASES, type WalletUseCases } from '../../application/use-cases';
 import { type LedgerTransaction } from '../../domain/ledger';
@@ -11,6 +16,14 @@ const xof = (amount: number) => ({ amount, currency: 'XOF' });
 /** Montant facultatif : absent (null) devient un montant nul, comme le veut le contrat. */
 const optionalXof = (amount: number | null) => (amount === null ? undefined : xof(amount));
 
+export function presentPrepaid(summary: PrepaidSummary): walletV1.PrepaidWallet {
+  return {
+    holder: { ...summary.holder },
+    balance: xof(summary.balance),
+    lastEntryAt: iso(summary.lastEntryAt),
+  };
+}
+
 export function presentWallet(summary: WalletSummary): walletV1.Wallet {
   return {
     holder: { ...summary.holder },
@@ -19,7 +32,16 @@ export function presentWallet(summary: WalletSummary): walletV1.Wallet {
     totalCollected: xof(summary.totalCollected),
     totalPaidOut: xof(summary.totalPaidOut),
     lastEntryAt: iso(summary.lastEntryAt),
+    prepaid: presentPrepaid(summary.prepaid),
   };
+}
+
+/** Objet payé par un débit (et son remboursement), avec le service appelant. */
+function presentObject(transaction: LedgerTransaction): walletV1.ObjectReference | undefined {
+  const object = transaction.object;
+  return object
+    ? { service: transaction.caller, objectType: object.type, objectId: object.id, part: object.part ?? '' }
+    : undefined;
 }
 
 export function presentTransaction(transaction: LedgerTransaction): walletV1.LedgerTransaction {
@@ -36,6 +58,7 @@ export function presentTransaction(transaction: LedgerTransaction): walletV1.Led
     reversesTransactionId: transaction.reversesTransactionId ?? '',
     createdAt: iso(transaction.createdAt),
     entries: transaction.entries.map((line) => ({ ...line, amount: xof(line.amount) })),
+    object: presentObject(transaction),
   };
 }
 
@@ -59,6 +82,8 @@ export function presentStatement(page: PageResult<StatementLine>): walletV1.Stat
         payoutStatus: line.payoutStatus ?? '',
         reversesTransactionId: t.reversesTransactionId ?? '',
         createdAt: iso(t.createdAt),
+        account: line.account,
+        object: presentObject(t),
       };
     }),
     nextCursor: page.nextCursor ?? '',
@@ -149,6 +174,39 @@ export class WalletGrpcController implements walletV1.WalletServiceController {
     const page = await this.useCases.listStatement.execute(request.holder, parsePage(request.page));
     return { statement: presentStatement(page) };
   }
+
+  async debit(request: walletV1.DebitRequest): Promise<walletV1.DebitResponse> {
+    const result = await this.useCases.debitPrepaid.execute({
+      idempotencyKey: request.idempotencyKey,
+      holder: request.holder,
+      amount: request.amount,
+      object: request.object,
+      description: request.description,
+    });
+    return {
+      transaction: presentTransaction(result.transaction),
+      wallet: presentPrepaid(result.wallet),
+      created: result.created,
+    };
+  }
+
+  async refund(request: walletV1.RefundRequest): Promise<walletV1.RefundResponse> {
+    const result = await this.useCases.refundDebit.execute({
+      transactionId: request.transactionId,
+      reason: request.reason,
+    });
+    return {
+      transaction: presentTransaction(result.transaction),
+      wallet: presentPrepaid(result.wallet),
+      created: result.created,
+    };
+  }
+
+  async getPrepaidBalance(
+    request: walletV1.GetPrepaidBalanceRequest,
+  ): Promise<walletV1.GetPrepaidBalanceResponse> {
+    return { wallet: presentPrepaid(await this.useCases.getPrepaidBalance.execute(request.holder)) };
+  }
 }
 
 /** Espace du titulaire connecté (gateway). */
@@ -158,12 +216,36 @@ export class WalletAccountGrpcController implements walletV1.WalletAccountServic
   constructor(@Inject(WALLET_USE_CASES) private readonly useCases: WalletUseCases) {}
 
   async getMyWallet(): Promise<walletV1.GetMyWalletResponse> {
-    return { wallet: presentWallet(await this.useCases.getMyWallet.execute()) };
+    const { wallet, topUpLimits } = await this.useCases.getMyWallet.execute();
+    return {
+      wallet: presentWallet(wallet),
+      topUpLimits: { min: xof(topUpLimits.min), max: xof(topUpLimits.max) },
+    };
   }
 
   async listMyStatement(request: walletV1.ListMyStatementRequest): Promise<walletV1.ListMyStatementResponse> {
+    const page = await this.useCases.listMyStatement.execute({
+      page: parsePage(request.page),
+      account: request.account,
+    });
+    return { statement: presentStatement(page) };
+  }
+
+  async createTopUp(request: walletV1.CreateTopUpRequest): Promise<walletV1.CreateTopUpResponse> {
+    const { topUp, created } = await this.useCases.createTopUp.execute({
+      idempotencyKey: request.idempotencyKey,
+      amount: request.amount,
+    });
     return {
-      statement: presentStatement(await this.useCases.listMyStatement.execute(parsePage(request.page))),
+      topUp: {
+        paymentId: topUp.paymentId,
+        holder: { ...topUp.holder },
+        amount: xof(topUp.amount),
+        status: topUp.status,
+        checkoutUrl: topUp.checkoutUrl ?? '',
+        expiresAt: iso(topUp.expiresAt),
+      },
+      created,
     };
   }
 
@@ -187,7 +269,11 @@ export class WalletAdminGrpcController implements walletV1.WalletAdminServiceCon
   async listHolderStatement(
     request: walletV1.ListHolderStatementRequest,
   ): Promise<walletV1.ListHolderStatementResponse> {
-    const page = await this.useCases.listHolderStatement.execute(request.holder, parsePage(request.page));
+    const page = await this.useCases.listHolderStatement.execute({
+      holder: request.holder,
+      page: parsePage(request.page),
+      account: request.account,
+    });
     return { statement: presentStatement(page) };
   }
 
@@ -212,6 +298,26 @@ export class WalletAdminGrpcController implements walletV1.WalletAdminServiceCon
       })),
       owedToHolders: xof(overview.owedToHolders),
       holdersCount: overview.holdersCount,
+      owedToCustomers: xof(overview.owedToCustomers),
+      customersCount: overview.customersCount,
+    };
+  }
+
+  async creditPrepaidWallet(
+    request: walletV1.CreditPrepaidWalletRequest,
+  ): Promise<walletV1.CreditPrepaidWalletResponse> {
+    const result = await this.useCases.creditPrepaidWallet.execute({
+      idempotencyKey: request.idempotencyKey,
+      holder: request.holder,
+      kind: request.kind,
+      amount: request.amount,
+      reason: request.reason,
+      paymentId: request.paymentId,
+    });
+    return {
+      transaction: presentTransaction(result.transaction),
+      wallet: presentPrepaid(result.wallet),
+      created: result.created,
     };
   }
 }

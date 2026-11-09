@@ -7,6 +7,7 @@ import { documentBodies } from './document-schemas';
 import { fileBodies } from './file-schemas';
 import { accountBodies, organizationBodies } from './organization-schemas';
 import { paymentBodies } from './payment-schemas';
+import { walletBodies } from './wallet-schemas';
 
 /**
  * Corps des requêtes, repris des schémas du contrat OpenAPI (components/schemas) : tout champ
@@ -52,6 +53,7 @@ export const requestBodies = {
   ...billingBodies,
   ...paymentBodies,
   ...notificationBodies,
+  ...walletBodies,
   ...fileBodies,
   ...documentBodies,
 };

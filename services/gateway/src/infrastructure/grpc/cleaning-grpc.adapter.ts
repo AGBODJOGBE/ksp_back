@@ -470,6 +470,16 @@ export class CleaningGrpcAdapter implements CleaningApi {
     return presentMission(res.mission);
   }
 
+  async payMissionFromWallet(id: string, part: string, idempotencyKey: string): Promise<Json> {
+    // Idempotent par clé chez cleaning et wallet : rejouable après une panne.
+    const res = await this.call(
+      'payMissionFromWallet',
+      (m) => this.clients.missions.payMissionFromWallet({ missionId: id, part, idempotencyKey }, m),
+      { idempotent: true },
+    );
+    return presentMission(res.mission);
+  }
+
   // --- Back-office ------------------------------------------------------------------------------
 
   async listQuoteRequests(value: Page, filters: QuoteRequestFilters): Promise<Json> {

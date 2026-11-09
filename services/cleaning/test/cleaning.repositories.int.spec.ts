@@ -11,6 +11,7 @@ import {
   CUSTOMER_ID,
   definitionInput,
   FakeGeocoder,
+  FakeWallet,
   FixedClock,
   OTHER_AGENT_ID,
 } from '../src/application/testing/fakes';
@@ -73,6 +74,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       invoices: new PrismaContractInvoiceRepository(prisma),
       organizations: new PrismaOrganizationStandingRepository(prisma),
       geocoder: new FakeGeocoder(),
+      wallet: new FakeWallet(),
       people: { userNames: async () => new Map(), organizationNames: async () => new Map() },
       fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
       clock,
@@ -323,6 +325,45 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     expect(audit).toEqual(
       expect.arrayContaining(['service.saved', 'quote.sent', 'quote.accepted', 'payment.recorded']),
     );
+  });
+
+  it('paiement par portefeuille : remboursement marqué une fois, contrôlé par la base (ADR-046)', async () => {
+    const row = await prisma.mission.findFirst({
+      where: { customerId: CUSTOMER_ID },
+      orderBy: { id: 'asc' },
+    });
+    const mission = (await deps.missions.findById(row!.id))!;
+    const now = new Date();
+    const wallet = {
+      id: '0192f1c4-0000-7000-8000-0000000000f1',
+      amount: 1000,
+      method: 'wallet' as const,
+      reference: '0192f1c4-0000-7000-d000-000000000001',
+      recordedBy: CUSTOMER_ID,
+      recordedAt: now,
+      idempotencyKey: 'wallet-int-0001',
+      refundedAt: null,
+    };
+    const withWallet = {
+      ...mission,
+      payment: { ...mission.payment, payments: [...mission.payment.payments, wallet] },
+    };
+    expect(await deps.missions.save(withWallet, { events: [], audit: [] })).toBe(true);
+    const loaded = (await deps.missions.findById(mission.id))!;
+    const refunded = {
+      ...loaded,
+      payment: {
+        ...loaded.payment,
+        payments: loaded.payment.payments.map((p) => (p.id === wallet.id ? { ...p, refundedAt: now } : p)),
+      },
+    };
+    expect(await deps.missions.save(refunded, { events: [], audit: [] })).toBe(true);
+    const after = (await deps.missions.findById(mission.id))!;
+    expect(after.payment.payments.find((p) => p.id === wallet.id)!.refundedAt).toEqual(now);
+    expect(after.payment.payments.filter((p) => p.refundedAt !== null)).toHaveLength(1);
+    await expect(
+      pool.query("UPDATE mission_payments SET refunded_at = now() WHERE method = 'cash'"),
+    ).rejects.toThrow(/mission_payments_refund_check/);
   });
 
   it('agent déjà pris : aucun passage enregistré, aucun événement', async () => {

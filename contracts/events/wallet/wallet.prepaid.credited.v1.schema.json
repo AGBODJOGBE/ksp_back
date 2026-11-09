@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/wallet/wallet.prepaid.credited.v1.schema.json",
+  "title": "wallet.prepaid.credited",
+  "description": "Portefeuille prépayé d'un client crédité (ADR-046) : recharge Mobile Money confirmée (origin payment), remboursement d'un débit par le service qui l'avait demandé (origin service), ou crédit manuel de la finance avec motif (origin finance). Publié une seule fois par écriture. Écouté par notification (remboursement ou crédit de la finance ; la recharge a déjà son reçu de paiement). Identifiants, montants et libellé seulement.",
+  "x-event-type": "wallet.prepaid.credited",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "transactionId",
+    "kind",
+    "origin",
+    "holder",
+    "userId",
+    "amount",
+    "balanceAfter",
+    "description",
+    "paymentId",
+    "refundedTransactionId",
+    "creditedAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "balance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "holder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "transactionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "enum": ["top_up", "refund"],
+      "description": "top_up : recharge ; refund : remboursement"
+    },
+    "origin": {
+      "enum": ["payment", "service", "finance"]
+    },
+    "holder": {
+      "$ref": "#/$defs/holder"
+    },
+    "userId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Compte à prévenir : le titulaire (user), sinon le membre qui a payé ou rechargé ; null s'il n'y en a pas (crédit de la finance à une organisation)"
+    },
+    "amount": {
+      "$ref": "#/$defs/money"
+    },
+    "balanceAfter": {
+      "$ref": "#/$defs/balance",
+      "description": "Solde prépayé après le crédit"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Libellé du relevé (motif de la finance compris)"
+    },
+    "paymentId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Recharge : paiement Mobile Money crédité ; null sinon"
+    },
+    "refundedTransactionId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Remboursement d'un débit : débit remboursé ; null sinon"
+    },
+    "creditedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

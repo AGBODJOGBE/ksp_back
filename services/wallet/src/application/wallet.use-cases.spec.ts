@@ -191,7 +191,7 @@ describe('portefeuille (cas d’usage, ADR-042)', () => {
       expect(await settle(payout.id, 'completed')).toBe('duplicate');
       expect(store().balances.get('ksp:payouts_in_transit')).toBe(0);
       expect(store().balances.get('ksp:collections')).toBe(3125);
-      const wallet = await asCustomer(() => useCases.getMyWallet.execute(), ORGANIZATION_ID);
+      const { wallet } = await asCustomer(() => useCases.getMyWallet.execute(), ORGANIZATION_ID);
       expect(wallet).toMatchObject({ balance: 0, payoutsInProgress: 0, totalPaidOut: 21875 });
       expectInvariant();
     });
@@ -295,7 +295,7 @@ describe('portefeuille (cas d’usage, ADR-042)', () => {
       await collect({ reference: 'payment:2', grossAmount: { amount: 10000, currency: 'XOF' } });
       const { payout } = await requestPayout();
       const page = await asCustomer(
-        () => useCases.listMyStatement.execute({ limit: 2, cursor: null }),
+        () => useCases.listMyStatement.execute({ page: { limit: 2, cursor: null }, account: '' }),
         ORGANIZATION_ID,
       );
       expect(
@@ -306,12 +306,12 @@ describe('portefeuille (cas d’usage, ADR-042)', () => {
       ]);
       expect(page.items[0]!.payoutStatus).toBe('submitted');
       const next = await asCustomer(
-        () => useCases.listMyStatement.execute({ limit: 2, cursor: page.nextCursor }),
+        () => useCases.listMyStatement.execute({ page: { limit: 2, cursor: page.nextCursor }, account: '' }),
         ORGANIZATION_ID,
       );
       expect(next.items).toHaveLength(1);
       // Contexte personnel : un autre titulaire (le compte), vide.
-      expect((await asCustomer(() => useCases.getMyWallet.execute())).holder).toEqual({
+      expect((await asCustomer(() => useCases.getMyWallet.execute())).wallet.holder).toEqual({
         type: 'user',
         id: USER_ID,
       });
@@ -336,9 +336,13 @@ describe('portefeuille (cas d’usage, ADR-042)', () => {
           { account: 'ksp:collections', balance: 25000 },
           { account: 'ksp:commission', balance: 3125 },
           { account: 'ksp:payouts_in_transit', balance: 0 },
+          { account: 'ksp:prepaid_funds', balance: 0 },
+          { account: 'ksp:service_revenue', balance: 0 },
         ],
         owedToHolders: 21875,
         holdersCount: 1,
+        owedToCustomers: 0,
+        customersCount: 0,
       });
       const wallet = await asStaff(() => useCases.getHolderWallet.execute(ORG));
       expect(wallet.balance).toBe(21875);

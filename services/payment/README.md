@@ -49,6 +49,15 @@ paiement du même objet, quel que soit le payeur ou la part, jusqu'à ce que la 
 obligatoire) : date, auteur et note sont enregistrés, le statut reste `amount_mismatch`, le blocage est
 levé. Écarts à traiter : `GET /api/v1/admin/payment/payments?underReview=true`.
 
+## Recharge du portefeuille prépayé (ADR-046)
+
+`TopUpPaymentService.CreateTopUpPayment`, réservé à wallet : objet `wallet_top_up` (identifiant :
+organisation active du payeur, sinon le payeur), montant choisi par le client et contrôlé par wallet,
+page réutilisée pour le même montant, remplacée sinon. Confirmation par le chemin commun ; la réussite
+publie `payment.intent.succeeded`, sur lequel wallet crédite le portefeuille. Les refus d'ADR-032 liés à
+un montant dû ne s'appliquent pas. `POST /api/v1/payment/payments` (mission, facture) est **déprécié**
+au profit du portefeuille, mais reste fonctionnel.
+
 ## Liens de paiement (ADR-040)
 
 Pour un payeur **sans compte KSP** (débiteur du Recouvrement). Un service émetteur autorisé
