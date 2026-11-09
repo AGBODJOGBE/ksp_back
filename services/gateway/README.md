@@ -97,6 +97,20 @@ Le jeton d'un lien de signature est un secret : un jeton mal formé est refusé 
 
 Le **manifeste de routage** (`src/domain/routing/route-manifest.ts`) est la seule source des routes : le décorateur `@Route('<operationId>')` en tire chemin, méthode, exigence d'accès et limite. Un test (`test/openapi.contract.spec.ts`) vérifie qu'il correspond exactement au contrat OpenAPI, que chaque point d'entrée en vient, et que les réponses réelles (succès et erreurs) respectent les schémas du contrat.
 
+## Routes du centre de notifications (ADR-039)
+
+9 routes vers `notification` (`NOTIFICATION_GRPC_URL`, `localhost:50052` par défaut), déclarées dans `src/domain/routing/notification-routes.ts` :
+
+| Route                                                                               | Appel                                                                            | Accès                                |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------ |
+| `GET /api/v1/notification/notifications` (`unread`, `limit`, `cursor`)              | `InAppNotificationService/ListMyNotifications`                                   | connecté                             |
+| `GET /api/v1/notification/notifications/unread-count`                               | `InAppNotificationService/CountMyUnreadNotifications`                            | connecté                             |
+| `POST /api/v1/notification/notifications/{id}/read`, `/read-all`                    | `InAppNotificationService/MarkNotificationRead`, `…AllRead`                      | connecté                             |
+| `GET`, `PUT /api/v1/notification/preferences`                                       | `InAppNotificationService/Get`/`UpdateMyNotificationPreferences`                 | connecté                             |
+| `GET /api/v1/admin/notification/deliveries[/{id}]`, `/admin/notification/templates` | `NotificationAdminService/ListDeliveries`, `GetDelivery`, `ListMessageTemplates` | `super_admin`, `support_agent` + MFA |
+
+La gateway appelle `notification` avec son jeton de service : `notification` doit figurer dans les `audiences` de la gateway dans `SERVICE_CLIENTS` d'identity (ADR-022).
+
 ## Liens de paiement, reversements, portefeuille (ADR-040 à 042)
 
 | Route                                                                                 | Appel gRPC                                            | Accès                                    |

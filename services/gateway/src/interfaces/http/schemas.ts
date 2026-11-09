@@ -2,6 +2,7 @@ import { AppError } from '@ksp/platform';
 import { z } from 'zod';
 import { billingBodies } from './billing-schemas';
 import { cleaningBodies } from './cleaning-schemas';
+import { notificationBodies } from './notification-schemas';
 import { documentBodies } from './document-schemas';
 import { fileBodies } from './file-schemas';
 import { accountBodies, organizationBodies } from './organization-schemas';
@@ -50,6 +51,7 @@ export const requestBodies = {
   ...cleaningBodies,
   ...billingBodies,
   ...paymentBodies,
+  ...notificationBodies,
   ...fileBodies,
   ...documentBodies,
 };
