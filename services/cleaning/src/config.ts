@@ -33,6 +33,11 @@ export const configSchema = baseServiceConfigSchema
     /** Refuser le compte rendu d'une visite avant l'heure prévue (proposition à valider). */
     CLEANING_BLOCK_EARLY_VISIT_REPORT: flag(true),
     /**
+     * Adresse gRPC du service geo (ADR-045) : renseignée, le géocodage inverse passe par geo et
+     * les deux variables suivantes ne servent plus. Vide : appel direct des fournisseurs (repli).
+     */
+    GEO_GRPC_URL: z.preprocess(unset, z.string().min(1).optional()),
+    /**
      * Géocodage inverse (ADR-034), facultatif : Nominatim auto-hébergé d'abord, Google en secours.
      * Un fournisseur sans sa variable est désactivé ; sans aucun, le client choisit sa commune.
      */

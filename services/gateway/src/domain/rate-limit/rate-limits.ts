@@ -15,7 +15,12 @@ export type RateLimitCategory =
   | 'payment_webhook'
   | 'payment_link_read'
   | 'payment_link_pay'
-  | 'file_upload';
+  | 'file_upload'
+  | 'document_code_request'
+  | 'document_code_verify'
+  | 'document_link'
+  | 'document_link_code_request'
+  | 'document_link_code_verify';
 
 export interface RateLimitRule {
   limit: number;
@@ -54,6 +59,13 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   payment_link_pay: { limit: 5, windowSeconds: 60, key: 'ip' },
   // Déclaration d'un envoi de fichier (ADR-038) : file limite aussi les envois en attente et le volume.
   file_upload: { limit: 30, windowSeconds: 60, key: 'user' },
+  // Signature d'un document (ADR-044) : document limite aussi les codes (un par minute, 5 par heure)
+  // et les essais (5 par code). Signataire connecté : par utilisateur ; lien sans compte : par IP.
+  document_code_request: { limit: 3, windowSeconds: 60, key: 'user' },
+  document_code_verify: { limit: 10, windowSeconds: 60, key: 'user' },
+  document_link: { limit: 30, windowSeconds: 60, key: 'ip' },
+  document_link_code_request: { limit: 3, windowSeconds: 60, key: 'ip' },
+  document_link_code_verify: { limit: 10, windowSeconds: 60, key: 'ip' },
 };
 
 /** Clé du compteur : une catégorie ne partage jamais ses compteurs avec une autre. */

@@ -2,6 +2,8 @@ import { type RateLimitCategory } from '../rate-limit/rate-limits';
 import { ACCOUNT_ROUTES } from './account-routes';
 import { BILLING_ROUTES } from './billing-routes';
 import { CLEANING_ROUTES } from './cleaning-routes';
+import { NOTIFICATION_ROUTES } from './notification-routes';
+import { DOCUMENT_ROUTES } from './document-routes';
 import { FILE_ROUTES } from './file-routes';
 import { ORGANIZATION_ROUTES } from './organization-routes';
 import { PAYMENT_ROUTES } from './payment-routes';
@@ -190,8 +192,10 @@ export const ROUTE_MANIFEST = [
   ...CLEANING_ROUTES,
   ...BILLING_ROUTES,
   ...PAYMENT_ROUTES,
+  ...NOTIFICATION_ROUTES,
   ...WALLET_ROUTES,
   ...FILE_ROUTES,
+  ...DOCUMENT_ROUTES,
 ] as const satisfies readonly RouteDefinition[];
 
 export type OperationId = (typeof ROUTE_MANIFEST)[number]['operationId'];

@@ -14,6 +14,13 @@ package ksp.notification.v1;
 //   identity.email_verification
 //                  canal CHANNEL_EMAIL seul, recipient.email obligatoire ; variables : code,
 //                  expires_in_minutes. Code de confirmation de l'e-mail du profil. Modèle secret.
+//   document.signature_code
+//                  WhatsApp (modèle d'authentification, comme identity.otp) puis e-mail ; variables :
+//                  code (6 chiffres), expires_in_minutes, document_title. Code de signature d'un
+//                  document (ADR-044). Modèle secret.
+//   document.signature_requested
+//                  WhatsApp puis e-mail ; variables : document_title, link (lien personnel de
+//                  signature, porte un jeton), expires_on, first_name facultatif. Modèle secret.
 //
 // Erreurs (code AppError → statut gRPC) :
 //   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
@@ -24,10 +31,49 @@ package ksp.notification.v1;
 //   NOTIFICATION_CALLER_FORBIDDEN     PERMISSION_DENIED service appelant non autorisé
 //   NOTIFICATION_ALREADY_IN_PROGRESS  ALREADY_EXISTS    envoi en cours avec la même idempotency_key
 //
-// Le reste du contrat (notifications dans l'application, préférences, appareils, modèles,
-// événements écoutés) sera écrit après le cahier des charges du service notification.
+// Le reste du contrat (appareils push, édition des modèles, notification en direct) sera écrit
+// après le cahier des charges du service notification.
 service NotificationService {
   rpc SendNotification(SendNotificationRequest) returns (SendNotificationResponse);
+}
+
+// Centre de notifications de l'espace KSP (ADR-039), réservé à la gateway : l'utilisateur est lu
+// dans le contexte de la requête, chacun ne voit que ses propres notifications.
+//
+// Erreurs :
+//   AUTH_REQUIRED                       UNAUTHENTICATED   aucun utilisateur dans le contexte
+//   NOTIFICATION_VALIDATION_FAILED      INVALID_ARGUMENT  page, curseur ou identifiant mal formé
+//   NOTIFICATION_NOT_FOUND              NOT_FOUND         notification inconnue ou d'un autre compte
+service InAppNotificationService {
+  // Les plus récentes d'abord ; unread_only pour les seules non lues.
+  rpc ListMyNotifications(ListMyNotificationsRequest) returns (ListMyNotificationsResponse);
+  // Nombre de notifications non lues (pastille de l'en-tête).
+  rpc CountMyUnreadNotifications(CountMyUnreadNotificationsRequest)
+    returns (CountMyUnreadNotificationsResponse);
+  // Idempotent : une notification déjà lue garde sa date de lecture.
+  rpc MarkNotificationRead(MarkNotificationReadRequest) returns (MarkNotificationReadResponse);
+  rpc MarkAllNotificationsRead(MarkAllNotificationsReadRequest) returns (MarkAllNotificationsReadResponse);
+  // Canaux souhaités pour les messages facultatifs (ADR-039) ; WhatsApp et e-mail par défaut.
+  rpc GetMyNotificationPreferences(GetMyNotificationPreferencesRequest)
+    returns (GetMyNotificationPreferencesResponse);
+  rpc UpdateMyNotificationPreferences(UpdateMyNotificationPreferencesRequest)
+    returns (UpdateMyNotificationPreferencesResponse);
+}
+
+// Back-office des notifications (ADR-039), réservé à la gateway : rôles super_admin et
+// support_agent, double authentification faite pendant la session (12 heures au plus). Aucune
+// donnée personnelle en clair : destinataire masqué, jamais le texte ni les variables d'un envoi.
+//
+// Erreurs :
+//   AUTH_FORBIDDEN, AUTH_MFA_REQUIRED   PERMISSION_DENIED rôle ou double authentification manquant
+//   NOTIFICATION_VALIDATION_FAILED      INVALID_ARGUMENT  filtre mal formé (details.field)
+//   NOTIFICATION_NOT_FOUND              NOT_FOUND         envoi inconnu
+service NotificationAdminService {
+  // Historique des envois, les plus récents d'abord.
+  rpc ListDeliveries(ListDeliveriesRequest) returns (ListDeliveriesResponse);
+  rpc GetDelivery(GetDeliveryRequest) returns (GetDeliveryResponse);
+  // Modèles de messages et leur texte, en lecture seule.
+  rpc ListMessageTemplates(ListMessageTemplatesRequest) returns (ListMessageTemplatesResponse);
 }
 
 enum Channel {
@@ -83,4 +129,160 @@ message SendNotificationResponse {
   string notification_id = 1;
   Channel channel_used = 2;
   DeliveryStatus status = 3;
+}
+
+message Page {
+  // 20 par défaut, 100 au plus.
+  int32 limit = 1;
+  // Identifiant du dernier élément de la page précédente ; vide pour la première page.
+  string cursor = 2;
+}
+
+// Notification de l'espace KSP. Dates ISO 8601 en UTC ; chaînes vides pour les valeurs absentes.
+message InAppNotification {
+  string id = 1;
+  string template_code = 2;
+  string title = 3;
+  string body = 4;
+  // Adresse de la page concernée de l'espace KSP ; vide s'il n'y en a pas.
+  string link = 5;
+  string created_at = 6;
+  // Vide : pas encore lue.
+  string read_at = 7;
+}
+
+message ListMyNotificationsRequest {
+  Page page = 1;
+  bool unread_only = 2;
+}
+
+message ListMyNotificationsResponse {
+  repeated InAppNotification notifications = 1;
+  string next_cursor = 2;
+  int32 unread_count = 3;
+}
+
+message CountMyUnreadNotificationsRequest {}
+
+message CountMyUnreadNotificationsResponse {
+  int32 unread_count = 1;
+}
+
+message MarkNotificationReadRequest {
+  string notification_id = 1;
+}
+
+message MarkNotificationReadResponse {
+  InAppNotification notification = 1;
+  int32 unread_count = 2;
+}
+
+message MarkAllNotificationsReadRequest {}
+
+message MarkAllNotificationsReadResponse {
+  // Notifications marquées lues par cet appel.
+  int32 marked = 1;
+  int32 unread_count = 2;
+}
+
+// Canaux souhaités pour les messages facultatifs. Les codes de connexion, les messages importants
+// (impayés, suspension), ceux de la suppression du compte et ceux adressés aux équipes KSP partent
+// toujours ; l'espace KSP reçoit toujours la notification.
+message NotificationPreferences {
+  bool whatsapp = 1;
+  bool email = 2;
+  // Vide : jamais modifiées (valeurs par défaut).
+  string updated_at = 3;
+}
+
+message GetMyNotificationPreferencesRequest {}
+
+message GetMyNotificationPreferencesResponse {
+  NotificationPreferences preferences = 1;
+}
+
+message UpdateMyNotificationPreferencesRequest {
+  bool whatsapp = 1;
+  bool email = 2;
+}
+
+message UpdateMyNotificationPreferencesResponse {
+  NotificationPreferences preferences = 1;
+}
+
+// Un envoi de l'historique (table notifications). Canaux : sms, whatsapp, email, push, in_app.
+message Delivery {
+  string id = 1;
+  string template_code = 2;
+  string requested_channel = 3;
+  // Vide tant qu'aucun canal n'a abouti.
+  string channel_used = 4;
+  // Canaux considérés, dans l'ordre (sautés compris).
+  repeated string channels_tried = 5;
+  // Destinataire masqué (+229********45) ; vide après l'effacement du compte.
+  string target_masked = 6;
+  // Vide pour un envoi sans compte, ou après l'effacement du compte (ADR-036).
+  string recipient_user_id = 7;
+  // pending, accepted ou failed.
+  string status = 8;
+  string error_code = 9;
+  // Cause de l'échec (recipient_invalid, provider_unavailable, provider_rejected…).
+  string failure_reason = 10;
+  // Identifiant du message chez le prestataire (wamid… pour WhatsApp, messageId pour Brevo).
+  string provider_message_id = 11;
+  string created_at = 12;
+  string expires_at = 13;
+  string accepted_at = 14;
+  string failed_at = 15;
+  // Historique détaché d'un compte supprimé (ADR-036).
+  bool erased = 16;
+}
+
+message ListDeliveriesRequest {
+  Page page = 1;
+  string template_code = 2;
+  // Canal essayé (sms, whatsapp, email, push, in_app).
+  string channel = 3;
+  // pending, accepted ou failed.
+  string status = 4;
+  // Période d'envoi, dates AAAA-MM-JJ à l'heure du Bénin, bornes incluses.
+  string from = 5;
+  string to = 6;
+  string recipient_user_id = 7;
+}
+
+message ListDeliveriesResponse {
+  repeated Delivery deliveries = 1;
+  string next_cursor = 2;
+}
+
+message GetDeliveryRequest {
+  string delivery_id = 1;
+}
+
+message GetDeliveryResponse {
+  Delivery delivery = 1;
+}
+
+message MessageTemplate {
+  string code = 1;
+  // direct (appel d'un service : codes), short, document ou important (règle de choix du canal).
+  string kind = 2;
+  repeated string channels = 3;
+  // Modèle secret (codes) : ni le texte ni les variables d'un envoi ne sont conservés.
+  bool secret = 4;
+  // Message facultatif : soumis aux préférences du destinataire.
+  bool optional = 5;
+  repeated string variables = 6;
+  repeated string optional_variables = 7;
+  // Texte rendu avec le nom des variables entre accolades ; vides pour un texte rédigé chez le
+  // prestataire (modèle WhatsApp approuvé par Meta).
+  string subject = 8;
+  string text = 9;
+}
+
+message ListMessageTemplatesRequest {}
+
+message ListMessageTemplatesResponse {
+  repeated MessageTemplate templates = 1;
 }

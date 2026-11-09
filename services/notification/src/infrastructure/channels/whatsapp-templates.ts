@@ -213,6 +213,12 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
       v['link'] ?? '',
     ],
   },
+  // Invitation à signer un document (ADR-044) : le lien porte un jeton personnel (modèle secret).
+  'document.signature_requested': spec('ksp_document_signature_requested', [
+    'document_title',
+    'expires_on',
+    'link',
+  ]),
   // Reçu d'un paiement en ligne (ADR-031).
   'payment.receipt.customer': spec('ksp_payment_receipt', [
     'amount',

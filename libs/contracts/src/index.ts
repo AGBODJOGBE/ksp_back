@@ -11,4 +11,6 @@ export * as billingV1 from './generated/ksp/billing/v1/billing';
 export * as paymentV1 from './generated/ksp/payment/v1/payment';
 export * as fileV1 from './generated/ksp/file/v1/file';
 export * as walletV1 from './generated/ksp/wallet/v1/wallet';
+export * as documentV1 from './generated/ksp/document/v1/document';
+export * as geoV1 from './generated/ksp/geo/v1/geo';
 // new-service:exports (le générateur de service ajoute les nouveaux contrats ici)

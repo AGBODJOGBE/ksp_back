@@ -12,6 +12,7 @@ export interface UserNotificationsErasure {
  * « événement traité » de l'inbox : `duplicate` (et rien d'effacé) si l'événement l'est déjà.
  *
  * - notifications de l'espace KSP du compte : supprimées (titre et texte portent le prénom) ;
+ * - préférences de canaux du compte (ADR-039) : supprimées ;
  * - historique des envois (`notifications`) : identifiant du compte, destinataire masqué, clé
  *   d'idempotence (elle contient l'identifiant du compte) et identifiant du message chez le
  *   prestataire retirés ; modèle, canaux, statut, cause d'échec et dates gardés pour les

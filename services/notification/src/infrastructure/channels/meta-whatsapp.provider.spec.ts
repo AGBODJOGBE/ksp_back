@@ -161,6 +161,49 @@ describe('MetaWhatsAppProvider', () => {
     });
   });
 
+  it('code de signature d’un document : même modèle d’authentification que le code de connexion', async () => {
+    const { calls, whatsapp } = provider(() => json(200, { messages: [{ id: 'wamid.2' }] }));
+    await whatsapp.send({
+      ...message,
+      templateCode: 'document.signature_code',
+      variables: { code: '246810', expires_in_minutes: '10', document_title: 'Mandat' },
+    });
+    const body = JSON.parse(String(calls[0]!.init.body)) as { template: unknown };
+    expect(body.template).toEqual({
+      name: 'ksp_otp',
+      language: { code: 'fr' },
+      components: [
+        { type: 'body', parameters: [{ type: 'text', text: '246810' }] },
+        { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: '246810' }] },
+      ],
+    });
+  });
+
+  it('invitation à signer : modèle « utility », titre, date limite et lien', async () => {
+    const { calls, whatsapp } = provider(() => json(200, { messages: [{ id: 'wamid.3' }] }));
+    await whatsapp.send({
+      ...message,
+      templateCode: 'document.signature_requested',
+      variables: {
+        document_title: 'Protocole',
+        expires_on: '16 novembre 2026',
+        link: 'https://ksp.bj/signer/abc',
+      },
+    });
+    const body = JSON.parse(String(calls[0]!.init.body)) as {
+      template: { name: string; components: unknown };
+    };
+    expect(body.template.name).toBe('ksp_document_signature_requested');
+    expect(body.template.components).toEqual([
+      {
+        type: 'body',
+        parameters: ['Madame, Monsieur', 'Protocole', '16 novembre 2026', 'https://ksp.bj/signer/abc'].map(
+          (text) => ({ type: 'text', text }),
+        ),
+      },
+    ]);
+  });
+
   it('modèle sans équivalent WhatsApp → refus, sans appel à Meta', async () => {
     const { calls, whatsapp } = provider(() => json(200, {}));
     await expect(whatsapp.send({ ...message, templateCode: 'document.signature' })).resolves.toEqual({

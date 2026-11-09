@@ -78,6 +78,170 @@ export interface SendNotificationResponse {
   status: DeliveryStatus;
 }
 
+export interface Page {
+  /** 20 par défaut, 100 au plus. */
+  limit: number;
+  /** Identifiant du dernier élément de la page précédente ; vide pour la première page. */
+  cursor: string;
+}
+
+/** Notification de l'espace KSP. Dates ISO 8601 en UTC ; chaînes vides pour les valeurs absentes. */
+export interface InAppNotification {
+  id: string;
+  templateCode: string;
+  title: string;
+  body: string;
+  /** Adresse de la page concernée de l'espace KSP ; vide s'il n'y en a pas. */
+  link: string;
+  createdAt: string;
+  /** Vide : pas encore lue. */
+  readAt: string;
+}
+
+export interface ListMyNotificationsRequest {
+  page?: Page | undefined;
+  unreadOnly: boolean;
+}
+
+export interface ListMyNotificationsResponse {
+  notifications: InAppNotification[];
+  nextCursor: string;
+  unreadCount: number;
+}
+
+export interface CountMyUnreadNotificationsRequest {
+}
+
+export interface CountMyUnreadNotificationsResponse {
+  unreadCount: number;
+}
+
+export interface MarkNotificationReadRequest {
+  notificationId: string;
+}
+
+export interface MarkNotificationReadResponse {
+  notification?: InAppNotification | undefined;
+  unreadCount: number;
+}
+
+export interface MarkAllNotificationsReadRequest {
+}
+
+export interface MarkAllNotificationsReadResponse {
+  /** Notifications marquées lues par cet appel. */
+  marked: number;
+  unreadCount: number;
+}
+
+/**
+ * Canaux souhaités pour les messages facultatifs. Les codes de connexion, les messages importants
+ * (impayés, suspension), ceux de la suppression du compte et ceux adressés aux équipes KSP partent
+ * toujours ; l'espace KSP reçoit toujours la notification.
+ */
+export interface NotificationPreferences {
+  whatsapp: boolean;
+  email: boolean;
+  /** Vide : jamais modifiées (valeurs par défaut). */
+  updatedAt: string;
+}
+
+export interface GetMyNotificationPreferencesRequest {
+}
+
+export interface GetMyNotificationPreferencesResponse {
+  preferences?: NotificationPreferences | undefined;
+}
+
+export interface UpdateMyNotificationPreferencesRequest {
+  whatsapp: boolean;
+  email: boolean;
+}
+
+export interface UpdateMyNotificationPreferencesResponse {
+  preferences?: NotificationPreferences | undefined;
+}
+
+/** Un envoi de l'historique (table notifications). Canaux : sms, whatsapp, email, push, in_app. */
+export interface Delivery {
+  id: string;
+  templateCode: string;
+  requestedChannel: string;
+  /** Vide tant qu'aucun canal n'a abouti. */
+  channelUsed: string;
+  /** Canaux considérés, dans l'ordre (sautés compris). */
+  channelsTried: string[];
+  /** Destinataire masqué (+229********45) ; vide après l'effacement du compte. */
+  targetMasked: string;
+  /** Vide pour un envoi sans compte, ou après l'effacement du compte (ADR-036). */
+  recipientUserId: string;
+  /** pending, accepted ou failed. */
+  status: string;
+  errorCode: string;
+  /** Cause de l'échec (recipient_invalid, provider_unavailable, provider_rejected…). */
+  failureReason: string;
+  /** Identifiant du message chez le prestataire (wamid… pour WhatsApp, messageId pour Brevo). */
+  providerMessageId: string;
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt: string;
+  failedAt: string;
+  /** Historique détaché d'un compte supprimé (ADR-036). */
+  erased: boolean;
+}
+
+export interface ListDeliveriesRequest {
+  page?: Page | undefined;
+  templateCode: string;
+  /** Canal essayé (sms, whatsapp, email, push, in_app). */
+  channel: string;
+  /** pending, accepted ou failed. */
+  status: string;
+  /** Période d'envoi, dates AAAA-MM-JJ à l'heure du Bénin, bornes incluses. */
+  from: string;
+  to: string;
+  recipientUserId: string;
+}
+
+export interface ListDeliveriesResponse {
+  deliveries: Delivery[];
+  nextCursor: string;
+}
+
+export interface GetDeliveryRequest {
+  deliveryId: string;
+}
+
+export interface GetDeliveryResponse {
+  delivery?: Delivery | undefined;
+}
+
+export interface MessageTemplate {
+  code: string;
+  /** direct (appel d'un service : codes), short, document ou important (règle de choix du canal). */
+  kind: string;
+  channels: string[];
+  /** Modèle secret (codes) : ni le texte ni les variables d'un envoi ne sont conservés. */
+  secret: boolean;
+  /** Message facultatif : soumis aux préférences du destinataire. */
+  optional: boolean;
+  variables: string[];
+  optionalVariables: string[];
+  /**
+   * Texte rendu avec le nom des variables entre accolades ; vides pour un texte rédigé chez le
+   * prestataire (modèle WhatsApp approuvé par Meta).
+   */
+  subject: string;
+  text: string;
+}
+
+export interface ListMessageTemplatesRequest {
+}
+
+export interface ListMessageTemplatesResponse {
+  templates: MessageTemplate[];
+}
+
 /**
  * Envoi direct d'une notification. Utilisé pour les envois prioritaires dont l'appelant
  * doit connaître le résultat immédiatement : codes de vérification d'identity (ADR-014)
@@ -91,6 +255,13 @@ export interface SendNotificationResponse {
  *   identity.email_verification
  *                  canal CHANNEL_EMAIL seul, recipient.email obligatoire ; variables : code,
  *                  expires_in_minutes. Code de confirmation de l'e-mail du profil. Modèle secret.
+ *   document.signature_code
+ *                  WhatsApp (modèle d'authentification, comme identity.otp) puis e-mail ; variables :
+ *                  code (6 chiffres), expires_in_minutes, document_title. Code de signature d'un
+ *                  document (ADR-044). Modèle secret.
+ *   document.signature_requested
+ *                  WhatsApp puis e-mail ; variables : document_title, link (lien personnel de
+ *                  signature, porte un jeton), expires_on, first_name facultatif. Modèle secret.
  *
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
@@ -101,8 +272,8 @@ export interface SendNotificationResponse {
  *   NOTIFICATION_CALLER_FORBIDDEN     PERMISSION_DENIED service appelant non autorisé
  *   NOTIFICATION_ALREADY_IN_PROGRESS  ALREADY_EXISTS    envoi en cours avec la même idempotency_key
  *
- * Le reste du contrat (notifications dans l'application, préférences, appareils, modèles,
- * événements écoutés) sera écrit après le cahier des charges du service notification.
+ * Le reste du contrat (appareils push, édition des modèles, notification en direct) sera écrit
+ * après le cahier des charges du service notification.
  */
 
 export interface NotificationServiceClient {
@@ -122,6 +293,13 @@ export interface NotificationServiceClient {
  *   identity.email_verification
  *                  canal CHANNEL_EMAIL seul, recipient.email obligatoire ; variables : code,
  *                  expires_in_minutes. Code de confirmation de l'e-mail du profil. Modèle secret.
+ *   document.signature_code
+ *                  WhatsApp (modèle d'authentification, comme identity.otp) puis e-mail ; variables :
+ *                  code (6 chiffres), expires_in_minutes, document_title. Code de signature d'un
+ *                  document (ADR-044). Modèle secret.
+ *   document.signature_requested
+ *                  WhatsApp puis e-mail ; variables : document_title, link (lien personnel de
+ *                  signature, porte un jeton), expires_on, first_name facultatif. Modèle secret.
  *
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
@@ -132,8 +310,8 @@ export interface NotificationServiceClient {
  *   NOTIFICATION_CALLER_FORBIDDEN     PERMISSION_DENIED service appelant non autorisé
  *   NOTIFICATION_ALREADY_IN_PROGRESS  ALREADY_EXISTS    envoi en cours avec la même idempotency_key
  *
- * Le reste du contrat (notifications dans l'application, préférences, appareils, modèles,
- * événements écoutés) sera écrit après le cahier des charges du service notification.
+ * Le reste du contrat (appareils push, édition des modèles, notification en direct) sera écrit
+ * après le cahier des charges du service notification.
  */
 
 export interface NotificationServiceController {
@@ -161,3 +339,218 @@ export function NotificationServiceControllerMethods() {
 }
 
 export const NOTIFICATION_SERVICE_NAME = "NotificationService";
+
+/**
+ * Centre de notifications de l'espace KSP (ADR-039), réservé à la gateway : l'utilisateur est lu
+ * dans le contexte de la requête, chacun ne voit que ses propres notifications.
+ *
+ * Erreurs :
+ *   AUTH_REQUIRED                       UNAUTHENTICATED   aucun utilisateur dans le contexte
+ *   NOTIFICATION_VALIDATION_FAILED      INVALID_ARGUMENT  page, curseur ou identifiant mal formé
+ *   NOTIFICATION_NOT_FOUND              NOT_FOUND         notification inconnue ou d'un autre compte
+ */
+
+export interface InAppNotificationServiceClient {
+  /** Les plus récentes d'abord ; unread_only pour les seules non lues. */
+
+  listMyNotifications(
+    request: ListMyNotificationsRequest,
+    metadata?: Metadata,
+  ): Observable<ListMyNotificationsResponse>;
+
+  /** Nombre de notifications non lues (pastille de l'en-tête). */
+
+  countMyUnreadNotifications(
+    request: CountMyUnreadNotificationsRequest,
+    metadata?: Metadata,
+  ): Observable<CountMyUnreadNotificationsResponse>;
+
+  /** Idempotent : une notification déjà lue garde sa date de lecture. */
+
+  markNotificationRead(
+    request: MarkNotificationReadRequest,
+    metadata?: Metadata,
+  ): Observable<MarkNotificationReadResponse>;
+
+  markAllNotificationsRead(
+    request: MarkAllNotificationsReadRequest,
+    metadata?: Metadata,
+  ): Observable<MarkAllNotificationsReadResponse>;
+
+  /** Canaux souhaités pour les messages facultatifs (ADR-039) ; WhatsApp et e-mail par défaut. */
+
+  getMyNotificationPreferences(
+    request: GetMyNotificationPreferencesRequest,
+    metadata?: Metadata,
+  ): Observable<GetMyNotificationPreferencesResponse>;
+
+  updateMyNotificationPreferences(
+    request: UpdateMyNotificationPreferencesRequest,
+    metadata?: Metadata,
+  ): Observable<UpdateMyNotificationPreferencesResponse>;
+}
+
+/**
+ * Centre de notifications de l'espace KSP (ADR-039), réservé à la gateway : l'utilisateur est lu
+ * dans le contexte de la requête, chacun ne voit que ses propres notifications.
+ *
+ * Erreurs :
+ *   AUTH_REQUIRED                       UNAUTHENTICATED   aucun utilisateur dans le contexte
+ *   NOTIFICATION_VALIDATION_FAILED      INVALID_ARGUMENT  page, curseur ou identifiant mal formé
+ *   NOTIFICATION_NOT_FOUND              NOT_FOUND         notification inconnue ou d'un autre compte
+ */
+
+export interface InAppNotificationServiceController {
+  /** Les plus récentes d'abord ; unread_only pour les seules non lues. */
+
+  listMyNotifications(
+    request: ListMyNotificationsRequest,
+    metadata?: Metadata,
+  ): Promise<ListMyNotificationsResponse> | Observable<ListMyNotificationsResponse> | ListMyNotificationsResponse;
+
+  /** Nombre de notifications non lues (pastille de l'en-tête). */
+
+  countMyUnreadNotifications(
+    request: CountMyUnreadNotificationsRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<CountMyUnreadNotificationsResponse>
+    | Observable<CountMyUnreadNotificationsResponse>
+    | CountMyUnreadNotificationsResponse;
+
+  /** Idempotent : une notification déjà lue garde sa date de lecture. */
+
+  markNotificationRead(
+    request: MarkNotificationReadRequest,
+    metadata?: Metadata,
+  ): Promise<MarkNotificationReadResponse> | Observable<MarkNotificationReadResponse> | MarkNotificationReadResponse;
+
+  markAllNotificationsRead(
+    request: MarkAllNotificationsReadRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<MarkAllNotificationsReadResponse>
+    | Observable<MarkAllNotificationsReadResponse>
+    | MarkAllNotificationsReadResponse;
+
+  /** Canaux souhaités pour les messages facultatifs (ADR-039) ; WhatsApp et e-mail par défaut. */
+
+  getMyNotificationPreferences(
+    request: GetMyNotificationPreferencesRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<GetMyNotificationPreferencesResponse>
+    | Observable<GetMyNotificationPreferencesResponse>
+    | GetMyNotificationPreferencesResponse;
+
+  updateMyNotificationPreferences(
+    request: UpdateMyNotificationPreferencesRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<UpdateMyNotificationPreferencesResponse>
+    | Observable<UpdateMyNotificationPreferencesResponse>
+    | UpdateMyNotificationPreferencesResponse;
+}
+
+export function InAppNotificationServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = [
+      "listMyNotifications",
+      "countMyUnreadNotifications",
+      "markNotificationRead",
+      "markAllNotificationsRead",
+      "getMyNotificationPreferences",
+      "updateMyNotificationPreferences",
+    ];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("InAppNotificationService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("InAppNotificationService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const IN_APP_NOTIFICATION_SERVICE_NAME = "InAppNotificationService";
+
+/**
+ * Back-office des notifications (ADR-039), réservé à la gateway : rôles super_admin et
+ * support_agent, double authentification faite pendant la session (12 heures au plus). Aucune
+ * donnée personnelle en clair : destinataire masqué, jamais le texte ni les variables d'un envoi.
+ *
+ * Erreurs :
+ *   AUTH_FORBIDDEN, AUTH_MFA_REQUIRED   PERMISSION_DENIED rôle ou double authentification manquant
+ *   NOTIFICATION_VALIDATION_FAILED      INVALID_ARGUMENT  filtre mal formé (details.field)
+ *   NOTIFICATION_NOT_FOUND              NOT_FOUND         envoi inconnu
+ */
+
+export interface NotificationAdminServiceClient {
+  /** Historique des envois, les plus récents d'abord. */
+
+  listDeliveries(request: ListDeliveriesRequest, metadata?: Metadata): Observable<ListDeliveriesResponse>;
+
+  getDelivery(request: GetDeliveryRequest, metadata?: Metadata): Observable<GetDeliveryResponse>;
+
+  /** Modèles de messages et leur texte, en lecture seule. */
+
+  listMessageTemplates(
+    request: ListMessageTemplatesRequest,
+    metadata?: Metadata,
+  ): Observable<ListMessageTemplatesResponse>;
+}
+
+/**
+ * Back-office des notifications (ADR-039), réservé à la gateway : rôles super_admin et
+ * support_agent, double authentification faite pendant la session (12 heures au plus). Aucune
+ * donnée personnelle en clair : destinataire masqué, jamais le texte ni les variables d'un envoi.
+ *
+ * Erreurs :
+ *   AUTH_FORBIDDEN, AUTH_MFA_REQUIRED   PERMISSION_DENIED rôle ou double authentification manquant
+ *   NOTIFICATION_VALIDATION_FAILED      INVALID_ARGUMENT  filtre mal formé (details.field)
+ *   NOTIFICATION_NOT_FOUND              NOT_FOUND         envoi inconnu
+ */
+
+export interface NotificationAdminServiceController {
+  /** Historique des envois, les plus récents d'abord. */
+
+  listDeliveries(
+    request: ListDeliveriesRequest,
+    metadata?: Metadata,
+  ): Promise<ListDeliveriesResponse> | Observable<ListDeliveriesResponse> | ListDeliveriesResponse;
+
+  getDelivery(
+    request: GetDeliveryRequest,
+    metadata?: Metadata,
+  ): Promise<GetDeliveryResponse> | Observable<GetDeliveryResponse> | GetDeliveryResponse;
+
+  /** Modèles de messages et leur texte, en lecture seule. */
+
+  listMessageTemplates(
+    request: ListMessageTemplatesRequest,
+    metadata?: Metadata,
+  ): Promise<ListMessageTemplatesResponse> | Observable<ListMessageTemplatesResponse> | ListMessageTemplatesResponse;
+}
+
+export function NotificationAdminServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["listDeliveries", "getDelivery", "listMessageTemplates"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("NotificationAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("NotificationAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const NOTIFICATION_ADMIN_SERVICE_NAME = "NotificationAdminService";

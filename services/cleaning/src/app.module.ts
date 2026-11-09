@@ -1,4 +1,4 @@
-import { identityV1, walletV1 } from '@ksp/contracts';
+import { geoV1, identityV1, walletV1 } from '@ksp/contracts';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -8,9 +8,11 @@ import {
 } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
+import { type ReverseGeocoder } from './application/ports';
 import { CLEANING_USE_CASES, createUseCases } from './application/use-cases';
 import { type ServiceConfig } from './config';
 import { createGeocoder } from './infrastructure/geocoding/fallback.geocoder';
+import { GeoServiceGeocoder } from './infrastructure/geocoding/geo-service.geocoder';
 import { IdentityPeopleDirectory } from './infrastructure/identity/identity-people-directory';
 import { GrpcWalletLedger } from './infrastructure/wallet/grpc-wallet-ledger';
 import { BillingEventsConsumer } from './infrastructure/messaging/billing-events.consumer';
@@ -44,6 +46,35 @@ import {
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
+const GEO_CLIENT = Symbol('GEO_CLIENT');
+
+/**
+ * Géocodage inverse (ADR-045) : le service geo si GEO_GRPC_URL est renseignée, sinon les
+ * fournisseurs appelés directement (ADR-034), gardés en repli le temps du déploiement de geo.
+ * Délai de l'appel à geo : ses deux fournisseurs enchaînés, plus une marge d'une seconde.
+ */
+function selectGeocoder(
+  config: ServiceConfig,
+  geoGrpc: ClientGrpc | undefined,
+  serviceTokens: ServiceTokenProvider | undefined,
+): ReverseGeocoder {
+  const logger = new Logger('Cleaning');
+  if (geoGrpc) {
+    logger.log('Géocodage inverse : service geo.');
+    return new GeoServiceGeocoder(
+      geoGrpc.getService<geoV1.GeoServiceClient>(geoV1.GEO_SERVICE_NAME),
+      new GrpcCaller({ target: 'geo', ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}) }),
+      2 * config.GEOCODING_TIMEOUT_MS + 1_000,
+    );
+  }
+  const geocoder = createGeocoder(config);
+  logger.log(
+    geocoder.providerNames.length
+      ? `Géocodage inverse : ${geocoder.providerNames.join(' puis ')} (appel direct, repli).`
+      : 'Géocodage inverse désactivé (GEO_GRPC_URL, NOMINATIM_URL et GOOGLE_MAPS_API_KEY vides) : le client choisit sa commune.',
+  );
+  return geocoder;
+}
 
 /** Racine de composition : relie les cas d'usage à leurs adaptateurs. */
 @Module({})
@@ -56,6 +87,7 @@ export class AppModule {
         ClientsModule.register([
           grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
           grpcClientOptions(WALLET_CLIENT, 'wallet', config.WALLET_GRPC_URL),
+          ...(config.GEO_GRPC_URL ? [grpcClientOptions(GEO_CLIENT, 'geo', config.GEO_GRPC_URL)] : []),
         ]),
       ],
       controllers: [
@@ -94,6 +126,7 @@ export class AppModule {
             IDENTITY_CLIENT,
             WALLET_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
+            { token: GEO_CLIENT, optional: true },
           ],
           useFactory: (
             catalog: PrismaCatalogRepository,
@@ -105,13 +138,9 @@ export class AppModule {
             grpc: ClientGrpc,
             walletGrpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
+            geoGrpc: ClientGrpc | undefined,
           ) => {
-            const geocoder = createGeocoder(config);
-            new Logger('Cleaning').log(
-              geocoder.providerNames.length
-                ? `Géocodage inverse : ${geocoder.providerNames.join(' puis ')}.`
-                : 'Géocodage inverse désactivé (NOMINATIM_URL et GOOGLE_MAPS_API_KEY vides) : le client choisit sa commune.',
-            );
+            const geocoder = selectGeocoder(config, geoGrpc, serviceTokens);
             if (!serviceTokens) {
               new Logger('Cleaning').warn(
                 'Aucun jeton de service : appels vers identity et wallet non authentifiés (développement uniquement).',

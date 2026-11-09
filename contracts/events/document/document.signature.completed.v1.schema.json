@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/document/document.signature.completed.v1.schema.json",
+  "title": "document.signature.completed",
+  "description": "Document signé par code à usage unique (ADR-044) : le PDF stocké avait l'empreinte enregistrée à sa production, une page de certificat lui a été ajoutée et la preuve est conservée par document. Publié une seule fois par demande de signature. Destiné au service qui a produit le document (recovery : mandat ou protocole signé). Identifiants et empreintes seulement : ni téléphone, ni nom, ni adresse IP.",
+  "x-event-type": "document.signature.completed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "documentId",
+    "signatureRequestId",
+    "template",
+    "templateVersion",
+    "producerService",
+    "subjectType",
+    "subjectId",
+    "ownerId",
+    "signerUserId",
+    "method",
+    "channel",
+    "documentSha256",
+    "signedFileId",
+    "signedDocumentSha256",
+    "signedAt"
+  ],
+  "properties": {
+    "documentId": { "type": "string", "format": "uuid" },
+    "signatureRequestId": { "type": "string", "format": "uuid" },
+    "template": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,63}$",
+      "description": "Modèle du document : recovery_mandate, recovery_settlement_agreement…"
+    },
+    "templateVersion": { "type": "integer", "minimum": 1 },
+    "producerService": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,40}$",
+      "description": "Service métier qui a produit le document et demandé la signature"
+    },
+    "subjectType": { "type": "string", "pattern": "^[a-z][a-z0-9]*(_[a-z0-9]+)+$" },
+    "subjectId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,100}$" },
+    "ownerId": { "type": ["string", "null"], "format": "uuid" },
+    "signerUserId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Compte du signataire ; null pour une personne sans compte (débiteur)"
+    },
+    "method": { "const": "one_time_code" },
+    "channel": {
+      "enum": ["whatsapp", "email", "sms"],
+      "description": "Canal par lequel le code validé a été reçu"
+    },
+    "documentSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Empreinte du PDF présenté et signé (avant la page de certificat)"
+    },
+    "signedFileId": { "type": "string", "format": "uuid" },
+    "signedDocumentSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Empreinte du PDF signé (pages d'origine et page de certificat)"
+    },
+    "signedAt": { "type": "string", "format": "date-time" }
+  }
+}

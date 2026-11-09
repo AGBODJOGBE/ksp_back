@@ -7,6 +7,7 @@ import {
   FixedClock,
   InMemoryInbox,
   InMemoryNotifications,
+  InMemoryPreferences,
   SequentialIds,
 } from '../testing/fakes';
 import { type OrganizationBillingContact, type RecipientContact } from './event-notification.ports';
@@ -42,12 +43,14 @@ function setup(
   const directory = new FakeDirectory(contacts);
   const organizations = new FakeOrganizations(billingContacts);
   const inbox = new InMemoryInbox();
+  const preferences = new InMemoryPreferences();
   const clock = new FixedClock(NOW);
   const useCase = new NotifyEventUseCase(
     EVENT_RULES,
     new MessageDispatcher(notifications, providers, clock),
     directory,
     organizations,
+    preferences,
     inbox,
     clock,
     new SequentialIds(),
@@ -59,7 +62,7 @@ function setup(
     },
   );
   const [whatsapp, email] = providers as [FakeProvider, FakeProvider];
-  return { notifications, directory, organizations, inbox, useCase, whatsapp, email };
+  return { notifications, directory, organizations, inbox, preferences, useCase, whatsapp, email };
 }
 
 const event = <T extends keyof KspEventPayloads>(type: T, payload: KspEventPayloads[T]): ReceivedEvent => ({
@@ -1316,5 +1319,65 @@ describe('NotifyEventUseCase — paiement en ligne (ADR-031)', () => {
     expect(email.sent[0]!.content!.subject).toBe(
       `Reçu de paiement — 150${NBSP}000${NBSP}FCFA — SARL Bénin Propre`,
     );
+  });
+});
+
+describe('NotifyEventUseCase — préférences de canaux (ADR-039)', () => {
+  const withEmail = contact(CUSTOMER, { email: 'koffi@example.com' });
+  const at = new Date('2026-10-20T10:00:00Z');
+
+  it('WhatsApp écarté : le message court part par e-mail, l’espace garde la notification', async () => {
+    const { useCase, whatsapp, email, inbox, preferences } = setup([withEmail]);
+    await preferences.save(CUSTOMER, { whatsapp: false, email: true }, at);
+    await expect(useCase.execute(quoteRequested)).resolves.toMatchObject({ accepted: 1, inApp: 1 });
+    expect(whatsapp.sent).toHaveLength(0);
+    expect(email.sent.map((message) => message.templateCode)).toEqual(['cleaning.quote_requested.customer']);
+    expect(inbox.inApp).toHaveLength(1);
+  });
+
+  it('tous les canaux écartés : aucun envoi externe, compté à part des destinataires injoignables', async () => {
+    const { useCase, whatsapp, email, inbox, preferences } = setup([withEmail]);
+    await preferences.save(CUSTOMER, { whatsapp: false, email: false }, at);
+    await expect(useCase.execute(quoteSent)).resolves.toMatchObject({
+      accepted: 0,
+      optedOut: 1,
+      unreachable: 0,
+      inApp: 1,
+    });
+    expect([...whatsapp.sent, ...email.sent]).toHaveLength(0);
+    expect(inbox.inApp[0]!.templateCode).toBe('cleaning.quote_sent.customer');
+  });
+
+  it('message important (impayés) : WhatsApp et e-mail malgré les préférences', async () => {
+    const { useCase, whatsapp, email, preferences } = setup([withEmail]);
+    await preferences.save(CUSTOMER, { whatsapp: false, email: false }, at);
+    await expect(
+      useCase.execute(
+        event('cleaning.contract.suspension_warning', {
+          missionId: MISSION,
+          customerId: CUSTOMER,
+          organizationId: null,
+          unpaidCount: 1,
+          suspensionThreshold: 2,
+        }),
+      ),
+    ).resolves.toMatchObject({ accepted: 2, optedOut: 0 });
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(email.sent).toHaveLength(1);
+  });
+
+  it('messages des agents : envoyés quelles que soient leurs préférences', async () => {
+    const { useCase, whatsapp, preferences } = setup([
+      contact(CUSTOMER),
+      contact(AGENT_1, { firstName: 'Awa' }),
+      contact(AGENT_2, { phoneE164: '+2290197000046' }),
+    ]);
+    await preferences.save(CUSTOMER, { whatsapp: false, email: false }, at);
+    await preferences.save(AGENT_1, { whatsapp: false, email: false }, at);
+    await expect(useCase.execute(missionScheduled)).resolves.toMatchObject({ accepted: 2, optedOut: 1 });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.mission_scheduled.agent',
+      'cleaning.mission_scheduled.agent',
+    ]);
   });
 });

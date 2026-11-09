@@ -4,6 +4,7 @@ import { PAYMENT_TEMPLATES } from './messages/payment.messages';
 import { CLEANING_TEMPLATES } from './messages/cleaning.messages';
 import { IDENTITY_DIRECT_TEMPLATES } from './messages/identity.messages';
 import { ACCOUNT_TEMPLATES } from './messages/account.messages';
+import { DOCUMENT_DIRECT_TEMPLATES } from './messages/document.messages';
 import { ORGANIZATION_TEMPLATES } from './messages/organization.messages';
 import { WALLET_TEMPLATES } from './messages/wallet.messages';
 
@@ -70,6 +71,7 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
     },
   },
   ...Object.fromEntries(IDENTITY_DIRECT_TEMPLATES.map((template) => [template.code, template])),
+  ...Object.fromEntries(DOCUMENT_DIRECT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(CLEANING_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(BILLING_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(ORGANIZATION_TEMPLATES.map((template) => [template.code, template])),
@@ -77,6 +79,11 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
   ...Object.fromEntries(PAYMENT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(WALLET_TEMPLATES.map((template) => [template.code, template])),
 };
+
+/** Tous les modèles connus, par code croissant (liste du back-office, en lecture seule). */
+export function allTemplates(): TemplateDefinition[] {
+  return Object.values(TEMPLATES).sort((a, b) => a.code.localeCompare(b.code));
+}
 
 export function findTemplate(code: string): TemplateDefinition | null {
   return Object.hasOwn(TEMPLATES, code) ? TEMPLATES[code] : null;

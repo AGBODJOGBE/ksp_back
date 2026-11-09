@@ -53,10 +53,14 @@ export const configSchema = z
     BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
     /** Adresse gRPC de payment (paiement en ligne, ADR-031). */
     PAYMENT_GRPC_URL: z.string().min(1).default('localhost:50055'),
+    /** Adresse gRPC de notification (centre de notifications, ADR-039). */
+    NOTIFICATION_GRPC_URL: z.string().min(1).default('localhost:50052'),
     /** Adresse gRPC de file (stockage des fichiers, ADR-038). */
     FILE_GRPC_URL: z.string().min(1).default('localhost:50056'),
     /** Adresse gRPC de wallet (grand livre des fonds des clients, ADR-042). */
     WALLET_GRPC_URL: z.string().min(1).default('localhost:50057'),
+    /** Adresse gRPC de document (documents et signature par code, ADR-044). */
+    DOCUMENT_GRPC_URL: z.string().min(1).default('localhost:50058'),
     JWKS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(600),
     JWKS_RELOAD_COOLDOWN_SECONDS: z.coerce.number().int().nonnegative().default(30),
 
@@ -99,6 +103,15 @@ export const configSchema = z
     RATE_LIMIT_PAYMENT_LINK_READ_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.payment_link_read.limit),
     RATE_LIMIT_PAYMENT_LINK_PAY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.payment_link_pay.limit),
     RATE_LIMIT_FILE_UPLOAD_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.file_upload.limit),
+    RATE_LIMIT_DOCUMENT_CODE_REQUEST_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.document_code_request.limit),
+    RATE_LIMIT_DOCUMENT_CODE_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.document_code_verify.limit),
+    RATE_LIMIT_DOCUMENT_LINK_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.document_link.limit),
+    RATE_LIMIT_DOCUMENT_LINK_CODE_REQUEST_PER_MINUTE: perMinute(
+      DEFAULT_RATE_LIMITS.document_link_code_request.limit,
+    ),
+    RATE_LIMIT_DOCUMENT_LINK_CODE_VERIFY_PER_MINUTE: perMinute(
+      DEFAULT_RATE_LIMITS.document_link_code_verify.limit,
+    ),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV !== 'production') return;
@@ -188,6 +201,26 @@ export function rateLimitsFrom(config: GatewayConfig): RateLimitTable {
       limit: config.RATE_LIMIT_PAYMENT_LINK_PAY_PER_MINUTE,
     },
     file_upload: { ...DEFAULT_RATE_LIMITS.file_upload, limit: config.RATE_LIMIT_FILE_UPLOAD_PER_MINUTE },
+    document_code_request: {
+      ...DEFAULT_RATE_LIMITS.document_code_request,
+      limit: config.RATE_LIMIT_DOCUMENT_CODE_REQUEST_PER_MINUTE,
+    },
+    document_code_verify: {
+      ...DEFAULT_RATE_LIMITS.document_code_verify,
+      limit: config.RATE_LIMIT_DOCUMENT_CODE_VERIFY_PER_MINUTE,
+    },
+    document_link: {
+      ...DEFAULT_RATE_LIMITS.document_link,
+      limit: config.RATE_LIMIT_DOCUMENT_LINK_PER_MINUTE,
+    },
+    document_link_code_request: {
+      ...DEFAULT_RATE_LIMITS.document_link_code_request,
+      limit: config.RATE_LIMIT_DOCUMENT_LINK_CODE_REQUEST_PER_MINUTE,
+    },
+    document_link_code_verify: {
+      ...DEFAULT_RATE_LIMITS.document_link_code_verify,
+      limit: config.RATE_LIMIT_DOCUMENT_LINK_CODE_VERIFY_PER_MINUTE,
+    },
   };
 }
 

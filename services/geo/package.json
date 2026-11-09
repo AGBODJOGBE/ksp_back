@@ -1,0 +1,31 @@
+{
+  "name": "@ksp/geo-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Service geo de l'écosystème KSP : géocodage inverse et itinéraires (OSRM).",
+  "main": "dist/main.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "jest",
+    "dev": "node --watch --env-file=.env -r ../../tools/dev/register.cjs -r ./src/tracing.ts src/main.ts",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@ksp/contracts": "workspace:*",
+    "@ksp/platform": "workspace:*",
+    "@grpc/grpc-js": "1.14.6",
+    "@nestjs/common": "11.2.7",
+    "@nestjs/core": "11.2.7",
+    "@nestjs/microservices": "11.2.7",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "11.2.7"
+  }
+}

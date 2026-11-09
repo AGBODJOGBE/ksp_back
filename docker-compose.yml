@@ -67,6 +67,18 @@ services:
       - '4317:4317'
       - '16686:16686'
 
+  # Moteur d'itinéraires du service geo (ADR-045), algorithme MLD, sur http://localhost:5000.
+  # Données à préparer une fois (tools/geo/prepare-osrm) ; démarré seulement avec
+  # « docker compose --profile routing up -d osrm ». geo démarre aussi sans lui. Image officielle
+  # du projet, version figée : osrm/osrm-backend sur Docker Hub n'est plus publiée depuis 2021.
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v6.0.0
+    profiles: ['routing']
+    command: osrm-routed --algorithm mld /data/region.osrm
+    ports: ['5000:5000']
+    volumes:
+      - osrm-data:/data
+
   # Recherche du catalogue (phase 3) : démarré seulement avec « docker compose --profile search up -d ».
   meilisearch:
     image: getmeili/meilisearch:v1.15
@@ -83,3 +95,4 @@ volumes:
   rabbitmq-data:
   minio-data:
   meilisearch-data:
+  osrm-data:

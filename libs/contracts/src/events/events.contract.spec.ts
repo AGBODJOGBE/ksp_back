@@ -4,6 +4,7 @@ import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
 import { type BillingEventPayloads, type BillingEventType } from './billing.events';
 import { type CleaningEventPayloads, type CleaningEventType } from './cleaning.events';
+import { type DocumentEventPayloads, type DocumentEventType } from './document.events';
 import { type IdentityEventPayloads, type IdentityEventType } from './identity.events';
 import { type NotificationEventPayloads, type NotificationEventType } from './notification.events';
 import { type PaymentEventPayloads, type PaymentEventType } from './payment.events';
@@ -599,6 +600,56 @@ describe('Contrats des événements payment', () => {
       expect(validate({ ...payload, amount: { amount: 0, currency: 'XOF' } })).toBe(false);
       expect(validate({ ...payload, amount: { amount: 100, currency: 'EUR' } })).toBe(false);
     }
+  });
+});
+
+const sha = 'a'.repeat(64);
+
+const documentExamples: { [K in DocumentEventType]: DocumentEventPayloads[K] } = {
+  'document.signature.completed': {
+    documentId: uuid,
+    signatureRequestId: uuid,
+    template: 'recovery_settlement_agreement',
+    templateVersion: 1,
+    producerService: 'recovery',
+    subjectType: 'recovery_case',
+    subjectId: uuid,
+    ownerId: uuid,
+    signerUserId: null,
+    method: 'one_time_code',
+    channel: 'whatsapp',
+    documentSha256: sha,
+    signedFileId: uuid,
+    signedDocumentSha256: 'b'.repeat(64),
+    signedAt: '2026-11-09T10:00:00.000Z',
+  },
+};
+
+describe('Contrats des événements document', () => {
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  addFormats(ajv);
+  ajv.addKeyword('x-event-type').addKeyword('x-event-version');
+  const schemas = loadSchemas('document');
+
+  it('chaque type TypeScript a un schéma, et inversement', () => {
+    expect([...schemas.keys()].sort()).toEqual(Object.keys(documentExamples).sort());
+  });
+
+  it.each(Object.entries(documentExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
+    const validate = ajv.compile(schemas.get(type)!);
+    expect(validate(payload)).toBe(true);
+  });
+
+  it('signature : aucune donnée personnelle du signataire, empreintes SHA-256 hexadécimales', () => {
+    const validate = ajv.compile(schemas.get('document.signature.completed')!);
+    const payload = documentExamples['document.signature.completed'];
+    expect(validate({ ...payload, signerUserId: uuid })).toBe(true);
+    expect(validate({ ...payload, phone: '+2290197000045' })).toBe(false);
+    expect(validate({ ...payload, signerName: 'Koffi' })).toBe(false);
+    expect(validate({ ...payload, ip: '197.234.1.2' })).toBe(false);
+    expect(validate({ ...payload, code: '123456' })).toBe(false);
+    expect(validate({ ...payload, documentSha256: 'ABC' })).toBe(false);
+    expect(validate({ ...payload, method: 'handwritten' })).toBe(false);
   });
 });
 

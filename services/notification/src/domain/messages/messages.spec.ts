@@ -334,3 +334,54 @@ describe('reçu de paiement en ligne (ADR-031)', () => {
     expect(invalidVariables(template, { ...variables, reference: 'a b' })).toEqual(['reference']);
   });
 });
+
+describe('Messages de signature de document (ADR-044)', () => {
+  const code = findTemplate('document.signature_code')!;
+  const invitation = findTemplate('document.signature_requested')!;
+
+  it('modèles secrets d’appel direct, par WhatsApp puis e-mail', () => {
+    for (const template of [code, invitation]) {
+      expect(template).toMatchObject({ secret: true, channels: ['whatsapp', 'email'] });
+      expect(isEventTemplate(template)).toBe(false);
+    }
+    expect(
+      invalidVariables(code, { code: '482913', expires_in_minutes: '10', document_title: 'Mandat' }),
+    ).toEqual([]);
+    expect(invalidVariables(code, { code: '4829', expires_in_minutes: '10', document_title: '' })).toEqual([
+      'code',
+      'document_title',
+    ]);
+    expect(
+      invalidVariables(invitation, {
+        document_title: 'Protocole',
+        link: 'javascript:alert(1)',
+        expires_on: '16 novembre 2026',
+      }),
+    ).toEqual(['link']);
+  });
+
+  it('code : titre du document et validité dans le texte, jamais le code dans l’objet', () => {
+    const message = code.render!({
+      code: '482913',
+      expires_in_minutes: '10',
+      document_title: 'Mandat de recouvrement',
+    });
+    expect(message.subject).toBe('Votre code de signature KSP');
+    expect(message.text).toContain('« Mandat de recouvrement » : 482913');
+    expect(message.text).toContain('valable 10 minutes');
+  });
+
+  it('invitation : prénom facultatif, lien personnel et date limite', () => {
+    const variables = {
+      document_title: 'Protocole d’accord',
+      link: 'https://ksp.bj/signer/abc',
+      expires_on: '16 novembre 2026',
+    };
+    const anonymous = invitation.render!(variables);
+    expect(anonymous.subject).toBe('Document à signer : Protocole d’accord');
+    expect(anonymous.text).toContain('Bonjour Madame, Monsieur,');
+    expect(anonymous.text).toContain('https://ksp.bj/signer/abc');
+    expect(anonymous.text).toContain('16 novembre 2026');
+    expect(invitation.render!({ ...variables, first_name: 'Koffi' }).text).toContain('Bonjour Koffi,');
+  });
+});

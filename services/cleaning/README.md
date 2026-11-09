@@ -39,9 +39,12 @@ Le même script ajoute, pour le parcours par lieu (ADR-034) : un type de lieu d�
   commentaire ; un événement `cleaning.quote.requested` par demande, avec `groupId`, plus
   `cleaning.quote_group.requested` pour le groupe (ADR-035 point 14). Chaque demande suit ensuite
   son circuit habituel.
-- **Commune retrouvée par géocodage inverse** depuis la position (`ReverseGeocoder`) : Nominatim
-  auto-hébergé d'abord (`NOMINATIM_URL`), Google en secours (`GOOGLE_MAPS_API_KEY`), délai
-  `GEOCODING_TIMEOUT_MS` (3 s) ; un fournisseur sans sa variable est désactivé. La commune trouvée
+- **Commune retrouvée par géocodage inverse** depuis la position (`ReverseGeocoder`) : par le
+  service interne `geo` quand `GEO_GRPC_URL` est renseignée (ADR-045 ; jeton de service
+  d'audience `geo`, délai de l'appel `2 × GEOCODING_TIMEOUT_MS + 1 s`, geo indisponible = non
+  trouvé). Sinon, repli sur l'appel direct : Nominatim auto-hébergé d'abord (`NOMINATIM_URL`),
+  Google en secours (`GOOGLE_MAPS_API_KEY`), délai `GEOCODING_TIMEOUT_MS` (3 s) ; un fournisseur
+  sans sa variable est désactivé. La commune trouvée
   remplace celle du client ; sans résultat, celle du client sert de repli
   (`CLEANING_LOCATION_UNRESOLVED` si elle manque). Rapprochement avec les zones par leur clé et
   leurs **noms alternatifs** (`aliases`).
