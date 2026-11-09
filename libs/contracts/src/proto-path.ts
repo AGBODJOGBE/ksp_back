@@ -26,6 +26,7 @@ export function protoPath(relativePath: string): string {
 export const GRPC_PACKAGES = {
   // new-service:packages (le générateur de service ajoute les nouveaux packages ici)
   geo: { package: 'ksp.geo.v1', file: 'ksp/geo/v1/geo.proto' },
+  document: { package: 'ksp.document.v1', file: 'ksp/document/v1/document.proto' },
   file: { package: 'ksp.file.v1', file: 'ksp/file/v1/file.proto' },
   wallet: { package: 'ksp.wallet.v1', file: 'ksp/wallet/v1/wallet.proto' },
   payment: { package: 'ksp.payment.v1', file: 'ksp/payment/v1/payment.proto' },

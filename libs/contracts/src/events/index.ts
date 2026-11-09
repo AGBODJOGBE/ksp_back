@@ -1,11 +1,13 @@
 import { type BillingEventPayloads } from './billing.events';
 import { type CleaningEventPayloads } from './cleaning.events';
+import { type DocumentEventPayloads } from './document.events';
 import { type IdentityEventPayloads } from './identity.events';
 import { type NotificationEventPayloads } from './notification.events';
 import { type PaymentEventPayloads } from './payment.events';
 
 export * from './billing.events';
 export * from './cleaning.events';
+export * from './document.events';
 export * from './envelope';
 export * from './identity.events';
 export * from './notification.events';
@@ -16,5 +18,6 @@ export type KspEventPayloads = IdentityEventPayloads &
   NotificationEventPayloads &
   CleaningEventPayloads &
   BillingEventPayloads &
-  PaymentEventPayloads;
+  PaymentEventPayloads &
+  DocumentEventPayloads;
 export type KspEventType = keyof KspEventPayloads;

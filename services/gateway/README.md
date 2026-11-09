@@ -80,7 +80,36 @@ celui de la réponse.
 
 Le détail (corps, réponses, erreurs) est dans le contrat OpenAPI, étiquettes « Nettoyage » et « Nettoyage (back-office) ».
 
+## Routes des documents et de la signature (ADR-044)
+
+7 routes vers `document` (`DOCUMENT_GRPC_URL`, `localhost:50058` par défaut), déclarées dans `src/domain/routing/document-routes.ts` :
+
+| Route                                                  | Appel                                      | Accès                              |
+| ------------------------------------------------------ | ------------------------------------------ | ---------------------------------- |
+| `GET /api/v1/document/documents/{id}`, `/download-url` | `DocumentService/GetMyDocument`, `…`       | connecté (titulaire ou signataire) |
+| `POST /api/v1/document/signatures/{id}/otp`            | `DocumentService/SendSignatureCode`        | connecté, 3 par utilisateur        |
+| `POST /api/v1/document/signatures/{id}/sign`           | `DocumentService/SignDocument`             | connecté, 10 par utilisateur       |
+| `GET /api/v1/document/sign/{token}`                    | `DocumentSigningService/GetSigningSession` | public, 30 par IP                  |
+| `POST /api/v1/document/sign/{token}/otp`               | `DocumentSigningService/SendSigningCode`   | public, 3 par IP                   |
+| `POST /api/v1/document/sign/{token}/sign`              | `DocumentSigningService/SignWithLink`      | public, 10 par IP                  |
+
+Le jeton d'un lien de signature est un secret : un jeton mal formé est refusé (404) sans appeler document, et le kit le remplace par `[masqué]` dans l'adresse et les paramètres journalisés de chaque requête. L'adresse IP et le navigateur (`x-client-ip`, `x-user-agent`) sont transmis à document, qui les inscrit dans la preuve de signature. Aucun identifiant de fichier n'est rendu : le PDF se lit par l'adresse de courte durée de `/download-url` (ou `download` du lien).
+
 Le **manifeste de routage** (`src/domain/routing/route-manifest.ts`) est la seule source des routes : le décorateur `@Route('<operationId>')` en tire chemin, méthode, exigence d'accès et limite. Un test (`test/openapi.contract.spec.ts`) vérifie qu'il correspond exactement au contrat OpenAPI, que chaque point d'entrée en vient, et que les réponses réelles (succès et erreurs) respectent les schémas du contrat.
+
+## Routes du centre de notifications (ADR-039)
+
+9 routes vers `notification` (`NOTIFICATION_GRPC_URL`, `localhost:50052` par défaut), déclarées dans `src/domain/routing/notification-routes.ts` :
+
+| Route                                                                               | Appel                                                                            | Accès                                |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------ |
+| `GET /api/v1/notification/notifications` (`unread`, `limit`, `cursor`)              | `InAppNotificationService/ListMyNotifications`                                   | connecté                             |
+| `GET /api/v1/notification/notifications/unread-count`                               | `InAppNotificationService/CountMyUnreadNotifications`                            | connecté                             |
+| `POST /api/v1/notification/notifications/{id}/read`, `/read-all`                    | `InAppNotificationService/MarkNotificationRead`, `…AllRead`                      | connecté                             |
+| `GET`, `PUT /api/v1/notification/preferences`                                       | `InAppNotificationService/Get`/`UpdateMyNotificationPreferences`                 | connecté                             |
+| `GET /api/v1/admin/notification/deliveries[/{id}]`, `/admin/notification/templates` | `NotificationAdminService/ListDeliveries`, `GetDelivery`, `ListMessageTemplates` | `super_admin`, `support_agent` + MFA |
+
+La gateway appelle `notification` avec son jeton de service : `notification` doit figurer dans les `audiences` de la gateway dans `SERVICE_CLIENTS` d'identity (ADR-022).
 
 ## Liens de paiement, reversements, portefeuille (ADR-040 à 042)
 

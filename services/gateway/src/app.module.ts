@@ -1,4 +1,13 @@
-import { billingV1, cleaningV1, fileV1, identityV1, paymentV1, walletV1 } from '@ksp/contracts';
+import {
+  billingV1,
+  cleaningV1,
+  documentV1,
+  fileV1,
+  identityV1,
+  notificationV1,
+  paymentV1,
+  walletV1,
+} from '@ksp/contracts';
 import {
   AccessTokenVerifier,
   createLoggerModule,
@@ -17,6 +26,8 @@ import { type BillingApi } from './application/billing/billing.ports';
 import { type CleaningApi } from './application/cleaning/cleaning.ports';
 import { type AccountAdminApi } from './application/identity/account-admin.ports';
 import { type OrganizationsApi } from './application/identity/organizations.ports';
+import { type NotificationApi } from './application/notification/notification.ports';
+import { type DocumentApi } from './application/document/document.ports';
 import { type FileApi } from './application/file/file.ports';
 import { type PaymentApi } from './application/payment/payment.ports';
 import { type WalletApi } from './application/wallet/wallet.ports';
@@ -44,6 +55,8 @@ import { BillingGrpcAdapter } from './infrastructure/grpc/billing-grpc.adapter';
 import { CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
 import { IdentityGrpcAdapter } from './infrastructure/grpc/identity-grpc.adapter';
 import { OrganizationsGrpcAdapter } from './infrastructure/grpc/organizations-grpc.adapter';
+import { NotificationGrpcAdapter } from './infrastructure/grpc/notification-grpc.adapter';
+import { DocumentGrpcAdapter } from './infrastructure/grpc/document-grpc.adapter';
 import { FileGrpcAdapter } from './infrastructure/grpc/file-grpc.adapter';
 import { PaymentGrpcAdapter } from './infrastructure/grpc/payment-grpc.adapter';
 import { WalletGrpcAdapter } from './infrastructure/grpc/wallet-grpc.adapter';
@@ -60,6 +73,8 @@ import { IdentityHttpController } from './interfaces/http/identity.controller';
 import { JwksHttpController } from './interfaces/http/jwks.controller';
 import { OrganizationAdminHttpController } from './interfaces/http/organizations-admin.controller';
 import { OrganizationHttpController } from './interfaces/http/organizations.controller';
+import { NotificationHttpController } from './interfaces/http/notification.controller';
+import { DocumentHttpController } from './interfaces/http/document.controller';
 import { FileHttpController } from './interfaces/http/file.controller';
 import { PaymentHttpController } from './interfaces/http/payment.controller';
 import { WalletHttpController } from './interfaces/http/wallet.controller';
@@ -72,10 +87,14 @@ import {
   CLEANING_API,
   CLEANING_GRPC_CLIENT,
   CLOCK,
+  DOCUMENT_API,
+  DOCUMENT_GRPC_CLIENT,
   FILE_API,
   FILE_GRPC_CLIENT,
   IDENTITY_GRPC_CLIENT,
   JWKS_SOURCE,
+  NOTIFICATION_API,
+  NOTIFICATION_GRPC_CLIENT,
   ORGANIZATIONS_API,
   PAYMENT_API,
   PAYMENT_GRPC_CLIENT,
@@ -104,8 +123,10 @@ export class AppModule {
           grpcClientOptions(CLEANING_GRPC_CLIENT, 'cleaning', config.CLEANING_GRPC_URL),
           grpcClientOptions(BILLING_GRPC_CLIENT, 'billing', config.BILLING_GRPC_URL),
           grpcClientOptions(PAYMENT_GRPC_CLIENT, 'payment', config.PAYMENT_GRPC_URL),
+          grpcClientOptions(NOTIFICATION_GRPC_CLIENT, 'notification', config.NOTIFICATION_GRPC_URL),
           grpcClientOptions(FILE_GRPC_CLIENT, 'file', config.FILE_GRPC_URL),
           grpcClientOptions(WALLET_GRPC_CLIENT, 'wallet', config.WALLET_GRPC_URL),
+          grpcClientOptions(DOCUMENT_GRPC_CLIENT, 'document', config.DOCUMENT_GRPC_URL),
         ]),
       ],
       controllers: [
@@ -119,8 +140,10 @@ export class AppModule {
         CleaningAdminHttpController,
         BillingHttpController,
         PaymentHttpController,
+        NotificationHttpController,
         FileHttpController,
         WalletHttpController,
+        DocumentHttpController,
       ],
       providers: [
         ReadinessRegistry,
@@ -282,6 +305,27 @@ export class AppModule {
             ),
         },
         {
+          provide: NOTIFICATION_API,
+          inject: [NOTIFICATION_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
+          useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): NotificationApi =>
+            new NotificationGrpcAdapter(
+              {
+                center: grpc.getService<notificationV1.InAppNotificationServiceClient>(
+                  notificationV1.IN_APP_NOTIFICATION_SERVICE_NAME,
+                ),
+                admin: grpc.getService<notificationV1.NotificationAdminServiceClient>(
+                  notificationV1.NOTIFICATION_ADMIN_SERVICE_NAME,
+                ),
+              },
+              // Coupe-circuit propre à notification : une panne n'affecte pas les autres routes (UC-GW-07).
+              new GrpcCaller({
+                target: 'notification',
+                defaultDeadlineMs: config.GRPC_DEADLINE_MS,
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        {
           provide: FILE_API,
           inject: [FILE_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
           useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): FileApi =>
@@ -309,6 +353,23 @@ export class AppModule {
               // Coupe-circuit propre à wallet : une panne n'affecte pas les autres routes (UC-GW-07).
               new GrpcCaller({
                 target: 'wallet',
+                defaultDeadlineMs: config.GRPC_DEADLINE_MS,
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        {
+          provide: DOCUMENT_API,
+          inject: [DOCUMENT_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
+          useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): DocumentApi =>
+            new DocumentGrpcAdapter(
+              grpc.getService<documentV1.DocumentServiceClient>(documentV1.DOCUMENT_SERVICE_NAME),
+              grpc.getService<documentV1.DocumentSigningServiceClient>(
+                documentV1.DOCUMENT_SIGNING_SERVICE_NAME,
+              ),
+              // Coupe-circuit propre à document : une panne n'affecte pas les autres routes (UC-GW-07).
+              new GrpcCaller({
+                target: 'document',
                 defaultDeadlineMs: config.GRPC_DEADLINE_MS,
                 ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
               }),

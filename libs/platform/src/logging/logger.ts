@@ -33,12 +33,34 @@ export const REDACTED_PATHS = [
   '*.displayAddress',
 ];
 
+/**
+ * Segments d'adresse qui sont des secrets (jeton d'un lien de signature, ADR-044) : remplacés par
+ * « [masqué] » dans l'adresse et les paramètres de route journalisés par chaque requête HTTP.
+ */
+const SECRET_PATHS: readonly RegExp[] = [/^(\/api\/v1\/document\/sign\/)[^/?#]+/];
+
+export function maskSecretPaths(url: string | undefined): string | undefined {
+  return url === undefined
+    ? url
+    : SECRET_PATHS.reduce((acc, pattern) => acc.replace(pattern, '$1[masqué]'), url);
+}
+
+/** Requête journalisée (forme de pino-std-serializers) : adresse et jeton de route masqués. */
+export function serializeRequest<T extends { url?: string; params?: Record<string, unknown> }>(
+  request: T,
+): T {
+  request.url = maskSecretPaths(request.url);
+  if (request.params && 'token' in request.params) request.params = { ...request.params, token: '[masqué]' };
+  return request;
+}
+
 export function createLoggerModule(serviceName: string, level: string) {
   return LoggerModule.forRoot({
     pinoHttp: {
       level,
       base: { service: serviceName },
       redact: { paths: REDACTED_PATHS, censor: '[masqué]' },
+      serializers: { req: serializeRequest },
       // Chaque ligne porte l'identifiant de corrélation : on retrouve un parcours dans tous les services.
       mixin: () => {
         const context = currentContext();

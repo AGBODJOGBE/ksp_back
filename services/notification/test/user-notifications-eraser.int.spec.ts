@@ -104,7 +104,9 @@ describeWithDatabase('PrismaUserNotificationsEraser (PostgreSQL)', () => {
     );
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE processed_events, in_app_notifications, notifications, outbox');
+    await pool.query(
+      'TRUNCATE processed_events, in_app_notifications, notifications, outbox, notification_preferences',
+    );
   });
 
   it('efface les notifications de l’espace, détache les envois et l’outbox, garde les statistiques', async () => {
@@ -116,6 +118,12 @@ describeWithDatabase('PrismaUserNotificationsEraser (PostgreSQL)', () => {
     await delivery(3, OTHER_USER_ID, 'accepted');
     await failedEvent(2, USER_ID);
     await failedEvent(4, OTHER_USER_ID);
+    for (const userId of [USER_ID, OTHER_USER_ID]) {
+      await pool.query(
+        'INSERT INTO notification_preferences (user_id, whatsapp, email, updated_at) VALUES ($1, false, true, now())',
+        [userId],
+      );
+    }
 
     await expect(eraser.eraseUser(USER_ID, { eventId: EVENT_ID, consumer: CONSUMER })).resolves.toEqual({
       status: 'processed',
@@ -125,6 +133,8 @@ describeWithDatabase('PrismaUserNotificationsEraser (PostgreSQL)', () => {
 
     const { rows: remaining } = await pool.query('SELECT user_id FROM in_app_notifications');
     expect(remaining).toEqual([{ user_id: OTHER_USER_ID }]);
+    const { rows: preferences } = await pool.query('SELECT user_id FROM notification_preferences');
+    expect(preferences).toEqual([{ user_id: OTHER_USER_ID }]);
 
     const { rows: deliveries } = await pool.query(
       'SELECT id, idempotency_key, template_code, channel_used, channels_tried, target_masked, ' +

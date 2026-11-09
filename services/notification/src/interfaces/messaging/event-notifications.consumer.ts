@@ -43,7 +43,8 @@ export class EventNotificationsConsumer implements OnApplicationBootstrap, Befor
     const message =
       `${envelope.type} (${envelope.eventId}) : ${result.accepted} message(s) pris en charge, ` +
       `${result.failed} en échec, ${result.replayed} déjà envoyé(s), ${result.inApp} dans l'espace, ` +
-      `${result.recipientsNotFound} destinataire(s) introuvable(s), ${result.unreachable} sans coordonnées.`;
+      `${result.recipientsNotFound} destinataire(s) introuvable(s), ${result.unreachable} sans coordonnées, ` +
+      `${result.optedOut} sans canal choisi (préférences).`;
     if (result.failed > 0 || result.recipientsNotFound > 0) this.logger.warn(message);
     else this.logger.log(message);
   }

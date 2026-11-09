@@ -72,6 +72,12 @@ describe('GetUsersUseCase', () => {
     expect(found).toMatchObject({ phoneE164: null, email: null, emailVerifiedAt: null });
   });
 
+  it('rend les coordonnées à document, pour envoyer un code de signature (ADR-044)', async () => {
+    const { users } = useCase();
+    const [found] = await users.many('document', [ID_1]);
+    expect(found).toMatchObject({ id: ID_1, phoneE164: '+2290197000045', email: 'koffi@example.com' });
+  });
+
   it('accepte un appel sans jeton de service vérifié (développement)', async () => {
     const { users } = useCase();
     await expect(users.one(null, ID_1)).resolves.toMatchObject({ id: ID_1 });
