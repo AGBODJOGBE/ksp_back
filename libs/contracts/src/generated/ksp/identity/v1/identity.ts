@@ -745,6 +745,186 @@ export interface FindAccountByPhoneResponse {
   account?: AccountMatch | undefined;
 }
 
+/** Compte vu par l'administration des comptes. */
+export interface AdminAccount {
+  userId: string;
+  status: UserStatus;
+  /** Vides tant que le profil n'est pas complété. */
+  firstName: string;
+  lastName: string;
+  /** Numéro complet pour super_admin ; vide pour un administrateur de métier. */
+  phoneE164: string;
+  /** Indicatif et deux derniers chiffres ; vide si le compte n'a pas de numéro. */
+  phoneMasked: string;
+  createdAt: string;
+  /** Suspension en cours ; vides sinon. */
+  suspendedAt: string;
+  suspensionReason: string;
+  /** Codes des rôles actifs, dans l'ordre d'attribution. */
+  roleCodes: string[];
+}
+
+/** Double authentification d'un compte (ADR-023). */
+export interface AccountMfaStatus {
+  /** Application d'authentification configurée et confirmée. */
+  configured: boolean;
+  /** Vide si elle n'est pas configurée. */
+  configuredAt: string;
+  recoveryCodesRemaining: number;
+}
+
+/** Une attribution de rôle, active ou retirée. */
+export interface AccountRoleAssignment {
+  id: string;
+  roleCode: string;
+  roleDescription: string;
+  /** Service qui déclare le rôle. */
+  service: string;
+  scopeType: ScopeType;
+  /** Métier pour une portée domain ; vide pour une portée globale. */
+  scopeId: string;
+  grantedAt: string;
+  /** Vides pour une attribution d'amorçage (script roles:grant). */
+  grantedBy: string;
+  grantedByName: string;
+  grantReason: string;
+  /** Vides tant que le rôle est actif. */
+  revokedAt: string;
+  revokedBy: string;
+  revokedByName: string;
+  revokeReason: string;
+  /** L'appelant peut retirer ce rôle (rôle actif de son périmètre). */
+  revocable: boolean;
+}
+
+/** Une action tracée dans le journal d'audit d'identity pour ce compte. */
+export interface AccountAuditEntry {
+  id: string;
+  /** user.role_granted, user.role_revoked, user.suspended, user.reactivated, user.mfa_reset. */
+  action: string;
+  at: string;
+  actorId: string;
+  /** Vide si l'auteur n'a pas de nom (profil incomplet ou compte supprimé). */
+  actorName: string;
+  /** Rôle concerné ; vide pour une action sur le compte. */
+  roleCode: string;
+  reason: string;
+}
+
+/** Actions que l'appelant peut faire sur ce compte, dans son état actuel. */
+export interface AccountAdminActions {
+  grantRole: boolean;
+  suspend: boolean;
+  reactivate: boolean;
+  resetMfa: boolean;
+}
+
+/** Fiche d'un compte : renvoyée par la lecture et par chaque écriture. */
+export interface AccountDetail {
+  account?: AdminAccount | undefined;
+  mfa?:
+    | AccountMfaStatus
+    | undefined;
+  /** Rôles actifs d'abord, puis retirés, les plus récents d'abord. */
+  roles: AccountRoleAssignment[];
+  /** Les plus récentes d'abord (50 au plus). */
+  history: AccountAuditEntry[];
+  actions?: AccountAdminActions | undefined;
+}
+
+/** Un rôle du catalogue. */
+export interface AssignableRole {
+  code: string;
+  service: string;
+  scopeType: ScopeType;
+  description: string;
+  backofficeAccess: boolean;
+  /** L'appelant peut l'attribuer. */
+  grantable: boolean;
+}
+
+export interface SearchAccountsRequest {
+  /** Vide, numéro E.164 complet ou nom (100 caractères au plus). */
+  query: string;
+  /** 20 par défaut, 50 au plus. */
+  limit: number;
+  /** next_cursor de la page précédente ; vide pour la première page. */
+  cursor: string;
+}
+
+export interface SearchAccountsResponse {
+  accounts: AdminAccount[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+}
+
+export interface GetAccountRequest {
+  userId: string;
+}
+
+export interface GetAccountResponse {
+  detail?: AccountDetail | undefined;
+}
+
+export interface ListAssignableRolesRequest {
+}
+
+export interface ListAssignableRolesResponse {
+  roles: AssignableRole[];
+}
+
+export interface GrantAccountRoleRequest {
+  userId: string;
+  roleCode: string;
+  /** Motif tracé (500 caractères au plus). */
+  reason: string;
+}
+
+export interface GrantAccountRoleResponse {
+  detail?: AccountDetail | undefined;
+}
+
+export interface RevokeAccountRoleRequest {
+  userId: string;
+  assignmentId: string;
+  /** Motif tracé et publié dans identity.role.revoked (500 caractères au plus). */
+  reason: string;
+}
+
+export interface RevokeAccountRoleResponse {
+  detail?: AccountDetail | undefined;
+}
+
+export interface SuspendAccountRequest {
+  userId: string;
+  /** Motif tracé et publié dans identity.user.suspended (500 caractères au plus). */
+  reason: string;
+}
+
+export interface SuspendAccountResponse {
+  detail?: AccountDetail | undefined;
+}
+
+export interface ReactivateAccountRequest {
+  userId: string;
+  /** Motif tracé (500 caractères au plus). */
+  reason: string;
+}
+
+export interface ReactivateAccountResponse {
+  detail?: AccountDetail | undefined;
+}
+
+export interface ResetAccountMfaRequest {
+  userId: string;
+  /** Motif tracé (500 caractères au plus). */
+  reason: string;
+}
+
+export interface ResetAccountMfaResponse {
+  detail?: AccountDetail | undefined;
+}
+
 /** Appelé par tous les services autorisés par la carte des services. */
 
 export interface IdentityServiceClient {
@@ -1740,11 +1920,93 @@ export const ORGANIZATION_ADMIN_SERVICE_NAME = "OrganizationAdminService";
  *   IDENTITY_PHONE_INVALID  INVALID_ARGUMENT    numéro hors du format E.164
  *   IDENTITY_USER_NOT_FOUND NOT_FOUND           aucun compte pour ce numéro (un compte supprimé
  *                                               est traité comme introuvable)
+ *
+ * Administration des comptes et des rôles (ADR-043, UC-ID-18 à 20) : rechercher un compte, lire sa
+ * fiche (identité, état, double authentification, rôles et historique), attribuer ou retirer un rôle
+ * du catalogue, suspendre ou réactiver le compte, réinitialiser sa double authentification. Chaque
+ * écriture exige un motif, est tracée dans le journal d'audit d'identity et renvoie la fiche à jour.
+ * Rôles :
+ *   - super_admin : tout, sur tous les comptes ;
+ *   - administrateur d'un métier (cleaning_admin, recovery_admin) : rôles de son métier seulement,
+ *     sauf le sien ; recherche limitée à son équipe ou à un numéro complet ; numéro affiché masqué.
+ * Double authentification exigée. Les rôles de portée org ou personal ne s'attribuent pas ici.
+ *
+ * Erreurs supplémentaires (code AppError → statut gRPC) :
+ *   IDENTITY_ACCOUNT_ADMIN_INVALID       INVALID_ARGUMENT    details.field : query ou reason
+ *                                                            (motif absent ou de plus de 500 caractères)
+ *   IDENTITY_USER_NOT_FOUND              NOT_FOUND           compte inconnu ou supprimé
+ *   IDENTITY_ROLE_NOT_FOUND              NOT_FOUND           rôle absent du catalogue
+ *   IDENTITY_ROLE_ASSIGNMENT_NOT_FOUND   NOT_FOUND           attribution inconnue pour ce compte
+ *   IDENTITY_ROLE_FORBIDDEN              PERMISSION_DENIED   rôle hors du périmètre de l'appelant
+ *   IDENTITY_ROLE_SCOPE_INVALID          INVALID_ARGUMENT    rôle de portée org ou personal
+ *   IDENTITY_ROLE_ALREADY_REVOKED        FAILED_PRECONDITION attribution déjà retirée
+ *   IDENTITY_ACCOUNT_NOT_ACTIVE          FAILED_PRECONDITION compte non actif (details.status) :
+ *                                                            aucun rôle ne s'attribue
+ *   IDENTITY_ACCOUNT_INVALID_TRANSITION  FAILED_PRECONDITION details.from, details.action
+ *   IDENTITY_LAST_SUPER_ADMIN            FAILED_PRECONDITION l'action laisserait le système sans
+ *                                                            super administrateur actif
+ *   IDENTITY_SELF_ACTION_FORBIDDEN       FAILED_PRECONDITION suspension ou réinitialisation de son
+ *                                                            propre compte
+ *   IDENTITY_MFA_NOT_ENROLLED            FAILED_PRECONDITION aucune double authentification à
+ *                                                            réinitialiser
  * ---------------------------------------------------------------------------
  */
 
 export interface AccountAdminServiceClient {
   findAccountByPhone(request: FindAccountByPhoneRequest, metadata?: Metadata): Observable<FindAccountByPhoneResponse>;
+
+  /**
+   * Requête vide : comptes qui ont un rôle actif (équipe du métier pour un admin métier). Numéro
+   * E.164 complet : ce compte. Sinon : nom (2 caractères au moins, chaque mot dans le prénom ou le
+   * nom). Les plus récents d'abord ; un compte supprimé n'apparaît jamais.
+   */
+
+  searchAccounts(request: SearchAccountsRequest, metadata?: Metadata): Observable<SearchAccountsResponse>;
+
+  getAccount(request: GetAccountRequest, metadata?: Metadata): Observable<GetAccountResponse>;
+
+  /** Catalogue des rôles, avec ceux que l'appelant peut attribuer. */
+
+  listAssignableRoles(
+    request: ListAssignableRolesRequest,
+    metadata?: Metadata,
+  ): Observable<ListAssignableRolesResponse>;
+
+  /**
+   * Compte actif seulement. Portée du rôle : globale, ou le métier qui le déclare. Une attribution
+   * active identique est rendue telle quelle (rien n'est écrit). Événement identity.role.granted ;
+   * le rôle entre dans les jetons au renouvellement suivant (15 minutes au plus). Un compte qui
+   * reçoit son premier rôle du back-office configure sa double authentification à sa prochaine
+   * connexion au back-office (ADR-023).
+   */
+
+  grantAccountRole(request: GrantAccountRoleRequest, metadata?: Metadata): Observable<GrantAccountRoleResponse>;
+
+  /**
+   * Événement identity.role.revoked ; une session du back-office sans rôle restant est fermée à
+   * son renouvellement suivant (ADR-023).
+   */
+
+  revokeAccountRole(request: RevokeAccountRoleRequest, metadata?: Metadata): Observable<RevokeAccountRoleResponse>;
+
+  /**
+   * super_admin. Actif → suspendu (identity.user.suspended) : toutes les sessions sont fermées,
+   * la connexion et le renouvellement sont refusés (IDENTITY_ACCOUNT_SUSPENDED).
+   */
+
+  suspendAccount(request: SuspendAccountRequest, metadata?: Metadata): Observable<SuspendAccountResponse>;
+
+  /** super_admin. Suspendu → actif (identity.user.reactivated). */
+
+  reactivateAccount(request: ReactivateAccountRequest, metadata?: Metadata): Observable<ReactivateAccountResponse>;
+
+  /**
+   * super_admin. Téléphone perdu : l'application d'authentification et les codes de récupération
+   * sont effacés, les sessions du back-office fermées ; la prochaine connexion au back-office
+   * impose une nouvelle configuration (enrollmentRequired).
+   */
+
+  resetAccountMfa(request: ResetAccountMfaRequest, metadata?: Metadata): Observable<ResetAccountMfaResponse>;
 }
 
 /**
@@ -1761,6 +2023,35 @@ export interface AccountAdminServiceClient {
  *   IDENTITY_PHONE_INVALID  INVALID_ARGUMENT    numéro hors du format E.164
  *   IDENTITY_USER_NOT_FOUND NOT_FOUND           aucun compte pour ce numéro (un compte supprimé
  *                                               est traité comme introuvable)
+ *
+ * Administration des comptes et des rôles (ADR-043, UC-ID-18 à 20) : rechercher un compte, lire sa
+ * fiche (identité, état, double authentification, rôles et historique), attribuer ou retirer un rôle
+ * du catalogue, suspendre ou réactiver le compte, réinitialiser sa double authentification. Chaque
+ * écriture exige un motif, est tracée dans le journal d'audit d'identity et renvoie la fiche à jour.
+ * Rôles :
+ *   - super_admin : tout, sur tous les comptes ;
+ *   - administrateur d'un métier (cleaning_admin, recovery_admin) : rôles de son métier seulement,
+ *     sauf le sien ; recherche limitée à son équipe ou à un numéro complet ; numéro affiché masqué.
+ * Double authentification exigée. Les rôles de portée org ou personal ne s'attribuent pas ici.
+ *
+ * Erreurs supplémentaires (code AppError → statut gRPC) :
+ *   IDENTITY_ACCOUNT_ADMIN_INVALID       INVALID_ARGUMENT    details.field : query ou reason
+ *                                                            (motif absent ou de plus de 500 caractères)
+ *   IDENTITY_USER_NOT_FOUND              NOT_FOUND           compte inconnu ou supprimé
+ *   IDENTITY_ROLE_NOT_FOUND              NOT_FOUND           rôle absent du catalogue
+ *   IDENTITY_ROLE_ASSIGNMENT_NOT_FOUND   NOT_FOUND           attribution inconnue pour ce compte
+ *   IDENTITY_ROLE_FORBIDDEN              PERMISSION_DENIED   rôle hors du périmètre de l'appelant
+ *   IDENTITY_ROLE_SCOPE_INVALID          INVALID_ARGUMENT    rôle de portée org ou personal
+ *   IDENTITY_ROLE_ALREADY_REVOKED        FAILED_PRECONDITION attribution déjà retirée
+ *   IDENTITY_ACCOUNT_NOT_ACTIVE          FAILED_PRECONDITION compte non actif (details.status) :
+ *                                                            aucun rôle ne s'attribue
+ *   IDENTITY_ACCOUNT_INVALID_TRANSITION  FAILED_PRECONDITION details.from, details.action
+ *   IDENTITY_LAST_SUPER_ADMIN            FAILED_PRECONDITION l'action laisserait le système sans
+ *                                                            super administrateur actif
+ *   IDENTITY_SELF_ACTION_FORBIDDEN       FAILED_PRECONDITION suspension ou réinitialisation de son
+ *                                                            propre compte
+ *   IDENTITY_MFA_NOT_ENROLLED            FAILED_PRECONDITION aucune double authentification à
+ *                                                            réinitialiser
  * ---------------------------------------------------------------------------
  */
 
@@ -1769,11 +2060,95 @@ export interface AccountAdminServiceController {
     request: FindAccountByPhoneRequest,
     metadata?: Metadata,
   ): Promise<FindAccountByPhoneResponse> | Observable<FindAccountByPhoneResponse> | FindAccountByPhoneResponse;
+
+  /**
+   * Requête vide : comptes qui ont un rôle actif (équipe du métier pour un admin métier). Numéro
+   * E.164 complet : ce compte. Sinon : nom (2 caractères au moins, chaque mot dans le prénom ou le
+   * nom). Les plus récents d'abord ; un compte supprimé n'apparaît jamais.
+   */
+
+  searchAccounts(
+    request: SearchAccountsRequest,
+    metadata?: Metadata,
+  ): Promise<SearchAccountsResponse> | Observable<SearchAccountsResponse> | SearchAccountsResponse;
+
+  getAccount(
+    request: GetAccountRequest,
+    metadata?: Metadata,
+  ): Promise<GetAccountResponse> | Observable<GetAccountResponse> | GetAccountResponse;
+
+  /** Catalogue des rôles, avec ceux que l'appelant peut attribuer. */
+
+  listAssignableRoles(
+    request: ListAssignableRolesRequest,
+    metadata?: Metadata,
+  ): Promise<ListAssignableRolesResponse> | Observable<ListAssignableRolesResponse> | ListAssignableRolesResponse;
+
+  /**
+   * Compte actif seulement. Portée du rôle : globale, ou le métier qui le déclare. Une attribution
+   * active identique est rendue telle quelle (rien n'est écrit). Événement identity.role.granted ;
+   * le rôle entre dans les jetons au renouvellement suivant (15 minutes au plus). Un compte qui
+   * reçoit son premier rôle du back-office configure sa double authentification à sa prochaine
+   * connexion au back-office (ADR-023).
+   */
+
+  grantAccountRole(
+    request: GrantAccountRoleRequest,
+    metadata?: Metadata,
+  ): Promise<GrantAccountRoleResponse> | Observable<GrantAccountRoleResponse> | GrantAccountRoleResponse;
+
+  /**
+   * Événement identity.role.revoked ; une session du back-office sans rôle restant est fermée à
+   * son renouvellement suivant (ADR-023).
+   */
+
+  revokeAccountRole(
+    request: RevokeAccountRoleRequest,
+    metadata?: Metadata,
+  ): Promise<RevokeAccountRoleResponse> | Observable<RevokeAccountRoleResponse> | RevokeAccountRoleResponse;
+
+  /**
+   * super_admin. Actif → suspendu (identity.user.suspended) : toutes les sessions sont fermées,
+   * la connexion et le renouvellement sont refusés (IDENTITY_ACCOUNT_SUSPENDED).
+   */
+
+  suspendAccount(
+    request: SuspendAccountRequest,
+    metadata?: Metadata,
+  ): Promise<SuspendAccountResponse> | Observable<SuspendAccountResponse> | SuspendAccountResponse;
+
+  /** super_admin. Suspendu → actif (identity.user.reactivated). */
+
+  reactivateAccount(
+    request: ReactivateAccountRequest,
+    metadata?: Metadata,
+  ): Promise<ReactivateAccountResponse> | Observable<ReactivateAccountResponse> | ReactivateAccountResponse;
+
+  /**
+   * super_admin. Téléphone perdu : l'application d'authentification et les codes de récupération
+   * sont effacés, les sessions du back-office fermées ; la prochaine connexion au back-office
+   * impose une nouvelle configuration (enrollmentRequired).
+   */
+
+  resetAccountMfa(
+    request: ResetAccountMfaRequest,
+    metadata?: Metadata,
+  ): Promise<ResetAccountMfaResponse> | Observable<ResetAccountMfaResponse> | ResetAccountMfaResponse;
 }
 
 export function AccountAdminServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["findAccountByPhone"];
+    const grpcMethods: string[] = [
+      "findAccountByPhone",
+      "searchAccounts",
+      "getAccount",
+      "listAssignableRoles",
+      "grantAccountRole",
+      "revokeAccountRole",
+      "suspendAccount",
+      "reactivateAccount",
+      "resetAccountMfa",
+    ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("AccountAdminService", method)(constructor.prototype[method], method, descriptor);

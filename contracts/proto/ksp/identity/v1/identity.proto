@@ -933,9 +933,63 @@ message ReactivateOrganizationResponse {
 //   IDENTITY_PHONE_INVALID  INVALID_ARGUMENT    numéro hors du format E.164
 //   IDENTITY_USER_NOT_FOUND NOT_FOUND           aucun compte pour ce numéro (un compte supprimé
 //                                               est traité comme introuvable)
+//
+// Administration des comptes et des rôles (ADR-043, UC-ID-18 à 20) : rechercher un compte, lire sa
+// fiche (identité, état, double authentification, rôles et historique), attribuer ou retirer un rôle
+// du catalogue, suspendre ou réactiver le compte, réinitialiser sa double authentification. Chaque
+// écriture exige un motif, est tracée dans le journal d'audit d'identity et renvoie la fiche à jour.
+// Rôles :
+//   - super_admin : tout, sur tous les comptes ;
+//   - administrateur d'un métier (cleaning_admin, recovery_admin) : rôles de son métier seulement,
+//     sauf le sien ; recherche limitée à son équipe ou à un numéro complet ; numéro affiché masqué.
+// Double authentification exigée. Les rôles de portée org ou personal ne s'attribuent pas ici.
+//
+// Erreurs supplémentaires (code AppError → statut gRPC) :
+//   IDENTITY_ACCOUNT_ADMIN_INVALID       INVALID_ARGUMENT    details.field : query ou reason
+//                                                            (motif absent ou de plus de 500 caractères)
+//   IDENTITY_USER_NOT_FOUND              NOT_FOUND           compte inconnu ou supprimé
+//   IDENTITY_ROLE_NOT_FOUND              NOT_FOUND           rôle absent du catalogue
+//   IDENTITY_ROLE_ASSIGNMENT_NOT_FOUND   NOT_FOUND           attribution inconnue pour ce compte
+//   IDENTITY_ROLE_FORBIDDEN              PERMISSION_DENIED   rôle hors du périmètre de l'appelant
+//   IDENTITY_ROLE_SCOPE_INVALID          INVALID_ARGUMENT    rôle de portée org ou personal
+//   IDENTITY_ROLE_ALREADY_REVOKED        FAILED_PRECONDITION attribution déjà retirée
+//   IDENTITY_ACCOUNT_NOT_ACTIVE          FAILED_PRECONDITION compte non actif (details.status) :
+//                                                            aucun rôle ne s'attribue
+//   IDENTITY_ACCOUNT_INVALID_TRANSITION  FAILED_PRECONDITION details.from, details.action
+//   IDENTITY_LAST_SUPER_ADMIN            FAILED_PRECONDITION l'action laisserait le système sans
+//                                                            super administrateur actif
+//   IDENTITY_SELF_ACTION_FORBIDDEN       FAILED_PRECONDITION suspension ou réinitialisation de son
+//                                                            propre compte
+//   IDENTITY_MFA_NOT_ENROLLED            FAILED_PRECONDITION aucune double authentification à
+//                                                            réinitialiser
 // ---------------------------------------------------------------------------
 service AccountAdminService {
   rpc FindAccountByPhone(FindAccountByPhoneRequest) returns (FindAccountByPhoneResponse);
+  // Requête vide : comptes qui ont un rôle actif (équipe du métier pour un admin métier). Numéro
+  // E.164 complet : ce compte. Sinon : nom (2 caractères au moins, chaque mot dans le prénom ou le
+  // nom). Les plus récents d'abord ; un compte supprimé n'apparaît jamais.
+  rpc SearchAccounts(SearchAccountsRequest) returns (SearchAccountsResponse);
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+  // Catalogue des rôles, avec ceux que l'appelant peut attribuer.
+  rpc ListAssignableRoles(ListAssignableRolesRequest) returns (ListAssignableRolesResponse);
+  // Compte actif seulement. Portée du rôle : globale, ou le métier qui le déclare. Une attribution
+  // active identique est rendue telle quelle (rien n'est écrit). Événement identity.role.granted ;
+  // le rôle entre dans les jetons au renouvellement suivant (15 minutes au plus). Un compte qui
+  // reçoit son premier rôle du back-office configure sa double authentification à sa prochaine
+  // connexion au back-office (ADR-023).
+  rpc GrantAccountRole(GrantAccountRoleRequest) returns (GrantAccountRoleResponse);
+  // Événement identity.role.revoked ; une session du back-office sans rôle restant est fermée à
+  // son renouvellement suivant (ADR-023).
+  rpc RevokeAccountRole(RevokeAccountRoleRequest) returns (RevokeAccountRoleResponse);
+  // super_admin. Actif → suspendu (identity.user.suspended) : toutes les sessions sont fermées,
+  // la connexion et le renouvellement sont refusés (IDENTITY_ACCOUNT_SUSPENDED).
+  rpc SuspendAccount(SuspendAccountRequest) returns (SuspendAccountResponse);
+  // super_admin. Suspendu → actif (identity.user.reactivated).
+  rpc ReactivateAccount(ReactivateAccountRequest) returns (ReactivateAccountResponse);
+  // super_admin. Téléphone perdu : l'application d'authentification et les codes de récupération
+  // sont effacés, les sessions du back-office fermées ; la prochaine connexion au back-office
+  // impose une nouvelle configuration (enrollmentRequired).
+  rpc ResetAccountMfa(ResetAccountMfaRequest) returns (ResetAccountMfaResponse);
 }
 
 message FindAccountByPhoneRequest {
@@ -956,4 +1010,181 @@ message AccountMatch {
 
 message FindAccountByPhoneResponse {
   AccountMatch account = 1;
+}
+
+// Compte vu par l'administration des comptes.
+message AdminAccount {
+  string user_id = 1;
+  UserStatus status = 2;
+  // Vides tant que le profil n'est pas complété.
+  string first_name = 3;
+  string last_name = 4;
+  // Numéro complet pour super_admin ; vide pour un administrateur de métier.
+  string phone_e164 = 5;
+  // Indicatif et deux derniers chiffres ; vide si le compte n'a pas de numéro.
+  string phone_masked = 6;
+  string created_at = 7;
+  // Suspension en cours ; vides sinon.
+  string suspended_at = 8;
+  string suspension_reason = 9;
+  // Codes des rôles actifs, dans l'ordre d'attribution.
+  repeated string role_codes = 10;
+}
+
+// Double authentification d'un compte (ADR-023).
+message AccountMfaStatus {
+  // Application d'authentification configurée et confirmée.
+  bool configured = 1;
+  // Vide si elle n'est pas configurée.
+  string configured_at = 2;
+  int32 recovery_codes_remaining = 3;
+}
+
+// Une attribution de rôle, active ou retirée.
+message AccountRoleAssignment {
+  string id = 1;
+  string role_code = 2;
+  string role_description = 3;
+  // Service qui déclare le rôle.
+  string service = 4;
+  ScopeType scope_type = 5;
+  // Métier pour une portée domain ; vide pour une portée globale.
+  string scope_id = 6;
+  string granted_at = 7;
+  // Vides pour une attribution d'amorçage (script roles:grant).
+  string granted_by = 8;
+  string granted_by_name = 9;
+  string grant_reason = 10;
+  // Vides tant que le rôle est actif.
+  string revoked_at = 11;
+  string revoked_by = 12;
+  string revoked_by_name = 13;
+  string revoke_reason = 14;
+  // L'appelant peut retirer ce rôle (rôle actif de son périmètre).
+  bool revocable = 15;
+}
+
+// Une action tracée dans le journal d'audit d'identity pour ce compte.
+message AccountAuditEntry {
+  string id = 1;
+  // user.role_granted, user.role_revoked, user.suspended, user.reactivated, user.mfa_reset.
+  string action = 2;
+  string at = 3;
+  string actor_id = 4;
+  // Vide si l'auteur n'a pas de nom (profil incomplet ou compte supprimé).
+  string actor_name = 5;
+  // Rôle concerné ; vide pour une action sur le compte.
+  string role_code = 6;
+  string reason = 7;
+}
+
+// Actions que l'appelant peut faire sur ce compte, dans son état actuel.
+message AccountAdminActions {
+  bool grant_role = 1;
+  bool suspend = 2;
+  bool reactivate = 3;
+  bool reset_mfa = 4;
+}
+
+// Fiche d'un compte : renvoyée par la lecture et par chaque écriture.
+message AccountDetail {
+  AdminAccount account = 1;
+  AccountMfaStatus mfa = 2;
+  // Rôles actifs d'abord, puis retirés, les plus récents d'abord.
+  repeated AccountRoleAssignment roles = 3;
+  // Les plus récentes d'abord (50 au plus).
+  repeated AccountAuditEntry history = 4;
+  AccountAdminActions actions = 5;
+}
+
+// Un rôle du catalogue.
+message AssignableRole {
+  string code = 1;
+  string service = 2;
+  ScopeType scope_type = 3;
+  string description = 4;
+  bool backoffice_access = 5;
+  // L'appelant peut l'attribuer.
+  bool grantable = 6;
+}
+
+message SearchAccountsRequest {
+  // Vide, numéro E.164 complet ou nom (100 caractères au plus).
+  string query = 1;
+  // 20 par défaut, 50 au plus.
+  int32 limit = 2;
+  // next_cursor de la page précédente ; vide pour la première page.
+  string cursor = 3;
+}
+
+message SearchAccountsResponse {
+  repeated AdminAccount accounts = 1;
+  // Vide : dernière page.
+  string next_cursor = 2;
+}
+
+message GetAccountRequest {
+  string user_id = 1;
+}
+
+message GetAccountResponse {
+  AccountDetail detail = 1;
+}
+
+message ListAssignableRolesRequest {}
+
+message ListAssignableRolesResponse {
+  repeated AssignableRole roles = 1;
+}
+
+message GrantAccountRoleRequest {
+  string user_id = 1;
+  string role_code = 2;
+  // Motif tracé (500 caractères au plus).
+  string reason = 3;
+}
+
+message GrantAccountRoleResponse {
+  AccountDetail detail = 1;
+}
+
+message RevokeAccountRoleRequest {
+  string user_id = 1;
+  string assignment_id = 2;
+  // Motif tracé et publié dans identity.role.revoked (500 caractères au plus).
+  string reason = 3;
+}
+
+message RevokeAccountRoleResponse {
+  AccountDetail detail = 1;
+}
+
+message SuspendAccountRequest {
+  string user_id = 1;
+  // Motif tracé et publié dans identity.user.suspended (500 caractères au plus).
+  string reason = 2;
+}
+
+message SuspendAccountResponse {
+  AccountDetail detail = 1;
+}
+
+message ReactivateAccountRequest {
+  string user_id = 1;
+  // Motif tracé (500 caractères au plus).
+  string reason = 2;
+}
+
+message ReactivateAccountResponse {
+  AccountDetail detail = 1;
+}
+
+message ResetAccountMfaRequest {
+  string user_id = 1;
+  // Motif tracé (500 caractères au plus).
+  string reason = 2;
+}
+
+message ResetAccountMfaResponse {
+  AccountDetail detail = 1;
 }
