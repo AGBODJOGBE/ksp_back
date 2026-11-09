@@ -104,6 +104,17 @@ demande de suppression puis avant l'anonymisation : une mission non terminée
 encore valide (`open_cleaning_request`) — bloque la suppression. `identity.user.deleted` efface les
 positions des lieux du compte (ADR-035).
 
+## Paiement par le portefeuille prépayé (ADR-046)
+
+- `MissionService.PayMissionFromWallet` (`POST /api/v1/cleaning/missions/{id}/pay`) : acompte encore dû
+  ou reste dû débité en entier par wallet (clé `<mission>:<part>:<clé du client>`), puis paiement
+  enregistré (moyen `wallet`, référence = débit), avec les effets d'un paiement enregistré. Mission
+  payée ou annulée entre-temps : débit remboursé aussitôt (`WalletService.Refund`).
+- Annulation d'une mission dont aucun passage n'a commencé : paiements par portefeuille marqués
+  remboursés (`refunded_at`, hors du montant payé) et `cleaning.mission.refunded` publié dans la même
+  transaction ; wallet rembourse chaque débit.
+- Configuration : `WALLET_GRPC_URL` ; jeton de service `cleaning` → `wallet`.
+
 ## Règles (cahier des charges, parties 4 et 9)
 
 | Sujet      | Fonctionnement                                                                                                                                                                                                                                                                                                |

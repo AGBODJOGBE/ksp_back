@@ -48,6 +48,14 @@ partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/bill
   effacer à `identity.user.deleted` : la facture ne garde que l'identifiant du compte et l'en-tête de
   l'organisation (document comptable).
 
+## Paiement par le portefeuille prépayé (ADR-046)
+
+`BillingService.PayMyInvoiceFromWallet` (`POST /api/v1/billing/invoices/{id}/pay`) : portefeuille de
+l'organisation (membre `org_admin` ou `org_member`) ou du client ; reste dû débité en entier par wallet
+puis enregistré (moyen `wallet`, auteur = le membre) ; payée au total : `billing.invoice.paid`. Facture
+réglée entre-temps : débit remboursé aussitôt. Configuration : `WALLET_GRPC_URL` ; jeton de service
+`billing` → `wallet`.
+
 ## Démarrer en local
 
 ```bash
