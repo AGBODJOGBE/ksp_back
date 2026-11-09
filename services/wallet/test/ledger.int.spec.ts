@@ -268,7 +268,12 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
     });
 
     it('remboursement d’un débit une seule fois ; rejeu du débit remboursé refusé ; invariant', async () => {
-      const original = await store.findByReference('cleaning', 'debit:k-debit-0001');
+      // Un des débits simultanés acceptés (lequel dépend de l'ordre des verrous).
+      const { rows: debits } = await pool.query(
+        "SELECT reference FROM ledger_transactions WHERE kind = 'service_payment' AND caller = 'cleaning' ORDER BY id LIMIT 1",
+      );
+      const reference = debits[0].reference as string;
+      const original = await store.findByReference('cleaning', reference);
       const results = await Promise.all([
         useCases.refundFromEvent.execute({
           producer: 'cleaning',
@@ -283,7 +288,9 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
         "SELECT count(*)::int AS n FROM ledger_transactions WHERE kind = 'refund'",
       );
       expect(rows[0].n).toBe(1);
-      await expect(debit('k-debit-0001', 8000)).rejects.toMatchObject({ code: 'WALLET_DEBIT_REFUNDED' });
+      await expect(debit(reference.slice('debit:'.length), 8000)).rejects.toMatchObject({
+        code: 'WALLET_DEBIT_REFUNDED',
+      });
       const overview = await store.overview();
       const balance = (code: string) => overview.internal.find((a) => a.account === code)!.balance;
       expect(balance('ksp:prepaid_funds')).toBe(overview.owedToCustomers + balance('ksp:service_revenue'));
