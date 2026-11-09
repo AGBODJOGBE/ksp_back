@@ -12,7 +12,8 @@ export type RateLimitCategory =
   | 'email_code_verify'
   | 'account_lookup'
   | 'payment_create'
-  | 'payment_webhook';
+  | 'payment_webhook'
+  | 'file_upload';
 
 export interface RateLimitRule {
   limit: number;
@@ -45,6 +46,8 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   payment_create: { limit: 10, windowSeconds: 60, key: 'user' },
   // Notifications du prestataire de paiement (route publique, signature vérifiée par payment).
   payment_webhook: { limit: 120, windowSeconds: 60, key: 'ip' },
+  // Déclaration d'un envoi de fichier (ADR-038) : file limite aussi les envois en attente et le volume.
+  file_upload: { limit: 30, windowSeconds: 60, key: 'user' },
 };
 
 /** Clé du compteur : une catégorie ne partage jamais ses compteurs avec une autre. */

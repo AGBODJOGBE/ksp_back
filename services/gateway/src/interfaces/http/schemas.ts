@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { billingBodies } from './billing-schemas';
 import { cleaningBodies } from './cleaning-schemas';
 import { notificationBodies } from './notification-schemas';
+import { fileBodies } from './file-schemas';
 import { accountBodies, organizationBodies } from './organization-schemas';
 import { paymentBodies } from './payment-schemas';
 
@@ -50,6 +51,7 @@ export const requestBodies = {
   ...billingBodies,
   ...paymentBodies,
   ...notificationBodies,
+  ...fileBodies,
 };
 
 /** Champ refusé et raison, sans reprendre la valeur envoyée (elle peut être un code ou un jeton). */

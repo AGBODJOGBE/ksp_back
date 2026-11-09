@@ -15,3 +15,5 @@ export const PAYMENT_API = Symbol('PAYMENT_API');
 export const PAYMENT_SIMULATION_ROUTE = Symbol('PAYMENT_SIMULATION_ROUTE');
 export const NOTIFICATION_GRPC_CLIENT = Symbol('NOTIFICATION_GRPC_CLIENT');
 export const NOTIFICATION_API = Symbol('NOTIFICATION_API');
+export const FILE_GRPC_CLIENT = Symbol('FILE_GRPC_CLIENT');
+export const FILE_API = Symbol('FILE_API');

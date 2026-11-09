@@ -16,17 +16,38 @@ import {
   type TotpFactor,
   TotpStepAlreadyUsedError,
 } from '../mfa/mfa.ports';
-import { type RoleGrant, type RoleRepository } from '../role/role.ports';
+import {
+  LastSuperAdminError,
+  RoleAssignmentNotFoundError,
+  RoleAssignmentRevokedError,
+  type RoleGrant,
+  type RoleRepository,
+  type RoleRevocation,
+} from '../role/role.ports';
 import { type Account, ChallengeAlreadyConsumedError } from '../session/session.ports';
 import { type InMemoryChallenges, type InMemoryIdentityStore } from './fakes';
 
-interface FakeAssignment {
+export interface FakeAssignment {
   id: string;
   userId: string;
   role: RoleDefinition;
   scopeId: string | null;
   grantedBy: string | null;
+  grantedAt: Date;
+  grantReason: string | null;
   revokedAt: Date | null;
+  revokedBy: string | null;
+  revokeReason: string | null;
+}
+
+/** Trace d'audit écrite par une doublure (même forme que audit_log). */
+export interface FakeAuditEntry {
+  id: string;
+  actorId: string;
+  action: string;
+  entityId: string;
+  at: Date;
+  details: Record<string, unknown>;
 }
 
 export class InMemoryRoles implements RoleRepository {
@@ -34,12 +55,29 @@ export class InMemoryRoles implements RoleRepository {
   readonly assignments: FakeAssignment[] = [];
   /** Événements identity.role.granted écrits. */
   readonly granted: RoleGrant[] = [];
+  /** Événements identity.role.revoked écrits. */
+  readonly revoked: (RoleRevocation & { roleCode: string })[] = [];
+  /** Traces d'audit écrites (attributions et retraits du back-office). */
+  readonly audit: FakeAuditEntry[] = [];
+  /** État des comptes, pour la règle du dernier super administrateur actif. */
+  statusOf: (userId: string) => string = () => 'active';
 
   /** Attribution directe, pour préparer un test. */
-  assign(userId: string, code: string): void {
+  assign(userId: string, code: string, id = `a-${code}`): void {
     const role = this.definitions.find((definition) => definition.code === code)!;
     const scopeId = role.scopeType === 'domain' ? role.service : null;
-    this.assignments.push({ id: `a-${code}`, userId, role, scopeId, grantedBy: null, revokedAt: null });
+    this.assignments.push({
+      id,
+      userId,
+      role,
+      scopeId,
+      grantedBy: null,
+      grantedAt: new Date('2026-10-01T08:00:00Z'),
+      grantReason: null,
+      revokedAt: null,
+      revokedBy: null,
+      revokeReason: null,
+    });
   }
 
   async activeRoles(userId: string): Promise<AssignedRole[]> {
@@ -75,11 +113,63 @@ export class InMemoryRoles implements RoleRepository {
       role,
       scopeId: input.scopeId,
       grantedBy: input.grantedBy,
+      grantedAt: input.now,
+      grantReason: input.audit?.reason ?? null,
       revokedAt: null,
+      revokedBy: null,
+      revokeReason: null,
     });
     const grant = { ...base, assignmentId: input.assignmentId, scopeId: input.scopeId, created: true };
     this.granted.push(grant);
+    if (input.audit && input.grantedBy) {
+      this.audit.push({
+        id: input.audit.id,
+        actorId: input.grantedBy,
+        action: 'user.role_granted',
+        entityId: input.userId,
+        at: input.now,
+        details: { roleCode: input.roleCode, reason: input.audit.reason },
+      });
+    }
     return grant;
+  }
+
+  async revoke(revocation: RoleRevocation): Promise<{ roleCode: string }> {
+    const assignment = this.assignments.find(
+      (candidate) => candidate.id === revocation.assignmentId && candidate.userId === revocation.userId,
+    );
+    if (!assignment) throw new RoleAssignmentNotFoundError();
+    if (assignment.revokedAt) throw new RoleAssignmentRevokedError();
+    const roleCode = assignment.role.code;
+    if (roleCode === 'super_admin' && !this.anotherActiveSuperAdmin(revocation.userId)) {
+      throw new LastSuperAdminError();
+    }
+    Object.assign(assignment, {
+      revokedAt: revocation.now,
+      revokedBy: revocation.actorId,
+      revokeReason: revocation.reason,
+    });
+    this.revoked.push({ ...revocation, roleCode });
+    this.audit.push({
+      id: revocation.auditId,
+      actorId: revocation.actorId,
+      action: 'user.role_revoked',
+      entityId: revocation.userId,
+      at: revocation.now,
+      details: { roleCode, reason: revocation.reason },
+    });
+    return { roleCode };
+  }
+
+  /** Un autre compte actif garde-t-il le rôle super_admin ? */
+  anotherActiveSuperAdmin(userId: string): boolean {
+    return this.assignments.some(
+      (candidate) =>
+        candidate.role.code === 'super_admin' &&
+        !candidate.revokedAt &&
+        candidate.userId !== userId &&
+        this.statusOf(candidate.userId) === 'active',
+    );
   }
 }
 
