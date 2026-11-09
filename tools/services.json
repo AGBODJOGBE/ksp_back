@@ -33,5 +33,10 @@
     "grpcPort": 50056,
     "httpPort": 3106,
     "database": true
+  },
+  "document": {
+    "grpcPort": 50057,
+    "httpPort": 3107,
+    "database": true
   }
 }

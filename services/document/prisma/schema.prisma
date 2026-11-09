@@ -1,0 +1,163 @@
+// Base de données du service document. Aucun autre service n'y accède (règle d'or n° 1).
+
+generator client {
+  provider = "prisma-client-js"
+  // Client propre à ce service : plusieurs services cohabitent dans le dépôt.
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Événements à publier (pattern outbox, règle d'or n° 4). Écrits dans la même transaction que la donnée métier.
+model OutboxEvent {
+  id            String    @id @db.Uuid
+  eventType     String    @map("event_type")
+  payload       Json
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  publishedAt   DateTime? @map("published_at") @db.Timestamptz(3)
+  attempts      Int       @default(0)
+  /// Prochaine tentative après un échec (délai croissant, ADR-032).
+  nextAttemptAt DateTime? @map("next_attempt_at") @db.Timestamptz(3)
+  /// Mis de côté après 24 h d'échecs : rejouable par pnpm outbox:replay (ADR-032).
+  parkedAt      DateTime? @map("parked_at") @db.Timestamptz(3)
+  lastError     String?   @map("last_error")
+  /// Premier échec de publication : mise de côté après 24 h d'échecs (ADR-032).
+  firstFailedAt DateTime? @map("first_failed_at") @db.Timestamptz(3)
+
+  @@map("outbox")
+}
+
+/// Événements déjà traités par ce service (inbox) : un événement reçu deux fois n'a qu'un effet.
+model ProcessedEvent {
+  eventId     String   @map("event_id") @db.Uuid
+  consumer    String
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@id([eventId, consumer])
+  @@map("processed_events")
+}
+
+/// Document produit à partir d'un modèle (ADR-044). Le PDF vit dans le service file ; ni le contenu
+/// ni les variables du modèle ne sont gardés ici (le PDF fait foi).
+model Document {
+  id                 String    @id @db.Uuid
+  template           String
+  templateVersion    Int       @map("template_version")
+  title              String
+  /// Numéro lisible unique (MAN-2026-000042).
+  number             String    @unique
+  /// draft, pending_signature, signed, expired ou cancelled.
+  status             String
+  subjectType        String    @map("subject_type")
+  subjectId          String    @map("subject_id")
+  /// Compte titulaire ; retiré à la suppression du compte (ADR-036).
+  ownerId            String?   @map("owner_id") @db.Uuid
+  /// Service métier qui a produit le document : seul à le gérer.
+  producerService    String    @map("producer_service")
+  idempotencyKey     String    @map("idempotency_key")
+  fileId             String    @map("file_id") @db.Uuid
+  /// Empreinte SHA-256 (hexadécimale) du PDF produit.
+  sha256             String
+  sizeBytes          Int       @map("size_bytes")
+  signedFileId       String?   @map("signed_file_id") @db.Uuid
+  signedSha256       String?   @map("signed_sha256")
+  createdAt          DateTime  @map("created_at") @db.Timestamptz(3)
+  signedAt           DateTime? @map("signed_at") @db.Timestamptz(3)
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(3)
+  cancellationReason String?   @map("cancellation_reason")
+
+  requests SignatureRequest[]
+
+  @@unique([producerService, idempotencyKey])
+  @@index([ownerId])
+  @@index([subjectType, subjectId])
+  @@map("documents")
+}
+
+/// Séquence des numéros lisibles, par préfixe de modèle et par année.
+model DocumentCounter {
+  prefix String
+  year   Int
+  last   Int
+
+  @@id([prefix, year])
+  @@map("document_counters")
+}
+
+/// Demande de signature (un signataire). Coordonnées en clair gardées seulement tant qu'elle est en
+/// attente ; jeton du lien gardé par son empreinte SHA-256.
+model SignatureRequest {
+  id                String    @id @db.Uuid
+  documentId        String    @map("document_id") @db.Uuid
+  /// pending, signed, expired ou cancelled.
+  status            String
+  signerUserId      String?   @map("signer_user_id") @db.Uuid
+  signerPhoneE164   String?   @map("signer_phone_e164")
+  signerEmail       String?   @map("signer_email")
+  signerPhoneMasked String    @map("signer_phone_masked")
+  signerName        String    @map("signer_name")
+  tokenHash         String?   @unique @map("token_hash")
+  /// Empreinte du PDF à signer, fixée à la demande.
+  documentSha256    String    @map("document_sha256")
+  idempotencyKey    String    @map("idempotency_key")
+  createdAt         DateTime  @map("created_at") @db.Timestamptz(3)
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(3)
+  signedAt          DateTime? @map("signed_at") @db.Timestamptz(3)
+  closedAt          DateTime? @map("closed_at") @db.Timestamptz(3)
+
+  document Document           @relation(fields: [documentId], references: [id])
+  codes    SignatureCode[]
+  evidence SignatureEvidence?
+
+  @@unique([documentId, idempotencyKey])
+  @@index([documentId, createdAt])
+  @@index([signerUserId])
+  @@map("signature_requests")
+}
+
+/// Code à usage unique : seule son empreinte HMAC est gardée.
+model SignatureCode {
+  id         String    @id @db.Uuid
+  requestId  String    @map("request_id") @db.Uuid
+  codeHash   String    @map("code_hash")
+  /// whatsapp, email ou sms : canal qui a acheminé le code.
+  channel    String
+  createdAt  DateTime  @map("created_at") @db.Timestamptz(3)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  attempts   Int       @default(0)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+
+  request SignatureRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, createdAt])
+  @@map("signature_codes")
+}
+
+/// Preuve d'une signature, jamais modifiée (sauf le compte retiré à sa suppression, ADR-036).
+model SignatureEvidence {
+  id                 String   @id @db.Uuid
+  requestId          String   @unique @map("request_id") @db.Uuid
+  documentId         String   @map("document_id") @db.Uuid
+  signedAt           DateTime @map("signed_at") @db.Timestamptz(3)
+  method             String
+  channel            String
+  codeId             String   @map("code_id") @db.Uuid
+  signerUserId       String?  @map("signer_user_id") @db.Uuid
+  signerName         String   @map("signer_name")
+  signerPhoneMasked  String   @map("signer_phone_masked")
+  ip                 String?
+  userAgent          String?  @map("user_agent")
+  documentSha256     String   @map("document_sha256")
+  signedFileId       String   @map("signed_file_id") @db.Uuid
+  signedSha256       String   @map("signed_sha256")
+  consent            Boolean
+  certificateVersion Int      @map("certificate_version")
+
+  request SignatureRequest @relation(fields: [requestId], references: [id])
+
+  @@index([signerUserId])
+  @@map("signature_evidence")
+}
