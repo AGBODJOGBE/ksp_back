@@ -1,0 +1,227 @@
+syntax = "proto3";
+
+package ksp.file.v1;
+
+// Contrats du service file : stockage sécurisé des pièces jointes (ADR-038). Le contenu d'un
+// fichier ne transite jamais par la gateway ni par file : il est envoyé et lu directement dans le
+// stockage objet compatible S3 (MinIO en local, Object Storage de Contabo en production, ADR-018),
+// par des adresses présignées de courte durée.
+//
+// - FileService : espace connecté, réservé à la gateway. Le propriétaire d'un fichier est le compte
+//   connecté qui l'a déclaré (jamais une valeur envoyée par le client) ; lui seul le lit par ces
+//   méthodes.
+// - FileInternalService : services métier seulement (jeton de service). Chaque finalité (`purpose`)
+//   appartient à un ou plusieurs services : un service ne voit, ne rattache et ne supprime que les
+//   fichiers de ses finalités. C'est lui qui décide qui d'autre peut lire (par exemple le
+//   superviseur d'une mission) : il obtient alors une adresse de lecture pour son utilisateur.
+//
+// Parcours d'envoi : CreateUpload (adresse PUT présignée) → envoi du contenu par le client
+// directement au stockage → CompleteUpload (présence, taille réelle, signature binaire des images et
+// PDF) → "available", sinon "rejected". Un fichier non confirmé est purgé après un délai ; un fichier
+// jamais rattaché à un objet métier aussi.
+//
+// Finalités (liste fermée, extensible par ajout) et limites :
+//   recovery_evidence             PDF, JPEG, PNG, WebP   10 Mo   services : recovery
+//   cleaning_intervention_photo   JPEG, PNG, WebP         8 Mo   services : cleaning
+//   generated_document            PDF                    20 Mo   services : document (envoi par le service seul)
+//   avatar                        JPEG, PNG, WebP         2 Mo   services : identity
+//
+// Conventions : dates ISO 8601 en UTC (chaîne vide = absente) ; tailles en octets ; valeurs
+// énumérées en snake_case, identiques à l'API REST. Les adresses présignées sont des secrets à
+// durée courte : jamais journalisées.
+//
+// Erreurs (code AppError → statut gRPC) :
+//   FILE_VALIDATION_FAILED      INVALID_ARGUMENT    details.field
+//   FILE_TYPE_NOT_ALLOWED       INVALID_ARGUMENT    type MIME refusé pour la finalité (details.allowed)
+//   FILE_TOO_LARGE              INVALID_ARGUMENT    taille au-delà du maximum de la finalité (details.maxBytes)
+//   FILE_NOT_FOUND              NOT_FOUND           fichier inconnu, supprimé ou hors du périmètre de l'appelant
+//   FILE_PURPOSE_FORBIDDEN      PERMISSION_DENIED   finalité réservée à l'envoi par un service, ou à d'autres services
+//   FILE_OWNER_MISMATCH         PERMISSION_DENIED   rattachement d'un fichier envoyé par un autre compte
+//   FILE_CALLER_FORBIDDEN       PERMISSION_DENIED   méthode réservée aux services métier
+//   FILE_QUOTA_EXCEEDED         FAILED_PRECONDITION trop d'envois en attente, ou volume du jour atteint (details.limit)
+//   FILE_NOT_UPLOADED           FAILED_PRECONDITION contenu pas encore reçu par le stockage : l'envoyer puis confirmer
+//   FILE_UPLOAD_REJECTED        FAILED_PRECONDITION contenu refusé à la confirmation (details.reason : size_mismatch,
+//                                                   type_mismatch, malware) ; le fichier passe en "rejected"
+//   FILE_NOT_AVAILABLE          FAILED_PRECONDITION fichier pas (ou plus) disponible : en attente, rejeté
+//   FILE_ALREADY_ATTACHED       ALREADY_EXISTS      fichier déjà rattaché à un autre objet
+//   FILE_STORAGE_UNAVAILABLE    UNAVAILABLE         stockage injoignable : réessayer
+//   AUTH_REQUIRED               UNAUTHENTICATED
+
+// Espace connecté (gateway) : fichiers du compte connecté.
+service FileService {
+  // Déclare un fichier (nom, type, taille, finalité) et renvoie l'adresse PUT présignée.
+  rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);
+  // Vérifie le contenu reçu par le stockage et rend le fichier disponible, ou le rejette.
+  rpc CompleteUpload(CompleteUploadRequest) returns (CompleteUploadResponse);
+  rpc GetMyFile(GetMyFileRequest) returns (GetMyFileResponse);
+  // Adresse de lecture de courte durée d'un fichier disponible du compte connecté.
+  rpc CreateMyDownloadUrl(CreateMyDownloadUrlRequest) returns (CreateMyDownloadUrlResponse);
+}
+
+// Services métier (jeton de service) : fichiers des finalités de l'appelant.
+service FileInternalService {
+  // Fichier produit par le service lui-même (PDF généré…), rattaché dès sa déclaration.
+  rpc CreateServiceUpload(CreateServiceUploadRequest) returns (CreateServiceUploadResponse);
+  rpc CompleteServiceUpload(CompleteServiceUploadRequest) returns (CompleteServiceUploadResponse);
+  // Rattache un fichier disponible à un objet du service (idempotent pour le même objet).
+  rpc AttachFile(AttachFileRequest) returns (AttachFileResponse);
+  // Fichiers disponibles rattachés à un objet, avec au besoin leurs adresses de lecture.
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  // Adresse de lecture de courte durée, pour un utilisateur que le service a lui-même autorisé.
+  rpc CreateDownloadUrl(CreateDownloadUrlRequest) returns (CreateDownloadUrlResponse);
+  // Suppression logique (effacement physique après le délai de grâce) ; idempotente.
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+}
+
+// Objet métier auquel un fichier est rattaché.
+message FileSubject {
+  // Type d'objet, en snake_case, préfixé par son domaine : "recovery_case", "cleaning_intervention"…
+  string type = 1;
+  string id = 2;
+}
+
+message StoredFile {
+  string id = 1;
+  // Finalité : "recovery_evidence", "cleaning_intervention_photo", "generated_document" ou "avatar".
+  string purpose = 2;
+  // Nom d'origine, nettoyé (sans chemin ni caractère de contrôle), servi au téléchargement.
+  string file_name = 3;
+  string content_type = 4;
+  // Taille déclarée ; égale à la taille réelle une fois le fichier disponible.
+  int64 size_bytes = 5;
+  // "pending" (en attente du contenu), "available" ou "rejected".
+  string status = 6;
+  // Fichier rejeté : "size_mismatch", "type_mismatch" ou "malware" ; vide sinon.
+  string rejection_reason = 7;
+  // Compte qui a envoyé le fichier ; vide pour un fichier produit par un service, ou détaché d'un
+  // compte supprimé (ADR-036).
+  string owner_id = 8;
+  // Objet rattaché ; absent tant que le fichier n'est pas rattaché.
+  FileSubject subject = 9;
+  string created_at = 10;
+  // Confirmation du contenu (passage à "available" ou "rejected").
+  string completed_at = 11;
+}
+
+// Envoi présigné : le client envoie le contenu par cette requête, avant `expires_at`.
+message UploadInstructions {
+  string url = 1;
+  // Toujours "PUT".
+  string method = 2;
+  // En-têtes à envoyer tels quels (Content-Type) : ils sont signés.
+  map<string, string> headers = 3;
+  string expires_at = 4;
+}
+
+message DownloadUrl {
+  string url = 1;
+  string expires_at = 2;
+}
+
+message CreateUploadRequest {
+  string purpose = 1;
+  string file_name = 2;
+  string content_type = 3;
+  int64 size_bytes = 4;
+}
+
+message CreateUploadResponse {
+  StoredFile file = 1;
+  UploadInstructions upload = 2;
+}
+
+message CompleteUploadRequest {
+  string file_id = 1;
+}
+
+message CompleteUploadResponse {
+  StoredFile file = 1;
+}
+
+message GetMyFileRequest {
+  string file_id = 1;
+}
+
+message GetMyFileResponse {
+  StoredFile file = 1;
+}
+
+message CreateMyDownloadUrlRequest {
+  string file_id = 1;
+}
+
+message CreateMyDownloadUrlResponse {
+  DownloadUrl download = 1;
+}
+
+message CreateServiceUploadRequest {
+  string purpose = 1;
+  string file_name = 2;
+  string content_type = 3;
+  int64 size_bytes = 4;
+  // Objet du service auquel le fichier est rattaché dès sa déclaration.
+  FileSubject subject = 5;
+  // Compte concerné (titulaire du document), facultatif.
+  string owner_id = 6;
+}
+
+message CreateServiceUploadResponse {
+  StoredFile file = 1;
+  UploadInstructions upload = 2;
+}
+
+message CompleteServiceUploadRequest {
+  string file_id = 1;
+}
+
+message CompleteServiceUploadResponse {
+  StoredFile file = 1;
+}
+
+message AttachFileRequest {
+  string file_id = 1;
+  FileSubject subject = 2;
+  // Compte au nom duquel le service rattache le fichier : il doit l'avoir envoyé lui-même
+  // (sinon FILE_OWNER_MISMATCH). Empêche de rattacher le fichier d'un autre en connaissant son
+  // identifiant.
+  string owner_id = 3;
+}
+
+message AttachFileResponse {
+  StoredFile file = 1;
+}
+
+message ListFilesRequest {
+  FileSubject subject = 1;
+  // Joint à chaque fichier une adresse de lecture de courte durée.
+  bool include_download_urls = 2;
+}
+
+message ListedFile {
+  StoredFile file = 1;
+  // Présente si include_download_urls.
+  DownloadUrl download = 2;
+}
+
+message ListFilesResponse {
+  // Les plus anciens d'abord ; 200 au plus.
+  repeated ListedFile files = 1;
+}
+
+message CreateDownloadUrlRequest {
+  string file_id = 1;
+  // Objet auquel le fichier doit être rattaché : le service ne lit que les fichiers de ses objets.
+  FileSubject subject = 2;
+}
+
+message CreateDownloadUrlResponse {
+  StoredFile file = 1;
+  DownloadUrl download = 2;
+}
+
+message DeleteFileRequest {
+  string file_id = 1;
+  FileSubject subject = 2;
+}
+
+message DeleteFileResponse {}
