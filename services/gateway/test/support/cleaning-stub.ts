@@ -648,6 +648,7 @@ const DEFAULTS: Record<Method, () => unknown> = {
   listMyMissions: () => ({ missions: [protoMission], nextCursor: IDS.mission }),
   getMission: withMission,
   cancelMission: withMission,
+  payMissionFromWallet: withMission,
   listQuoteRequests: () => ({ requests: [protoRequest], nextCursor: '' }),
   getQuoteRequest: () => ({
     request: protoRequest,
@@ -780,7 +781,7 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
         cleaningV1.QuoteServiceControllerMethods,
       ),
       stubController(
-        pick(['listMyMissions', 'getMission', 'cancelMission']),
+        pick(['listMyMissions', 'getMission', 'cancelMission', 'payMissionFromWallet']),
         cleaningV1.MissionServiceControllerMethods,
       ),
       stubController(
@@ -806,6 +807,7 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
               'listMyMissions',
               'getMission',
               'cancelMission',
+              'payMissionFromWallet',
             ].includes(m),
         ),
         cleaningV1.CleaningAdminServiceControllerMethods,

@@ -111,6 +111,16 @@ export class BillingGrpcAdapter implements BillingApi {
     return presentInvoice(res.invoice);
   }
 
+  async payMyInvoiceFromWallet(id: string, idempotencyKey: string): Promise<Json> {
+    // Idempotent par clé chez billing et wallet : rejouable après une panne.
+    const res = await this.call(
+      'payMyInvoiceFromWallet',
+      (m) => this.clients.invoices.payMyInvoiceFromWallet({ invoiceId: id, idempotencyKey }, m),
+      { idempotent: true },
+    );
+    return presentInvoice(res.invoice);
+  }
+
   async listInvoices(value: Page, filters: InvoiceFilters): Promise<Json> {
     return list(
       await this.read('listInvoices', (m) =>

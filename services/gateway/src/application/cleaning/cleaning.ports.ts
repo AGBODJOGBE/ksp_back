@@ -276,6 +276,8 @@ export interface CleaningApi {
   listMyMissions(page: Page): Promise<Json>;
   getMyMission(id: string): Promise<Json>;
   cancelMyMission(id: string, reason: string | undefined): Promise<Json>;
+  /** Acompte ou solde payé depuis le portefeuille prépayé (ADR-046). */
+  payMissionFromWallet(id: string, part: string, idempotencyKey: string): Promise<Json>;
 
   listQuoteRequests(page: Page, filters: QuoteRequestFilters): Promise<Json>;
   getQuoteRequest(id: string): Promise<Json>;

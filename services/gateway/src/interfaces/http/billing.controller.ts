@@ -2,7 +2,7 @@ import { Body, Controller, Headers, Inject, Param, Query } from '@nestjs/common'
 import { type BillingApi } from '../../application/billing/billing.ports';
 import { BILLING_API } from '../../tokens';
 import { billingParams } from './billing-schemas';
-import { idFrom, pageFrom } from './cleaning.controller';
+import { idFrom, keyFrom, pageFrom } from './cleaning.controller';
 import { parseParam } from './cleaning-schemas';
 import { Route } from './route.decorator';
 import { parseBody, requestBodies } from './schemas';
@@ -31,6 +31,12 @@ export class BillingHttpController {
   @Route('getMyInvoice')
   getMyInvoice(@Param('id') id: unknown) {
     return this.billing.getMyInvoice(idFrom(id));
+  }
+
+  @Route('payMyInvoiceFromWallet')
+  payFromWallet(@Param('id') id: unknown, @Headers('idempotency-key') key: unknown) {
+    const invoiceId = idFrom(id);
+    return this.billing.payMyInvoiceFromWallet(invoiceId, keyFrom(key));
   }
 
   @Route('listInvoices')

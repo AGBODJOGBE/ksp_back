@@ -343,6 +343,7 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
         recordedBy: record.recordedBy,
         recordedByName: orNull(record.recordedByName),
         recordedAt: record.recordedAt,
+        refundedAt: orNull(record.refundedAt),
       })),
     },
     cancellationReason: orNull(value.cancellationReason),

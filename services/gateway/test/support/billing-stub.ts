@@ -66,7 +66,7 @@ export const protoInvoice: billingV1.Invoice = {
 const settings: billingV1.BillingSettings = { paymentTermDays: 10, updatedBy: '', updatedAt: '' };
 
 type Method = keyof billingV1.BillingServiceController | keyof billingV1.BillingAdminServiceController;
-const CUSTOMER_METHODS: readonly Method[] = ['listMyInvoices', 'getMyInvoice'];
+const CUSTOMER_METHODS: readonly Method[] = ['listMyInvoices', 'getMyInvoice', 'payMyInvoiceFromWallet'];
 
 const DEFAULTS: Record<Method, () => unknown> = {
   listMyInvoices: () => ({ invoices: [protoInvoice], nextCursor: '' }),
@@ -84,6 +84,15 @@ const DEFAULTS: Record<Method, () => unknown> = {
   }),
   getBillingSettings: () => ({ settings }),
   updateBillingSettings: () => ({ settings }),
+  payMyInvoiceFromWallet: () => ({
+    invoice: {
+      ...protoInvoice,
+      status: 'paid',
+      paid: xof(160000),
+      balance: xof(0),
+      paidAt: '2026-12-16T11:00:00.000Z',
+    },
+  }),
 };
 
 export class BillingStub {

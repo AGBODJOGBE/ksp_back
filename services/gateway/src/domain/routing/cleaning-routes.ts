@@ -204,6 +204,17 @@ export const CLEANING_ROUTES = [
     requiresKnownClient: false,
   },
   {
+    // Acompte ou solde payé depuis le portefeuille prépayé (ADR-046).
+    operationId: 'payMyCleaningMissionFromWallet',
+    method: 'POST',
+    path: '/api/v1/cleaning/missions/{id}/pay',
+    grpc: `${MISSION}/PayMissionFromWallet`,
+    access: { level: 'authenticated' },
+    rateLimit: 'payment_create',
+    requiresKnownClient: false,
+    idempotencyKey: 'required',
+  },
+  {
     operationId: 'listCleaningQuoteRequests',
     method: 'GET',
     path: '/api/v1/admin/cleaning/quote-requests',

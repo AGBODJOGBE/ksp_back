@@ -163,7 +163,10 @@ describe('gateway → liens de paiement, reversements, portefeuille', () => {
         grossAmount: { amount: 25000, currency: 'XOF' },
         commissionRateBps: 1250,
       });
-      expect(wallet.stub.last('listMyStatement')!.request).toEqual({ page: { limit: 2, cursor: '' } });
+      expect(wallet.stub.last('listMyStatement')!.request).toEqual({
+        page: { limit: 2, cursor: '' },
+        account: '',
+      });
     });
 
     it('back-office : titulaire validé avant l’appel ; réservé à la finance', async () => {
@@ -179,6 +182,67 @@ describe('gateway → liens de paiement, reversements, portefeuille', () => {
       expect(bad.status).toBe(400);
       const denied = await backoffice(http().get('/api/v1/admin/wallet/overview'), cleaningAdmin);
       expect(denied.status).toBe(403);
+    });
+    it('portefeuille prépayé (ADR-046) : solde, limites de recharge, relevé filtré', async () => {
+      const auth = (req: request.Test) =>
+        req.set('Origin', ORIGINS.web).set('Authorization', `Bearer ${customer}`);
+      const mine = await auth(http().get('/api/v1/wallet/me'));
+      expect(mine.body).toMatchObject({
+        prepaid: { balance: { amount: 5000, currency: 'XOF' } },
+        topUpLimits: { min: { amount: 500 }, max: { amount: 1000000 } },
+      });
+      const prepaid = await auth(http().get('/api/v1/wallet/me/statement?account=prepaid'));
+      expect(prepaid.status).toBe(200);
+      expect(wallet.stub.last('listMyStatement')!.request).toMatchObject({ account: 'prepaid' });
+      const bad = await auth(http().get('/api/v1/wallet/me/statement?account=bonus'));
+      expect(bad.status).toBe(400);
+    });
+
+    it('recharge : clé et montant vérifiés avant l’appel, transmis à wallet', async () => {
+      const post = () =>
+        http()
+          .post('/api/v1/wallet/me/top-ups')
+          .set('Origin', ORIGINS.web)
+          .set('Authorization', `Bearer ${customer}`);
+      expect((await post().send({ amount: { amount: 20000, currency: 'XOF' } })).status).toBe(400);
+      const decimal = await post()
+        .set('Idempotency-Key', 'recharge-0001')
+        .send({ amount: { amount: 200.5, currency: 'XOF' } });
+      expect(decimal.status).toBe(400);
+      expect(wallet.stub.calls).toEqual([]);
+      const ok = await post()
+        .set('Idempotency-Key', 'recharge-0001')
+        .send({ amount: { amount: 20000, currency: 'XOF' } });
+      expect(ok.status).toBe(200);
+      expect(ok.body).toMatchObject({ status: 'pending', checkoutUrl: expect.stringContaining('https://') });
+      expect(wallet.stub.last('createTopUp')!.request).toEqual({
+        idempotencyKey: 'recharge-0001',
+        amount: { amount: 20000, currency: 'XOF' },
+      });
+    });
+
+    it('crédit manuel : réservé à la finance, motif et clé transmis', async () => {
+      const body = { kind: 'refund', amount: { amount: 5000, currency: 'XOF' }, reason: 'Passage manqué' };
+      const url = `/api/v1/admin/wallet/holders/organization/${HOLDER_ID}/credits`;
+      const denied = await backoffice(http().post(url), cleaningAdmin)
+        .set('Idempotency-Key', 'credit-0001')
+        .send(body);
+      expect(denied.status).toBe(403);
+      const ok = await backoffice(http().post(url), finance).set('Idempotency-Key', 'credit-0001').send(body);
+      expect(ok.status).toBe(200);
+      expect(ok.body).toMatchObject({
+        kind: 'refund',
+        created: true,
+        wallet: { balance: { amount: 10000 } },
+      });
+      expect(wallet.stub.last('creditPrepaidWallet')!.request).toEqual({
+        idempotencyKey: 'credit-0001',
+        holder: { type: 'organization', id: HOLDER_ID },
+        kind: 'refund',
+        amount: { amount: 5000, currency: 'XOF' },
+        reason: 'Passage manqué',
+        paymentId: '',
+      });
     });
   });
 });

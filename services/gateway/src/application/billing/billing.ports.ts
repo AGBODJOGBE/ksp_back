@@ -27,6 +27,8 @@ export interface InvoicePaymentInput {
 export interface BillingApi {
   listMyInvoices(page: Page, status: string | undefined): Promise<Json>;
   getMyInvoice(id: string): Promise<Json>;
+  /** Reste dû payé depuis le portefeuille prépayé (ADR-046). */
+  payMyInvoiceFromWallet(id: string, idempotencyKey: string): Promise<Json>;
   listInvoices(page: Page, filters: InvoiceFilters): Promise<Json>;
   getInvoice(id: string): Promise<Json>;
   recordInvoicePayment(id: string, input: InvoicePaymentInput): Promise<Json>;

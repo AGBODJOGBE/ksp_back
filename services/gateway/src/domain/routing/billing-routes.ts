@@ -32,6 +32,17 @@ export const BILLING_ROUTES = [
     requiresKnownClient: false,
   },
   {
+    // Reste dû payé depuis le portefeuille prépayé (ADR-046).
+    operationId: 'payMyInvoiceFromWallet',
+    method: 'POST',
+    path: '/api/v1/billing/invoices/{id}/pay',
+    grpc: `${BILLING}/PayMyInvoiceFromWallet`,
+    access: { level: 'authenticated' },
+    rateLimit: 'payment_create',
+    requiresKnownClient: false,
+    idempotencyKey: 'required',
+  },
+  {
     operationId: 'listInvoices',
     method: 'GET',
     path: '/api/v1/admin/billing/invoices',
