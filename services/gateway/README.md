@@ -84,14 +84,18 @@ Le **manifeste de routage** (`src/domain/routing/route-manifest.ts`) est la seul
 
 ## Liens de paiement, reversements, portefeuille (ADR-040 à 042)
 
-| Route                                                                                 | Appel gRPC                                            | Accès                                    |
-| ------------------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------- |
-| `GET /api/v1/payment/links/{token}`                                                   | `PaymentLinkPublicService/GetPublicPaymentLink`       | public, 30 par minute et par IP          |
-| `POST /api/v1/payment/links/{token}/pay` (`Idempotency-Key`)                          | `PaymentLinkPublicService/PayPaymentLink`             | public, 5 par minute et par IP           |
-| `POST /api/v1/payment/links/{token}/simulate` (développement)                         | `PaymentLinkPublicService/SimulatePaymentLinkPayment` | public, fermée en production             |
-| `GET /api/v1/admin/payment/payouts`, `POST …/{id}/confirm`, `…/{id}/fail`             | `PayoutAdminService/…`                                | `finance_officer`, `super_admin` + MFA   |
-| `GET /api/v1/wallet/me`, `…/me/statement`, `…/me/payouts`                             | `WalletAccountService/…` (`WALLET_GRPC_URL`)          | connecté (compte ou organisation active) |
-| `GET /api/v1/admin/wallet/holders/{type}/{id}[/statement]`, `…/payouts`, `…/overview` | `WalletAdminService/…`                                | `finance_officer`, `super_admin` + MFA   |
+| Route                                                                                 | Appel gRPC                                            | Accès                                      |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------ |
+| `GET /api/v1/payment/links/{token}`                                                   | `PaymentLinkPublicService/GetPublicPaymentLink`       | public, 30 par minute et par IP            |
+| `POST /api/v1/payment/links/{token}/pay` (`Idempotency-Key`)                          | `PaymentLinkPublicService/PayPaymentLink`             | public, 5 par minute et par IP             |
+| `POST /api/v1/payment/links/{token}/simulate` (développement)                         | `PaymentLinkPublicService/SimulatePaymentLinkPayment` | public, fermée en production               |
+| `GET /api/v1/admin/payment/payouts`, `POST …/{id}/confirm`, `…/{id}/fail`             | `PayoutAdminService/…`                                | `finance_officer`, `super_admin` + MFA     |
+| `GET /api/v1/wallet/me`, `…/me/statement`, `…/me/payouts`                             | `WalletAccountService/…` (`WALLET_GRPC_URL`)          | connecté (compte ou organisation active)   |
+| `GET /api/v1/admin/wallet/holders/{type}/{id}[/statement]`, `…/payouts`, `…/overview` | `WalletAdminService/…`                                | `finance_officer`, `super_admin` + MFA     |
+| `POST /api/v1/wallet/me/top-ups` (`Idempotency-Key`, ADR-046)                         | `WalletAccountService/CreateTopUp`                    | connecté (`org_viewer` refusé par wallet)  |
+| `POST /api/v1/admin/wallet/holders/{type}/{id}/credits` (`Idempotency-Key`)           | `WalletAdminService/CreditPrepaidWallet`              | `finance_officer`, `super_admin` + MFA     |
+| `POST /api/v1/cleaning/missions/{id}/pay` (`Idempotency-Key`, ADR-046)                | `MissionService/PayMissionFromWallet`                 | connecté (client de la mission)            |
+| `POST /api/v1/billing/invoices/{id}/pay` (`Idempotency-Key`, ADR-046)                 | `BillingService/PayMyInvoiceFromWallet`               | connecté (`org_viewer` refusé par billing) |
 
 Un jeton de lien mal formé rend 404 `PAYMENT_LINK_NOT_FOUND` sans appel de payment (rien de plus
 qu'un jeton inconnu). Aucune donnée personnelle du payeur sur les routes publiques.
