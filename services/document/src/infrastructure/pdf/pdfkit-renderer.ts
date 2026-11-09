@@ -11,6 +11,11 @@ const FONTS_DIR = join(__dirname, '..', '..', '..', 'assets', 'fonts');
 const COLORS = { text: '#1a1a1a', muted: '#5f6670', accent: '#1f3a5f', rule: '#c9ced6' } as const;
 const MARGIN = { top: 92, bottom: 70, left: 56, right: 56 } as const;
 const BODY = 10;
+/**
+ * Options de texte communes : crénage sans ligatures (« ffi » resterait un seul glyphe, et le texte
+ * copié ou recherché dans le PDF perdrait des lettres : « Kof » pour « Koffi »).
+ */
+const TEXT = { features: { liga: false, clig: false, dlig: false } } as unknown as PDFKit.Mixins.TextOptions;
 
 type Doc = PDFKit.PDFDocument;
 
@@ -101,11 +106,11 @@ export class PdfKitRenderer implements PdfRenderer {
 
   private title(doc: Doc, content: DocumentContent): void {
     doc.font('bold').fontSize(16).fillColor(COLORS.accent);
-    doc.text(content.title, MARGIN.left, MARGIN.top, { width: this.width });
+    doc.text(content.title, MARGIN.left, MARGIN.top, { ...TEXT, width: this.width });
     doc.moveDown(0.3);
     doc.font('regular').fontSize(BODY).fillColor(COLORS.muted);
-    doc.text(`N° ${content.number}`, { width: this.width });
-    doc.text(content.dateLine, { width: this.width });
+    doc.text(`N° ${content.number}`, { ...TEXT, width: this.width });
+    doc.text(content.dateLine, { ...TEXT, width: this.width });
     doc.moveDown(0.8);
     doc.fillColor(COLORS.text);
   }
@@ -117,7 +122,7 @@ export class PdfKitRenderer implements PdfRenderer {
         doc.moveDown(0.6);
         this.ensure(doc, 40);
         doc.font('bold').fontSize(11.5).fillColor(COLORS.accent);
-        doc.text(block.text, x, doc.y, { width: this.width });
+        doc.text(block.text, x, doc.y, { ...TEXT, width: this.width });
         doc.moveDown(0.3).fillColor(COLORS.text);
         return;
       }
@@ -126,18 +131,18 @@ export class PdfKitRenderer implements PdfRenderer {
           .font(block.strong ? 'bold' : 'regular')
           .fontSize(BODY)
           .fillColor(COLORS.text);
-        doc.text(block.text, x, doc.y, { width: this.width, align: 'justify', lineGap: 2 });
+        doc.text(block.text, x, doc.y, { ...TEXT, width: this.width, align: 'justify', lineGap: 2 });
         doc.moveDown(0.5);
         return;
       }
       case 'list': {
         doc.font('regular').fontSize(BODY);
         for (const item of block.items) {
-          const height = doc.heightOfString(item, { width: this.width - 14, lineGap: 2 });
+          const height = doc.heightOfString(item, { ...TEXT, width: this.width - 14, lineGap: 2 });
           this.ensure(doc, height);
           const y = doc.y;
-          doc.text('•', x + 2, y, { width: 10 });
-          doc.text(item, x + 14, y, { width: this.width - 14, lineGap: 2 });
+          doc.text('•', x + 2, y, { ...TEXT, width: 10 });
+          doc.text(item, x + 14, y, { ...TEXT, width: this.width - 14, lineGap: 2 });
           doc.moveDown(0.2);
         }
         doc.moveDown(0.3);
@@ -150,13 +155,15 @@ export class PdfKitRenderer implements PdfRenderer {
         for (const [label, value] of block.rows) {
           doc.font('regular');
           const height = Math.max(
-            doc.heightOfString(label, { width: labelWidth }),
-            doc.heightOfString(value, { width: valueWidth, lineGap: 1 }),
+            doc.heightOfString(label, { ...TEXT, width: labelWidth }),
+            doc.heightOfString(value, { ...TEXT, width: valueWidth, lineGap: 1 }),
           );
           this.ensure(doc, height);
           const y = doc.y;
-          doc.fillColor(COLORS.muted).text(label, x, y, { width: labelWidth });
-          doc.fillColor(COLORS.text).text(value, x + labelWidth + 10, y, { width: valueWidth, lineGap: 1 });
+          doc.fillColor(COLORS.muted).text(label, x, y, { ...TEXT, width: labelWidth });
+          doc
+            .fillColor(COLORS.text)
+            .text(value, x + labelWidth + 10, y, { ...TEXT, width: valueWidth, lineGap: 1 });
           doc.y = y + height + 4;
         }
         doc.moveDown(0.3);
@@ -171,7 +178,8 @@ export class PdfKitRenderer implements PdfRenderer {
         this.ensure(doc, 90);
         const gap = 20;
         const count = block.parties.length;
-        const width = (this.width - gap * (count - 1)) / count;
+        // Une partie seule garde la largeur d'une colonne sur deux.
+        const width = (this.width - gap * (Math.max(count, 2) - 1)) / Math.max(count, 2);
         const y = doc.y;
         block.parties.forEach((party, index) => {
           const left = x + index * (width + gap);
@@ -180,12 +188,12 @@ export class PdfKitRenderer implements PdfRenderer {
             .font('bold')
             .fontSize(BODY)
             .fillColor(COLORS.text)
-            .text(party.role, left + 8, y + 8, { width: width - 16 });
-          doc.font('regular').text(party.name, left + 8, doc.y + 2, { width: width - 16 });
+            .text(party.role, left + 8, y + 8, { ...TEXT, width: width - 16 });
+          doc.font('regular').text(party.name, left + 8, doc.y + 2, { ...TEXT, width: width - 16 });
           doc
             .fontSize(8.5)
             .fillColor(COLORS.muted)
-            .text(party.note, left + 8, y + 60, { width: width - 16 });
+            .text(party.note, left + 8, y + 60, { ...TEXT, width: width - 16 });
         });
         doc.fillColor(COLORS.text).fontSize(BODY);
         doc.x = x;
@@ -206,14 +214,16 @@ export class PdfKitRenderer implements PdfRenderer {
     const row = (cells: readonly string[], font: 'regular' | 'bold') => {
       doc.font(font).fontSize(BODY);
       const height =
-        Math.max(...cells.map((cell, index) => doc.heightOfString(cell, { width: widths[index]! - 8 }))) + 6;
+        Math.max(
+          ...cells.map((cell, index) => doc.heightOfString(cell, { ...TEXT, width: widths[index]! - 8 })),
+        ) + 6;
       this.ensure(doc, height);
       const y = doc.y;
       let left = x;
       cells.forEach((cell, index) => {
         doc
           .fillColor(COLORS.text)
-          .text(cell, left + 4, y + 3, { width: widths[index]! - 8, align: align(index) });
+          .text(cell, left + 4, y + 3, { ...TEXT, width: widths[index]! - 8, align: align(index) });
         left += widths[index]!;
       });
       doc
@@ -249,6 +259,7 @@ export class PdfKitRenderer implements PdfRenderer {
         .fontSize(12)
         .fillColor(COLORS.accent)
         .text(this.issuer.name.toUpperCase(), MARGIN.left, 34, {
+          ...TEXT,
           width: width / 2,
           lineBreak: false,
         });
@@ -257,10 +268,12 @@ export class PdfKitRenderer implements PdfRenderer {
         .fontSize(8.5)
         .fillColor(COLORS.muted)
         .text(this.issuer.address, MARGIN.left, 52, {
+          ...TEXT,
           width: width / 2,
           lineBreak: false,
         });
       doc.text(content.number, MARGIN.left + width / 2, 38, {
+        ...TEXT,
         width: width / 2,
         align: 'right',
         lineBreak: false,
@@ -284,10 +297,12 @@ export class PdfKitRenderer implements PdfRenderer {
         .fontSize(8)
         .fillColor(COLORS.muted)
         .text(legal, MARGIN.left, footerY, {
+          ...TEXT,
           width: width * 0.7,
           lineBreak: false,
         });
       doc.text(footerLabel(index - range.start + 1, range.count), MARGIN.left + width * 0.7, footerY, {
+        ...TEXT,
         width: width * 0.3,
         align: 'right',
         lineBreak: false,
