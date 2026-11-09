@@ -150,7 +150,8 @@ describeWithDatabase('PrismaAccountAdminRepository (PostgreSQL)', () => {
       'identity.role.granted',
       'identity.role.revoked',
     ]);
-    expect(outbox.rows[1].payload).toMatchObject({ reason: 'Fin du renfort', revokedBy: DEPUTY });
+    // La colonne payload porte l'enveloppe ; le contenu de l'événement est sous payload.
+    expect(outbox.rows[1].payload.payload).toMatchObject({ reason: 'Fin du renfort', revokedBy: DEPUTY });
     const history = await accounts.history(CUSTOMER, 50);
     expect(history.map((entry) => [entry.action, entry.roleCode, entry.reason])).toEqual([
       ['user.role_revoked', 'cleaning_supervisor', 'Fin du renfort'],
