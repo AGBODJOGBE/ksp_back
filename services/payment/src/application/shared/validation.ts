@@ -56,3 +56,34 @@ export function parsePage(page: { limit?: number; cursor?: string } | undefined)
   const cursor = page?.cursor ? requireUuid('cursor', page.cursor) : null;
   return { limit, cursor };
 }
+
+/** Texte facultatif : espaces retirés, chaîne vide = absent, `max` caractères au plus. */
+export function optionalText(field: string, value: string | undefined, max: number): string | null {
+  const text = (value ?? '').trim();
+  if (!text) return null;
+  if (text.length > max) throw PaymentErrors.invalid(field, `${max} caractères au plus.`);
+  return text;
+}
+
+/** Montant XOF entier, entre 1 et `max` (ksp.common.v1.Money). */
+export function requireXof(
+  field: string,
+  money: { amount: number; currency: string } | undefined,
+  max: number,
+): number {
+  const amount = Number(money?.amount ?? 0);
+  if ((money?.currency || 'XOF') !== 'XOF') throw PaymentErrors.invalid(field, 'Devise XOF attendue.');
+  if (!Number.isSafeInteger(amount) || amount < 1 || amount > max) {
+    throw PaymentErrors.invalid(field, `Montant entier en XOF attendu, de 1 à ${max}.`);
+  }
+  return amount;
+}
+
+/** Date et heure ISO 8601 obligatoire. */
+export function requireInstant(field: string, value: string | undefined): Date {
+  const date = value ? new Date(value) : new Date(Number.NaN);
+  if (!value || Number.isNaN(date.getTime()) || !/^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    throw PaymentErrors.invalid(field, 'Date et heure ISO 8601 attendues.');
+  }
+  return date;
+}

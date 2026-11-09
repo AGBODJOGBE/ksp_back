@@ -492,6 +492,36 @@ const paymentExamples: { [K in PaymentEventType]: PaymentEventPayloads[K] } = {
     succeededAt: '2026-11-02T09:15:00Z',
   },
   'payment.intent.failed': { ...missionPayment, status: 'cancelled', failedAt: '2026-11-02T09:20:00Z' },
+  'payment.link.paid': {
+    paymentLinkId: uuid,
+    paymentId: uuid,
+    subjectType: 'recovery_installment',
+    subjectId: uuid,
+    reference: 'REC-2026-000123 E2',
+    amount: { amount: 25000, currency: 'XOF' },
+    method: 'mobile_money_online',
+    provider: 'fedapay',
+    providerReference: 'trx_Ab12Cd34',
+    paidAt: '2026-11-07T10:00:00Z',
+  },
+  'payment.payout.completed': {
+    payoutId: uuid,
+    issuer: 'wallet',
+    reference: uuid,
+    amount: { amount: 22500, currency: 'XOF' },
+    provider: 'manual',
+    providerReference: 'MTN-TRF-0042',
+    completedAt: '2026-11-07T12:00:00Z',
+  },
+  'payment.payout.failed': {
+    payoutId: uuid,
+    issuer: 'wallet',
+    reference: uuid,
+    amount: { amount: 22500, currency: 'XOF' },
+    provider: 'fedapay',
+    failureCode: 'provider_failed',
+    failedAt: '2026-11-07T12:00:00Z',
+  },
 };
 
 describe('Contrats des événements payment', () => {
@@ -523,6 +553,24 @@ describe('Contrats des événements payment', () => {
     ).toBe(true);
     expect(validate({ ...succeeded, subjectReference: 'facture 42' })).toBe(false);
     expect(validate({ ...succeeded, part: 'all' })).toBe(false);
+  });
+
+  it('un lien ne porte jamais un type d’objet réservé au paiement par compte', () => {
+    const validate = ajv.compile(schemas.get('payment.link.paid')!);
+    const paid = paymentExamples['payment.link.paid'];
+    expect(validate({ ...paid, subjectType: 'billing_invoice' })).toBe(false);
+    expect(validate({ ...paid, subjectType: 'Recovery Installment' })).toBe(false);
+    expect(validate({ ...paid, customerId: uuid })).toBe(false);
+  });
+
+  it('un reversement ne transmet ni le numéro ni le nom du bénéficiaire', () => {
+    for (const type of ['payment.payout.completed', 'payment.payout.failed'] as const) {
+      const validate = ajv.compile(schemas.get(type)!);
+      expect(validate({ ...paymentExamples[type], beneficiaryPhone: '+2290197000045' })).toBe(false);
+      expect(validate({ ...paymentExamples[type], beneficiaryName: 'Koffi' })).toBe(false);
+    }
+    const failed = ajv.compile(schemas.get('payment.payout.failed')!);
+    expect(failed({ ...paymentExamples['payment.payout.failed'], reason: 'numéro inconnu' })).toBe(false);
   });
 
   it('aucune donnée personnelle (téléphone, nom), montants entiers et positifs en XOF', () => {

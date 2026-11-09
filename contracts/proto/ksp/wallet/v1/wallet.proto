@@ -1,0 +1,330 @@
+syntax = "proto3";
+
+package ksp.wallet.v1;
+
+import "ksp/common/v1/money.proto";
+
+// Contrats du service wallet : grand livre en double entrée des fonds que KSP détient pour le
+// compte de ses clients (créanciers du Recouvrement), ADR-042.
+//
+// - WalletService : opérations des services métier (recovery au lancement, WALLET_LEDGER_CALLERS ;
+//   jeton de service obligatoire) : encaissement crédité au titulaire avec prélèvement de la
+//   commission, reversement demandé depuis le solde, annulation d'un encaissement par écriture
+//   inverse, solde et relevé d'un titulaire.
+// - WalletAccountService : espace du titulaire connecté (son compte, ou son organisation active).
+// - WalletAdminService : back-office (finance_officer, super_admin, double authentification).
+//
+// Règles :
+// - écritures immuables : une transaction équilibrée (débits = crédits) ne se modifie jamais, une
+//   erreur se corrige par une écriture inverse ; aucun solde n'est saisi, il découle des écritures ;
+// - montants entiers en XOF ; commission = taux en points de base (1 250 = 12,5 %), arrondie à
+//   l'entier inférieur (KSP ne prélève jamais plus que le taux) ;
+// - idempotence par référence (encaissement, annulation) ou clé (reversement), propre à l'appelant ;
+// - un reversement ne dépasse jamais le solde disponible ; il est exécuté par payment
+//   (PayoutService) et soldé à la réception de payment.payout.completed ou payment.payout.failed.
+//
+// Comptes : un compte par titulaire ("user" ou "organization"), et les comptes internes de KSP :
+// "ksp:collections" (fonds encaissés et détenus par KSP), "ksp:commission" (commissions acquises),
+// "ksp:payouts_in_transit" (reversements demandés, pas encore confirmés).
+//
+// L'utilisateur connecté n'est jamais dans les messages : la gateway le transmet dans les
+// métadonnées gRPC. Dates ISO 8601 en UTC (chaîne vide = absente).
+//
+// Erreurs (code AppError → statut gRPC) :
+//   WALLET_VALIDATION_FAILED             INVALID_ARGUMENT    details.field
+//   WALLET_TRANSACTION_NOT_FOUND         NOT_FOUND           transaction inconnue
+//   WALLET_PAYOUT_NOT_FOUND              NOT_FOUND           reversement inconnu
+//   WALLET_INSUFFICIENT_BALANCE          FAILED_PRECONDITION solde disponible inférieur au reversement demandé
+//   WALLET_TRANSACTION_NOT_REVERSIBLE    FAILED_PRECONDITION seul un encaissement s'annule par cette méthode
+//   WALLET_IDEMPOTENCY_KEY_REUSED        ALREADY_EXISTS      référence ou clé déjà utilisée pour une autre opération
+//   WALLET_TRANSACTION_ALREADY_REVERSED  ALREADY_EXISTS      encaissement déjà annulé (par une autre demande)
+//   WALLET_CALLER_FORBIDDEN              PERMISSION_DENIED   méthode réservée à un autre service
+//   AUTH_REQUIRED                        UNAUTHENTICATED
+//   AUTH_FORBIDDEN                       PERMISSION_DENIED   rôle du back-office manquant
+//   AUTH_MFA_REQUIRED                    PERMISSION_DENIED   double authentification absente
+
+// Opérations des services métier (recovery), jeton de service obligatoire.
+service WalletService {
+  // Encaissement reçu pour un titulaire : le net lui est crédité, la commission revient à KSP.
+  rpc RecordCollection(RecordCollectionRequest) returns (RecordCollectionResponse);
+  // Reversement du solde vers un compte Mobile Money : montant retenu, puis exécuté par payment.
+  rpc RequestPayout(RequestPayoutRequest) returns (RequestPayoutResponse);
+  // Annulation d'un encaissement par écriture inverse (encaissement enregistré à tort, remboursé…).
+  rpc ReverseTransaction(ReverseTransactionRequest) returns (ReverseTransactionResponse);
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  rpc ListStatement(ListStatementRequest) returns (ListStatementResponse);
+}
+
+// Espace du titulaire connecté : son compte (contexte personnel) ou son organisation active.
+service WalletAccountService {
+  rpc GetMyWallet(GetMyWalletRequest) returns (GetMyWalletResponse);
+  rpc ListMyStatement(ListMyStatementRequest) returns (ListMyStatementResponse);
+  rpc ListMyPayouts(ListMyPayoutsRequest) returns (ListMyPayoutsResponse);
+}
+
+// Back-office : finance_officer, super_admin, avec double authentification.
+service WalletAdminService {
+  rpc GetHolderWallet(GetHolderWalletRequest) returns (GetHolderWalletResponse);
+  rpc ListHolderStatement(ListHolderStatementRequest) returns (ListHolderStatementResponse);
+  rpc ListWalletPayouts(ListWalletPayoutsRequest) returns (ListWalletPayoutsResponse);
+  // Soldes des comptes internes de KSP et total dû aux titulaires.
+  rpc GetLedgerOverview(GetLedgerOverviewRequest) returns (GetLedgerOverviewResponse);
+}
+
+message Page {
+  // 20 par défaut, 100 au plus.
+  int32 limit = 1;
+  string cursor = 2;
+}
+
+// Titulaire d'un compte : un compte KSP ("user") ou une organisation ("organization").
+message Holder {
+  string type = 1;
+  // UUID du compte ou de l'organisation (identity).
+  string id = 2;
+}
+
+message Wallet {
+  Holder holder = 1;
+  // Solde disponible (crédits - débits). Négatif seulement après l'annulation d'un encaissement
+  // déjà reversé : KSP a alors trop reversé, aucun reversement n'est possible avant régularisation.
+  ksp.common.v1.Money balance = 2;
+  // Reversements demandés, pas encore terminés (déjà déduits du solde).
+  ksp.common.v1.Money payouts_in_progress = 3;
+  // Cumul des encaissements nets crédités (annulations déduites) et des reversements terminés.
+  ksp.common.v1.Money total_collected = 4;
+  ksp.common.v1.Money total_paid_out = 5;
+  // Dernière écriture, vide si le compte n'en a aucune.
+  string last_entry_at = 6;
+}
+
+// Une ligne du relevé d'un titulaire (une écriture sur son compte), les plus récentes d'abord.
+message StatementLine {
+  string transaction_id = 1;
+  // "collection" (encaissement), "payout" (reversement retenu), "payout_release" (reversement en
+  // échec : montant rendu) ou "reversal" (annulation d'un encaissement).
+  string kind = 2;
+  // "credit" (en faveur du titulaire) ou "debit".
+  string direction = 3;
+  ksp.common.v1.Money amount = 4;
+  // Solde du titulaire après cette écriture.
+  ksp.common.v1.Money balance_after = 5;
+  // Référence de l'opération chez l'appelant (par exemple le paiement encaissé).
+  string reference = 6;
+  string description = 7;
+  // Encaissement (et son annulation) : montant brut, commission prélevée, taux en points de base.
+  ksp.common.v1.Money gross_amount = 8;
+  ksp.common.v1.Money commission = 9;
+  int32 commission_rate_bps = 10;
+  // Reversement : son identifiant wallet et son statut.
+  string payout_id = 11;
+  string payout_status = 12;
+  // Annulation : encaissement annulé.
+  string reverses_transaction_id = 13;
+  string created_at = 14;
+}
+
+message StatementPage {
+  repeated StatementLine lines = 1;
+  string next_cursor = 2;
+}
+
+// Écriture d'une transaction : compte, sens, montant.
+message LedgerEntry {
+  // "holder:user:<id>", "holder:organization:<id>", "ksp:collections", "ksp:commission" ou
+  // "ksp:payouts_in_transit".
+  string account = 1;
+  // "debit" ou "credit".
+  string direction = 2;
+  ksp.common.v1.Money amount = 3;
+}
+
+message LedgerTransaction {
+  string id = 1;
+  // "collection", "payout_hold", "payout_settlement", "payout_release" ou "reversal".
+  string kind = 2;
+  // Référence d'idempotence de l'appelant.
+  string reference = 3;
+  Holder holder = 4;
+  // Montant pour le titulaire : net crédité (encaissement), montant retenu ou rendu, ou annulé.
+  ksp.common.v1.Money amount = 5;
+  ksp.common.v1.Money gross_amount = 6;
+  ksp.common.v1.Money commission = 7;
+  int32 commission_rate_bps = 8;
+  string description = 9;
+  string reverses_transaction_id = 10;
+  string created_at = 11;
+  // Écritures équilibrées (somme des débits = somme des crédits).
+  repeated LedgerEntry entries = 12;
+}
+
+// Bénéficiaire d'un reversement par Mobile Money.
+message PayoutBeneficiary {
+  // Numéro E.164 (+229…).
+  string phone = 1;
+  // "mtn", "moov" ou "celtiis".
+  string operator = 2;
+  // Nom du titulaire du compte Mobile Money, 1 à 120 caractères.
+  string name = 3;
+}
+
+message WalletPayout {
+  string id = 1;
+  Holder holder = 2;
+  ksp.common.v1.Money amount = 3;
+  // "pending_submission" (pas encore transmis à payment, nouvel essai automatique), "submitted",
+  // "completed" ou "failed" (montant rendu au solde).
+  string status = 4;
+  // Reversement chez payment, vide tant qu'il n'est pas transmis.
+  string payment_payout_id = 5;
+  string beneficiary_operator = 6;
+  // Numéro masqué (seuls les deux derniers chiffres) : wallet ne garde le numéro complet que
+  // jusqu'à sa transmission à payment.
+  string beneficiary_phone_masked = 7;
+  string hold_transaction_id = 8;
+  // Transaction qui l'a soldé (terminé ou rendu), vide en cours.
+  string settlement_transaction_id = 9;
+  string created_at = 10;
+  string updated_at = 11;
+  string completed_at = 12;
+  string failed_at = 13;
+}
+
+message RecordCollectionRequest {
+  Holder holder = 1;
+  // Montant encaissé, entier en XOF (1 à 1 000 000 000).
+  ksp.common.v1.Money gross_amount = 2;
+  // Commission de KSP en points de base (0 à 10 000 : 1 250 = 12,5 %), fournie par l'appelant.
+  int32 commission_rate_bps = 3;
+  // Référence d'idempotence (1 à 100 caractères : lettres, chiffres, ":", "_", "-"), par exemple
+  // "payment:<id du paiement>" : une seconde demande identique renvoie la même transaction.
+  string reference = 4;
+  // Libellé du relevé, 1 à 140 caractères (aucune donnée personnelle du débiteur).
+  string description = 5;
+}
+
+message RecordCollectionResponse {
+  LedgerTransaction transaction = 1;
+  Wallet wallet = 2;
+  // false : encaissement déjà enregistré avec cette référence.
+  bool created = 3;
+}
+
+message RequestPayoutRequest {
+  // Obligatoire (8 à 100 caractères : lettres, chiffres, "_" et "-"), propre à l'appelant.
+  string idempotency_key = 1;
+  Holder holder = 2;
+  // Entier en XOF, 1 à 1 000 000 000, au plus le solde disponible.
+  ksp.common.v1.Money amount = 3;
+  PayoutBeneficiary beneficiary = 4;
+}
+
+message RequestPayoutResponse {
+  WalletPayout payout = 1;
+  Wallet wallet = 2;
+  // false : reversement déjà demandé avec cette clé.
+  bool created = 3;
+}
+
+message ReverseTransactionRequest {
+  // Encaissement à annuler.
+  string transaction_id = 1;
+  // Raison, 1 à 200 caractères (aucune donnée personnelle).
+  string reason = 2;
+  // Référence d'idempotence de l'annulation (même format que pour un encaissement).
+  string reference = 3;
+}
+
+message ReverseTransactionResponse {
+  LedgerTransaction transaction = 1;
+  Wallet wallet = 2;
+  // false : annulation déjà enregistrée avec cette référence.
+  bool created = 3;
+}
+
+message GetBalanceRequest {
+  Holder holder = 1;
+}
+
+message GetBalanceResponse {
+  Wallet wallet = 1;
+}
+
+message ListStatementRequest {
+  Holder holder = 1;
+  Page page = 2;
+}
+
+message ListStatementResponse {
+  StatementPage statement = 1;
+}
+
+message GetMyWalletRequest {}
+
+message GetMyWalletResponse {
+  Wallet wallet = 1;
+}
+
+message ListMyStatementRequest {
+  Page page = 1;
+}
+
+message ListMyStatementResponse {
+  StatementPage statement = 1;
+}
+
+message ListMyPayoutsRequest {
+  Page page = 1;
+  // Filtre facultatif : "pending_submission", "submitted", "completed" ou "failed".
+  string status = 2;
+}
+
+message ListMyPayoutsResponse {
+  repeated WalletPayout payouts = 1;
+  string next_cursor = 2;
+}
+
+message GetHolderWalletRequest {
+  Holder holder = 1;
+}
+
+message GetHolderWalletResponse {
+  Wallet wallet = 1;
+}
+
+message ListHolderStatementRequest {
+  Holder holder = 1;
+  Page page = 2;
+}
+
+message ListHolderStatementResponse {
+  StatementPage statement = 1;
+}
+
+message ListWalletPayoutsRequest {
+  Page page = 1;
+  // Filtres facultatifs.
+  string status = 2;
+  Holder holder = 3;
+}
+
+message ListWalletPayoutsResponse {
+  repeated WalletPayout payouts = 1;
+  string next_cursor = 2;
+}
+
+message GetLedgerOverviewRequest {}
+
+message AccountBalance {
+  // "ksp:collections", "ksp:commission" ou "ksp:payouts_in_transit".
+  string account = 1;
+  // Solde dans le sens naturel du compte (positif en temps normal).
+  ksp.common.v1.Money balance = 2;
+}
+
+message GetLedgerOverviewResponse {
+  repeated AccountBalance internal_accounts = 1;
+  // Somme des soldes des titulaires (ce que KSP leur doit).
+  ksp.common.v1.Money owed_to_holders = 2;
+  int32 holders_count = 3;
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/payment/payment.payout.failed.v1.schema.json",
+  "title": "payment.payout.failed",
+  "description": "Reversement par Mobile Money en échec : refusé par le prestataire (statut relu chez lui), ou déclaré en échec par la finance au back-office en mode manuel (ADR-041). Aucun argent n'est parti. Publié une seule fois par reversement. Écouté par l'émetteur (wallet : montant rendu au solde du titulaire). Identifiants et montants seulement : la raison détaillée reste dans payment.",
+  "x-event-type": "payment.payout.failed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payoutId", "issuer", "reference", "amount", "provider", "failureCode", "failedAt"],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "integer", "minimum": 1 },
+        "currency": { "const": "XOF" }
+      }
+    }
+  },
+  "properties": {
+    "payoutId": { "type": "string", "format": "uuid" },
+    "issuer": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Service qui a demandé le reversement (wallet)"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Référence de l'émetteur (wallet : identifiant de son reversement)"
+    },
+    "amount": { "$ref": "#/$defs/money" },
+    "provider": { "enum": ["fedapay", "manual"] },
+    "failureCode": {
+      "enum": ["provider_failed", "rejected_by_finance"],
+      "description": "provider_failed : refusé par le prestataire ; rejected_by_finance : mis en échec au back-office"
+    },
+    "failedAt": { "type": "string", "format": "date-time" }
+  }
+}

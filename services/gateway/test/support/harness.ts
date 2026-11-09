@@ -666,6 +666,8 @@ export async function startGateway(options: {
   notificationUrl?: string;
   /** Service file simulé (file-stub.ts) ; sans lui, les routes des fichiers répondent 503. */
   fileUrl?: string;
+  /** Service wallet simulé (wallet-stub.ts) ; sans lui, les routes du portefeuille répondent 503. */
+  walletUrl?: string;
   keys: TestKeys;
   env?: Record<string, string>;
   jwks?: JwksSource;
@@ -679,6 +681,7 @@ export async function startGateway(options: {
     ...(options.paymentUrl ? { PAYMENT_GRPC_URL: options.paymentUrl } : {}),
     ...(options.notificationUrl ? { NOTIFICATION_GRPC_URL: options.notificationUrl } : {}),
     ...(options.fileUrl ? { FILE_GRPC_URL: options.fileUrl } : {}),
+    ...(options.walletUrl ? { WALLET_GRPC_URL: options.walletUrl } : {}),
     CORS_WEB_ORIGINS: `${ORIGINS.web},https://shop.ksp.bj,https://print.ksp.bj`,
     CORS_BACKOFFICE_ORIGINS: ORIGINS.backoffice,
     ...options.env,

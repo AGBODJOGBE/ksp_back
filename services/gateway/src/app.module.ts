@@ -1,4 +1,12 @@
-import { billingV1, cleaningV1, fileV1, identityV1, notificationV1, paymentV1 } from '@ksp/contracts';
+import {
+  billingV1,
+  cleaningV1,
+  fileV1,
+  identityV1,
+  notificationV1,
+  paymentV1,
+  walletV1,
+} from '@ksp/contracts';
 import {
   AccessTokenVerifier,
   createLoggerModule,
@@ -20,6 +28,7 @@ import { type OrganizationsApi } from './application/identity/organizations.port
 import { type NotificationApi } from './application/notification/notification.ports';
 import { type FileApi } from './application/file/file.ports';
 import { type PaymentApi } from './application/payment/payment.ports';
+import { type WalletApi } from './application/wallet/wallet.ports';
 import { RequestCleaningQuoteUseCase } from './application/cleaning/request-cleaning-quote.use-case';
 import { AuthorizeRequestUseCase } from './application/access/authorize-request.use-case';
 import {
@@ -47,6 +56,7 @@ import { OrganizationsGrpcAdapter } from './infrastructure/grpc/organizations-gr
 import { NotificationGrpcAdapter } from './infrastructure/grpc/notification-grpc.adapter';
 import { FileGrpcAdapter } from './infrastructure/grpc/file-grpc.adapter';
 import { PaymentGrpcAdapter } from './infrastructure/grpc/payment-grpc.adapter';
+import { WalletGrpcAdapter } from './infrastructure/grpc/wallet-grpc.adapter';
 import { HttpJwksSource } from './infrastructure/keys/http-jwks.source';
 import { KeysReadiness } from './infrastructure/keys/keys-readiness';
 import { type JwksSource, SigningKeysCache } from './infrastructure/keys/signing-keys-cache';
@@ -63,6 +73,7 @@ import { OrganizationHttpController } from './interfaces/http/organizations.cont
 import { NotificationHttpController } from './interfaces/http/notification.controller';
 import { FileHttpController } from './interfaces/http/file.controller';
 import { PaymentHttpController } from './interfaces/http/payment.controller';
+import { WalletHttpController } from './interfaces/http/wallet.controller';
 import { RefreshCookies } from './interfaces/http/refresh-cookie';
 import { RouteGuard } from './interfaces/http/route.guard';
 import {
@@ -82,6 +93,8 @@ import {
   PAYMENT_API,
   PAYMENT_GRPC_CLIENT,
   PAYMENT_SIMULATION_ROUTE,
+  WALLET_API,
+  WALLET_GRPC_CLIENT,
   RATE_LIMITER,
 } from './tokens';
 
@@ -106,6 +119,7 @@ export class AppModule {
           grpcClientOptions(PAYMENT_GRPC_CLIENT, 'payment', config.PAYMENT_GRPC_URL),
           grpcClientOptions(NOTIFICATION_GRPC_CLIENT, 'notification', config.NOTIFICATION_GRPC_URL),
           grpcClientOptions(FILE_GRPC_CLIENT, 'file', config.FILE_GRPC_URL),
+          grpcClientOptions(WALLET_GRPC_CLIENT, 'wallet', config.WALLET_GRPC_URL),
         ]),
       ],
       controllers: [
@@ -121,6 +135,7 @@ export class AppModule {
         PaymentHttpController,
         NotificationHttpController,
         FileHttpController,
+        WalletHttpController,
       ],
       providers: [
         ReadinessRegistry,
@@ -266,6 +281,12 @@ export class AppModule {
                 admin: grpc.getService<paymentV1.PaymentAdminServiceClient>(
                   paymentV1.PAYMENT_ADMIN_SERVICE_NAME,
                 ),
+                links: grpc.getService<paymentV1.PaymentLinkPublicServiceClient>(
+                  paymentV1.PAYMENT_LINK_PUBLIC_SERVICE_NAME,
+                ),
+                payoutAdmin: grpc.getService<paymentV1.PayoutAdminServiceClient>(
+                  paymentV1.PAYOUT_ADMIN_SERVICE_NAME,
+                ),
               },
               // Coupe-circuit propre à payment : une panne n'affecte pas les autres routes (UC-GW-07).
               new GrpcCaller({
@@ -305,6 +326,25 @@ export class AppModule {
               // Coupe-circuit propre à file : une panne n'affecte pas les autres routes (UC-GW-07).
               new GrpcCaller({
                 target: 'file',
+                defaultDeadlineMs: config.GRPC_DEADLINE_MS,
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        {
+          provide: WALLET_API,
+          inject: [WALLET_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
+          useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): WalletApi =>
+            new WalletGrpcAdapter(
+              {
+                account: grpc.getService<walletV1.WalletAccountServiceClient>(
+                  walletV1.WALLET_ACCOUNT_SERVICE_NAME,
+                ),
+                admin: grpc.getService<walletV1.WalletAdminServiceClient>(walletV1.WALLET_ADMIN_SERVICE_NAME),
+              },
+              // Coupe-circuit propre à wallet : une panne n'affecte pas les autres routes (UC-GW-07).
+              new GrpcCaller({
+                target: 'wallet',
                 defaultDeadlineMs: config.GRPC_DEADLINE_MS,
                 ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
               }),

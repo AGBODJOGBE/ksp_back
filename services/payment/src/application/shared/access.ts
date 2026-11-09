@@ -9,6 +9,9 @@ import { PaymentErrors } from './errors';
  */
 export const PAYMENT_STAFF = ['finance_officer', 'cleaning_admin', 'super_admin'] as const;
 
+/** Rôles du back-office des reversements (ADR-041) : la finance seulement. */
+export const PAYOUT_STAFF = ['finance_officer', 'super_admin'] as const;
+
 /** Double authentification faite pendant la session back-office en cours (12 heures au plus). */
 export const BACKOFFICE_MFA_MAX_AGE_SECONDS = 12 * 3600;
 
@@ -46,4 +49,20 @@ export function requireStaff(allowed: readonly string[], nowMs?: number): { user
 export function requireCaller(allowed: readonly string[]): void {
   const caller = currentContext()?.callerService;
   if (caller && !allowed.includes(caller)) throw PaymentErrors.callerForbidden();
+}
+
+/**
+ * Service émetteur (liens, reversements) : l'appelant authentifié par son jeton de service, s'il est
+ * autorisé. Sans vérificateur (développement local sans jetons), l'appel est attribué au premier
+ * service autorisé : en production, le jeton de service est obligatoire.
+ */
+export function requireIssuer(allowed: readonly string[]): string {
+  const caller = currentContext()?.callerService;
+  if (caller) {
+    if (!allowed.includes(caller)) throw PaymentErrors.callerForbidden();
+    return caller;
+  }
+  const fallback = allowed[0];
+  if (!fallback) throw PaymentErrors.callerForbidden();
+  return fallback;
 }

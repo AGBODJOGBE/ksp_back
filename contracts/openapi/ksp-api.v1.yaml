@@ -74,6 +74,14 @@ tags:
     description: Notifications de l'espace KSP et préférences de canaux (ADR-039)
   - name: Notifications (back-office)
     description: Historique des envois et modèles de messages, en lecture seule (ADR-039)
+  - name: Paiement par lien
+    description: Page publique d'un lien de paiement, pour un payeur sans compte KSP (débiteur du Recouvrement, ADR-040)
+  - name: Reversements (back-office)
+    description: Reversements par Mobile Money et, en mode manuel, leur confirmation par la finance (ADR-041)
+  - name: Portefeuille
+    description: Solde, relevé et reversements des fonds que KSP détient pour le titulaire connecté (ADR-042)
+  - name: Portefeuille (back-office)
+    description: Portefeuilles des titulaires et vue d'ensemble du grand livre (ADR-042)
   - name: Fichiers
     description: Envoi et lecture des pièces jointes du compte connecté, directement dans le stockage par adresses présignées (ADR-038)
 
@@ -142,6 +150,16 @@ x-ksp-rate-limits:
     per: minute
     key: ip
     description: Notifications du prestataire de paiement (route publique, signature vérifiée par payment).
+  payment_link_read:
+    limit: 30
+    per: minute
+    key: ip
+    description: Page publique d'un lien de paiement (ADR-040) ; payeur sans compte, freine l'essai de jetons.
+  payment_link_pay:
+    limit: 5
+    per: minute
+    key: ip
+    description: Paiement par lien (ADR-040) ; chaque essai peut appeler le prestataire, payment limite aussi par lien.
   file_upload:
     limit: 30
     per: minute
@@ -8178,6 +8196,7 @@ paths:
                 expiresAt: 2026-11-02T09:30:00Z
                 completedAt: null
                 underReview: false
+                paymentLinkId: null
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -8440,8 +8459,10 @@ paths:
         - name: subjectType
           in: query
           required: false
+          description: Type d'objet du paiement par compte, ou type de l'émetteur d'un lien (`recovery_installment`…).
           schema:
-            $ref: '#/components/schemas/PaymentSubjectType'
+            type: string
+            pattern: ^[a-z][a-z0-9_]{2,49}$
         - name: subjectId
           in: query
           required: false
@@ -8572,6 +8593,7 @@ paths:
                 expiresAt: 2026-11-02T09:30:00Z
                 completedAt: 2026-11-02T09:05:00Z
                 underReview: false
+                paymentLinkId: null
                 customerName: Koffi Adjovi
                 organizationName: null
                 mismatchResolvedAt: 2026-11-05T10:00:00Z
@@ -8591,6 +8613,680 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/payment/links/{token}:
+    get:
+      tags:
+        - Paiement par lien
+      operationId: getPaymentLink
+      summary: Lien de paiement (page publique)
+      description: |
+        Page publique d'un lien de paiement envoyé par SMS ou WhatsApp à un payeur **sans compte KSP** (débiteur du
+        Recouvrement, ADR-040) : bénéficiaire affiché, libellé, référence, montant, échéance, expiration, statut,
+        et la dernière tentative de paiement. **Aucune donnée personnelle** du payeur, aucun identifiant interne.
+
+        Statuts : `active` (payable), `paid`, `under_review` (paiement reçu pour un autre montant, en
+        vérification par la finance : inviter à contacter le support), `revoked` (annulé par l'émetteur) ou
+        `expired`. Une tentative encore en attente est vérifiée auprès du prestataire au passage (au plus une fois
+        toutes les quelques secondes) : la page de retour du prestataire interroge cette route jusqu'à un statut
+        final de `payment`.
+
+        Le jeton (43 caractères) est l'unique secret du lien ; un jeton mal formé ou inconnu rend 404, sans
+        distinction. Limite d'appels par adresse IP.
+
+        Erreurs : `PAYMENT_LINK_NOT_FOUND` (404), `GATEWAY_RATE_LIMITED` (429).
+      x-ksp-grpc: ksp.payment.v1.PaymentLinkPublicService/GetPublicPaymentLink
+      x-ksp-access: public
+      x-ksp-rate-limit: payment_link_read
+      parameters:
+        - $ref: '#/components/parameters/LinkToken'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicPaymentLink'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/payment/links/{token}/pay:
+    post:
+      tags:
+        - Paiement par lien
+      operationId: payPaymentLink
+      summary: Payer un lien par Mobile Money
+      description: |
+        Lance le paiement du lien chez le prestataire (FedaPay, comme `POST /api/v1/payment/payments`) et renvoie
+        sa page de paiement (`checkoutUrl`), où le payeur saisit son numéro. Le montant est celui du lien, jamais
+        envoyé par le navigateur. Retour du payeur : la page publique du lien.
+
+        Idempotent : la même clé renvoie la même tentative ; une tentative encore en attente est réutilisée (une
+        seule page payable par lien). Confirmation par le prestataire seulement (notification signée), jamais par
+        le retour du navigateur ; la réussite publie `payment.link.paid`.
+
+        Refus : objet déjà payé, par ce lien ou un autre (`PAYMENT_LINK_ALREADY_PAID`, 409) ; paiement en écart
+        de montant pas encore traité par la finance (`PAYMENT_UNDER_REVIEW`, 409, ADR-032) ; lien révoqué
+        (`PAYMENT_LINK_REVOKED`) ou expiré (`PAYMENT_LINK_EXPIRED`, 422) ; plus de 10 tentatives par heure sur
+        le lien (`PAYMENT_LINK_TOO_MANY_ATTEMPTS`, 429, réglable) ; 5 appels par minute et par adresse IP.
+
+        Erreurs : `PAYMENT_VALIDATION_FAILED` (400), `PAYMENT_LINK_NOT_FOUND` (404), `PAYMENT_LINK_ALREADY_PAID`,
+        `PAYMENT_UNDER_REVIEW` (409), `PAYMENT_LINK_REVOKED`, `PAYMENT_LINK_EXPIRED` (422),
+        `PAYMENT_LINK_TOO_MANY_ATTEMPTS` (429), `PAYMENT_PROVIDER_UNAVAILABLE` (503, réessayer avec la même clé).
+      x-ksp-grpc: ksp.payment.v1.PaymentLinkPublicService/PayPaymentLink
+      x-ksp-access: public
+      x-ksp-rate-limit: payment_link_pay
+      parameters:
+        - $ref: '#/components/parameters/LinkToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Tentative créée (ou déjà créée avec cette clé, ou tentative en attente réutilisée)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentLinkPayment'
+              example:
+                id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5002
+                status: pending
+                checkoutUrl: https://process.fedapay.com/eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9
+                expiresAt: 2026-11-07T10:30:00Z
+                failureReason: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/payment/links/{token}/simulate:
+    post:
+      tags:
+        - Paiement par lien
+      operationId: simulatePaymentLinkPayment
+      summary: Simuler l’issue du paiement d’un lien (développement)
+      description: |
+        **Développement seulement**, comme `POST /api/v1/payment/payments/{id}/simulate` : règle (`succeeded`) ou
+        refuse (`failed`) la dernière tentative en attente du lien chez le prestataire simulé, puis la confirme
+        par le même chemin qu'une notification. Refusé en production et avec FedaPay : 404
+        `PAYMENT_SIMULATION_DISABLED`.
+
+        Erreurs : `PAYMENT_VALIDATION_FAILED` (400), `PAYMENT_LINK_NOT_FOUND`, `PAYMENT_NOT_FOUND` (aucune
+        tentative en attente), `PAYMENT_SIMULATION_DISABLED` (404).
+      x-ksp-grpc: ksp.payment.v1.PaymentLinkPublicService/SimulatePaymentLinkPayment
+      x-ksp-access: public
+      x-ksp-rate-limit: payment_link_pay
+      parameters:
+        - $ref: '#/components/parameters/LinkToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SimulatePaymentRequest'
+            example:
+              outcome: succeeded
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentLinkPayment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/payment/payouts:
+    get:
+      tags:
+        - Reversements (back-office)
+      operationId: listPayouts
+      summary: Reversements (back-office)
+      description: |
+        Reversements par Mobile Money demandés par les services (wallet : reversement du solde d'un créancier,
+        ADR-041), les plus récents d'abord, filtrables par statut et par émetteur. Le numéro complet du
+        bénéficiaire est montré : en mode manuel (`provider` = `manual`), la finance fait elle-même le virement
+        puis le confirme ou le déclare en échec.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.payment.v1.PayoutAdminService/ListPayouts
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PayoutStatus'
+        - name: issuer
+          in: query
+          required: false
+          description: Service qui a demandé le reversement (`wallet`).
+          schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]*$
+            maxLength: 50
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayoutList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/payment/payouts/{id}/confirm:
+    post:
+      tags:
+        - Reversements (back-office)
+      operationId: confirmPayout
+      summary: Confirmer un reversement fait à la main
+      description: |
+        Mode manuel (`provider` = `manual`) : la finance a fait le virement Mobile Money et en donne la référence.
+        Le reversement passe `completed` et `payment.payout.completed` est publié (wallet solde le montant en
+        transit). Rejouable sans effet (même clé `Idempotency-Key` facultative, ou même compte et même
+        référence) ; une autre issue d'un reversement déjà terminé est refusée.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `PAYMENT_VALIDATION_FAILED` (400), `PAYMENT_PAYOUT_NOT_FOUND` (404),
+        `PAYMENT_PAYOUT_ALREADY_SETTLED` (409), `PAYMENT_PAYOUT_NOT_MANUAL` (422, exécuté par le prestataire).
+      x-ksp-grpc: ksp.payment.v1.PayoutAdminService/ConfirmPayout
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PayoutId'
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmPayoutRequest'
+            example:
+              transferReference: MTN-TRF-0042
+      responses:
+        '200':
+          description: Reversement terminé (ou déjà terminé par la même demande)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payout'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/payment/payouts/{id}/fail:
+    post:
+      tags:
+        - Reversements (back-office)
+      operationId: failPayout
+      summary: Déclarer un reversement en échec
+      description: |
+        Mode manuel : la finance n'a pas pu faire le virement (numéro inconnu, compte bloqué…). Le reversement
+        passe `failed` et `payment.payout.failed` est publié avec un code seulement (la raison reste dans
+        payment) : wallet rend le montant au solde du titulaire. Rejouable sans effet comme la confirmation.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `PAYMENT_VALIDATION_FAILED` (400), `PAYMENT_PAYOUT_NOT_FOUND` (404),
+        `PAYMENT_PAYOUT_ALREADY_SETTLED` (409), `PAYMENT_PAYOUT_NOT_MANUAL` (422).
+      x-ksp-grpc: ksp.payment.v1.PayoutAdminService/FailPayout
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PayoutId'
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FailPayoutRequest'
+            example:
+              reason: Numéro inconnu chez MTN, créancier recontacté.
+      responses:
+        '200':
+          description: Reversement en échec (ou déjà déclaré par la même demande)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payout'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/wallet/me:
+    get:
+      tags:
+        - Portefeuille
+      operationId: getMyWallet
+      summary: Mon portefeuille
+      description: |
+        Solde des fonds que KSP détient pour le titulaire connecté (ADR-042) : son organisation active
+        (contexte entreprise) ou son compte (contexte personnel). `balance` = encaissements nets (commission de KSP
+        déduite) moins les reversements demandés ; `payoutsInProgress` = reversements pas encore terminés (déjà
+        déduits). Un compte sans écriture rend des montants nuls.
+      x-ksp-grpc: ksp.wallet.v1.WalletAccountService/GetMyWallet
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/wallet/me/statement:
+    get:
+      tags:
+        - Portefeuille
+      operationId: listMyWalletStatement
+      summary: Relevé de mon portefeuille
+      description: |
+        Écritures du compte du titulaire connecté, les plus récentes d'abord, avec le solde après chacune :
+        encaissements (montant brut, commission et taux), reversements (et leur statut), montants rendus après un
+        reversement en échec, annulations.
+      x-ksp-grpc: ksp.wallet.v1.WalletAccountService/ListMyStatement
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletStatement'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/wallet/me/payouts:
+    get:
+      tags:
+        - Portefeuille
+      operationId: listMyWalletPayouts
+      summary: Mes reversements
+      description: |
+        Reversements du titulaire connecté, les plus récents d'abord. Le numéro du bénéficiaire est masqué (wallet
+        ne garde le numéro complet que jusqu'à la transmission à payment).
+      x-ksp-grpc: ksp.wallet.v1.WalletAccountService/ListMyPayouts
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/WalletPayoutStatus'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletPayoutList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/holders/{type}/{id}:
+    get:
+      tags:
+        - Portefeuille (back-office)
+      operationId: getHolderWallet
+      summary: Portefeuille d’un titulaire
+      description: |
+        Solde et cumuls d'un titulaire (compte ou organisation), comme `GET /api/v1/wallet/me`.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/GetHolderWallet
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/HolderType'
+        - $ref: '#/components/parameters/HolderId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/holders/{type}/{id}/statement:
+    get:
+      tags:
+        - Portefeuille (back-office)
+      operationId: listHolderWalletStatement
+      summary: Relevé d’un titulaire
+      description: |
+        Relevé d'un titulaire, comme `GET /api/v1/wallet/me/statement`.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/ListHolderStatement
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/HolderType'
+        - $ref: '#/components/parameters/HolderId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletStatement'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/payouts:
+    get:
+      tags:
+        - Portefeuille (back-office)
+      operationId: listWalletPayouts
+      summary: Reversements des titulaires
+      description: |
+        Reversements demandés depuis les portefeuilles, filtrables par statut (`pending_submission` : pas encore
+        transmis à payment, nouvel essai automatique toutes les minutes) et par titulaire (`holderType` et
+        `holderId` ensemble). L'exécution se suit dans `GET /api/v1/admin/payment/payouts`.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/ListWalletPayouts
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/WalletPayoutStatus'
+        - name: holderType
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/WalletHolderType'
+        - name: holderId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletPayoutList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/overview:
+    get:
+      tags:
+        - Portefeuille (back-office)
+      operationId: getWalletLedgerOverview
+      summary: Vue d’ensemble du grand livre
+      description: |
+        Soldes des comptes internes de KSP — `ksp:collections` (fonds encaissés et détenus), `ksp:commission`
+        (commissions acquises), `ksp:payouts_in_transit` (reversements demandés, pas encore terminés) — et total dû
+        aux titulaires. Invariant : collections = dû aux titulaires + commission + en transit.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/GetLedgerOverview
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletLedgerOverview'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -9376,6 +10072,42 @@ components:
       schema:
         type: string
         format: uuid
+    LinkToken:
+      name: token
+      in: path
+      required: true
+      description: Jeton du lien de paiement (43 caractères base64url), reçu par SMS ou WhatsApp.
+      schema:
+        type: string
+        pattern: ^[A-Za-z0-9_-]{43}$
+    PayoutId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant du reversement (UUID).
+      schema:
+        type: string
+        format: uuid
+    HolderType:
+      name: type
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/WalletHolderType'
+    HolderId:
+      name: id
+      in: path
+      required: true
+      description: Compte ou organisation (UUID d'identity).
+      schema:
+        type: string
+        format: uuid
+    WalletPayoutStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/WalletPayoutStatus'
     FileId:
       name: id
       in: path
@@ -14108,11 +14840,15 @@ components:
         - reference
       properties:
         type:
-          $ref: '#/components/schemas/PaymentSubjectType'
+          type: string
+          pattern: ^[a-z][a-z0-9_]{2,49}$
+          description: |
+            `cleaning_mission` ou `billing_invoice` (paiement par compte) ; pour un paiement par lien, type choisi par
+            l'émetteur du lien, par exemple `recovery_installment` (ADR-040).
         id:
           type: string
           format: uuid
-          description: Mission (Nettoyage) ou facture.
+          description: Mission (Nettoyage), facture, ou objet de l'émetteur d'un lien.
         part:
           description: Mission seulement — `deposit` (acompte) ou `balance` (reste dû) ; null pour une facture.
           enum:
@@ -14123,7 +14859,7 @@ components:
           type:
             - string
             - 'null'
-          description: Numéro de la facture ; null pour une mission.
+          description: Numéro de la facture, ou référence de l'émetteur d'un lien ; null pour une mission.
     Payment:
       type: object
       additionalProperties: false
@@ -14144,6 +14880,7 @@ components:
         - expiresAt
         - completedAt
         - underReview
+        - paymentLinkId
       properties:
         id:
           type: string
@@ -14155,9 +14892,17 @@ components:
         amount:
           $ref: '#/components/schemas/Money'
         customerId:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uuid
-          description: Payeur (compte qui a créé le paiement).
+          description: Payeur (compte qui a créé le paiement) ; null pour un paiement par lien (payeur sans compte).
+        paymentLinkId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Lien de paiement payé (ADR-040) ; null pour un paiement par compte.
         organizationId:
           type:
             - string
@@ -14302,6 +15047,475 @@ components:
           description: |
             Ce que la finance a fait (remboursement, encaissement manuel enregistré…), espaces de début et de fin
             retirés ; une note vide est refusée.
+    PublicPaymentLink:
+      type: object
+      additionalProperties: false
+      description: Lien de paiement vu par le payeur (ADR-040) — aucune donnée personnelle, aucun identifiant interne.
+      required:
+        - status
+        - beneficiaryName
+        - description
+        - reference
+        - amount
+        - dueDate
+        - expiresAt
+        - paidAt
+        - payment
+      properties:
+        status:
+          description: |
+            `active` (payable), `paid`, `under_review` (paiement en vérification par la finance : contacter le
+            support), `revoked` (annulé par l'émetteur) ou `expired`.
+          enum:
+            - active
+            - paid
+            - under_review
+            - revoked
+            - expired
+        beneficiaryName:
+          type: string
+          maxLength: 120
+          description: Bénéficiaire affiché (créancier).
+        description:
+          type: string
+          maxLength: 140
+          description: Libellé, par exemple « Échéance 2 sur 6 ».
+        reference:
+          type: string
+          maxLength: 60
+          description: Référence de l'émetteur, à citer au support.
+        amount:
+          $ref: '#/components/schemas/Money'
+        dueDate:
+          type:
+            - string
+            - 'null'
+          format: date
+        expiresAt:
+          type: string
+          format: date-time
+        paidAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        payment:
+          description: Dernière tentative de paiement, null si aucune.
+          oneOf:
+            - $ref: '#/components/schemas/PaymentLinkPayment'
+            - type: 'null'
+    PaymentLinkPayment:
+      type: object
+      additionalProperties: false
+      description: Tentative de paiement d'un lien.
+      required:
+        - id
+        - status
+        - checkoutUrl
+        - expiresAt
+        - failureReason
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/PaymentStatus'
+        checkoutUrl:
+          type:
+            - string
+            - 'null'
+          format: uri
+          description: Page de paiement du prestataire, tant que la tentative est `pending` ; null sinon.
+        expiresAt:
+          type: string
+          format: date-time
+        failureReason:
+          enum:
+            - declined
+            - cancelled
+            - expired
+            - null
+    PayoutStatus:
+      description: |
+        `requested` (enregistré ; en mode manuel, attend la finance), `processing` (lancé chez le prestataire),
+        `completed` ou `failed`.
+      enum:
+        - requested
+        - processing
+        - completed
+        - failed
+    Payout:
+      type: object
+      additionalProperties: false
+      description: Reversement par Mobile Money (ADR-041), vu par la finance.
+      required:
+        - id
+        - status
+        - issuer
+        - reference
+        - amount
+        - beneficiary
+        - provider
+        - providerReference
+        - failureReason
+        - createdAt
+        - updatedAt
+        - completedAt
+        - failedAt
+        - settledBy
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/PayoutStatus'
+        issuer:
+          type: string
+          description: Service qui l'a demandé (`wallet`).
+        reference:
+          type: string
+          maxLength: 100
+          description: "Référence de l'émetteur (wallet : identifiant de son reversement)."
+        amount:
+          $ref: '#/components/schemas/Money'
+        beneficiary:
+          type: object
+          additionalProperties: false
+          required:
+            - phone
+            - operator
+            - name
+          properties:
+            phone:
+              type: string
+              pattern: ^\+229([0-9]{8}|[0-9]{10})$
+            operator:
+              enum:
+                - mtn
+                - moov
+                - celtiis
+            name:
+              type: string
+              maxLength: 120
+        provider:
+          enum:
+            - fedapay
+            - manual
+          description: '`manual` : virement fait par la finance, confirmé au back-office.'
+        providerReference:
+          type:
+            - string
+            - 'null'
+          description: Référence du virement (prestataire, ou saisie par la finance).
+        failureReason:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        failedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        settledBy:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Mode manuel — compte du back-office qui l'a confirmé ou déclaré en échec.
+    PayoutList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Payout'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    ConfirmPayoutRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - transferReference
+      properties:
+        transferReference:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Référence du virement Mobile Money fait par la finance.
+    FailPayoutRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Raison de l'échec ; gardée dans payment, jamais transmise dans les événements.
+    WalletHolderType:
+      enum:
+        - user
+        - organization
+    WalletHolder:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+      properties:
+        type:
+          $ref: '#/components/schemas/WalletHolderType'
+        id:
+          type: string
+          format: uuid
+    Wallet:
+      type: object
+      additionalProperties: false
+      description: Portefeuille d'un titulaire (ADR-042), calculé depuis les écritures du grand livre.
+      required:
+        - holder
+        - balance
+        - payoutsInProgress
+        - totalCollected
+        - totalPaidOut
+        - lastEntryAt
+      properties:
+        holder:
+          $ref: '#/components/schemas/WalletHolder'
+        balance:
+          $ref: '#/components/schemas/Money'
+          description: |
+            Solde disponible. Négatif seulement après l'annulation d'un encaissement déjà reversé (KSP a trop
+            reversé) : aucun reversement n'est alors possible.
+        payoutsInProgress:
+          $ref: '#/components/schemas/Money'
+        totalCollected:
+          $ref: '#/components/schemas/Money'
+        totalPaidOut:
+          $ref: '#/components/schemas/Money'
+        lastEntryAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    WalletStatementLine:
+      type: object
+      additionalProperties: false
+      required:
+        - transactionId
+        - kind
+        - direction
+        - amount
+        - balanceAfter
+        - reference
+        - description
+        - grossAmount
+        - commission
+        - commissionRateBps
+        - payoutId
+        - payoutStatus
+        - reversesTransactionId
+        - createdAt
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        kind:
+          description: |
+            `collection` (encaissement), `payout` (reversement retenu), `payout_release` (reversement en échec :
+            montant rendu) ou `reversal` (annulation d'un encaissement).
+          enum:
+            - collection
+            - payout
+            - payout_release
+            - reversal
+        direction:
+          description: '`credit` : en faveur du titulaire.'
+          enum:
+            - credit
+            - debit
+        amount:
+          $ref: '#/components/schemas/Money'
+        balanceAfter:
+          $ref: '#/components/schemas/Money'
+        reference:
+          type: string
+        description:
+          type: string
+        grossAmount:
+          description: Encaissement et annulation — montant brut ; null sinon.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        commission:
+          description: Encaissement et annulation — commission de KSP (arrondie à l'entier inférieur) ; null sinon.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        commissionRateBps:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+          maximum: 10000
+          description: Taux en points de base (1 250 = 12,5 %).
+        payoutId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        payoutStatus:
+          oneOf:
+            - $ref: '#/components/schemas/WalletPayoutStatus'
+            - type: 'null'
+        reversesTransactionId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+    WalletStatement:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WalletStatementLine'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    WalletPayoutStatus:
+      description: |
+        `pending_submission` (pas encore transmis à payment, nouvel essai automatique), `submitted`, `completed`
+        ou `failed` (montant rendu au solde).
+      enum:
+        - pending_submission
+        - submitted
+        - completed
+        - failed
+    WalletPayout:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - holder
+        - amount
+        - status
+        - paymentPayoutId
+        - beneficiaryOperator
+        - beneficiaryPhoneMasked
+        - createdAt
+        - updatedAt
+        - completedAt
+        - failedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        holder:
+          $ref: '#/components/schemas/WalletHolder'
+        amount:
+          $ref: '#/components/schemas/Money'
+        status:
+          $ref: '#/components/schemas/WalletPayoutStatus'
+        paymentPayoutId:
+          type:
+            - string
+            - 'null'
+          description: Reversement chez payment (`GET /api/v1/admin/payment/payouts`).
+        beneficiaryOperator:
+          enum:
+            - mtn
+            - moov
+            - celtiis
+        beneficiaryPhoneMasked:
+          type: string
+          description: Numéro masqué, par exemple `+229 •• •• 45`.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        failedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    WalletPayoutList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WalletPayout'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    WalletLedgerOverview:
+      type: object
+      additionalProperties: false
+      required:
+        - internalAccounts
+        - owedToHolders
+        - holdersCount
+      properties:
+        internalAccounts:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - account
+              - balance
+            properties:
+              account:
+                enum:
+                  - ksp:collections
+                  - ksp:commission
+                  - ksp:payouts_in_transit
+              balance:
+                $ref: '#/components/schemas/Money'
+        owedToHolders:
+          $ref: '#/components/schemas/Money'
+        holdersCount:
+          type: integer
+          minimum: 0
     PaymentWebhookAck:
       type: object
       additionalProperties: false

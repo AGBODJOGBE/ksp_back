@@ -18,13 +18,19 @@ export interface Page {
 
 /** Objet payé. */
 export interface PaymentSubject {
-  /** "cleaning_mission" ou "billing_invoice". */
+  /**
+   * "cleaning_mission" ou "billing_invoice" ; paiement par lien : type choisi par l'émetteur (par
+   * exemple "recovery_installment", ADR-040).
+   */
   type: string;
   /** Mission (cleaning) ou facture (billing). */
   id: string;
   /** Mission seulement : "deposit" (acompte) ou "balance" (reste dû) ; vide pour une facture. */
   part: string;
-  /** Référence lisible : numéro de la facture ; vide pour une mission. */
+  /**
+   * Référence lisible : numéro de la facture ; référence de l'émetteur pour un lien ; vide pour une
+   * mission.
+   */
   reference: string;
 }
 
@@ -42,7 +48,10 @@ export interface Payment {
   amount?:
     | Money
     | undefined;
-  /** Payeur : le compte connecté qui a créé le paiement. */
+  /**
+   * Payeur : le compte connecté qui a créé le paiement ; vide pour un paiement par lien (payeur sans
+   * compte, ADR-040).
+   */
   customerId: string;
   /** Organisation payeuse (facture d'entreprise), vide sinon. */
   organizationId: string;
@@ -80,6 +89,8 @@ export interface Payment {
   mismatchResolvedAt: string;
   mismatchResolvedBy: string;
   mismatchResolutionNote: string;
+  /** Paiement par lien (ADR-040) : lien payé, payeur sans compte (customer_id vide). Vide sinon. */
+  paymentLinkId: string;
 }
 
 export interface CreatePaymentRequest {
@@ -187,6 +198,266 @@ export interface ResolveAmountMismatchRequest {
 
 export interface ResolveAmountMismatchResponse {
   payment?: Payment | undefined;
+}
+
+/** Lien de paiement, vu par son émetteur. */
+export interface PaymentLink {
+  id: string;
+  /**
+   * "active" (payable), "paid", "under_review" (paiement en écart de montant à traiter par la
+   * finance), "revoked" ou "expired".
+   */
+  status: string;
+  /** Objet de l'émetteur : type ("recovery_installment"…) et identifiant. */
+  subjectType: string;
+  subjectId: string;
+  /** Référence lisible de l'émetteur (affichée au payeur, transmise au prestataire). */
+  reference: string;
+  /** Bénéficiaire affiché au payeur (créancier). */
+  beneficiaryName: string;
+  /** Libellé affiché au payeur, par exemple "Échéance 2 sur 6". */
+  description: string;
+  amount?:
+    | Money
+    | undefined;
+  /** Échéance affichée (AAAA-MM-JJ), vide si aucune. */
+  dueDate: string;
+  /** Au-delà, le lien ne peut plus être payé. */
+  expiresAt: string;
+  /** Adresse publique à envoyer au payeur (<PAYMENT_LINK_BASE_URL>/<jeton>) et le jeton seul. */
+  url: string;
+  token: string;
+  /** Payeur, facultatifs ; jamais journalisés, jamais montrés sur la page publique. */
+  payerName: string;
+  payerPhone: string;
+  /** Paiement réussi et sa date, vides sinon. */
+  paidPaymentId: string;
+  paidAt: string;
+  revokedAt: string;
+  revokedReason: string;
+  createdAt: string;
+  updatedAt: string;
+  /** Dernière tentative de paiement et son statut ("pending", "succeeded"…), vides si aucune. */
+  lastPaymentId: string;
+  lastPaymentStatus: string;
+}
+
+export interface CreatePaymentLinkRequest {
+  /** Obligatoire (8 à 100 caractères : lettres, chiffres, "_" et "-"), propre à l'émetteur. */
+  idempotencyKey: string;
+  /**
+   * Minuscules, chiffres et "_", 3 à 50 caractères ; "cleaning_mission" et "billing_invoice" sont
+   * réservés au paiement par compte.
+   */
+  subjectType: string;
+  /** UUID. */
+  subjectId: string;
+  /** 1 à 60 caractères. */
+  reference: string;
+  /** 1 à 120 caractères. */
+  beneficiaryName: string;
+  /** 1 à 140 caractères. */
+  description: string;
+  /** Entier en XOF, 1 à 1 000 000 000. */
+  amount?:
+    | Money
+    | undefined;
+  /** Facultative (AAAA-MM-JJ). */
+  dueDate: string;
+  /** Obligatoire : entre 1 heure et 180 jours après la création. */
+  expiresAt: string;
+  /** Facultatifs : nom (120 caractères au plus) et téléphone E.164 du payeur. */
+  payerName: string;
+  payerPhone: string;
+}
+
+export interface CreatePaymentLinkResponse {
+  link?:
+    | PaymentLink
+    | undefined;
+  /** false : lien déjà créé avec cette clé. */
+  created: boolean;
+}
+
+export interface GetPaymentLinkRequest {
+  linkId: string;
+}
+
+export interface GetPaymentLinkResponse {
+  link?: PaymentLink | undefined;
+}
+
+export interface RevokePaymentLinkRequest {
+  linkId: string;
+  /** Facultative, 200 caractères au plus. */
+  reason: string;
+}
+
+export interface RevokePaymentLinkResponse {
+  link?: PaymentLink | undefined;
+}
+
+/**
+ * Lien vu par le payeur (page publique) : aucune donnée personnelle du payeur, aucun identifiant
+ * de l'objet.
+ */
+export interface PublicPaymentLink {
+  /** "active", "paid", "under_review", "revoked" ou "expired". */
+  status: string;
+  beneficiaryName: string;
+  description: string;
+  reference: string;
+  amount?: Money | undefined;
+  dueDate: string;
+  expiresAt: string;
+  paidAt: string;
+  /** Dernière tentative de paiement, absente si aucune. */
+  payment?: PublicLinkPayment | undefined;
+}
+
+/** Tentative de paiement d'un lien. */
+export interface PublicLinkPayment {
+  id: string;
+  /** "pending", "succeeded", "failed", "expired", "cancelled" ou "amount_mismatch". */
+  status: string;
+  /** Page de paiement du prestataire, en attente seulement. */
+  checkoutUrl: string;
+  expiresAt: string;
+  /** "declined", "cancelled", "expired" ; vide sinon. */
+  failureReason: string;
+}
+
+export interface GetPublicPaymentLinkRequest {
+  /** Jeton du lien (43 caractères : lettres, chiffres, "_" et "-"). */
+  token: string;
+}
+
+export interface GetPublicPaymentLinkResponse {
+  link?: PublicPaymentLink | undefined;
+}
+
+export interface PayPaymentLinkRequest {
+  token: string;
+  /** En-tête Idempotency-Key, obligatoire. */
+  idempotencyKey: string;
+}
+
+export interface PayPaymentLinkResponse {
+  payment?:
+    | PublicLinkPayment
+    | undefined;
+  /** false : tentative déjà créée avec cette clé, ou tentative en attente réutilisée. */
+  created: boolean;
+}
+
+export interface SimulatePaymentLinkPaymentRequest {
+  token: string;
+  /** "succeeded" ou "failed". */
+  outcome: string;
+}
+
+export interface SimulatePaymentLinkPaymentResponse {
+  payment?: PublicLinkPayment | undefined;
+}
+
+/** Bénéficiaire d'un reversement par Mobile Money. */
+export interface PayoutBeneficiary {
+  /** Numéro E.164 (+229…). */
+  phone: string;
+  /** "mtn", "moov" ou "celtiis". */
+  operator: string;
+  /** Nom du titulaire du compte Mobile Money, 1 à 120 caractères. */
+  name: string;
+}
+
+export interface Payout {
+  id: string;
+  /** "requested" (enregistré), "processing" (lancé chez le prestataire), "completed" ou "failed". */
+  status: string;
+  /** Service qui l'a demandé ("wallet"). */
+  issuer: string;
+  /** Référence de l'émetteur (100 caractères au plus). */
+  reference: string;
+  amount?: Money | undefined;
+  beneficiary?:
+    | PayoutBeneficiary
+    | undefined;
+  /** "fedapay" ou "manual" (virement fait par la finance). */
+  provider: string;
+  /** Référence du virement : chez le prestataire, ou saisie par la finance ; vide sinon. */
+  providerReference: string;
+  /** Échec : raison (prestataire, ou note de la finance) ; vide sinon. */
+  failureReason: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string;
+  failedAt: string;
+  /** Mode manuel : compte du back-office qui l'a confirmé ou mis en échec. */
+  settledBy: string;
+}
+
+export interface RequestPayoutRequest {
+  /** Obligatoire (8 à 100 caractères : lettres, chiffres, "_" et "-"), propre à l'émetteur. */
+  idempotencyKey: string;
+  /** Référence de l'émetteur, reprise dans les événements (1 à 100 caractères). */
+  reference: string;
+  /** Entier en XOF, 1 à 1 000 000 000. */
+  amount?: Money | undefined;
+  beneficiary?: PayoutBeneficiary | undefined;
+}
+
+export interface RequestPayoutResponse {
+  payout?:
+    | Payout
+    | undefined;
+  /** false : reversement déjà demandé avec cette clé. */
+  created: boolean;
+}
+
+export interface GetPayoutRequest {
+  payoutId: string;
+}
+
+export interface GetPayoutResponse {
+  payout?: Payout | undefined;
+}
+
+export interface ListPayoutsRequest {
+  page?:
+    | Page
+    | undefined;
+  /** Filtres facultatifs : statut, émetteur. */
+  status: string;
+  issuer: string;
+}
+
+export interface ListPayoutsResponse {
+  payouts: Payout[];
+  nextCursor: string;
+}
+
+export interface ConfirmPayoutRequest {
+  payoutId: string;
+  /** Référence du virement Mobile Money fait par la finance, 1 à 100 caractères. */
+  transferReference: string;
+  /** En-tête Idempotency-Key, facultatif. */
+  idempotencyKey: string;
+}
+
+export interface ConfirmPayoutResponse {
+  payout?: Payout | undefined;
+}
+
+export interface FailPayoutRequest {
+  payoutId: string;
+  /** Raison, 1 à 500 caractères (jamais transmise dans les événements). */
+  reason: string;
+  /** En-tête Idempotency-Key, facultatif. */
+  idempotencyKey: string;
+}
+
+export interface FailPayoutResponse {
+  payout?: Payout | undefined;
 }
 
 /** Espace client : paiements du client connecté (contexte personnel) ou de son organisation active. */
@@ -355,3 +626,255 @@ export function PaymentAdminServiceControllerMethods() {
 }
 
 export const PAYMENT_ADMIN_SERVICE_NAME = "PaymentAdminService";
+
+/**
+ * Liens de paiement (ADR-040), réservés aux services émetteurs autorisés (PAYMENT_LINK_ISSUERS :
+ * recovery au lancement ; jeton de service obligatoire). Un lien porte un objet de l'émetteur (type
+ * extensible, par exemple "recovery_installment"), un montant fixe en XOF, le bénéficiaire affiché et
+ * une date d'expiration ; le payeur n'a pas de compte. L'émetteur ne voit que ses propres liens.
+ */
+
+export interface PaymentLinkServiceClient {
+  /** Crée le lien (ou renvoie celui de la même clé d'idempotence) et son adresse publique. */
+
+  createPaymentLink(request: CreatePaymentLinkRequest, metadata?: Metadata): Observable<CreatePaymentLinkResponse>;
+
+  getPaymentLink(request: GetPaymentLinkRequest, metadata?: Metadata): Observable<GetPaymentLinkResponse>;
+
+  /** Le lien ne peut plus être payé ; une tentative en attente est annulée. Rejouable sans effet. */
+
+  revokePaymentLink(request: RevokePaymentLinkRequest, metadata?: Metadata): Observable<RevokePaymentLinkResponse>;
+}
+
+/**
+ * Liens de paiement (ADR-040), réservés aux services émetteurs autorisés (PAYMENT_LINK_ISSUERS :
+ * recovery au lancement ; jeton de service obligatoire). Un lien porte un objet de l'émetteur (type
+ * extensible, par exemple "recovery_installment"), un montant fixe en XOF, le bénéficiaire affiché et
+ * une date d'expiration ; le payeur n'a pas de compte. L'émetteur ne voit que ses propres liens.
+ */
+
+export interface PaymentLinkServiceController {
+  /** Crée le lien (ou renvoie celui de la même clé d'idempotence) et son adresse publique. */
+
+  createPaymentLink(
+    request: CreatePaymentLinkRequest,
+    metadata?: Metadata,
+  ): Promise<CreatePaymentLinkResponse> | Observable<CreatePaymentLinkResponse> | CreatePaymentLinkResponse;
+
+  getPaymentLink(
+    request: GetPaymentLinkRequest,
+    metadata?: Metadata,
+  ): Promise<GetPaymentLinkResponse> | Observable<GetPaymentLinkResponse> | GetPaymentLinkResponse;
+
+  /** Le lien ne peut plus être payé ; une tentative en attente est annulée. Rejouable sans effet. */
+
+  revokePaymentLink(
+    request: RevokePaymentLinkRequest,
+    metadata?: Metadata,
+  ): Promise<RevokePaymentLinkResponse> | Observable<RevokePaymentLinkResponse> | RevokePaymentLinkResponse;
+}
+
+export function PaymentLinkServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["createPaymentLink", "getPaymentLink", "revokePaymentLink"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("PaymentLinkService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("PaymentLinkService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const PAYMENT_LINK_SERVICE_NAME = "PaymentLinkService";
+
+/**
+ * Page publique d'un lien de paiement, réservée à la gateway (routes publiques, sans compte). Aucune
+ * donnée personnelle du payeur n'y figure.
+ */
+
+export interface PaymentLinkPublicServiceClient {
+  /** Résumé du lien ; une tentative en attente est vérifiée auprès du prestataire au passage. */
+
+  getPublicPaymentLink(
+    request: GetPublicPaymentLinkRequest,
+    metadata?: Metadata,
+  ): Observable<GetPublicPaymentLinkResponse>;
+
+  /** Lance le paiement chez le prestataire (idempotent par clé) et renvoie sa page de paiement. */
+
+  payPaymentLink(request: PayPaymentLinkRequest, metadata?: Metadata): Observable<PayPaymentLinkResponse>;
+
+  /** Développement seulement (prestataire simulé, hors production), comme SimulatePayment. */
+
+  simulatePaymentLinkPayment(
+    request: SimulatePaymentLinkPaymentRequest,
+    metadata?: Metadata,
+  ): Observable<SimulatePaymentLinkPaymentResponse>;
+}
+
+/**
+ * Page publique d'un lien de paiement, réservée à la gateway (routes publiques, sans compte). Aucune
+ * donnée personnelle du payeur n'y figure.
+ */
+
+export interface PaymentLinkPublicServiceController {
+  /** Résumé du lien ; une tentative en attente est vérifiée auprès du prestataire au passage. */
+
+  getPublicPaymentLink(
+    request: GetPublicPaymentLinkRequest,
+    metadata?: Metadata,
+  ): Promise<GetPublicPaymentLinkResponse> | Observable<GetPublicPaymentLinkResponse> | GetPublicPaymentLinkResponse;
+
+  /** Lance le paiement chez le prestataire (idempotent par clé) et renvoie sa page de paiement. */
+
+  payPaymentLink(
+    request: PayPaymentLinkRequest,
+    metadata?: Metadata,
+  ): Promise<PayPaymentLinkResponse> | Observable<PayPaymentLinkResponse> | PayPaymentLinkResponse;
+
+  /** Développement seulement (prestataire simulé, hors production), comme SimulatePayment. */
+
+  simulatePaymentLinkPayment(
+    request: SimulatePaymentLinkPaymentRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<SimulatePaymentLinkPaymentResponse>
+    | Observable<SimulatePaymentLinkPaymentResponse>
+    | SimulatePaymentLinkPaymentResponse;
+}
+
+export function PaymentLinkPublicServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["getPublicPaymentLink", "payPaymentLink", "simulatePaymentLinkPayment"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("PaymentLinkPublicService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("PaymentLinkPublicService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const PAYMENT_LINK_PUBLIC_SERVICE_NAME = "PaymentLinkPublicService";
+
+/**
+ * Reversements par Mobile Money (ADR-041), réservés aux services autorisés (PAYMENT_PAYOUT_ISSUERS :
+ * wallet au lancement ; jeton de service obligatoire). Exécution par le prestataire (FedaPay) ou, en
+ * mode manuel, par la finance qui confirme le virement au back-office. Événements
+ * payment.payout.completed et payment.payout.failed.
+ */
+
+export interface PayoutServiceClient {
+  /** Enregistre le reversement (ou renvoie celui de la même clé) et le lance chez le prestataire. */
+
+  requestPayout(request: RequestPayoutRequest, metadata?: Metadata): Observable<RequestPayoutResponse>;
+
+  getPayout(request: GetPayoutRequest, metadata?: Metadata): Observable<GetPayoutResponse>;
+}
+
+/**
+ * Reversements par Mobile Money (ADR-041), réservés aux services autorisés (PAYMENT_PAYOUT_ISSUERS :
+ * wallet au lancement ; jeton de service obligatoire). Exécution par le prestataire (FedaPay) ou, en
+ * mode manuel, par la finance qui confirme le virement au back-office. Événements
+ * payment.payout.completed et payment.payout.failed.
+ */
+
+export interface PayoutServiceController {
+  /** Enregistre le reversement (ou renvoie celui de la même clé) et le lance chez le prestataire. */
+
+  requestPayout(
+    request: RequestPayoutRequest,
+    metadata?: Metadata,
+  ): Promise<RequestPayoutResponse> | Observable<RequestPayoutResponse> | RequestPayoutResponse;
+
+  getPayout(
+    request: GetPayoutRequest,
+    metadata?: Metadata,
+  ): Promise<GetPayoutResponse> | Observable<GetPayoutResponse> | GetPayoutResponse;
+}
+
+export function PayoutServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["requestPayout", "getPayout"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("PayoutService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("PayoutService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const PAYOUT_SERVICE_NAME = "PayoutService";
+
+/** Back-office des reversements : finance_officer, super_admin, avec double authentification. */
+
+export interface PayoutAdminServiceClient {
+  listPayouts(request: ListPayoutsRequest, metadata?: Metadata): Observable<ListPayoutsResponse>;
+
+  /** Mode manuel : la finance a fait le virement (référence obligatoire). */
+
+  confirmPayout(request: ConfirmPayoutRequest, metadata?: Metadata): Observable<ConfirmPayoutResponse>;
+
+  /** Mode manuel : le virement n'a pas pu être fait (raison obligatoire) ; le solde est rendu. */
+
+  failPayout(request: FailPayoutRequest, metadata?: Metadata): Observable<FailPayoutResponse>;
+}
+
+/** Back-office des reversements : finance_officer, super_admin, avec double authentification. */
+
+export interface PayoutAdminServiceController {
+  listPayouts(
+    request: ListPayoutsRequest,
+    metadata?: Metadata,
+  ): Promise<ListPayoutsResponse> | Observable<ListPayoutsResponse> | ListPayoutsResponse;
+
+  /** Mode manuel : la finance a fait le virement (référence obligatoire). */
+
+  confirmPayout(
+    request: ConfirmPayoutRequest,
+    metadata?: Metadata,
+  ): Promise<ConfirmPayoutResponse> | Observable<ConfirmPayoutResponse> | ConfirmPayoutResponse;
+
+  /** Mode manuel : le virement n'a pas pu être fait (raison obligatoire) ; le solde est rendu. */
+
+  failPayout(
+    request: FailPayoutRequest,
+    metadata?: Metadata,
+  ): Promise<FailPayoutResponse> | Observable<FailPayoutResponse> | FailPayoutResponse;
+}
+
+export function PayoutAdminServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["listPayouts", "confirmPayout", "failPayout"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("PayoutAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("PayoutAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const PAYOUT_ADMIN_SERVICE_NAME = "PayoutAdminService";

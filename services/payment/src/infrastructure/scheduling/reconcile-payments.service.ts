@@ -46,6 +46,14 @@ export class ReconcilePaymentsService implements OnApplicationBootstrap, OnAppli
             `${result.failed} non aboutis, ${result.errors} en erreur`,
         );
       }
+      // Reversements exécutés par le prestataire (ADR-041) : lancés, puis relus.
+      const payouts = await this.useCases.reconcilePayouts.execute();
+      if (payouts.examined) {
+        this.logger.log(
+          `Reversements : ${payouts.examined} examinés, ${payouts.completed} terminés, ` +
+            `${payouts.failed} en échec, ${payouts.errors} en erreur`,
+        );
+      }
     } catch (error) {
       this.logger.warn(`Rapprochement interrompu : ${(error as Error).message}`);
     } finally {

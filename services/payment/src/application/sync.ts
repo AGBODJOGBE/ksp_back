@@ -8,9 +8,14 @@ import {
   ONLINE_METHOD,
   type PaymentIntent,
   providerDescription,
+  type SubjectType,
+  SUBJECT_TYPES,
   supersede,
   type Transition,
 } from '../domain/payment-intent';
+
+const isAccountSubject = (type: string): type is SubjectType =>
+  (SUBJECT_TYPES as readonly string[]).includes(type);
 import {
   type NotificationOutcome,
   type OutboxMessage,
@@ -24,10 +29,37 @@ const MAX_ATTEMPTS = 3;
 /**
  * Événements d'un changement d'état : réussite ou échec, identifiants et montants seulement. Un
  * montant approuvé différent n'en publie aucun : rien ne doit être enregistré chez cleaning ni billing.
+ *
+ * Paiement par lien (ADR-040) : la réussite publie `payment.link.paid` (et jamais
+ * `payment.intent.succeeded`, réservé aux paiements par compte et écouté par cleaning, billing et
+ * notification) ; un échec ne publie rien (le payeur réessaie depuis la page du lien).
  */
 export function transitionEvents(transition: NonNullable<Transition>): OutboxMessage[] {
   if (transition.kind === 'amount_mismatch') return [];
   const intent = transition.intent;
+  if (intent.paymentLinkId !== null) {
+    if (transition.kind !== 'succeeded') return [];
+    return [
+      {
+        type: 'payment.link.paid',
+        payload: {
+          paymentLinkId: intent.paymentLinkId,
+          paymentId: intent.id,
+          subjectType: intent.subject.type,
+          subjectId: intent.subject.id,
+          reference: intent.subject.reference ?? '',
+          amount: { amount: intent.amount, currency: CURRENCY as 'XOF' },
+          method: ONLINE_METHOD,
+          provider: intent.provider,
+          providerReference: intent.providerReference,
+          paidAt: (intent.completedAt ?? intent.updatedAt).toISOString(),
+        },
+      },
+    ];
+  }
+  if (intent.customerId === null || !isAccountSubject(intent.subject.type)) {
+    throw new Error(`Paiement ${intent.id} sans payeur ni lien : état impossible.`);
+  }
   const ref = {
     paymentId: intent.id,
     subjectType: intent.subject.type,
@@ -172,9 +204,10 @@ export class PaymentSync {
 
   /**
    * Crée la transaction et sa page de paiement chez le prestataire. Panne du prestataire : le
-   * paiement reste en attente sans page ; le client renvoie la création avec la même clé.
+   * paiement reste en attente sans page ; le client renvoie la création avec la même clé. Retour du
+   * payeur : `returnUrl` (page publique d'un lien), sinon <PAYMENT_RETURN_URL>/<id du paiement>.
    */
-  async startCheckout(intent: PaymentIntent): Promise<PaymentIntent> {
+  async startCheckout(intent: PaymentIntent, returnUrl?: string): Promise<PaymentIntent> {
     let checkout;
     try {
       checkout = await this.deps.provider.createCheckout({
@@ -182,7 +215,7 @@ export class PaymentSync {
         amount: intent.amount,
         currency: 'XOF',
         description: providerDescription(intent.subject),
-        returnUrl: `${this.deps.settings.returnUrl.replace(/\/+$/, '')}/${intent.id}`,
+        returnUrl: returnUrl ?? `${this.deps.settings.returnUrl.replace(/\/+$/, '')}/${intent.id}`,
       });
     } catch (error) {
       if (error instanceof AppError && error.kind !== 'UNAVAILABLE' && error.kind !== 'DEADLINE_EXCEEDED') {
