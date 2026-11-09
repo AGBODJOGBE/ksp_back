@@ -51,8 +51,8 @@ package ksp.document.v1;
 //   DOCUMENT_SIGNATURE_CLOSED           FAILED_PRECONDITION demande déjà signée, expirée ou annulée
 //                                                           (details.status)
 //   DOCUMENT_SIGNER_UNREACHABLE         FAILED_PRECONDITION signataire sans téléphone ni e-mail connu
-//   DOCUMENT_CODE_TOO_SOON              FAILED_PRECONDITION nouveau code trop tôt (details.retryAfterSeconds)
-//   DOCUMENT_CODE_LIMIT_REACHED         FAILED_PRECONDITION trop de codes envoyés (details.retryAfterSeconds)
+//   DOCUMENT_CODE_TOO_SOON              RESOURCE_EXHAUSTED  nouveau code trop tôt (details.retryAfterSeconds)
+//   DOCUMENT_CODE_LIMIT_REACHED         RESOURCE_EXHAUSTED  trop de codes envoyés (details.retryAfterSeconds)
 //   DOCUMENT_CODE_INVALID               INVALID_ARGUMENT    code faux (details.attemptsLeft)
 //   DOCUMENT_CODE_EXPIRED               FAILED_PRECONDITION aucun code valable : en demander un nouveau
 //   DOCUMENT_CONSENT_REQUIRED           INVALID_ARGUMENT    accord explicite du signataire absent
