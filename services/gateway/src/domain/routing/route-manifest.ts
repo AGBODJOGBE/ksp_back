@@ -6,6 +6,7 @@ import { DOCUMENT_ROUTES } from './document-routes';
 import { FILE_ROUTES } from './file-routes';
 import { ORGANIZATION_ROUTES } from './organization-routes';
 import { PAYMENT_ROUTES } from './payment-routes';
+import { WALLET_ROUTES } from './wallet-routes';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -190,6 +191,7 @@ export const ROUTE_MANIFEST = [
   ...CLEANING_ROUTES,
   ...BILLING_ROUTES,
   ...PAYMENT_ROUTES,
+  ...WALLET_ROUTES,
   ...FILE_ROUTES,
   ...DOCUMENT_ROUTES,
 ] as const satisfies readonly RouteDefinition[];

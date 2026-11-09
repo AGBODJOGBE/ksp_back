@@ -82,7 +82,7 @@ Le détail (corps, réponses, erreurs) est dans le contrat OpenAPI, étiquettes 
 
 ## Routes des documents et de la signature (ADR-044)
 
-7 routes vers `document` (`DOCUMENT_GRPC_URL`, `localhost:50057` par défaut), déclarées dans `src/domain/routing/document-routes.ts` :
+7 routes vers `document` (`DOCUMENT_GRPC_URL`, `localhost:50058` par défaut), déclarées dans `src/domain/routing/document-routes.ts` :
 
 | Route                                                  | Appel                                      | Accès                              |
 | ------------------------------------------------------ | ------------------------------------------ | ---------------------------------- |
@@ -96,6 +96,20 @@ Le détail (corps, réponses, erreurs) est dans le contrat OpenAPI, étiquettes 
 Le jeton d'un lien de signature est un secret : un jeton mal formé est refusé (404) sans appeler document, et le kit le remplace par `[masqué]` dans l'adresse et les paramètres journalisés de chaque requête. L'adresse IP et le navigateur (`x-client-ip`, `x-user-agent`) sont transmis à document, qui les inscrit dans la preuve de signature. Aucun identifiant de fichier n'est rendu : le PDF se lit par l'adresse de courte durée de `/download-url` (ou `download` du lien).
 
 Le **manifeste de routage** (`src/domain/routing/route-manifest.ts`) est la seule source des routes : le décorateur `@Route('<operationId>')` en tire chemin, méthode, exigence d'accès et limite. Un test (`test/openapi.contract.spec.ts`) vérifie qu'il correspond exactement au contrat OpenAPI, que chaque point d'entrée en vient, et que les réponses réelles (succès et erreurs) respectent les schémas du contrat.
+
+## Liens de paiement, reversements, portefeuille (ADR-040 à 042)
+
+| Route                                                                                 | Appel gRPC                                            | Accès                                    |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------- |
+| `GET /api/v1/payment/links/{token}`                                                   | `PaymentLinkPublicService/GetPublicPaymentLink`       | public, 30 par minute et par IP          |
+| `POST /api/v1/payment/links/{token}/pay` (`Idempotency-Key`)                          | `PaymentLinkPublicService/PayPaymentLink`             | public, 5 par minute et par IP           |
+| `POST /api/v1/payment/links/{token}/simulate` (développement)                         | `PaymentLinkPublicService/SimulatePaymentLinkPayment` | public, fermée en production             |
+| `GET /api/v1/admin/payment/payouts`, `POST …/{id}/confirm`, `…/{id}/fail`             | `PayoutAdminService/…`                                | `finance_officer`, `super_admin` + MFA   |
+| `GET /api/v1/wallet/me`, `…/me/statement`, `…/me/payouts`                             | `WalletAccountService/…` (`WALLET_GRPC_URL`)          | connecté (compte ou organisation active) |
+| `GET /api/v1/admin/wallet/holders/{type}/{id}[/statement]`, `…/payouts`, `…/overview` | `WalletAdminService/…`                                | `finance_officer`, `super_admin` + MFA   |
+
+Un jeton de lien mal formé rend 404 `PAYMENT_LINK_NOT_FOUND` sans appel de payment (rien de plus
+qu'un jeton inconnu). Aucune donnée personnelle du payeur sur les routes publiques.
 
 ## Fonctionnement
 

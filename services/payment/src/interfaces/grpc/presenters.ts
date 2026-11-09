@@ -21,7 +21,7 @@ export function presentPayment(intent: PaymentIntent): paymentV1.Payment {
       reference: intent.subject.reference ?? '',
     },
     amount: { amount: intent.amount, currency: CURRENCY },
-    customerId: intent.customerId,
+    customerId: intent.customerId ?? '',
     organizationId: intent.organizationId ?? '',
     method: ONLINE_METHOD,
     provider: intent.provider,
@@ -38,6 +38,7 @@ export function presentPayment(intent: PaymentIntent): paymentV1.Payment {
     mismatchResolvedAt: '',
     mismatchResolvedBy: '',
     mismatchResolutionNote: '',
+    paymentLinkId: intent.paymentLinkId ?? '',
   };
 }
 
@@ -49,7 +50,7 @@ export function presentAdminPayment(intent: PaymentIntent, names: NameBook = NO_
   const resolution = intent.mismatchResolution;
   return {
     ...presentPayment(intent),
-    customerName: names.users.get(intent.customerId) ?? '',
+    customerName: (intent.customerId && names.users.get(intent.customerId)) || '',
     organizationName: (intent.organizationId && names.organizations.get(intent.organizationId)) || '',
     mismatchResolvedAt: iso(resolution?.resolvedAt ?? null),
     mismatchResolvedBy: resolution?.resolvedBy ?? '',

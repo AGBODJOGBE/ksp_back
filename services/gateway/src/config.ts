@@ -55,8 +55,10 @@ export const configSchema = z
     PAYMENT_GRPC_URL: z.string().min(1).default('localhost:50055'),
     /** Adresse gRPC de file (stockage des fichiers, ADR-038). */
     FILE_GRPC_URL: z.string().min(1).default('localhost:50056'),
+    /** Adresse gRPC de wallet (grand livre des fonds des clients, ADR-042). */
+    WALLET_GRPC_URL: z.string().min(1).default('localhost:50057'),
     /** Adresse gRPC de document (documents et signature par code, ADR-044). */
-    DOCUMENT_GRPC_URL: z.string().min(1).default('localhost:50057'),
+    DOCUMENT_GRPC_URL: z.string().min(1).default('localhost:50058'),
     JWKS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(600),
     JWKS_RELOAD_COOLDOWN_SECONDS: z.coerce.number().int().nonnegative().default(30),
 
@@ -96,6 +98,8 @@ export const configSchema = z
     RATE_LIMIT_ACCOUNT_LOOKUP_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.account_lookup.limit),
     RATE_LIMIT_PAYMENT_CREATE_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.payment_create.limit),
     RATE_LIMIT_PAYMENT_WEBHOOK_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.payment_webhook.limit),
+    RATE_LIMIT_PAYMENT_LINK_READ_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.payment_link_read.limit),
+    RATE_LIMIT_PAYMENT_LINK_PAY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.payment_link_pay.limit),
     RATE_LIMIT_FILE_UPLOAD_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.file_upload.limit),
     RATE_LIMIT_DOCUMENT_CODE_REQUEST_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.document_code_request.limit),
     RATE_LIMIT_DOCUMENT_CODE_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.document_code_verify.limit),
@@ -185,6 +189,14 @@ export function rateLimitsFrom(config: GatewayConfig): RateLimitTable {
     payment_webhook: {
       ...DEFAULT_RATE_LIMITS.payment_webhook,
       limit: config.RATE_LIMIT_PAYMENT_WEBHOOK_PER_MINUTE,
+    },
+    payment_link_read: {
+      ...DEFAULT_RATE_LIMITS.payment_link_read,
+      limit: config.RATE_LIMIT_PAYMENT_LINK_READ_PER_MINUTE,
+    },
+    payment_link_pay: {
+      ...DEFAULT_RATE_LIMITS.payment_link_pay,
+      limit: config.RATE_LIMIT_PAYMENT_LINK_PAY_PER_MINUTE,
     },
     file_upload: { ...DEFAULT_RATE_LIMITS.file_upload, limit: config.RATE_LIMIT_FILE_UPLOAD_PER_MINUTE },
     document_code_request: {

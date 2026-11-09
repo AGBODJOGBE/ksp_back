@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/payment/payment.link.paid.v1.schema.json",
+  "title": "payment.link.paid",
+  "description": "Lien de paiement payé : paiement par un payeur sans compte KSP (débiteur du Recouvrement), confirmé par le prestataire comme tout paiement en ligne (ADR-031), jamais par le navigateur (ADR-040). Publié une seule fois par paiement réussi, y compris pour un lien révoqué ou expiré entre-temps (réussite tardive : l'argent reçu est toujours enregistré). Écouté par le service émetteur, selon subjectType (recovery pour recovery_installment). Distinct de payment.intent.succeeded, qui ne concerne que les paiements par compte. Identifiants et montants seulement : ni nom ni téléphone du payeur.",
+  "x-event-type": "payment.link.paid",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "paymentLinkId",
+    "paymentId",
+    "subjectType",
+    "subjectId",
+    "reference",
+    "amount",
+    "method",
+    "provider",
+    "providerReference",
+    "paidAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "integer", "minimum": 1 },
+        "currency": { "const": "XOF" }
+      }
+    }
+  },
+  "properties": {
+    "paymentLinkId": { "type": "string", "format": "uuid" },
+    "paymentId": { "type": "string", "format": "uuid", "description": "Paiement (tentative) réussi" },
+    "subjectType": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,49}$",
+      "not": { "enum": ["cleaning_mission", "billing_invoice"] },
+      "description": "Type d'objet choisi par l'émetteur du lien, par exemple recovery_installment"
+    },
+    "subjectId": { "type": "string", "format": "uuid", "description": "Objet de l'émetteur (échéance…)" },
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60,
+      "description": "Référence lisible de l'émetteur, inscrite à la création du lien"
+    },
+    "amount": { "$ref": "#/$defs/money" },
+    "method": { "const": "mobile_money_online" },
+    "provider": { "enum": ["fedapay", "simulated"] },
+    "providerReference": {
+      "type": ["string", "null"],
+      "maxLength": 100,
+      "description": "Référence de la transaction chez le prestataire (aucune donnée personnelle)"
+    },
+    "paidAt": { "type": "string", "format": "date-time" }
+  }
+}

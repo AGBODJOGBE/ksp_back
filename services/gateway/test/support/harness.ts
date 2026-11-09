@@ -91,6 +91,73 @@ export const protoOrganization: identityV1.Organization = {
   suspensionReason: '',
 };
 
+export const ACCOUNT_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002';
+
+/** Fiche d'un compte, telle qu'identity la renvoie (administration des comptes, ADR-043). */
+export const protoAccountDetail: identityV1.AccountDetail = {
+  account: {
+    userId: ACCOUNT_ID,
+    status: identityV1.UserStatus.USER_STATUS_ACTIVE,
+    firstName: 'Awa',
+    lastName: 'Dossou',
+    phoneE164: '+2290197000045',
+    phoneMasked: '+229********45',
+    createdAt: '2026-10-19T12:00:00.000Z',
+    suspendedAt: '',
+    suspensionReason: '',
+    roleCodes: ['cleaning_agent'],
+  },
+  mfa: { configured: true, configuredAt: '2026-10-20T08:00:00.000Z', recoveryCodesRemaining: 9 },
+  roles: [
+    {
+      id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0b01',
+      roleCode: 'cleaning_agent',
+      roleDescription: 'Agent de terrain du nettoyage',
+      service: 'cleaning',
+      scopeType: identityV1.ScopeType.SCOPE_TYPE_DOMAIN,
+      scopeId: 'cleaning',
+      grantedAt: '2026-10-20T07:00:00.000Z',
+      grantedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8dad01',
+      grantedByName: 'Afi Kpodar',
+      grantReason: 'Recrutée comme agent de terrain.',
+      revokedAt: '',
+      revokedBy: '',
+      revokedByName: '',
+      revokeReason: '',
+      revocable: true,
+    },
+    {
+      id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0b00',
+      roleCode: 'super_admin',
+      roleDescription: 'Direction KSP',
+      service: 'identity',
+      scopeType: identityV1.ScopeType.SCOPE_TYPE_GLOBAL,
+      scopeId: '',
+      grantedAt: '2026-10-01T07:00:00.000Z',
+      grantedBy: '',
+      grantedByName: '',
+      grantReason: '',
+      revokedAt: '2026-10-02T07:00:00.000Z',
+      revokedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8dad01',
+      revokedByName: '',
+      revokeReason: 'Erreur d’attribution.',
+      revocable: false,
+    },
+  ],
+  history: [
+    {
+      id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0c01',
+      action: 'user.role_granted',
+      at: '2026-10-20T07:00:00.000Z',
+      actorId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8dad01',
+      actorName: 'Afi Kpodar',
+      roleCode: 'cleaning_agent',
+      reason: 'Recrutée comme agent de terrain.',
+    },
+  ],
+  actions: { grantRole: true, suspend: true, reactivate: false, resetMfa: true },
+};
+
 const protoMembership: identityV1.OrganizationMembership = {
   organization: protoOrganization,
   role: identityV1.OrgRole.ORG_ROLE_ADMIN,
@@ -234,6 +301,40 @@ export class IdentityStub {
         phoneMasked: '+229********45',
       },
     }),
+    searchAccounts: () => ({ accounts: [protoAccountDetail.account!], nextCursor: '' }),
+    getAccount: () => ({ detail: protoAccountDetail }),
+    listAssignableRoles: () => ({
+      roles: [
+        {
+          code: 'cleaning_agent',
+          service: 'cleaning',
+          scopeType: identityV1.ScopeType.SCOPE_TYPE_DOMAIN,
+          description: 'Agent de terrain du nettoyage',
+          backofficeAccess: true,
+          grantable: true,
+        },
+      ],
+    }),
+    grantAccountRole: () => ({ detail: protoAccountDetail }),
+    revokeAccountRole: () => ({ detail: protoAccountDetail }),
+    suspendAccount: (request) => ({
+      detail: {
+        ...protoAccountDetail,
+        account: {
+          ...protoAccountDetail.account!,
+          status: identityV1.UserStatus.USER_STATUS_SUSPENDED,
+          suspendedAt: '2026-11-07T10:00:00.000Z',
+          suspensionReason: String(request['reason']),
+        },
+      },
+    }),
+    reactivateAccount: () => ({ detail: protoAccountDetail }),
+    resetAccountMfa: () => ({
+      detail: {
+        ...protoAccountDetail,
+        mfa: { configured: false, configuredAt: '', recoveryCodesRemaining: 0 },
+      },
+    }),
     getOrganization: () => ({
       organization: protoOrganization,
       members: [
@@ -374,6 +475,30 @@ class StubAccountAdminController implements identityV1.AccountAdminServiceContro
   constructor(@Inject(STUB) private readonly stub: IdentityStub) {}
   findAccountByPhone(request: identityV1.FindAccountByPhoneRequest) {
     return this.stub.handle('findAccountByPhone', { ...request });
+  }
+  searchAccounts(request: identityV1.SearchAccountsRequest) {
+    return this.stub.handle('searchAccounts', { ...request });
+  }
+  getAccount(request: identityV1.GetAccountRequest) {
+    return this.stub.handle('getAccount', { ...request });
+  }
+  listAssignableRoles(request: identityV1.ListAssignableRolesRequest) {
+    return this.stub.handle('listAssignableRoles', { ...request });
+  }
+  grantAccountRole(request: identityV1.GrantAccountRoleRequest) {
+    return this.stub.handle('grantAccountRole', { ...request });
+  }
+  revokeAccountRole(request: identityV1.RevokeAccountRoleRequest) {
+    return this.stub.handle('revokeAccountRole', { ...request });
+  }
+  suspendAccount(request: identityV1.SuspendAccountRequest) {
+    return this.stub.handle('suspendAccount', { ...request });
+  }
+  reactivateAccount(request: identityV1.ReactivateAccountRequest) {
+    return this.stub.handle('reactivateAccount', { ...request });
+  }
+  resetAccountMfa(request: identityV1.ResetAccountMfaRequest) {
+    return this.stub.handle('resetAccountMfa', { ...request });
   }
 }
 
@@ -539,6 +664,8 @@ export async function startGateway(options: {
   paymentUrl?: string;
   /** Service file simulé (file-stub.ts) ; sans lui, les routes des fichiers répondent 503. */
   fileUrl?: string;
+  /** Service wallet simulé (wallet-stub.ts) ; sans lui, les routes du portefeuille répondent 503. */
+  walletUrl?: string;
   /** Service document simulé (document-stub.ts) ; sans lui, les routes des documents répondent 503. */
   documentUrl?: string;
   keys: TestKeys;
@@ -553,6 +680,7 @@ export async function startGateway(options: {
     ...(options.billingUrl ? { BILLING_GRPC_URL: options.billingUrl } : {}),
     ...(options.paymentUrl ? { PAYMENT_GRPC_URL: options.paymentUrl } : {}),
     ...(options.fileUrl ? { FILE_GRPC_URL: options.fileUrl } : {}),
+    ...(options.walletUrl ? { WALLET_GRPC_URL: options.walletUrl } : {}),
     ...(options.documentUrl ? { DOCUMENT_GRPC_URL: options.documentUrl } : {}),
     CORS_WEB_ORIGINS: `${ORIGINS.web},https://shop.ksp.bj,https://print.ksp.bj`,
     CORS_BACKOFFICE_ORIGINS: ORIGINS.backoffice,

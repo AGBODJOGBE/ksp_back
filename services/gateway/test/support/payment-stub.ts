@@ -42,6 +42,47 @@ export const protoPayment: paymentV1.Payment = {
   mismatchResolvedAt: '',
   mismatchResolvedBy: '',
   mismatchResolutionNote: '',
+  paymentLinkId: '',
+};
+
+/** Lien de paiement vu par le payeur (ADR-040). */
+export const LINK_TOKEN = 'Kq3vR9xT2mB7nY4pW8sL1cF6hJ0dG5aE3zU9iO2kX7Q';
+export const protoLinkPayment: paymentV1.PublicLinkPayment = {
+  id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5002',
+  status: 'pending',
+  checkoutUrl: 'https://process.fedapay.com/tok2',
+  expiresAt: '2026-11-07T10:30:00.000Z',
+  failureReason: '',
+};
+export const protoPublicLink: paymentV1.PublicPaymentLink = {
+  status: 'active',
+  beneficiaryName: 'SARL Bénin Immo',
+  description: 'Échéance 2 sur 6',
+  reference: 'REC-2026-000123 E2',
+  amount: { amount: 25000, currency: 'XOF' },
+  dueDate: '2026-11-30',
+  expiresAt: '2026-11-14T10:00:00.000Z',
+  paidAt: '',
+  payment: protoLinkPayment,
+};
+
+/** Reversement (ADR-041). */
+export const PAYOUT_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6001';
+export const protoPayout: paymentV1.Payout = {
+  id: PAYOUT_ID,
+  status: 'requested',
+  issuer: 'wallet',
+  reference: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7001',
+  amount: { amount: 21875, currency: 'XOF' },
+  beneficiary: { phone: '+2290197000045', operator: 'mtn', name: 'SARL Bénin Immo' },
+  provider: 'manual',
+  providerReference: '',
+  failureReason: '',
+  createdAt: '2026-11-07T10:00:00.000Z',
+  updatedAt: '2026-11-07T10:00:00.000Z',
+  completedAt: '',
+  failedAt: '',
+  settledBy: '',
 };
 
 /** Écart de montant traité par la finance (ADR-032). */
@@ -59,7 +100,9 @@ export const protoResolvedMismatch: paymentV1.Payment = {
 type Method =
   | keyof paymentV1.PaymentServiceController
   | keyof paymentV1.PaymentWebhookServiceController
-  | keyof paymentV1.PaymentAdminServiceController;
+  | keyof paymentV1.PaymentAdminServiceController
+  | keyof paymentV1.PaymentLinkPublicServiceController
+  | keyof paymentV1.PayoutAdminServiceController;
 const CUSTOMER_METHODS: readonly Method[] = [
   'createPayment',
   'getMyPayment',
@@ -67,6 +110,13 @@ const CUSTOMER_METHODS: readonly Method[] = [
   'simulatePayment',
 ];
 const WEBHOOK_METHODS: readonly Method[] = ['receiveProviderNotification'];
+const LINK_METHODS: readonly Method[] = [
+  'getPublicPaymentLink',
+  'payPaymentLink',
+  'simulatePaymentLinkPayment',
+];
+const PAYOUT_METHODS: readonly Method[] = ['listPayouts', 'confirmPayout', 'failPayout'];
+const STAFF_STUB = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e99';
 
 const DEFAULTS: Record<Method, () => unknown> = {
   createPayment: () => ({ payment: protoPayment, created: true }),
@@ -86,6 +136,30 @@ const DEFAULTS: Record<Method, () => unknown> = {
     nextCursor: PAYMENT_ID,
   }),
   resolveAmountMismatch: () => ({ payment: protoResolvedMismatch }),
+  getPublicPaymentLink: () => ({ link: protoPublicLink }),
+  payPaymentLink: () => ({ payment: protoLinkPayment, created: true }),
+  simulatePaymentLinkPayment: () => ({
+    payment: { ...protoLinkPayment, status: 'succeeded', checkoutUrl: '' },
+  }),
+  listPayouts: () => ({ payouts: [protoPayout], nextCursor: '' }),
+  confirmPayout: () => ({
+    payout: {
+      ...protoPayout,
+      status: 'completed',
+      providerReference: 'MTN-TRF-0042',
+      completedAt: '2026-11-07T12:00:00.000Z',
+      settledBy: STAFF_STUB,
+    },
+  }),
+  failPayout: () => ({
+    payout: {
+      ...protoPayout,
+      status: 'failed',
+      failureReason: 'Numéro inconnu chez MTN',
+      failedAt: '2026-11-07T12:00:00.000Z',
+      settledBy: STAFF_STUB,
+    },
+  }),
 };
 
 export class PaymentStub {
@@ -149,8 +223,13 @@ export async function startPaymentStub(keys: TestKeys): Promise<PaymentServer> {
     controllers: [
       stubController(CUSTOMER_METHODS, paymentV1.PaymentServiceControllerMethods),
       stubController(WEBHOOK_METHODS, paymentV1.PaymentWebhookServiceControllerMethods),
+      stubController(LINK_METHODS, paymentV1.PaymentLinkPublicServiceControllerMethods),
+      stubController(PAYOUT_METHODS, paymentV1.PayoutAdminServiceControllerMethods),
       stubController(
-        all.filter((method) => !CUSTOMER_METHODS.includes(method) && !WEBHOOK_METHODS.includes(method)),
+        all.filter(
+          (method) =>
+            ![...CUSTOMER_METHODS, ...WEBHOOK_METHODS, ...LINK_METHODS, ...PAYOUT_METHODS].includes(method),
+        ),
         paymentV1.PaymentAdminServiceControllerMethods,
       ),
     ],

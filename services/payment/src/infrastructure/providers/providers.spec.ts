@@ -124,6 +124,7 @@ describe('adaptateur FedaPay', () => {
     expect(provider.verifyNotification(BODY, header, now)).toEqual({
       eventName: 'transaction.approved',
       eventId: '77',
+      entity: 'transaction',
       transactionId: '104571',
     });
     expect(() => provider.verifyNotification(BODY, 't=1,s=00', now)).toThrow(

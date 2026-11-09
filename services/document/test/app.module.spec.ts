@@ -11,8 +11,8 @@ import {
 const base = {
   SERVICE_NAME: 'document',
   NODE_ENV: 'test',
-  GRPC_PORT: '50057',
-  HTTP_PORT: '3107',
+  GRPC_PORT: '50058',
+  HTTP_PORT: '3108',
   DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
   RABBITMQ_URL: 'amqp://localhost',
   DOCUMENT_CODE_HMAC_SECRET: 'test-only-hmac-secret-0123456789abcdef',

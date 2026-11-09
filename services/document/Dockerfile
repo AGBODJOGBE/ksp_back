@@ -24,6 +24,6 @@ RUN apk add --no-cache openssl
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
 USER node
-EXPOSE 50057 3107
+EXPOSE 50058 3108
 # Les migrations sont appliquées par une tâche de déploiement dédiée (prisma migrate deploy), pas au démarrage.
 CMD ["node", "dist/main.js"]

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/payment/payment.payout.completed.v1.schema.json",
+  "title": "payment.payout.completed",
+  "description": "Reversement par Mobile Money terminé : envoyé par le prestataire (statut relu chez lui), ou virement confirmé par la finance au back-office en mode manuel (ADR-041). Publié une seule fois par reversement. Écouté par l'émetteur (wallet : montant en transit soldé). Identifiants et montants seulement : ni numéro ni nom du bénéficiaire.",
+  "x-event-type": "payment.payout.completed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payoutId", "issuer", "reference", "amount", "provider", "providerReference", "completedAt"],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "integer", "minimum": 1 },
+        "currency": { "const": "XOF" }
+      }
+    }
+  },
+  "properties": {
+    "payoutId": { "type": "string", "format": "uuid" },
+    "issuer": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Service qui a demandé le reversement (wallet)"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Référence de l'émetteur (wallet : identifiant de son reversement)"
+    },
+    "amount": { "$ref": "#/$defs/money" },
+    "provider": { "enum": ["fedapay", "manual"] },
+    "providerReference": {
+      "type": ["string", "null"],
+      "maxLength": 100,
+      "description": "Référence du virement chez le prestataire, ou saisie par la finance"
+    },
+    "completedAt": { "type": "string", "format": "date-time" }
+  }
+}

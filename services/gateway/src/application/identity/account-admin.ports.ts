@@ -7,4 +7,14 @@ import { type Json } from '../cleaning/cleaning.ports';
 export interface AccountAdminApi {
   /** Compte d'un numéro E.164 : identifiant, nom, numéro masqué et état ; jamais l'e-mail. */
   findByPhone(phone: string): Promise<Json>;
+  /** Administration des comptes (ADR-043) : chaque écriture renvoie la fiche à jour. */
+  search(input: { query?: string; limit?: number; cursor?: string }): Promise<Json>;
+  get(userId: string): Promise<Json>;
+  listAssignableRoles(): Promise<Json>;
+  grantRole(userId: string, roleCode: string, reason: string): Promise<Json>;
+  revokeRole(userId: string, assignmentId: string, reason: string): Promise<Json>;
+  changeStatus(userId: string, action: AccountStatusAction, reason: string): Promise<Json>;
+  resetMfa(userId: string, reason: string): Promise<Json>;
 }
+
+export type AccountStatusAction = 'suspend' | 'reactivate';

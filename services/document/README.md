@@ -10,7 +10,7 @@ pnpm --filter @ksp/document-service prisma:migrate   # crée les tables
 pnpm --filter @ksp/document-service dev
 ```
 
-- gRPC : `localhost:50057` ; santé : `http://localhost:3107/health/live` et `/health/ready` ; métriques : `/metrics`.
+- gRPC : `localhost:50058` ; santé : `http://localhost:3108/health/live` et `/health/ready` ; métriques : `/metrics`.
 - Dépendances : `file` (stockage des PDF, MinIO en local), `notification` (codes et liens : écrits dans son terminal en développement), `identity` (coordonnées d'un signataire titulaire d'un compte).
 - Base locale `document` : `docker compose down -v && pnpm infra:up` la crée (`infra/local/postgres-init.sql`).
 

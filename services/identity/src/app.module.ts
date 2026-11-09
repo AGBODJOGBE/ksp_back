@@ -1,4 +1,14 @@
 import { FindAccountByPhoneUseCase } from './application/account-admin/find-account-by-phone.use-case';
+import {
+  AccountDetails,
+  ChangeAccountStatusUseCase,
+  GetAccountUseCase,
+  GrantAccountRoleUseCase,
+  ListAssignableRolesUseCase,
+  ResetAccountMfaUseCase,
+  RevokeAccountRoleUseCase,
+  SearchAccountsUseCase,
+} from './application/account-admin/account-admin.use-cases';
 import { commonV1, notificationV1 } from '@ksp/contracts';
 import { GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
@@ -68,6 +78,7 @@ import {
 } from './infrastructure/scheduling/account-deletion-scheduler.service';
 import { NotificationEmailCodeSender } from './infrastructure/email/notification-email-code-sender';
 import { PrismaEmailVerificationRepository } from './infrastructure/email/prisma-email-verification.repository';
+import { PrismaAccountAdminRepository } from './infrastructure/account-admin/prisma-account-admin.repository';
 import { AesGcmSecretCipher } from './infrastructure/mfa/aes-gcm-secret-cipher';
 import { CryptoMfaTokenGenerator, CryptoRecoveryCodes } from './infrastructure/mfa/crypto-mfa-secrets';
 import { HmacTotpGenerator } from './infrastructure/mfa/hmac-totp-generator';
@@ -415,6 +426,55 @@ export class AppModule {
           provide: FindAccountByPhoneUseCase,
           inject: [PrismaLoginRepository],
           useFactory: (accounts: PrismaLoginRepository) => new FindAccountByPhoneUseCase(accounts),
+        },
+        PrismaAccountAdminRepository,
+        {
+          provide: AccountDetails,
+          inject: [PrismaAccountAdminRepository],
+          useFactory: (accounts: PrismaAccountAdminRepository) => new AccountDetails(accounts),
+        },
+        {
+          provide: SearchAccountsUseCase,
+          inject: [PrismaAccountAdminRepository],
+          useFactory: (accounts: PrismaAccountAdminRepository) => new SearchAccountsUseCase(accounts),
+        },
+        {
+          provide: GetAccountUseCase,
+          inject: [AccountDetails],
+          useFactory: (details: AccountDetails) => new GetAccountUseCase(details),
+        },
+        {
+          provide: ListAssignableRolesUseCase,
+          inject: [PrismaAccountAdminRepository],
+          useFactory: (accounts: PrismaAccountAdminRepository) => new ListAssignableRolesUseCase(accounts),
+        },
+        {
+          provide: GrantAccountRoleUseCase,
+          inject: [AccountDetails, PrismaRoleRepository],
+          useFactory: (details: AccountDetails, roles: PrismaRoleRepository) =>
+            new GrantAccountRoleUseCase(details, roles, new UuidV7Generator(), new SystemClock()),
+        },
+        {
+          provide: RevokeAccountRoleUseCase,
+          inject: [AccountDetails, PrismaAccountAdminRepository, PrismaRoleRepository],
+          useFactory: (
+            details: AccountDetails,
+            accounts: PrismaAccountAdminRepository,
+            roles: PrismaRoleRepository,
+          ) =>
+            new RevokeAccountRoleUseCase(details, accounts, roles, new UuidV7Generator(), new SystemClock()),
+        },
+        {
+          provide: ChangeAccountStatusUseCase,
+          inject: [AccountDetails, PrismaAccountAdminRepository],
+          useFactory: (details: AccountDetails, accounts: PrismaAccountAdminRepository) =>
+            new ChangeAccountStatusUseCase(details, accounts, new UuidV7Generator(), new SystemClock()),
+        },
+        {
+          provide: ResetAccountMfaUseCase,
+          inject: [AccountDetails, PrismaAccountAdminRepository],
+          useFactory: (details: AccountDetails, accounts: PrismaAccountAdminRepository) =>
+            new ResetAccountMfaUseCase(details, accounts, new UuidV7Generator(), new SystemClock()),
         },
         {
           provide: GetUsersUseCase,

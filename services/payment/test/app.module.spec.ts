@@ -1,6 +1,6 @@
 import { loadConfig } from '@ksp/platform';
 import { Test } from '@nestjs/testing';
-import { AppModule, createProvider } from '../src/app.module';
+import { AppModule, createPayoutProvider, createProvider } from '../src/app.module';
 import { configSchema } from '../src/config';
 import {
   PaymentAdminGrpcController,
@@ -70,5 +70,20 @@ describe('configuration de payment', () => {
     expect(production).toThrow(/PAYMENT_PROVIDER/);
     expect(production).toThrow(/SERVICE_CLIENT_SECRET/);
     expect(production).toThrow(/PAYMENT_RETURN_URL/);
+    expect(production).toThrow(/PAYMENT_LINK_TOKEN_SECRET/);
+    expect(production).toThrow(/PAYMENT_LINK_BASE_URL/);
+  });
+
+  it('liens et reversements : émetteurs autorisés, reversements manuels par défaut (ADR-040, ADR-041)', () => {
+    const config = loadConfig(configSchema, { ...BASE, PAYMENT_LINK_ISSUERS: 'recovery, realestate' });
+    expect(config.PAYMENT_LINK_ISSUERS).toEqual(['recovery', 'realestate']);
+    expect(config.PAYMENT_PAYOUT_ISSUERS).toEqual(['wallet']);
+    expect(createPayoutProvider(config).name).toBe('manual');
+    expect(() => loadConfig(configSchema, { ...BASE, PAYOUT_PROVIDER: 'fedapay' })).toThrow(
+      /FEDAPAY_SECRET_KEY/,
+    );
+    expect(() => loadConfig(configSchema, { ...BASE, PAYMENT_LINK_TOKEN_SECRET: 'court' })).toThrow(
+      /PAYMENT_LINK_TOKEN_SECRET/,
+    );
   });
 });

@@ -38,7 +38,7 @@ Le Recouvrement (prochain lot) a besoin d'un **mandat** signé par le créancier
 
 ## Conséquences
 
-- Variables de `document` : `FILE_GRPC_URL`, `NOTIFICATION_GRPC_URL`, `IDENTITY_GRPC_URL`, `DOCUMENT_CODE_HMAC_SECRET` (coffre), `PORTAL_BASE_URL` (HTTPS en production), `DOCUMENT_ISSUER_*`, `DOCUMENT_INTERNAL_CALLERS`, réglages des codes ; en production, jeton de service obligatoire et modèle `generic` interdit. Port gRPC 50057, HTTP 3107.
+- Variables de `document` : `FILE_GRPC_URL`, `NOTIFICATION_GRPC_URL`, `IDENTITY_GRPC_URL`, `DOCUMENT_CODE_HMAC_SECRET` (coffre), `PORTAL_BASE_URL` (HTTPS en production), `DOCUMENT_ISSUER_*`, `DOCUMENT_INTERNAL_CALLERS`, réglages des codes ; en production, jeton de service obligatoire et modèle `generic` interdit. Port gRPC 50058, HTTP 3108.
 - **Jetons de service** (ADR-022) : entrée `document` dans `SERVICE_CLIENTS` d'identity avec les audiences `file`, `notification`, `identity` ; audience `document` ajoutée aux entrées `gateway` et `recovery` (et aux futurs producteurs : `cleaning`, `billing`).
 - **Meta** : faire approuver le modèle utility `ksp_document_signature_requested` (prénom, titre du document, date limite, lien) ; le code de signature réutilise le modèle d'authentification `ksp_otp`.
 - **Portail** : pages `/signer/<jeton>` (lecture du PDF, demande du code, case d'accord, saisie) et `/mon-espace/documents/<id>` (chemins à valider) ; `recovery` consomme `document.signature.completed`.

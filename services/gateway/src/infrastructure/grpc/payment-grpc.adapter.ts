@@ -9,6 +9,8 @@ import {
   type PaymentApi,
   type PaymentFilters,
   type PaymentInput,
+  type PayoutFilters,
+  type PayoutSettlementInput,
 } from '../../application/payment/payment.ports';
 import { toUpstreamError } from './upstream-error';
 
@@ -16,6 +18,8 @@ export interface PaymentClients {
   payments: paymentV1.PaymentServiceClient;
   webhooks: paymentV1.PaymentWebhookServiceClient;
   admin: paymentV1.PaymentAdminServiceClient;
+  links: paymentV1.PaymentLinkPublicServiceClient;
+  payoutAdmin: paymentV1.PayoutAdminServiceClient;
 }
 
 /** Réponse de payment qui ne respecte pas le contrat : erreur interne, jamais transmise telle quelle. */
@@ -31,6 +35,9 @@ const PROVIDER_DEADLINES_MS = {
   simulatePayment: 10_000,
   receiveProviderNotification: 10_000,
   getMyPayment: 8_000,
+  getPaymentLink: 8_000,
+  payPaymentLink: 15_000,
+  simulatePaymentLinkPayment: 10_000,
 } as const;
 const page = (value: Page): paymentV1.Page => ({ limit: value.limit ?? 0, cursor: value.cursor ?? '' });
 
@@ -52,8 +59,10 @@ export function presentPayment(value: paymentV1.Payment | undefined, backoffice 
       reference: orNull(value.subject.reference),
     },
     amount: { amount: Number(value.amount?.amount ?? 0), currency: value.amount?.currency || 'XOF' },
-    customerId: value.customerId,
+    // Paiement par lien (ADR-040) : payeur sans compte, customerId null et lien renseigné.
+    customerId: orNull(value.customerId),
     organizationId: orNull(value.organizationId),
+    paymentLinkId: orNull(value.paymentLinkId),
     method: value.method,
     provider: value.provider,
     providerReference: orNull(value.providerReference),
@@ -73,6 +82,59 @@ export function presentPayment(value: paymentV1.Payment | undefined, backoffice 
           mismatchResolutionNote: orNull(value.mismatchResolutionNote),
         }
       : {}),
+  };
+}
+
+/** Essai de paiement d'un lien, vu par le payeur (ADR-040). */
+export function presentLinkPayment(value: paymentV1.PublicLinkPayment | undefined) {
+  if (!value) throw malformed('essai de paiement');
+  return {
+    id: value.id,
+    status: value.status,
+    checkoutUrl: orNull(value.checkoutUrl),
+    expiresAt: value.expiresAt,
+    failureReason: orNull(value.failureReason),
+  };
+}
+
+/** Lien de paiement vu par le payeur : aucune donnée personnelle, aucun identifiant interne. */
+export function presentPublicLink(value: paymentV1.PublicPaymentLink | undefined) {
+  if (!value) throw malformed('lien de paiement');
+  return {
+    status: value.status,
+    beneficiaryName: value.beneficiaryName,
+    description: value.description,
+    reference: value.reference,
+    amount: { amount: Number(value.amount?.amount ?? 0), currency: value.amount?.currency || 'XOF' },
+    dueDate: orNull(value.dueDate),
+    expiresAt: value.expiresAt,
+    paidAt: orNull(value.paidAt),
+    payment: value.payment ? presentLinkPayment(value.payment) : null,
+  };
+}
+
+/** Reversement (back-office de la finance, ADR-041) : numéro complet, nécessaire au virement manuel. */
+export function presentPayout(value: paymentV1.Payout | undefined) {
+  if (!value?.beneficiary) throw malformed('reversement');
+  return {
+    id: value.id,
+    status: value.status,
+    issuer: value.issuer,
+    reference: value.reference,
+    amount: { amount: Number(value.amount?.amount ?? 0), currency: value.amount?.currency || 'XOF' },
+    beneficiary: {
+      phone: value.beneficiary.phone,
+      operator: value.beneficiary.operator,
+      name: value.beneficiary.name,
+    },
+    provider: value.provider,
+    providerReference: orNull(value.providerReference),
+    failureReason: orNull(value.failureReason),
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    completedAt: orNull(value.completedAt),
+    failedAt: orNull(value.failedAt),
+    settledBy: orNull(value.settledBy),
   };
 }
 
@@ -171,6 +233,57 @@ export class PaymentGrpcAdapter implements PaymentApi {
       ),
     );
     return presentPayment(res.payment, true);
+  }
+
+  async getPaymentLink(token: string): Promise<Json> {
+    const res = await this.read('getPaymentLink', (m) =>
+      this.clients.links.getPublicPaymentLink({ token }, m),
+    );
+    return presentPublicLink(res.link);
+  }
+
+  async payPaymentLink(token: string, idempotencyKey: string): Promise<Json> {
+    const res = await this.write('payPaymentLink', (m) =>
+      this.clients.links.payPaymentLink({ token, idempotencyKey }, m),
+    );
+    return presentLinkPayment(res.payment);
+  }
+
+  async simulatePaymentLinkPayment(token: string, outcome: 'succeeded' | 'failed'): Promise<Json> {
+    const res = await this.write('simulatePaymentLinkPayment', (m) =>
+      this.clients.links.simulatePaymentLinkPayment({ token, outcome }, m),
+    );
+    return presentLinkPayment(res.payment);
+  }
+
+  async listPayouts(value: Page, filters: PayoutFilters): Promise<Json> {
+    const res = await this.read('listPayouts', (m) =>
+      this.clients.payoutAdmin.listPayouts(
+        { page: page(value), status: filters.status ?? '', issuer: filters.issuer ?? '' },
+        m,
+      ),
+    );
+    return { data: res.payouts.map(presentPayout), nextCursor: res.nextCursor || null };
+  }
+
+  async confirmPayout(id: string, input: PayoutSettlementInput): Promise<Json> {
+    const res = await this.write('confirmPayout', (m) =>
+      this.clients.payoutAdmin.confirmPayout(
+        { payoutId: id, transferReference: input.text, idempotencyKey: input.idempotencyKey ?? '' },
+        m,
+      ),
+    );
+    return presentPayout(res.payout);
+  }
+
+  async failPayout(id: string, input: PayoutSettlementInput): Promise<Json> {
+    const res = await this.write('failPayout', (m) =>
+      this.clients.payoutAdmin.failPayout(
+        { payoutId: id, reason: input.text, idempotencyKey: input.idempotencyKey ?? '' },
+        m,
+      ),
+    );
+    return presentPayout(res.payout);
   }
 
   // --- Appels -----------------------------------------------------------------------------------
