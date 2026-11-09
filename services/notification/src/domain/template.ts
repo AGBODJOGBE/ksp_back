@@ -76,6 +76,11 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
   ...Object.fromEntries(PAYMENT_TEMPLATES.map((template) => [template.code, template])),
 };
 
+/** Tous les modèles connus, par code croissant (liste du back-office, en lecture seule). */
+export function allTemplates(): TemplateDefinition[] {
+  return Object.values(TEMPLATES).sort((a, b) => a.code.localeCompare(b.code));
+}
+
 export function findTemplate(code: string): TemplateDefinition | null {
   return Object.hasOwn(TEMPLATES, code) ? TEMPLATES[code] : null;
 }

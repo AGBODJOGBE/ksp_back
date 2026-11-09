@@ -3,6 +3,18 @@
  * Elles reproduisent les garanties du vrai dépôt (unicité de la clé d'idempotence) sans base de données.
  */
 import { type ChannelName } from '../../domain/channel';
+import { type ChannelPreferences, DEFAULT_CHANNEL_PREFERENCES } from '../../domain/preferences';
+import {
+  type DeliveryFilters,
+  type DeliveryHistory,
+  type DeliveryRecord,
+  type InAppNotificationStore,
+  type PageRequest,
+  type PageResult,
+  type PreferencesStore,
+  type StoredInAppNotification,
+  type StoredPreferences,
+} from '../center/center.ports';
 import { type FailureReason, type NotificationStatus } from '../../domain/delivery';
 import {
   type ChannelProvider,
@@ -177,5 +189,99 @@ export class InMemoryInbox implements EventInbox {
     this.processed.add(eventId);
     this.inApp.push(...inApp);
     return 'processed';
+  }
+}
+
+/** Préférences en mémoire (ADR-039) : valeurs par défaut pour un compte sans choix. */
+export class InMemoryPreferences implements PreferencesStore {
+  readonly rows = new Map<string, StoredPreferences>();
+
+  async get(userId: string): Promise<StoredPreferences> {
+    return this.rows.get(userId) ?? { ...DEFAULT_CHANNEL_PREFERENCES, updatedAt: null };
+  }
+
+  async save(userId: string, preferences: ChannelPreferences, at: Date): Promise<StoredPreferences> {
+    const saved = { ...preferences, updatedAt: at };
+    this.rows.set(userId, saved);
+    return saved;
+  }
+
+  async findMany(userIds: readonly string[]): Promise<Map<string, ChannelPreferences>> {
+    return new Map(
+      [...this.rows]
+        .filter(([userId]) => userIds.includes(userId))
+        .map(([userId, row]) => [userId, { whatsapp: row.whatsapp, email: row.email }]),
+    );
+  }
+}
+
+const newestFirst = <T extends { createdAt: Date; id: string }>(a: T, b: T) =>
+  b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id);
+
+/** Pagination par curseur comme le dépôt : éléments qui suivent le curseur dans l'ordre donné. */
+function paginate<T extends { createdAt: Date; id: string }>(sorted: T[], page: PageRequest): PageResult<T> {
+  const start = page.cursor ? sorted.findIndex((item) => item.id === page.cursor) + 1 : 0;
+  if (page.cursor && start === 0) return { items: [], nextCursor: null };
+  const items = sorted.slice(start, start + page.limit);
+  const more = sorted.length > start + page.limit;
+  return { items, nextCursor: more ? (items.at(-1)?.id ?? null) : null };
+}
+
+/** Notifications de l'espace en mémoire, limitées au compte comme le dépôt. */
+export class InMemoryInAppNotifications implements InAppNotificationStore {
+  readonly rows: StoredInAppNotification[] = [];
+
+  async list(
+    userId: string,
+    page: PageRequest,
+    filter: { unreadOnly: boolean },
+  ): Promise<PageResult<StoredInAppNotification>> {
+    const mine = this.rows
+      .filter((row) => row.userId === userId && (!filter.unreadOnly || row.readAt === null))
+      .sort(newestFirst);
+    return paginate(mine, page);
+  }
+
+  async countUnread(userId: string): Promise<number> {
+    return this.rows.filter((row) => row.userId === userId && row.readAt === null).length;
+  }
+
+  async markRead(userId: string, id: string, at: Date): Promise<StoredInAppNotification | null> {
+    const row = this.rows.find((candidate) => candidate.id === id && candidate.userId === userId);
+    if (!row) return null;
+    row.readAt ??= at;
+    return { ...row };
+  }
+
+  async markAllRead(userId: string, at: Date): Promise<number> {
+    const unread = this.rows.filter((row) => row.userId === userId && row.readAt === null);
+    for (const row of unread) row.readAt = at;
+    return unread.length;
+  }
+}
+
+/** Historique des envois en mémoire, filtré comme le dépôt. */
+export class InMemoryDeliveryHistory implements DeliveryHistory {
+  readonly rows: DeliveryRecord[] = [];
+  readonly queries: DeliveryFilters[] = [];
+
+  async list(filters: DeliveryFilters, page: PageRequest): Promise<PageResult<DeliveryRecord>> {
+    this.queries.push(filters);
+    const matching = this.rows
+      .filter(
+        (row) =>
+          (!filters.templateCode || row.templateCode === filters.templateCode) &&
+          (!filters.channel || row.channelsTried.includes(filters.channel)) &&
+          (!filters.status || row.status === filters.status) &&
+          (!filters.from || row.createdAt.getTime() >= filters.from.getTime()) &&
+          (!filters.to || row.createdAt.getTime() < filters.to.getTime()) &&
+          (!filters.recipientUserId || row.recipientUserId === filters.recipientUserId),
+      )
+      .sort(newestFirst);
+    return paginate(matching, page);
+  }
+
+  async find(id: string): Promise<DeliveryRecord | null> {
+    return this.rows.find((row) => row.id === id) ?? null;
   }
 }

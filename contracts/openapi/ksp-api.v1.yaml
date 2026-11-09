@@ -70,6 +70,10 @@ tags:
     description: Paiement en ligne par Mobile Money (FedaPay) d'un acompte, d'un solde de mission ou d'une facture (ADR-031)
   - name: Paiement (back-office)
     description: Suivi des paiements en ligne
+  - name: Notifications
+    description: Notifications de l'espace KSP et préférences de canaux (ADR-039)
+  - name: Notifications (back-office)
+    description: Historique des envois et modèles de messages, en lecture seule (ADR-039)
   - name: Paiement par lien
     description: Page publique d'un lien de paiement, pour un payeur sans compte KSP (débiteur du Recouvrement, ADR-040)
   - name: Reversements (back-office)
@@ -9546,6 +9550,455 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/notification/notifications:
+    get:
+      tags:
+        - Notifications
+      operationId: listMyNotifications
+      summary: Mes notifications
+      description: |
+        Notifications de l'espace KSP du compte connecté, les plus récentes d'abord (curseur : identifiant de la
+        dernière notification reçue). `unread=true` : seulement les non lues. `unreadCount` : nombre total de non lues.
+        `link` : adresse de la page concernée de l'espace KSP, ou null.
+
+        Erreurs : `NOTIFICATION_VALIDATION_FAILED` (400).
+      x-ksp-grpc: ksp.notification.v1.InAppNotificationService/ListMyNotifications
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: unread
+          in: query
+          required: false
+          description: '`true` : seulement les notifications non lues.'
+          schema:
+            type: string
+            enum:
+              - 'true'
+              - 'false'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InAppNotificationList'
+              example:
+                data:
+                  - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6001
+                    templateCode: cleaning.quote_sent.customer
+                    title: Votre devis de nettoyage — Vitres
+                    body: |-
+                      Bonjour Koffi,
+                      Votre devis est prêt : 150 000 FCFA.
+                    link: https://ksp.bj/mon-espace/nettoyage/demandes/0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001
+                    createdAt: 2026-11-05T09:30:00Z
+                    readAt: null
+                nextCursor: null
+                unreadCount: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/notification/notifications/unread-count:
+    get:
+      tags:
+        - Notifications
+      operationId: countMyUnreadNotifications
+      summary: Nombre de notifications non lues
+      description: |
+        Pastille de l'en-tête de l'espace KSP.
+      x-ksp-grpc: ksp.notification.v1.InAppNotificationService/CountMyUnreadNotifications
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnreadNotificationCount'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/notification/notifications/{id}/read:
+    post:
+      tags:
+        - Notifications
+      operationId: markNotificationRead
+      summary: Marquer une notification comme lue
+      description: |
+        Idempotent : une notification déjà lue garde sa première date de lecture. Notification d'un autre compte :
+        404, sans révéler son existence.
+
+        Erreurs : `NOTIFICATION_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.notification.v1.InAppNotificationService/MarkNotificationRead
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NotificationId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkNotificationReadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/notification/notifications/read-all:
+    post:
+      tags:
+        - Notifications
+      operationId: markAllNotificationsRead
+      summary: Tout marquer comme lu
+      description: |
+        Marque lues toutes les notifications du compte ; `marked` : nombre marqué par cet appel.
+      x-ksp-grpc: ksp.notification.v1.InAppNotificationService/MarkAllNotificationsRead
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkAllNotificationsReadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/notification/preferences:
+    get:
+      tags:
+        - Notifications
+      operationId: getMyNotificationPreferences
+      summary: Mes préférences de notification
+      description: |
+        Canaux souhaités pour les messages facultatifs (ADR-039) : WhatsApp et e-mail par défaut (`updatedAt` null).
+        Partent toujours : codes de connexion, messages importants (impayés, suspension), suppression du compte ;
+        la notification de l'espace KSP est toujours enregistrée.
+      x-ksp-grpc: ksp.notification.v1.InAppNotificationService/GetMyNotificationPreferences
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferences'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    put:
+      tags:
+        - Notifications
+      operationId: updateMyNotificationPreferences
+      summary: Modifier mes préférences de notification
+      description: |
+        Tout écarter est permis : les messages restent dans l'espace KSP. Un e-mail n'est envoyé qu'à une adresse
+        vérifiée (ADR-026), même si l'e-mail est choisi.
+      x-ksp-grpc: ksp.notification.v1.InAppNotificationService/UpdateMyNotificationPreferences
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNotificationPreferencesRequest'
+            example:
+              whatsapp: false
+              email: true
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferences'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/notification/deliveries:
+    get:
+      tags:
+        - Notifications (back-office)
+      operationId: listNotificationDeliveries
+      summary: Historique des envois
+      description: |
+        Envois de messages, les plus récents d'abord. Aucune donnée personnelle en clair : destinataire masqué,
+        jamais le texte ni les variables (non conservés, ADR-014).
+
+        Rôles : `super_admin`, `support_agent` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400, filtre mal formé), `NOTIFICATION_VALIDATION_FAILED` (400, date
+        qui n'existe pas, ou `to` avant `from`).
+      x-ksp-grpc: ksp.notification.v1.NotificationAdminService/ListDeliveries
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+        - support_agent
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: templateCode
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^[a-z][a-z0-9_.]{0,99}$
+          example: billing.invoice_issued.customer
+        - name: channel
+          in: query
+          required: false
+          description: Canal essayé (présent dans `channelsTried`).
+          schema:
+            $ref: '#/components/schemas/NotificationChannel'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/NotificationDeliveryStatus'
+        - name: from
+          in: query
+          required: false
+          description: Début de la période d'envoi, date AAAA-MM-JJ à l'heure du Bénin (Africa/Porto-Novo), incluse.
+          schema:
+            type: string
+            format: date
+          example: '2026-11-01'
+        - name: to
+          in: query
+          required: false
+          description: Fin de la période d'envoi, date AAAA-MM-JJ à l'heure du Bénin, incluse.
+          schema:
+            type: string
+            format: date
+          example: '2026-11-30'
+        - name: recipientUserId
+          in: query
+          required: false
+          description: Compte destinataire (identifiant ; aucune recherche par numéro ni par adresse).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationDeliveryList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/notification/deliveries/{id}:
+    get:
+      tags:
+        - Notifications (back-office)
+      operationId: getNotificationDelivery
+      summary: Détail d’un envoi
+      description: |
+        Canaux essayés dans l'ordre, canal utilisé, code et cause d'échec, identifiant chez le prestataire.
+
+        Rôles : `super_admin`, `support_agent` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `NOTIFICATION_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.notification.v1.NotificationAdminService/GetDelivery
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+        - support_agent
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DeliveryId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationDelivery'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/notification/templates:
+    get:
+      tags:
+        - Notifications (back-office)
+      operationId: listNotificationTemplates
+      summary: Modèles de messages
+      description: |
+        Modèles et leur texte, en lecture seule, rendus avec le nom des variables entre accolades (`{first_name}`) :
+        aucune valeur réelle. `subject` et `text` null : texte rédigé chez le prestataire (modèle WhatsApp de Meta).
+
+        Rôles : `super_admin`, `support_agent` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.notification.v1.NotificationAdminService/ListMessageTemplates
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+        - support_agent
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationTemplateList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 components:
   securitySchemes:
     bearerAuth:
@@ -9587,6 +10040,22 @@ components:
         minimum: 1
 
   parameters:
+    NotificationId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant de la notification (UUID).
+      schema:
+        type: string
+        format: uuid
+    DeliveryId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant de l'envoi (UUID).
+      schema:
+        type: string
+        format: uuid
     InvoiceId:
       name: id
       in: path
@@ -10026,6 +10495,295 @@ components:
               correlationId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e12
 
   schemas:
+    NotificationChannel:
+      type: string
+      enum:
+        - sms
+        - whatsapp
+        - email
+        - push
+        - in_app
+    NotificationDeliveryStatus:
+      type: string
+      description: "`pending` : envoi en cours ; `accepted` : pris en charge par un prestataire ; `failed` : aucun canal n'a abouti."
+      enum:
+        - pending
+        - accepted
+        - failed
+    InAppNotification:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - templateCode
+        - title
+        - body
+        - link
+        - createdAt
+        - readAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        templateCode:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+          description: Texte brut, lignes séparées par des retours à la ligne.
+        link:
+          type:
+            - string
+            - 'null'
+          description: Page concernée de l'espace KSP.
+        createdAt:
+          type: string
+          format: date-time
+        readAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    InAppNotificationList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+        - unreadCount
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/InAppNotification'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+        unreadCount:
+          type: integer
+          minimum: 0
+    UnreadNotificationCount:
+      type: object
+      additionalProperties: false
+      required:
+        - unreadCount
+      properties:
+        unreadCount:
+          type: integer
+          minimum: 0
+    MarkNotificationReadResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - notification
+        - unreadCount
+      properties:
+        notification:
+          $ref: '#/components/schemas/InAppNotification'
+        unreadCount:
+          type: integer
+          minimum: 0
+    MarkAllNotificationsReadResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - marked
+        - unreadCount
+      properties:
+        marked:
+          type: integer
+          minimum: 0
+        unreadCount:
+          type: integer
+          minimum: 0
+    NotificationPreferences:
+      type: object
+      additionalProperties: false
+      required:
+        - whatsapp
+        - email
+        - updatedAt
+      properties:
+        whatsapp:
+          type: boolean
+        email:
+          type: boolean
+        updatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: null tant que les préférences n'ont jamais été modifiées.
+    UpdateNotificationPreferencesRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - whatsapp
+        - email
+      properties:
+        whatsapp:
+          type: boolean
+        email:
+          type: boolean
+    NotificationDelivery:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - templateCode
+        - requestedChannel
+        - channelUsed
+        - channelsTried
+        - targetMasked
+        - recipientUserId
+        - status
+        - errorCode
+        - failureReason
+        - providerMessageId
+        - createdAt
+        - expiresAt
+        - acceptedAt
+        - failedAt
+        - erased
+      properties:
+        id:
+          type: string
+          format: uuid
+        templateCode:
+          type: string
+        requestedChannel:
+          $ref: '#/components/schemas/NotificationChannel'
+        channelUsed:
+          oneOf:
+            - $ref: '#/components/schemas/NotificationChannel'
+            - type: 'null'
+        channelsTried:
+          type: array
+          description: Canaux considérés, dans l'ordre (sautés compris).
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
+        targetMasked:
+          type:
+            - string
+            - 'null'
+          description: Destinataire masqué (+229********45) ; null après l'effacement du compte.
+        recipientUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        status:
+          $ref: '#/components/schemas/NotificationDeliveryStatus'
+        errorCode:
+          type:
+            - string
+            - 'null'
+        failureReason:
+          type:
+            - string
+            - 'null'
+          description: recipient_invalid, provider_unavailable, provider_rejected, ttl_expired.
+        providerMessageId:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        acceptedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        failedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        erased:
+          type: boolean
+          description: Envoi détaché d'un compte supprimé (ADR-036).
+    NotificationDeliveryList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationDelivery'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    NotificationTemplate:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - kind
+        - channels
+        - secret
+        - optional
+        - variables
+        - optionalVariables
+        - subject
+        - text
+      properties:
+        code:
+          type: string
+        kind:
+          type: string
+          description: "`direct` : envoyé à la demande d'un service (codes) ; sinon nature du message d'un événement."
+          enum:
+            - direct
+            - short
+            - document
+            - important
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
+        secret:
+          type: boolean
+        optional:
+          type: boolean
+          description: Soumis aux préférences du destinataire (ADR-039).
+        variables:
+          type: array
+          items:
+            type: string
+        optionalVariables:
+          type: array
+          items:
+            type: string
+        subject:
+          type:
+            - string
+            - 'null'
+        text:
+          type:
+            - string
+            - 'null'
+    NotificationTemplateList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationTemplate'
     Error:
       type: object
       additionalProperties: false

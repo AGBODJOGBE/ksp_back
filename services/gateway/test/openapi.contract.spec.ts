@@ -18,6 +18,7 @@ import { CleaningHttpController } from '../src/interfaces/http/cleaning.controll
 import { FileHttpController } from '../src/interfaces/http/file.controller';
 import { IdentityHttpController } from '../src/interfaces/http/identity.controller';
 import { JwksHttpController } from '../src/interfaces/http/jwks.controller';
+import { NotificationHttpController } from '../src/interfaces/http/notification.controller';
 import { OrganizationAdminHttpController } from '../src/interfaces/http/organizations-admin.controller';
 import { OrganizationHttpController } from '../src/interfaces/http/organizations.controller';
 import { PaymentHttpController } from '../src/interfaces/http/payment.controller';
@@ -27,6 +28,7 @@ import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
 import { requestBodies } from '../src/interfaces/http/schemas';
 import { type BillingServer, startBillingStub } from './support/billing-stub';
 import { type CleaningServer, startCleaningStub } from './support/cleaning-stub';
+import { type NotificationServer, startNotificationStub } from './support/notification-stub';
 import { type FileServer, startFileStub } from './support/file-stub';
 import { LINK_TOKEN, type PaymentServer, startPaymentStub } from './support/payment-stub';
 import { startWalletStub, type WalletServer } from './support/wallet-stub';
@@ -189,6 +191,7 @@ describe('contrat OpenAPI : manifeste de routage', () => {
       CleaningAdminHttpController,
       BillingHttpController,
       PaymentHttpController,
+      NotificationHttpController,
       FileHttpController,
       WalletHttpController,
     ]) {
@@ -279,6 +282,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   let cleaning: CleaningServer;
   let billing: BillingServer;
   let payment: PaymentServer;
+  let notification: NotificationServer;
   let file: FileServer;
   let wallet: WalletServer;
   let app: NestExpressApplication;
@@ -293,10 +297,12 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     cleaning = await startCleaningStub(keys);
     billing = await startBillingStub(keys);
     payment = await startPaymentStub(keys);
+    notification = await startNotificationStub(keys);
     file = await startFileStub(keys);
     wallet = await startWalletStub(keys);
     app = await startGateway({
       paymentUrl: payment.url,
+      notificationUrl: notification.url,
       fileUrl: file.url,
       walletUrl: wallet.url,
       identityUrl: identity.url,
@@ -310,7 +316,13 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         claims: {
           client_id: 'backoffice',
           mfa,
-          roles: ['cleaning_supervisor', 'cleaning_agent', 'cleaning_admin', 'super_admin'].map((role) => ({
+          roles: [
+            'cleaning_supervisor',
+            'cleaning_agent',
+            'cleaning_admin',
+            'super_admin',
+            'support_agent',
+          ].map((role) => ({
             role,
             scopeType: 'global',
           })),
@@ -326,6 +338,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     await cleaning?.close();
     await billing?.close();
     await payment?.close();
+    await notification?.close();
     await file?.close();
     await wallet?.close();
   });
@@ -335,6 +348,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     cleaning.stub.reset();
     billing.stub.reset();
     payment.stub.reset();
+    notification.stub.reset();
     file.stub.reset();
     wallet.stub.reset();
   });
@@ -933,6 +947,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           path.includes('/wallet') ||
           path.includes('/organizations') ||
           path.includes('/accounts') ||
+          path.includes('/notification/') ||
           path === '/api/v1/admin/identity/roles' ||
           path === '/api/v1/identity/context',
       )
@@ -1623,6 +1638,74 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
             }),
           );
           return call('startCleaningIntervention');
+        },
+      ],
+      [
+        'notification d’un autre compte',
+        'markNotificationRead',
+        404,
+        () => {
+          notification.stub.on('markNotificationRead', () =>
+            Promise.reject(AppError.notFound('NOTIFICATION_NOT_FOUND', 'Notification introuvable.')),
+          );
+          return call('markNotificationRead');
+        },
+      ],
+      [
+        'notifications : filtre des non lues mal formé',
+        'listMyNotifications',
+        400,
+        () =>
+          from(http().get('/api/v1/notification/notifications?unread=oui')).set(
+            'Authorization',
+            `Bearer ${token}`,
+          ),
+      ],
+      [
+        'préférences : champ inconnu',
+        'updateMyNotificationPreferences',
+        400,
+        () => call('updateMyNotificationPreferences', { body: { whatsapp: true, email: true, sms: true } }),
+      ],
+      [
+        'historique des envois pour un client',
+        'listNotificationDeliveries',
+        403,
+        () => call('listNotificationDeliveries', { auth: 'customer' }),
+      ],
+      [
+        'historique des envois : période inexistante',
+        'listNotificationDeliveries',
+        400,
+        () => {
+          notification.stub.on('listDeliveries', () =>
+            Promise.reject(
+              AppError.invalid('NOTIFICATION_VALIDATION_FAILED', 'Date invalide.', { field: 'from' }),
+            ),
+          );
+          return call('listNotificationDeliveries').query({ from: '2026-02-30' });
+        },
+      ],
+      [
+        'envoi inconnu',
+        'getNotificationDelivery',
+        404,
+        () => {
+          notification.stub.on('getDelivery', () =>
+            Promise.reject(AppError.notFound('NOTIFICATION_NOT_FOUND', 'Envoi introuvable.')),
+          );
+          return call('getNotificationDelivery');
+        },
+      ],
+      [
+        'notification indisponible',
+        'countMyUnreadNotifications',
+        503,
+        () => {
+          notification.stub.on('countMyUnreadNotifications', () =>
+            Promise.reject(AppError.unavailable('NOTIFICATION_UNAVAILABLE', 'Indisponible.')),
+          );
+          return call('countMyUnreadNotifications');
         },
       ],
       [
