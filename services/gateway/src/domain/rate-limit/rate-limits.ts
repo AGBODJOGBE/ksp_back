@@ -13,6 +13,8 @@ export type RateLimitCategory =
   | 'account_lookup'
   | 'payment_create'
   | 'payment_webhook'
+  | 'payment_link_read'
+  | 'payment_link_pay'
   | 'file_upload';
 
 export interface RateLimitRule {
@@ -46,6 +48,10 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   payment_create: { limit: 10, windowSeconds: 60, key: 'user' },
   // Notifications du prestataire de paiement (route publique, signature vérifiée par payment).
   payment_webhook: { limit: 120, windowSeconds: 60, key: 'ip' },
+  // Page publique d'un lien de paiement (ADR-040) : sans compte, freine l'essai de jetons.
+  payment_link_read: { limit: 30, windowSeconds: 60, key: 'ip' },
+  // Paiement par lien : chaque essai peut appeler le prestataire ; payment limite aussi par lien.
+  payment_link_pay: { limit: 5, windowSeconds: 60, key: 'ip' },
   // Déclaration d'un envoi de fichier (ADR-038) : file limite aussi les envois en attente et le volume.
   file_upload: { limit: 30, windowSeconds: 60, key: 'user' },
 };
