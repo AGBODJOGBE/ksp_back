@@ -1,0 +1,314 @@
+syntax = "proto3";
+
+package ksp.document.v1;
+
+// Contrats du service document : documents PDF produits à partir de modèles versionnés, et
+// signature électronique simple par code à usage unique (ADR-044). Le PDF est stocké par le
+// service file (finalité "generated_document", ADR-038) et rattaché à l'objet "document_file" de
+// même identifiant que le document.
+//
+// - DocumentInternalService : services métier seulement (jeton de service, ADR-022). Un service ne
+//   voit, n'annule et ne fait signer que les documents qu'il a produits, à partir des modèles dont il
+//   est responsable.
+// - DocumentService : espace connecté, réservé à la gateway. Le propriétaire d'un document et le
+//   signataire connecté (identifié par son compte) le lisent ; le signataire connecté signe.
+// - DocumentSigningService : signataire sans compte (débiteur…), réservé à la gateway, identifié
+//   par le jeton du lien de signature reçu par WhatsApp ou e-mail (jamais journalisé).
+//
+// Modèles (fichiers versionnés dans le service, liste fermée, extensible par ajout) :
+//   recovery_mandate               v1  mandat de recouvrement, signé par le créancier    recovery
+//   recovery_formal_notice         v1  mise en demeure adressée au débiteur, sans signature   recovery
+//   recovery_settlement_agreement  v1  protocole d'accord et échéancier, signé par le débiteur  recovery
+//   generic                        v1  document de test (titre, paragraphes), désactivé en production
+//
+// Statuts d'un document : "draft" (produit, aucune signature en cours), "pending_signature",
+// "signed", "expired" (la demande de signature a expiré ; une nouvelle peut être faite) ou
+// "cancelled" (annulé par le service métier). Une demande de signature : "pending", "signed",
+// "expired" ou "cancelled". Un document a au plus un signataire et une demande en cours.
+//
+// Signature : un code de 6 chiffres envoyé par notification (WhatsApp, e-mail en repli), valable
+// 10 minutes, 5 essais ; un nouveau code au plus toutes les 60 secondes et 5 par heure. Avant de
+// signer, document relit le PDF stocké et compare son empreinte SHA-256 à celle enregistrée à la
+// production : un document modifié n'est jamais signé. La signature ajoute une page de certificat
+// aux pages d'origine inchangées, stockée comme un nouveau fichier ; la preuve (empreintes,
+// horodatage, moyen, téléphone masqué, adresse IP et navigateur transmis par la gateway) est
+// conservée, et l'événement document.signature.completed est publié.
+//
+// Conventions : dates ISO 8601 en UTC (chaîne vide = absente) ; montants entiers en XOF dans les
+// variables ; valeurs énumérées en snake_case, identiques à l'API REST. Ni le code, ni le jeton du
+// lien, ni le téléphone en clair, ni le contenu des documents n'apparaissent dans les journaux.
+//
+// Erreurs (code AppError → statut gRPC) :
+//   DOCUMENT_VALIDATION_FAILED          INVALID_ARGUMENT    details.field
+//   DOCUMENT_TEMPLATE_UNKNOWN           NOT_FOUND           modèle ou version inconnus (ou désactivés)
+//   DOCUMENT_VARIABLES_INVALID          INVALID_ARGUMENT    details.fields : chemins des variables refusées
+//   DOCUMENT_NOT_FOUND                  NOT_FOUND           document inconnu ou hors du périmètre de l'appelant
+//   DOCUMENT_SIGNATURE_NOT_FOUND        NOT_FOUND           demande inconnue, lien invalide ou hors périmètre
+//   DOCUMENT_CALLER_FORBIDDEN           PERMISSION_DENIED   service non autorisé, ou modèle d'un autre service
+//   DOCUMENT_SIGNATURE_NOT_REQUIRED     FAILED_PRECONDITION le modèle ne se signe pas (mise en demeure)
+//   DOCUMENT_INVALID_STATUS             FAILED_PRECONDITION action impossible dans l'état du document
+//                                                           (details.status)
+//   DOCUMENT_SIGNATURE_CLOSED           FAILED_PRECONDITION demande déjà signée, expirée ou annulée
+//                                                           (details.status)
+//   DOCUMENT_SIGNER_UNREACHABLE         FAILED_PRECONDITION signataire sans téléphone ni e-mail connu
+//   DOCUMENT_CODE_TOO_SOON              FAILED_PRECONDITION nouveau code trop tôt (details.retryAfterSeconds)
+//   DOCUMENT_CODE_LIMIT_REACHED         FAILED_PRECONDITION trop de codes envoyés (details.retryAfterSeconds)
+//   DOCUMENT_CODE_INVALID               INVALID_ARGUMENT    code faux (details.attemptsLeft)
+//   DOCUMENT_CODE_EXPIRED               FAILED_PRECONDITION aucun code valable : en demander un nouveau
+//   DOCUMENT_CONSENT_REQUIRED           INVALID_ARGUMENT    accord explicite du signataire absent
+//   DOCUMENT_CONTENT_CHANGED            FAILED_PRECONDITION empreinte du PDF stocké différente : refus de signer
+//   DOCUMENT_ALREADY_EXISTS             ALREADY_EXISTS      même idempotency_key déjà utilisée pour d'autres données
+//   DOCUMENT_DEPENDENCY_UNAVAILABLE     UNAVAILABLE         file, notification ou identity injoignable : réessayer
+//   AUTH_REQUIRED                       UNAUTHENTICATED
+
+// Services métier (jeton de service).
+service DocumentInternalService {
+  // Produit le PDF d'un modèle, le stocke et l'enregistre ("draft"). Idempotent par idempotency_key.
+  rpc GenerateDocument(GenerateDocumentRequest) returns (GenerateDocumentResponse);
+  rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
+  // Demande la signature d'un signataire (compte, ou téléphone pour une personne sans compte) et le
+  // prévient : lien de signature ("invitation") ou code immédiat ("code", signataire connecté en
+  // train de signer). Idempotent par idempotency_key.
+  rpc RequestSignature(RequestSignatureRequest) returns (RequestSignatureResponse);
+  // Annule un document non signé et sa demande de signature en cours ; idempotent.
+  rpc CancelDocument(CancelDocumentRequest) returns (CancelDocumentResponse);
+  // Adresse de lecture de courte durée, pour un utilisateur que le service a lui-même autorisé.
+  rpc CreateDownloadUrl(CreateDownloadUrlRequest) returns (CreateDownloadUrlResponse);
+}
+
+// Espace connecté (gateway) : propriétaire et signataire connecté.
+service DocumentService {
+  rpc GetMyDocument(GetMyDocumentRequest) returns (GetMyDocumentResponse);
+  // Adresse de lecture du PDF à jour (signé s'il l'est).
+  rpc CreateMyDownloadUrl(CreateMyDownloadUrlRequest) returns (CreateMyDownloadUrlResponse);
+  // Envoie un code au signataire connecté de cette demande.
+  rpc SendSignatureCode(SendSignatureCodeRequest) returns (SendSignatureCodeResponse);
+  rpc SignDocument(SignDocumentRequest) returns (SignDocumentResponse);
+}
+
+// Signataire sans compte, par le jeton du lien de signature (gateway, route publique).
+service DocumentSigningService {
+  // Aperçu de la demande et adresse de lecture du PDF à signer (ou signé).
+  rpc GetSigningSession(GetSigningSessionRequest) returns (GetSigningSessionResponse);
+  rpc SendSigningCode(SendSigningCodeRequest) returns (SendSigningCodeResponse);
+  rpc SignWithLink(SignWithLinkRequest) returns (SignWithLinkResponse);
+}
+
+// Objet métier auquel le document se rapporte (dossier de recouvrement…).
+message DocumentSubject {
+  // Type d'objet en snake_case, préfixé par son domaine : "recovery_case"…
+  string type = 1;
+  string id = 2;
+}
+
+message Signer {
+  // Signataire titulaire d'un compte KSP ; vide pour une personne sans compte.
+  string user_id = 1;
+  // Téléphone masqué (+229 01 ** ** ** 45) ; jamais le numéro en clair.
+  string phone_masked = 2;
+  // Nom affiché sur la page de certificat et dans les messages.
+  string display_name = 3;
+}
+
+message SignatureRequest {
+  string id = 1;
+  string document_id = 2;
+  // "pending", "signed", "expired" ou "cancelled".
+  string status = 3;
+  Signer signer = 4;
+  string created_at = 5;
+  string expires_at = 6;
+  string signed_at = 7;
+  // Dernier code envoyé : date d'expiration (vide si aucun code en cours).
+  string code_expires_at = 8;
+}
+
+message Document {
+  string id = 1;
+  // Modèle et version utilisés : "recovery_mandate"…
+  string template = 2;
+  int32 template_version = 3;
+  string title = 4;
+  // Numéro lisible, unique : préfixe du modèle, année, séquence (MAN-2026-000042).
+  string number = 5;
+  // "draft", "pending_signature", "signed", "expired" ou "cancelled".
+  string status = 6;
+  DocumentSubject subject = 7;
+  // Compte propriétaire (titulaire du document) ; vide s'il n'y en a pas ou s'il a été supprimé.
+  string owner_id = 8;
+  // PDF produit : fichier (service file), empreinte SHA-256 en hexadécimal, taille en octets.
+  string file_id = 9;
+  string sha256 = 10;
+  int64 size_bytes = 11;
+  // PDF signé (pages d'origine et page de certificat) ; vides tant que le document n'est pas signé.
+  string signed_file_id = 12;
+  string signed_sha256 = 13;
+  string created_at = 14;
+  string signed_at = 15;
+  string cancelled_at = 16;
+  // Demande de signature en cours ou la plus récente ; absente si aucune.
+  SignatureRequest signature = 17;
+}
+
+message DownloadUrl {
+  string url = 1;
+  string expires_at = 2;
+  // Version servie : "original" ou "signed".
+  string version = 3;
+}
+
+message GenerateDocumentRequest {
+  string template = 1;
+  // 0 : dernière version du modèle.
+  int32 template_version = 2;
+  // Variables du modèle, en JSON (objet), validées par le schéma de la version demandée.
+  string variables_json = 3;
+  DocumentSubject subject = 4;
+  // Compte propriétaire du document, facultatif (le créancier pour un mandat…).
+  string owner_id = 5;
+  // Obligatoire : un nouvel appel avec la même clé renvoie le même document.
+  string idempotency_key = 6;
+}
+
+message GenerateDocumentResponse {
+  Document document = 1;
+}
+
+message GetDocumentRequest {
+  string document_id = 1;
+}
+
+message GetDocumentResponse {
+  Document document = 1;
+}
+
+// Signataire désigné par le service métier : un compte, OU un téléphone (personne sans compte).
+message SignerInput {
+  string user_id = 1;
+  // E.164, obligatoire sans user_id.
+  string phone_e164 = 2;
+  // Adresse e-mail facultative d'une personne sans compte (repli si WhatsApp échoue).
+  string email = 3;
+  // Nom affiché (certificat, messages) ; obligatoire sans user_id, sinon prénom et nom du compte.
+  string display_name = 4;
+}
+
+message RequestSignatureRequest {
+  string document_id = 1;
+  SignerInput signer = 2;
+  // Validité de la demande en heures (168 par défaut, de 1 à 720).
+  int32 expires_in_hours = 3;
+  // "invitation" (défaut) : lien de signature envoyé au signataire ; "code" : code envoyé aussitôt
+  // (signataire connecté en train de signer dans l'espace KSP).
+  string notice = 4;
+  string idempotency_key = 5;
+}
+
+message RequestSignatureResponse {
+  Document document = 1;
+  SignatureRequest signature = 2;
+}
+
+message CancelDocumentRequest {
+  string document_id = 1;
+  // Motif interne (500 caractères au plus), jamais montré au signataire.
+  string reason = 2;
+}
+
+message CancelDocumentResponse {
+  Document document = 1;
+}
+
+message CreateDownloadUrlRequest {
+  string document_id = 1;
+  // "current" (défaut : signé s'il l'est), "original" ou "signed".
+  string version = 2;
+}
+
+message CreateDownloadUrlResponse {
+  DownloadUrl download = 1;
+}
+
+message GetMyDocumentRequest {
+  string document_id = 1;
+}
+
+message GetMyDocumentResponse {
+  Document document = 1;
+}
+
+message CreateMyDownloadUrlRequest {
+  string document_id = 1;
+}
+
+message CreateMyDownloadUrlResponse {
+  DownloadUrl download = 1;
+}
+
+// Code envoyé : canal utilisé et expiration ; jamais le code.
+message CodeDelivery {
+  // "whatsapp" ou "email".
+  string channel = 1;
+  string expires_at = 2;
+  // Délai avant de pouvoir demander un nouveau code.
+  int32 resend_after_seconds = 3;
+}
+
+message SendSignatureCodeRequest {
+  string signature_request_id = 1;
+}
+
+message SendSignatureCodeResponse {
+  CodeDelivery delivery = 1;
+}
+
+message SignDocumentRequest {
+  string signature_request_id = 1;
+  string code = 2;
+  // Le signataire déclare avoir lu le document et l'accepter (case cochée) : obligatoire.
+  bool consent = 3;
+}
+
+message SignDocumentResponse {
+  Document document = 1;
+}
+
+message GetSigningSessionRequest {
+  string token = 1;
+}
+
+// Ce que voit un signataire sans compte : rien d'autre que le document à signer.
+message SigningSession {
+  string document_title = 1;
+  string document_number = 2;
+  // "pending", "signed", "expired" ou "cancelled".
+  string status = 3;
+  Signer signer = 4;
+  string expires_at = 5;
+  string signed_at = 6;
+  string code_expires_at = 7;
+  // Lecture du PDF (signé s'il l'est) ; absente si la demande est expirée ou annulée.
+  DownloadUrl download = 8;
+}
+
+message GetSigningSessionResponse {
+  SigningSession session = 1;
+}
+
+message SendSigningCodeRequest {
+  string token = 1;
+}
+
+message SendSigningCodeResponse {
+  CodeDelivery delivery = 1;
+}
+
+message SignWithLinkRequest {
+  string token = 1;
+  string code = 2;
+  bool consent = 3;
+}
+
+message SignWithLinkResponse {
+  SigningSession session = 1;
+}
