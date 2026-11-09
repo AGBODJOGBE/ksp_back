@@ -46,6 +46,23 @@ export class PaymentGrpcController implements paymentV1.PaymentServiceController
   }
 }
 
+/** Recharge du portefeuille prépayé, réservée à wallet (ADR-046). */
+@Controller()
+@paymentV1.TopUpPaymentServiceControllerMethods()
+export class TopUpPaymentGrpcController implements paymentV1.TopUpPaymentServiceController {
+  constructor(@Inject(PAYMENT_USE_CASES) private readonly useCases: PaymentUseCases) {}
+
+  async createTopUpPayment(
+    request: paymentV1.CreateTopUpPaymentRequest,
+  ): Promise<paymentV1.CreateTopUpPaymentResponse> {
+    const result = await this.useCases.createTopUpPayment.execute({
+      idempotencyKey: request.idempotencyKey,
+      amount: request.amount,
+    });
+    return { payment: presentPayment(result.payment), created: result.created };
+  }
+}
+
 /**
  * Notifications du prestataire relayées par la gateway. Le corps n'est jamais journalisé : seule
  * l'issue l'est (identifiants seulement).

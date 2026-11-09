@@ -1,6 +1,8 @@
 import { type DueRefusal, invoiceAmount, missionAmount, unrecordedSuccesses } from '../domain/amount-due';
 import { isLinkSubjectType } from '../domain/payment-link';
 import {
+  DUE_SUBJECT_TYPES,
+  type DueSubjectType,
   MISSION_PARTS,
   type MissionPart,
   PAYMENT_STATUSES,
@@ -9,7 +11,6 @@ import {
   resolveMismatch,
   sameSubject,
   SUBJECT_TYPES,
-  type SubjectType,
 } from '../domain/payment-intent';
 import {
   type NameBook,
@@ -86,7 +87,7 @@ export class CreatePaymentUseCase {
     if (!IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
       throw PaymentErrors.invalid('idempotencyKey', 'Clé d’idempotence invalide (8 à 100 caractères).');
     }
-    const type = oneOf<SubjectType>('subjectType', input.subjectType, SUBJECT_TYPES);
+    const type = oneOf<DueSubjectType>('subjectType', input.subjectType, DUE_SUBJECT_TYPES);
     const subjectId = requireUuid('subjectId', input.subjectId);
     let part: MissionPart | null = null;
     if (type === 'cleaning_mission') part = oneOf('part', input.part, MISSION_PARTS);
@@ -157,7 +158,7 @@ export class CreatePaymentUseCase {
   }
 
   private async amountDue(
-    type: SubjectType,
+    type: DueSubjectType,
     subjectId: string,
     part: MissionPart | null,
     payer: ReturnType<typeof currentPayer>,

@@ -1,3 +1,4 @@
+import { CreateTopUpPaymentUseCase } from './top-up.use-cases';
 import {
   CreatePaymentUseCase,
   GetMyPaymentUseCase,
@@ -29,6 +30,7 @@ import { type PaymentDeps } from './ports';
 /** Cas d'usage du service (une classe chacun), reliés aux mêmes dépendances. */
 export function createUseCases(deps: PaymentDeps) {
   return {
+    createTopUpPayment: new CreateTopUpPaymentUseCase(deps),
     createPayment: new CreatePaymentUseCase(deps),
     getMyPayment: new GetMyPaymentUseCase(deps),
     listMyPayments: new ListMyPaymentsUseCase(deps),

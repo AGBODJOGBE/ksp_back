@@ -44,6 +44,7 @@ import {
   PaymentAdminGrpcController,
   PaymentGrpcController,
   PaymentWebhookGrpcController,
+  TopUpPaymentGrpcController,
 } from './interfaces/grpc/payment.controllers';
 
 const CLEANING_CLIENT = Symbol('CLEANING_CLIENT');
@@ -97,6 +98,7 @@ export class AppModule {
         PaymentLinkPublicGrpcController,
         PayoutGrpcController,
         PayoutAdminGrpcController,
+        TopUpPaymentGrpcController,
       ],
       providers: [
         PrismaService,
