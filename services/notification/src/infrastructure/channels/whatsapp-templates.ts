@@ -221,4 +221,7 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
     'reference',
     'link',
   ]),
+  // Portefeuille prépayé (ADR-046).
+  'wallet.payment.customer': spec('ksp_wallet_payment', ['amount', 'object', 'balance', 'link']),
+  'wallet.credit.customer': spec('ksp_wallet_credit', ['amount', 'object', 'balance', 'link']),
 };
