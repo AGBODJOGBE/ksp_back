@@ -8,8 +8,11 @@ export interface PaymentMoney {
   currency: 'XOF';
 }
 
-/** Objet payé : acompte ou solde d'une mission du Nettoyage, ou facture mensuelle. */
-export type PaymentSubjectType = 'cleaning_mission' | 'billing_invoice';
+/**
+ * Objet payé : acompte ou solde d'une mission du Nettoyage, facture mensuelle, ou recharge du
+ * portefeuille prépayé (ADR-046 ; identifiant : titulaire du portefeuille).
+ */
+export type PaymentSubjectType = 'cleaning_mission' | 'billing_invoice' | 'wallet_top_up';
 /** Mission : acompte ou reste dû ; null pour une facture. */
 export type PaymentPart = 'deposit' | 'balance';
 export type PaymentProviderName = 'fedapay' | 'simulated';
@@ -17,10 +20,10 @@ export type PaymentProviderName = 'fedapay' | 'simulated';
 interface PaymentRef {
   paymentId: string;
   subjectType: PaymentSubjectType;
-  /** Mission (cleaning) ou facture (billing). */
+  /** Mission (cleaning), facture (billing) ou titulaire du portefeuille rechargé. */
   subjectId: string;
   part: PaymentPart | null;
-  /** Numéro de la facture ; null pour une mission. */
+  /** Numéro de la facture ; null pour une mission ou une recharge. */
   subjectReference: string | null;
   /** Payeur : compte qui a créé le paiement. */
   customerId: string;

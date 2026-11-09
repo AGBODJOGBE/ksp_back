@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/wallet/wallet.prepaid.debited.v1.schema.json",
+  "title": "wallet.prepaid.debited",
+  "description": "Paiement d'un service débité du portefeuille prépayé d'un client (ADR-046), à la demande du service appelant (cleaning, billing). Publié une seule fois par débit, dans la transaction qui l'écrit. Écouté par notification (« paiement effectué depuis votre portefeuille »). Identifiants, montants et libellé seulement.",
+  "x-event-type": "wallet.prepaid.debited",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "transactionId",
+    "holder",
+    "userId",
+    "amount",
+    "balanceAfter",
+    "service",
+    "objectType",
+    "objectId",
+    "part",
+    "description",
+    "debitedAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "balance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "holder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "transactionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "holder": {
+      "$ref": "#/$defs/holder"
+    },
+    "userId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Compte à prévenir : le titulaire (user), sinon le membre qui a payé ou rechargé ; null s'il n'y en a pas (crédit de la finance à une organisation)"
+    },
+    "amount": {
+      "$ref": "#/$defs/money"
+    },
+    "balanceAfter": {
+      "$ref": "#/$defs/balance",
+      "description": "Solde prépayé après le débit"
+    },
+    "service": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Service appelant"
+    },
+    "objectType": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,49}$",
+      "description": "Objet payé chez le service, par exemple cleaning_mission ou billing_invoice"
+    },
+    "objectId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "part": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9_]{0,29}$",
+      "description": "Part payée (deposit, balance), null sinon"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "description": "Libellé du relevé, par exemple « Nettoyage de maison — acompte »"
+    },
+    "debitedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

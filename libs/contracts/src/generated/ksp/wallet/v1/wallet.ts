@@ -45,6 +45,33 @@ export interface Wallet {
     | undefined;
   /** Dernière écriture, vide si le compte n'en a aucune. */
   lastEntryAt: string;
+  /** Portefeuille prépayé du même titulaire (ADR-046), distinct du solde ci-dessus. */
+  prepaid?: PrepaidWallet | undefined;
+}
+
+/** Portefeuille prépayé d'un titulaire (ADR-046) : dépensable sur la plateforme, jamais négatif. */
+export interface PrepaidWallet {
+  holder?: Holder | undefined;
+  balance?:
+    | Money
+    | undefined;
+  /** Dernière écriture, vide si le portefeuille n'en a aucune. */
+  lastEntryAt: string;
+}
+
+/** Objet payé par un débit du portefeuille prépayé, chez le service appelant. */
+export interface ObjectReference {
+  /** Service appelant (jeton de service) ; renseigné par wallet, ignoré dans une demande. */
+  service: string;
+  /**
+   * Type d'objet du service ("cleaning_mission", "billing_invoice"…) : minuscules, chiffres et "_",
+   * 3 à 50 caractères.
+   */
+  objectType: string;
+  /** UUID de l'objet chez l'appelant. */
+  objectId: string;
+  /** Part payée (par exemple "deposit" ou "balance"), vide sinon. */
+  part: string;
 }
 
 /** Une ligne du relevé d'un titulaire (une écriture sur son compte), les plus récentes d'abord. */
@@ -74,9 +101,17 @@ export interface StatementLine {
   /** Reversement : son identifiant wallet et son statut. */
   payoutId: string;
   payoutStatus: string;
-  /** Annulation : encaissement annulé. */
+  /** Annulation : encaissement annulé ; remboursement : débit remboursé. */
   reversesTransactionId: string;
   createdAt: string;
+  /**
+   * Compte de la ligne : "collections" (fonds dus au titulaire, ADR-042) ou "prepaid" (portefeuille
+   * prépayé, ADR-046, kind "top_up" : recharge, "service_payment" : paiement d'un service, "refund" :
+   * remboursement).
+   */
+  account: string;
+  /** Paiement d'un service et son remboursement : objet payé. */
+  object?: ObjectReference | undefined;
 }
 
 export interface StatementPage {
@@ -88,7 +123,8 @@ export interface StatementPage {
 export interface LedgerEntry {
   /**
    * "holder:user:<id>", "holder:organization:<id>", "ksp:collections", "ksp:commission" ou
-   * "ksp:payouts_in_transit".
+   * "ksp:payouts_in_transit" ; portefeuille prépayé (ADR-046) : "prepaid:user:<id>",
+   * "prepaid:organization:<id>", "ksp:prepaid_funds" ou "ksp:service_revenue".
    */
   account: string;
   /** "debit" ou "credit". */
@@ -98,7 +134,10 @@ export interface LedgerEntry {
 
 export interface LedgerTransaction {
   id: string;
-  /** "collection", "payout_hold", "payout_settlement", "payout_release" ou "reversal". */
+  /**
+   * "collection", "payout_hold", "payout_settlement", "payout_release" ou "reversal" ;
+   * portefeuille prépayé (ADR-046) : "top_up", "service_payment" ou "refund".
+   */
   kind: string;
   /** Référence d'idempotence de l'appelant. */
   reference: string;
@@ -115,6 +154,8 @@ export interface LedgerTransaction {
   createdAt: string;
   /** Écritures équilibrées (somme des débits = somme des crédits). */
   entries: LedgerEntry[];
+  /** Paiement d'un service et son remboursement : objet payé. */
+  object?: ObjectReference | undefined;
 }
 
 /** Bénéficiaire d'un reversement par Mobile Money. */
@@ -242,11 +283,24 @@ export interface GetMyWalletRequest {
 }
 
 export interface GetMyWalletResponse {
-  wallet?: Wallet | undefined;
+  wallet?:
+    | Wallet
+    | undefined;
+  /** Montants de recharge acceptés (réglables), pour le formulaire du portail. */
+  topUpLimits?: TopUpLimits | undefined;
+}
+
+export interface TopUpLimits {
+  min?: Money | undefined;
+  max?: Money | undefined;
 }
 
 export interface ListMyStatementRequest {
-  page?: Page | undefined;
+  page?:
+    | Page
+    | undefined;
+  /** Filtre facultatif : "collections" ou "prepaid" ; vide : les deux, les plus récentes d'abord. */
+  account: string;
 }
 
 export interface ListMyStatementResponse {
@@ -276,7 +330,11 @@ export interface GetHolderWalletResponse {
 
 export interface ListHolderStatementRequest {
   holder?: Holder | undefined;
-  page?: Page | undefined;
+  page?:
+    | Page
+    | undefined;
+  /** Filtre facultatif : "collections" ou "prepaid" ; vide : les deux. */
+  account: string;
 }
 
 export interface ListHolderStatementResponse {
@@ -301,7 +359,10 @@ export interface GetLedgerOverviewRequest {
 }
 
 export interface AccountBalance {
-  /** "ksp:collections", "ksp:commission" ou "ksp:payouts_in_transit". */
+  /**
+   * "ksp:collections", "ksp:commission", "ksp:payouts_in_transit", "ksp:prepaid_funds" ou
+   * "ksp:service_revenue".
+   */
   account: string;
   /** Solde dans le sens naturel du compte (positif en temps normal). */
   balance?: Money | undefined;
@@ -312,6 +373,126 @@ export interface GetLedgerOverviewResponse {
   /** Somme des soldes des titulaires (ce que KSP leur doit). */
   owedToHolders?: Money | undefined;
   holdersCount: number;
+  /** Somme des portefeuilles prépayés (ce que KSP doit encore en services) et leur nombre (ADR-046). */
+  owedToCustomers?: Money | undefined;
+  customersCount: number;
+}
+
+export interface DebitRequest {
+  /**
+   * Obligatoire (8 à 150 caractères : lettres, chiffres, ":", "_" et "-"), propre à l'appelant : une
+   * seconde demande identique renvoie le même débit ; une demande différente est refusée.
+   */
+  idempotencyKey: string;
+  /** Titulaire débité : le client ("user") ou son organisation ("organization"). */
+  holder?:
+    | Holder
+    | undefined;
+  /** Entier en XOF, 1 à 1 000 000 000 ; jamais de débit partiel. */
+  amount?:
+    | Money
+    | undefined;
+  /** Objet payé chez l'appelant. */
+  object?:
+    | ObjectReference
+    | undefined;
+  /** Libellé du relevé, 1 à 140 caractères (par exemple « Nettoyage de maison — acompte »). */
+  description: string;
+}
+
+export interface DebitResponse {
+  transaction?: LedgerTransaction | undefined;
+  wallet?:
+    | PrepaidWallet
+    | undefined;
+  /** false : débit déjà enregistré avec cette clé. */
+  created: boolean;
+}
+
+export interface RefundRequest {
+  /** Débit (paiement d'un service) de l'appelant, remboursé en entier. */
+  transactionId: string;
+  /** Raison, 1 à 200 caractères (aucune donnée personnelle), visible dans le relevé. */
+  reason: string;
+}
+
+export interface RefundResponse {
+  transaction?: LedgerTransaction | undefined;
+  wallet?:
+    | PrepaidWallet
+    | undefined;
+  /** false : débit déjà remboursé (le même remboursement est renvoyé). */
+  created: boolean;
+}
+
+export interface GetPrepaidBalanceRequest {
+  holder?: Holder | undefined;
+}
+
+export interface GetPrepaidBalanceResponse {
+  wallet?: PrepaidWallet | undefined;
+}
+
+export interface CreateTopUpRequest {
+  /** Clé d'idempotence (en-tête Idempotency-Key), 8 à 100 caractères. */
+  idempotencyKey: string;
+  /** Entier en XOF, entre les limites de recharge (WALLET_TOP_UP_MIN et WALLET_TOP_UP_MAX). */
+  amount?: Money | undefined;
+}
+
+export interface CreateTopUpResponse {
+  topUp?:
+    | TopUp
+    | undefined;
+  /** false : recharge déjà demandée avec cette clé, ou page encore ouverte réutilisée. */
+  created: boolean;
+}
+
+/** Recharge : paiement Mobile Money créé par payment (objet "wallet_top_up"). */
+export interface TopUp {
+  /** Paiement chez payment, suivi par GET /api/v1/payment/payments/{id}. */
+  paymentId: string;
+  holder?: Holder | undefined;
+  amount?:
+    | Money
+    | undefined;
+  /**
+   * Statut du paiement : "pending", "succeeded", "failed", "cancelled", "expired" ou
+   * "amount_mismatch".
+   */
+  status: string;
+  /** Page de paiement du prestataire ; vide si elle n'a pas pu être créée (réessayer, même clé). */
+  checkoutUrl: string;
+  expiresAt: string;
+}
+
+export interface CreditPrepaidWalletRequest {
+  /** Obligatoire (en-tête Idempotency-Key), 8 à 100 caractères. */
+  idempotencyKey: string;
+  holder?:
+    | Holder
+    | undefined;
+  /**
+   * "refund" (remboursement d'un service, geste commercial) ou "top_up" (recharge reçue par Mobile
+   * Money mais non créditée : écart de montant traité par la finance ; payment_id obligatoire, un
+   * seul crédit par paiement, automatique ou manuel).
+   */
+  kind: string;
+  amount?:
+    | Money
+    | undefined;
+  /** Motif, 1 à 200 caractères, visible dans le relevé du client. */
+  reason: string;
+  paymentId: string;
+}
+
+export interface CreditPrepaidWalletResponse {
+  transaction?: LedgerTransaction | undefined;
+  wallet?:
+    | PrepaidWallet
+    | undefined;
+  /** false : crédit déjà enregistré avec cette clé (ou ce paiement). */
+  created: boolean;
 }
 
 /** Opérations des services métier (recovery), jeton de service obligatoire. */
@@ -332,6 +513,19 @@ export interface WalletServiceClient {
   getBalance(request: GetBalanceRequest, metadata?: Metadata): Observable<GetBalanceResponse>;
 
   listStatement(request: ListStatementRequest, metadata?: Metadata): Observable<ListStatementResponse>;
+
+  /**
+   * Portefeuille prépayé (ADR-046), services de WALLET_DEBIT_CALLERS : paiement d'un service débité
+   * du portefeuille (jamais partiel, jamais au-delà du solde), idempotent par (appelant, clé).
+   */
+
+  debit(request: DebitRequest, metadata?: Metadata): Observable<DebitResponse>;
+
+  /** Remboursement d'un débit de l'appelant : écriture inverse, le montant est recrédité (une fois). */
+
+  refund(request: RefundRequest, metadata?: Metadata): Observable<RefundResponse>;
+
+  getPrepaidBalance(request: GetPrepaidBalanceRequest, metadata?: Metadata): Observable<GetPrepaidBalanceResponse>;
 }
 
 /** Opérations des services métier (recovery), jeton de service obligatoire. */
@@ -367,6 +561,25 @@ export interface WalletServiceController {
     request: ListStatementRequest,
     metadata?: Metadata,
   ): Promise<ListStatementResponse> | Observable<ListStatementResponse> | ListStatementResponse;
+
+  /**
+   * Portefeuille prépayé (ADR-046), services de WALLET_DEBIT_CALLERS : paiement d'un service débité
+   * du portefeuille (jamais partiel, jamais au-delà du solde), idempotent par (appelant, clé).
+   */
+
+  debit(request: DebitRequest, metadata?: Metadata): Promise<DebitResponse> | Observable<DebitResponse> | DebitResponse;
+
+  /** Remboursement d'un débit de l'appelant : écriture inverse, le montant est recrédité (une fois). */
+
+  refund(
+    request: RefundRequest,
+    metadata?: Metadata,
+  ): Promise<RefundResponse> | Observable<RefundResponse> | RefundResponse;
+
+  getPrepaidBalance(
+    request: GetPrepaidBalanceRequest,
+    metadata?: Metadata,
+  ): Promise<GetPrepaidBalanceResponse> | Observable<GetPrepaidBalanceResponse> | GetPrepaidBalanceResponse;
 }
 
 export function WalletServiceControllerMethods() {
@@ -377,6 +590,9 @@ export function WalletServiceControllerMethods() {
       "reverseTransaction",
       "getBalance",
       "listStatement",
+      "debit",
+      "refund",
+      "getPrepaidBalance",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
@@ -402,6 +618,13 @@ export interface WalletAccountServiceClient {
   listMyStatement(request: ListMyStatementRequest, metadata?: Metadata): Observable<ListMyStatementResponse>;
 
   listMyPayouts(request: ListMyPayoutsRequest, metadata?: Metadata): Observable<ListMyPayoutsResponse>;
+
+  /**
+   * Recharge du portefeuille prépayé par Mobile Money (ADR-046) : page de paiement créée par payment ;
+   * le portefeuille est crédité à la confirmation du paiement (payment.intent.succeeded).
+   */
+
+  createTopUp(request: CreateTopUpRequest, metadata?: Metadata): Observable<CreateTopUpResponse>;
 }
 
 /** Espace du titulaire connecté : son compte (contexte personnel) ou son organisation active. */
@@ -421,11 +644,21 @@ export interface WalletAccountServiceController {
     request: ListMyPayoutsRequest,
     metadata?: Metadata,
   ): Promise<ListMyPayoutsResponse> | Observable<ListMyPayoutsResponse> | ListMyPayoutsResponse;
+
+  /**
+   * Recharge du portefeuille prépayé par Mobile Money (ADR-046) : page de paiement créée par payment ;
+   * le portefeuille est crédité à la confirmation du paiement (payment.intent.succeeded).
+   */
+
+  createTopUp(
+    request: CreateTopUpRequest,
+    metadata?: Metadata,
+  ): Promise<CreateTopUpResponse> | Observable<CreateTopUpResponse> | CreateTopUpResponse;
 }
 
 export function WalletAccountServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["getMyWallet", "listMyStatement", "listMyPayouts"];
+    const grpcMethods: string[] = ["getMyWallet", "listMyStatement", "listMyPayouts", "createTopUp"];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("WalletAccountService", method)(constructor.prototype[method], method, descriptor);
@@ -457,6 +690,16 @@ export interface WalletAdminServiceClient {
   /** Soldes des comptes internes de KSP et total dû aux titulaires. */
 
   getLedgerOverview(request: GetLedgerOverviewRequest, metadata?: Metadata): Observable<GetLedgerOverviewResponse>;
+
+  /**
+   * Crédit manuel d'un portefeuille prépayé avec motif (ADR-046) : remboursement, ou recharge reçue
+   * mais non créditée (écart de montant traité par la finance). Auteur gardé dans le grand livre.
+   */
+
+  creditPrepaidWallet(
+    request: CreditPrepaidWalletRequest,
+    metadata?: Metadata,
+  ): Observable<CreditPrepaidWalletResponse>;
 }
 
 /** Back-office : finance_officer, super_admin, avec double authentification. */
@@ -483,11 +726,27 @@ export interface WalletAdminServiceController {
     request: GetLedgerOverviewRequest,
     metadata?: Metadata,
   ): Promise<GetLedgerOverviewResponse> | Observable<GetLedgerOverviewResponse> | GetLedgerOverviewResponse;
+
+  /**
+   * Crédit manuel d'un portefeuille prépayé avec motif (ADR-046) : remboursement, ou recharge reçue
+   * mais non créditée (écart de montant traité par la finance). Auteur gardé dans le grand livre.
+   */
+
+  creditPrepaidWallet(
+    request: CreditPrepaidWalletRequest,
+    metadata?: Metadata,
+  ): Promise<CreditPrepaidWalletResponse> | Observable<CreditPrepaidWalletResponse> | CreditPrepaidWalletResponse;
 }
 
 export function WalletAdminServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["getHolderWallet", "listHolderStatement", "listWalletPayouts", "getLedgerOverview"];
+    const grpcMethods: string[] = [
+      "getHolderWallet",
+      "listHolderStatement",
+      "listWalletPayouts",
+      "getLedgerOverview",
+      "creditPrepaidWallet",
+    ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("WalletAdminService", method)(constructor.prototype[method], method, descriptor);

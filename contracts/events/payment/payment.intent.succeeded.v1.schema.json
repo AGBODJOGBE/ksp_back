@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/payment/payment.intent.succeeded.v1.schema.json",
   "title": "payment.intent.succeeded",
-  "description": "Paiement en ligne réussi, confirmé par le prestataire (notification signée puis relecture de la transaction chez lui), jamais par le navigateur (ADR-031). Publié une seule fois par paiement. Écouté par cleaning (paiement enregistré sur la mission), billing (paiement enregistré sur la facture) et notification (reçu au payeur). Identifiants et montants seulement.",
+  "description": "Paiement en ligne réussi, confirmé par le prestataire (notification signée puis relecture de la transaction chez lui), jamais par le navigateur (ADR-031). Publié une seule fois par paiement. Écouté par cleaning (paiement enregistré sur la mission), billing (paiement enregistré sur la facture), wallet (recharge créditée au portefeuille prépayé, ADR-046) et notification (reçu au payeur). Identifiants et montants seulement.",
   "x-event-type": "payment.intent.succeeded",
   "x-event-version": 1,
   "type": "object",
@@ -35,22 +35,22 @@
   "properties": {
     "paymentId": { "type": "string", "format": "uuid" },
     "subjectType": {
-      "enum": ["cleaning_mission", "billing_invoice"],
-      "description": "cleaning_mission : acompte ou solde d'une mission ; billing_invoice : facture mensuelle"
+      "enum": ["cleaning_mission", "billing_invoice", "wallet_top_up"],
+      "description": "cleaning_mission : acompte ou solde d'une mission ; billing_invoice : facture mensuelle ; wallet_top_up : recharge du portefeuille prépayé (ADR-046, ajouté : un consommateur ignore un type qu'il ne traite pas)"
     },
     "subjectId": {
       "type": "string",
       "format": "uuid",
-      "description": "Mission (cleaning) ou facture (billing)"
+      "description": "Mission (cleaning), facture (billing) ou titulaire du portefeuille rechargé : organizationId s'il est renseigné, sinon customerId (wallet_top_up)"
     },
     "part": {
       "enum": ["deposit", "balance", null],
-      "description": "Mission : acompte ou reste dû ; null pour une facture"
+      "description": "Mission : acompte ou reste dû ; null pour une facture ou une recharge"
     },
     "subjectReference": {
       "type": ["string", "null"],
       "pattern": "^FAC-[0-9]{4}-[0-9]{6}$",
-      "description": "Numéro de la facture ; null pour une mission"
+      "description": "Numéro de la facture ; null pour une mission ou une recharge"
     },
     "customerId": {
       "type": "string",

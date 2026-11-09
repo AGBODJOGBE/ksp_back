@@ -194,6 +194,17 @@ export interface CleaningEventPayloads {
     interventionIds: string[];
     failedCount: number;
   };
+  /**
+   * Paiements par portefeuille d'une mission annulée, remboursés dans le portefeuille du client
+   * (ADR-046) : wallet rembourse chaque débit cité, une seule fois.
+   */
+  'cleaning.mission.refunded': {
+    missionId: string;
+    customerId: string;
+    refunds: { paymentRecordId: string; walletTransactionId: string; amount: CleaningMoney }[];
+    reason: 'mission_cancelled';
+    refundedAt: string;
+  };
 }
 
 /**

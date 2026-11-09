@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.mission.refunded.v1.schema.json",
+  "title": "cleaning.mission.refunded",
+  "description": "Paiements par portefeuille d'une mission remboursés dans le portefeuille du client (ADR-046), décidé par cleaning à l'annulation d'une mission dont aucun passage n'a commencé. Publié dans la transaction de l'annulation. Écouté par wallet, qui rembourse chaque débit cité (une seule fois). Identifiants et montants seulement.",
+  "x-event-type": "cleaning.mission.refunded",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["missionId", "customerId", "refunds", "reason", "refundedAt"],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    }
+  },
+  "properties": {
+    "missionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "refunds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["paymentRecordId", "walletTransactionId", "amount"],
+        "properties": {
+          "paymentRecordId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Paiement de la mission remboursé"
+          },
+          "walletTransactionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Débit du portefeuille à rembourser"
+          },
+          "amount": {
+            "$ref": "#/$defs/money"
+          }
+        }
+      }
+    },
+    "reason": {
+      "enum": ["mission_cancelled"]
+    },
+    "refundedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
