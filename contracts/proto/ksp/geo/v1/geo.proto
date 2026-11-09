@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package ksp.geo.v1;
+
+// Contrat du service geo (ADR-045) : tout le géographique de la plateforme au même endroit.
+// Service interne, sans route REST : seuls les services métier l'appellent, avec un jeton de
+// service d'audience "geo" (cleaning aujourd'hui ; shop et delivery ensuite).
+//
+// - ReverseGeocode : noms de commune possibles d'un point (Nominatim auto-hébergé d'abord, Google
+//   en secours, ADR-034). Jamais d'erreur de fournisseur : une réponse sans commune signifie
+//   qu'aucun n'a trouvé ou qu'ils sont en panne. Le rapprochement commune → zone desservie reste
+//   au service appelant (ses zones lui appartiennent).
+// - Route, DistanceMatrix, Nearest : moteur d'itinéraires OSRM (/route, /table, /nearest).
+//
+// Conventions : coordonnées en degrés décimaux WGS 84 (latitude entre -90 et 90, longitude entre
+// -180 et 180 ; le Bénin est attendu mais pas imposé) ; distances en mètres et durées en secondes,
+// arrondies à l'entier. Profil de déplacement : "car" (valeur par défaut si vide), seul profil
+// servi aujourd'hui ; d'autres ("motorbike") seront ajoutés sans changer ce contrat. Les
+// coordonnées sont des données personnelles : jamais journalisées ni tracées.
+//
+// Erreurs (code AppError → statut gRPC) :
+//   GEO_VALIDATION_FAILED       INVALID_ARGUMENT  details.field (ex. "points[1].latitude"), details.allowed
+//   GEO_ROUTE_NOT_FOUND         NOT_FOUND         aucun itinéraire entre les points
+//   GEO_POINT_NOT_ROUTABLE      NOT_FOUND         point trop loin du réseau routier (details.field)
+//   GEO_ROUTING_UNAVAILABLE     UNAVAILABLE       OSRM absent, en panne ou trop lent : réessayable
+//   AUTH_REQUIRED               UNAUTHENTICATED   jeton de service absent ou invalide
+service GeoService {
+  // Commune(s) et adresse lisible d'un point GPS.
+  rpc ReverseGeocode(ReverseGeocodeRequest) returns (ReverseGeocodeResponse);
+  // Distance et durée d'un itinéraire passant par 2 à 25 points, dans l'ordre.
+  rpc Route(RouteRequest) returns (RouteResponse);
+  // Distances et durées de chaque origine vers chaque destination (1 à 25 de chaque côté).
+  rpc DistanceMatrix(DistanceMatrixRequest) returns (DistanceMatrixResponse);
+  // Point le plus proche sur le réseau routier (accès d'une boutique, d'un client).
+  rpc Nearest(NearestRequest) returns (NearestResponse);
+}
+
+message GeoPoint {
+  double latitude = 1;
+  double longitude = 2;
+}
+
+message ReverseGeocodeRequest {
+  GeoPoint point = 1;
+}
+
+message ReverseGeocodeResponse {
+  // Noms de commune possibles, du plus probable au moins probable, sans doublon ; vide si aucun
+  // fournisseur n'a trouvé.
+  repeated string communes = 1;
+  // Adresse lisible rendue par le fournisseur, vide si aucune.
+  string display_address = 2;
+  // Fournisseur qui a trouvé : "nominatim" ou "google" ; vide si aucun.
+  string provider = 3;
+}
+
+message RouteRequest {
+  repeated GeoPoint points = 1;
+  string profile = 2;
+}
+
+message RouteResponse {
+  int32 distance_meters = 1;
+  int32 duration_seconds = 2;
+}
+
+message DistanceMatrixRequest {
+  repeated GeoPoint origins = 1;
+  repeated GeoPoint destinations = 2;
+  string profile = 3;
+}
+
+message DistanceMatrixResponse {
+  // Une ligne par origine, dans l'ordre de la demande.
+  repeated DistanceMatrixRow rows = 1;
+}
+
+message DistanceMatrixRow {
+  // Une cellule par destination, dans l'ordre de la demande.
+  repeated DistanceMatrixCell cells = 1;
+}
+
+message DistanceMatrixCell {
+  // Faux si aucun itinéraire ne relie l'origine à la destination (distance et durée à 0).
+  bool reachable = 1;
+  int32 distance_meters = 2;
+  int32 duration_seconds = 3;
+}
+
+message NearestRequest {
+  GeoPoint point = 1;
+  string profile = 2;
+}
+
+message NearestResponse {
+  // Point du réseau routier le plus proche.
+  GeoPoint point = 1;
+  // Distance à vol d'oiseau entre le point demandé et ce point.
+  int32 distance_meters = 2;
+  // Nom de la voie, vide si inconnu.
+  string road_name = 3;
+}

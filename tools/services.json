@@ -38,5 +38,10 @@
     "grpcPort": 50057,
     "httpPort": 3107,
     "database": true
+  },
+  "geo": {
+    "grpcPort": 50059,
+    "httpPort": 3109,
+    "database": false
   }
 }
