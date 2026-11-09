@@ -17,6 +17,7 @@ ksp-backend/
 ├── services/<service>/                  un dossier par service (architecture hexagonale)
 ├── tools/
 │   ├── new-service/   générateur de service
+│   ├── geo/           préparation des données d'itinéraires OSRM
 │   └── ci/            scripts de la CI
 ├── infra/local/       initialisation de l'environnement local
 ├── docs/
@@ -34,7 +35,7 @@ ksp-backend/
 | Immobilier                         | `realestate`                                                                                              | 2     |
 | Marketplace, impression, livraison | `catalog`, `order`, `print`, `delivery`                                                                   | 3     |
 
-Services présents dans le dépôt : `gateway`, `identity`, `notification`, `cleaning`, `billing`, `payment` (dont liens de paiement sans compte et reversements, ADR-040 et ADR-041), `file` (stockage des pièces jointes par adresses présignées, ADR-038), `wallet` (grand livre des fonds des clients, ADR-042) et `document` (PDF produits à partir de modèles et signature par code, ADR-044). Ports réservés : `tools/services.json`.
+Services présents dans le dépôt : `gateway`, `identity`, `notification`, `cleaning`, `billing`, `payment` (dont liens de paiement sans compte et reversements, ADR-040 et ADR-041), `file` (stockage des pièces jointes par adresses présignées, ADR-038), `wallet` (grand livre des fonds des clients, ADR-042), `document` (PDF produits à partir de modèles et signature par code, ADR-044) et `geo` (géocodage inverse et itinéraires, service interne, ADR-045). Ports réservés : `tools/services.json`.
 
 ## Démarrer
 
@@ -60,6 +61,22 @@ La `gateway` n'a ni gRPC entrant ni base : elle sert l'API REST des fronts sur l
 En développement, `notification` n'envoie aucun message : le code de connexion s'affiche dans son terminal (voir `services/notification/README.md`).
 
 Consoles locales : RabbitMQ http://localhost:15672 (ksp / ksp), MinIO http://localhost:9001 (ksp / ksp-local-secret ; le bucket `ksp-files` est créé par `file` au démarrage en développement), traces Jaeger http://localhost:16686.
+
+### Itinéraires (OSRM)
+
+Le service `geo` calcule distances et durées avec OSRM (ADR-045). Il démarre sans lui (itinéraires
+indisponibles, géocodage servi). Pour les itinéraires en local, préparer une fois les données du
+Bénin, puis lancer le moteur :
+
+```bash
+tools/geo/prepare-osrm.sh                     # Windows : powershell -ExecutionPolicy Bypass -File tools/geo/prepare-osrm.ps1
+docker compose --profile routing up -d osrm   # http://localhost:5000 (OSRM_URL de geo)
+```
+
+Le script télécharge l'extrait OpenStreetMap du Bénin (Geofabrik, environ 46 Mo en novembre 2026)
+et le prépare (profil voiture, algorithme MLD) dans le volume `osrm-data`. Ordres de grandeur
+indicatifs : quelques minutes de préparation, moins de 1 Go dans le volume. Relancer le script met
+la carte à jour (puis `docker compose --profile routing restart osrm`).
 
 ## Commandes
 
