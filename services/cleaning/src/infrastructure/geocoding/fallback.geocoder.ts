@@ -48,7 +48,13 @@ export interface GeocodingConfig {
   GEOCODING_TIMEOUT_MS: number;
 }
 
-/** Nominatim auto-hébergé d'abord, Google en secours ; un fournisseur sans variable est désactivé. */
+/**
+ * Nominatim auto-hébergé d'abord, Google en secours ; un fournisseur sans variable est désactivé.
+ *
+ * @deprecated Repli (ADR-045), utilisé seulement sans GEO_GRPC_URL : cette chaîne vit désormais
+ * dans le service geo (voir GeoServiceGeocoder). Nominatim, Google et la chaîne seront retirés
+ * d'ici une fois geo déployé partout.
+ */
 export function createGeocoder(config: GeocodingConfig, fetchImpl?: typeof fetch): FallbackGeocoder {
   const providers: NamedGeocoder[] = [];
   const common = { timeoutMs: config.GEOCODING_TIMEOUT_MS, ...(fetchImpl ? { fetch: fetchImpl } : {}) };
