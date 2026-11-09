@@ -21,9 +21,28 @@ export const organizationBodies = {
   suspendOrganization: reason,
 };
 
-/** Recherche de compte au back-office (ADR-029) : numéro E.164 dans le corps. */
+/** Motif d'une action de l'administration des comptes (ADR-043), tracé par identity. */
+const adminReason = z.strictObject({ reason: z.string().min(1).max(500) });
+
+/**
+ * Comptes au back-office : recherche par numéro (ADR-029), administration des comptes et des rôles
+ * (ADR-043). Le périmètre de l'appelant et la forme du motif restent contrôlés par identity.
+ */
 export const accountBodies = {
   findAccountByPhone: z.strictObject({ phone: z.string().regex(/^\+[1-9][0-9]{6,14}$/) }),
+  searchAccounts: z.strictObject({
+    query: z.string().max(100).optional(),
+    limit: z.int().min(1).max(50).optional(),
+    cursor: z.guid().optional(),
+  }),
+  grantAccountRole: z.strictObject({
+    roleCode: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),
+    reason: z.string().min(1).max(500),
+  }),
+  revokeAccountRole: z.strictObject({ assignmentId: z.guid(), reason: z.string().min(1).max(500) }),
+  suspendAccount: adminReason,
+  reactivateAccount: adminReason,
+  resetAccountMfa: adminReason,
 };
 
 export const organizationParams = {
