@@ -1,4 +1,7 @@
+import { createHash, createHmac } from 'node:crypto';
 import { type RoleClaim, runWithContext } from '@ksp/platform';
+import { type PaymentLink } from '../../domain/payment-link';
+import { type Payout, type PayoutBeneficiary, type ProviderPayoutStatus } from '../../domain/payout';
 import { type InvoiceDue, type MissionDue } from '../../domain/amount-due';
 import {
   isUnderReview,
@@ -25,6 +28,12 @@ import {
   type ProviderNotification,
   type ProviderNotificationLog,
   type ProviderTransaction,
+  type LinkTokens,
+  type PaymentLinkRepository,
+  type PayoutFilter,
+  type PayoutProvider,
+  type PayoutRepository,
+  type ProviderPayout,
 } from '../ports';
 import { PaymentErrors } from '../shared/errors';
 
@@ -59,7 +68,9 @@ export class InMemoryPayments implements PaymentRepository {
   readonly outbox: OutboxMessage[] = [];
 
   async create(intent: PaymentIntent) {
-    const existing = await this.findByIdempotencyKey(intent.customerId, intent.idempotencyKey);
+    const existing = intent.paymentLinkId
+      ? await this.findByLinkKey(intent.paymentLinkId, intent.idempotencyKey)
+      : await this.findByIdempotencyKey(intent.customerId ?? '', intent.idempotencyKey);
     if (existing) return { created: false, intent: existing };
     this.rows.set(intent.id, { ...intent });
     return { created: true, intent: { ...intent } };
@@ -71,6 +82,18 @@ export class InMemoryPayments implements PaymentRepository {
   async findByIdempotencyKey(customerId: string, key: string) {
     const row = [...this.rows.values()].find((r) => r.customerId === customerId && r.idempotencyKey === key);
     return row ? { ...row } : null;
+  }
+  async findByLinkKey(paymentLinkId: string, key: string) {
+    const row = [...this.rows.values()].find(
+      (r) => r.paymentLinkId === paymentLinkId && r.idempotencyKey === key,
+    );
+    return row ? { ...row } : null;
+  }
+  async listForLink(paymentLinkId: string) {
+    return [...this.rows.values()]
+      .filter((r) => r.paymentLinkId === paymentLinkId)
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((r) => ({ ...r }));
   }
   async findByTransaction(provider: ProviderName, transactionId: string) {
     const row = [...this.rows.values()].find(
@@ -260,6 +283,7 @@ export class FakeProvider implements PaymentProvider {
     return {
       eventName: event.name,
       eventId: null,
+      entity: event.name.startsWith('payout.') ? 'payout' : 'transaction',
       transactionId: event.entity?.id ? String(event.entity.id) : null,
     };
   }
@@ -294,11 +318,163 @@ export class RecordingAlerts implements PaymentAlerts {
   paymentUnderReview(input: Parameters<PaymentAlerts['paymentUnderReview']>[0]): void {
     this.underReview.push(input);
   }
+  readonly payoutMismatches: Parameters<PaymentAlerts['payoutMismatch']>[0][] = [];
+  payoutMismatch(input: Parameters<PaymentAlerts['payoutMismatch']>[0]): void {
+    this.payoutMismatches.push(input);
+  }
 }
+
+/** Liens en mémoire (empreinte du jeton à part, comme en base). */
+export class InMemoryLinks implements PaymentLinkRepository {
+  readonly rows = new Map<string, PaymentLink>();
+  readonly hashes = new Map<string, string>();
+  async create(link: PaymentLink, tokenHash: string) {
+    const existing = await this.findByIssuerKey(link.issuer, link.idempotencyKey);
+    if (existing) return { created: false, link: existing };
+    this.rows.set(link.id, { ...link });
+    this.hashes.set(tokenHash, link.id);
+    return { created: true, link: { ...link } };
+  }
+  async findById(id: string) {
+    const row = this.rows.get(id);
+    return row ? { ...row } : null;
+  }
+  async findByTokenHash(hash: string) {
+    const id = this.hashes.get(hash);
+    return id ? this.findById(id) : null;
+  }
+  async findByIssuerKey(issuer: string, key: string) {
+    const row = [...this.rows.values()].find((r) => r.issuer === issuer && r.idempotencyKey === key);
+    return row ? { ...row } : null;
+  }
+  async listForSubject(subjectType: string, subjectId: string) {
+    return [...this.rows.values()]
+      .filter((r) => r.subjectType === subjectType && r.subjectId === subjectId)
+      .sort((a, b) => b.id.localeCompare(a.id));
+  }
+  async save(link: PaymentLink) {
+    const current = this.rows.get(link.id);
+    if (!current || current.version !== link.version) return false;
+    this.rows.set(link.id, { ...link, version: link.version + 1 });
+    return true;
+  }
+}
+
+/** Mêmes jetons que l'adaptateur (HMAC-SHA256, base64url), secret de test. */
+export class TestLinkTokens implements LinkTokens {
+  issue(linkId: string): string {
+    return createHmac('sha256', 'test-secret').update(linkId).digest('base64url');
+  }
+  hash(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+}
+
+export class InMemoryPayouts implements PayoutRepository {
+  readonly rows = new Map<string, Payout>();
+  readonly outbox: OutboxMessage[] = [];
+  async create(payout: Payout) {
+    const existing = await this.findByIssuerKey(payout.issuer, payout.idempotencyKey);
+    if (existing) return { created: false, payout: existing };
+    this.rows.set(payout.id, { ...payout });
+    return { created: true, payout: { ...payout } };
+  }
+  async findById(id: string) {
+    const row = this.rows.get(id);
+    return row ? { ...row } : null;
+  }
+  async findByIssuerKey(issuer: string, key: string) {
+    const row = [...this.rows.values()].find((r) => r.issuer === issuer && r.idempotencyKey === key);
+    return row ? { ...row } : null;
+  }
+  async findByProviderPayoutId(provider: string, providerPayoutId: string) {
+    const row = [...this.rows.values()].find(
+      (r) => r.provider === provider && r.providerPayoutId === providerPayoutId,
+    );
+    return row ? { ...row } : null;
+  }
+  async save(payout: Payout, events: OutboxMessage[]) {
+    const current = this.rows.get(payout.id);
+    if (!current || current.version !== payout.version) return false;
+    this.rows.set(payout.id, { ...payout, version: payout.version + 1 });
+    this.outbox.push(...events);
+    return true;
+  }
+  async list(filter: PayoutFilter, page: PageRequest) {
+    const items = [...this.rows.values()]
+      .filter(
+        (r) =>
+          (!filter.status || r.status === filter.status) && (!filter.issuer || r.issuer === filter.issuer),
+      )
+      .sort((a, b) => b.id.localeCompare(a.id))
+      .filter((r) => !page.cursor || r.id < page.cursor);
+    return {
+      items: items.slice(0, page.limit),
+      nextCursor: items.length > page.limit ? items[page.limit - 1]!.id : null,
+    };
+  }
+  async listToReconcile(input: { provider: string; checkedBefore: Date; limit: number }) {
+    return [...this.rows.values()]
+      .filter(
+        (r) =>
+          r.provider === input.provider &&
+          (r.status === 'requested' ||
+            (r.status === 'processing' && (!r.lastCheckedAt || r.lastCheckedAt < input.checkedBefore))),
+      )
+      .slice(0, input.limit)
+      .map((r) => ({ ...r }));
+  }
+}
+
+/** Prestataire de reversements de test : panne simulable, statut réglable. */
+export class FakePayoutProvider {
+  readonly name = 'fedapay' as const;
+  readonly automatic = true as const;
+  readonly payouts = new Map<string, ProviderPayout>();
+  readonly started: string[] = [];
+  readonly created: { payoutId: string; beneficiary: PayoutBeneficiary }[] = [];
+  down = false;
+  /** Lancement qui atteint le prestataire mais dont la réponse se perd. */
+  loseStartResponse = false;
+  private n = 0;
+  async createPayout(request: { payoutId: string; amount: number; beneficiary: PayoutBeneficiary }) {
+    if (this.down) throw PaymentErrors.providerUnavailable();
+    this.n += 1;
+    const providerPayoutId = String(9000 + this.n);
+    this.created.push({ payoutId: request.payoutId, beneficiary: request.beneficiary });
+    this.payouts.set(providerPayoutId, {
+      providerPayoutId,
+      status: 'pending',
+      reference: `po_${this.n}`,
+      amount: request.amount,
+      currency: 'XOF',
+    });
+    return { providerPayoutId, reference: `po_${this.n}` };
+  }
+  async startPayout(providerPayoutId: string) {
+    if (this.down) throw PaymentErrors.providerUnavailable();
+    this.started.push(providerPayoutId);
+    this.set(providerPayoutId, { status: 'processing' });
+    if (this.loseStartResponse) throw PaymentErrors.providerUnavailable();
+  }
+  async getPayout(providerPayoutId: string) {
+    if (this.down) throw PaymentErrors.providerUnavailable();
+    return { ...this.payouts.get(providerPayoutId)! };
+  }
+  set(providerPayoutId: string, change: Partial<ProviderPayout> & { status?: ProviderPayoutStatus }) {
+    this.payouts.set(providerPayoutId, { ...this.payouts.get(providerPayoutId)!, ...change });
+  }
+}
+
+export const MANUAL_PAYOUT_PROVIDER: PayoutProvider = { name: 'manual', automatic: false };
 
 export function makeDeps(overrides: Partial<PaymentDeps> = {}) {
   const deps = {
     payments: new InMemoryPayments(),
+    links: new InMemoryLinks() as PaymentLinkRepository,
+    linkTokens: new TestLinkTokens() as LinkTokens,
+    payouts: new InMemoryPayouts() as PayoutRepository,
+    payoutProvider: MANUAL_PAYOUT_PROVIDER,
     notifications: new InMemoryNotificationLog(),
     dues: new InMemoryDues(),
     people: new InMemoryPeople(),
@@ -312,6 +488,10 @@ export function makeDeps(overrides: Partial<PaymentDeps> = {}) {
       lateSuccessWindowHours: 24,
       lateSuccessRecheckMinutes: 15,
       unrecordedGraceMinutes: 15,
+      linkBaseUrl: 'https://ksp.bj/payer',
+      linkIssuers: ['recovery'] as readonly string[],
+      linkAttemptsPerHour: 10,
+      payoutIssuers: ['wallet'] as readonly string[],
     },
     clock: new FixedClock(),
     ids: new SequenceIds(),

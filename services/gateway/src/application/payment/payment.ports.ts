@@ -28,6 +28,19 @@ export interface MismatchResolutionInput {
   idempotencyKey?: string | undefined;
 }
 
+/** Filtres de la liste des reversements (back-office, ADR-041). */
+export interface PayoutFilters {
+  status?: string | undefined;
+  issuer?: string | undefined;
+}
+
+/** Décision de la finance sur un reversement manuel : référence du virement ou raison de l'échec. */
+export interface PayoutSettlementInput {
+  text: string;
+  /** En-tête Idempotency-Key, facultatif. */
+  idempotencyKey?: string | undefined;
+}
+
 /** Un appel par méthode du contrat ksp.payment.v1 exposée en REST. */
 export interface PaymentApi {
   createPayment(input: PaymentInput, idempotencyKey: string): Promise<Json>;
@@ -38,4 +51,12 @@ export interface PaymentApi {
   receiveWebhook(provider: 'fedapay', payload: Buffer, signature: string): Promise<Json>;
   listPayments(page: Page, filters: PaymentFilters): Promise<Json>;
   resolveAmountMismatch(id: string, input: MismatchResolutionInput): Promise<Json>;
+  /** Page publique d'un lien de paiement (ADR-040), sans donnée personnelle. */
+  getPaymentLink(token: string): Promise<Json>;
+  payPaymentLink(token: string, idempotencyKey: string): Promise<Json>;
+  simulatePaymentLinkPayment(token: string, outcome: 'succeeded' | 'failed'): Promise<Json>;
+  /** Reversements (ADR-041). */
+  listPayouts(page: Page, filters: PayoutFilters): Promise<Json>;
+  confirmPayout(id: string, input: PayoutSettlementInput): Promise<Json>;
+  failPayout(id: string, input: PayoutSettlementInput): Promise<Json>;
 }

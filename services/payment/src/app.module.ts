@@ -8,7 +8,7 @@ import {
 } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
-import { type PaymentProvider } from './application/ports';
+import { type PaymentProvider, type PayoutProvider } from './application/ports';
 import { createUseCases, PAYMENT_USE_CASES } from './application/use-cases';
 import { type ServiceConfig, simulationEnabled } from './config';
 import { LoggerPaymentAlerts } from './infrastructure/alerts/logger-payment-alerts';
@@ -20,13 +20,25 @@ import {
   PrismaProviderNotificationLog,
 } from './infrastructure/persistence/prisma-payment.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
+import { HmacLinkTokens } from './infrastructure/links/hmac-link-tokens';
+import {
+  PrismaPaymentLinkRepository,
+  PrismaPayoutRepository,
+} from './infrastructure/persistence/prisma-link-payout.repositories';
 import { FEDAPAY_API_URLS, FedapayProvider } from './infrastructure/providers/fedapay.provider';
+import { FedapayPayoutProvider, MANUAL_PAYOUTS } from './infrastructure/providers/payout.providers';
 import { SimulatedProvider } from './infrastructure/providers/simulated.provider';
 import {
   RECONCILE_INTERVAL_MS,
   ReconcilePaymentsService,
 } from './infrastructure/scheduling/reconcile-payments.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
+import {
+  PaymentLinkGrpcController,
+  PaymentLinkPublicGrpcController,
+  PayoutAdminGrpcController,
+  PayoutGrpcController,
+} from './interfaces/grpc/link-payout.controllers';
 import {
   ObligationGrpcController,
   PaymentAdminGrpcController,
@@ -51,6 +63,17 @@ export function createProvider(config: ServiceConfig): PaymentProvider {
   return new SimulatedProvider(config.PAYMENT_SIMULATION_CHECKOUT_URL);
 }
 
+/** Exécution des reversements (ADR-041) : manuelle par défaut, FedaPay une fois validé. */
+export function createPayoutProvider(config: ServiceConfig): PayoutProvider {
+  if (config.PAYOUT_PROVIDER === 'fedapay') {
+    return new FedapayPayoutProvider({
+      apiUrl: (config.FEDAPAY_API_URL ?? FEDAPAY_API_URLS[config.FEDAPAY_ENVIRONMENT]).replace(/\/+$/, ''),
+      secretKey: config.FEDAPAY_SECRET_KEY ?? '',
+    });
+  }
+  return MANUAL_PAYOUTS;
+}
+
 /** Racine de composition : relie les cas d'usage à leurs adaptateurs. */
 @Module({})
 export class AppModule {
@@ -70,12 +93,18 @@ export class AppModule {
         PaymentWebhookGrpcController,
         PaymentAdminGrpcController,
         ObligationGrpcController,
+        PaymentLinkGrpcController,
+        PaymentLinkPublicGrpcController,
+        PayoutGrpcController,
+        PayoutAdminGrpcController,
       ],
       providers: [
         PrismaService,
         OutboxRelayService,
         PrismaPaymentRepository,
         PrismaProviderNotificationLog,
+        PrismaPaymentLinkRepository,
+        PrismaPayoutRepository,
         ReconcilePaymentsService,
         { provide: RECONCILE_INTERVAL_MS, useValue: config.PAYMENT_RECONCILE_INTERVAL_MS },
         {
@@ -83,6 +112,8 @@ export class AppModule {
           inject: [
             PrismaPaymentRepository,
             PrismaProviderNotificationLog,
+            PrismaPaymentLinkRepository,
+            PrismaPayoutRepository,
             CLEANING_CLIENT,
             BILLING_CLIENT,
             IDENTITY_CLIENT,
@@ -91,6 +122,8 @@ export class AppModule {
           useFactory: (
             payments: PrismaPaymentRepository,
             notifications: PrismaProviderNotificationLog,
+            links: PrismaPaymentLinkRepository,
+            payouts: PrismaPayoutRepository,
             cleaning: ClientGrpc,
             billing: ClientGrpc,
             identity: ClientGrpc,
@@ -106,8 +139,14 @@ export class AppModule {
               new GrpcCaller({ target, ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}) });
             const provider = createProvider(config);
             logger.log(`Prestataire de paiement : ${provider.name}`);
+            const payoutProvider = createPayoutProvider(config);
+            logger.log(`Exécution des reversements : ${payoutProvider.name}`);
             return createUseCases({
               payments,
+              links,
+              linkTokens: new HmacLinkTokens(config.PAYMENT_LINK_TOKEN_SECRET),
+              payouts,
+              payoutProvider,
               notifications,
               dues: new GrpcAmountDueDirectory(
                 {
@@ -137,6 +176,10 @@ export class AppModule {
                 lateSuccessWindowHours: config.PAYMENT_LATE_SUCCESS_WINDOW_HOURS,
                 lateSuccessRecheckMinutes: config.PAYMENT_LATE_SUCCESS_RECHECK_MINUTES,
                 unrecordedGraceMinutes: config.PAYMENT_UNRECORDED_GRACE_MINUTES,
+                linkBaseUrl: config.PAYMENT_LINK_BASE_URL,
+                linkIssuers: config.PAYMENT_LINK_ISSUERS,
+                linkAttemptsPerHour: config.PAYMENT_LINK_ATTEMPTS_PER_HOUR,
+                payoutIssuers: config.PAYMENT_PAYOUT_ISSUERS,
               },
               clock: new SystemClock(),
               ids: new UuidV7Generator(),

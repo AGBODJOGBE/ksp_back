@@ -82,6 +82,20 @@ Le détail (corps, réponses, erreurs) est dans le contrat OpenAPI, étiquettes 
 
 Le **manifeste de routage** (`src/domain/routing/route-manifest.ts`) est la seule source des routes : le décorateur `@Route('<operationId>')` en tire chemin, méthode, exigence d'accès et limite. Un test (`test/openapi.contract.spec.ts`) vérifie qu'il correspond exactement au contrat OpenAPI, que chaque point d'entrée en vient, et que les réponses réelles (succès et erreurs) respectent les schémas du contrat.
 
+## Liens de paiement, reversements, portefeuille (ADR-040 à 042)
+
+| Route                                                                                 | Appel gRPC                                            | Accès                                    |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------- |
+| `GET /api/v1/payment/links/{token}`                                                   | `PaymentLinkPublicService/GetPublicPaymentLink`       | public, 30 par minute et par IP          |
+| `POST /api/v1/payment/links/{token}/pay` (`Idempotency-Key`)                          | `PaymentLinkPublicService/PayPaymentLink`             | public, 5 par minute et par IP           |
+| `POST /api/v1/payment/links/{token}/simulate` (développement)                         | `PaymentLinkPublicService/SimulatePaymentLinkPayment` | public, fermée en production             |
+| `GET /api/v1/admin/payment/payouts`, `POST …/{id}/confirm`, `…/{id}/fail`             | `PayoutAdminService/…`                                | `finance_officer`, `super_admin` + MFA   |
+| `GET /api/v1/wallet/me`, `…/me/statement`, `…/me/payouts`                             | `WalletAccountService/…` (`WALLET_GRPC_URL`)          | connecté (compte ou organisation active) |
+| `GET /api/v1/admin/wallet/holders/{type}/{id}[/statement]`, `…/payouts`, `…/overview` | `WalletAdminService/…`                                | `finance_officer`, `super_admin` + MFA   |
+
+Un jeton de lien mal formé rend 404 `PAYMENT_LINK_NOT_FOUND` sans appel de payment (rien de plus
+qu'un jeton inconnu). Aucune donnée personnelle du payeur sur les routes publiques.
+
 ## Fonctionnement
 
 | Sujet             | Règle                                                                                                                                                                                                                                                                                                   |

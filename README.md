@@ -34,7 +34,7 @@ ksp-backend/
 | Immobilier                         | `realestate`                                                                                              | 2     |
 | Marketplace, impression, livraison | `catalog`, `order`, `print`, `delivery`                                                                   | 3     |
 
-Services présents dans le dépôt : `gateway`, `identity`, `notification`, `cleaning`, `billing`, `payment` et `file` (stockage des pièces jointes par adresses présignées, ADR-038). Ports réservés : `tools/services.json`.
+Services présents dans le dépôt : `gateway`, `identity`, `notification`, `cleaning`, `billing`, `payment` (dont liens de paiement sans compte et reversements, ADR-040 et ADR-041), `file` (stockage des pièces jointes par adresses présignées, ADR-038) et `wallet` (grand livre des fonds des clients, ADR-042). Ports réservés : `tools/services.json`.
 
 ## Démarrer
 

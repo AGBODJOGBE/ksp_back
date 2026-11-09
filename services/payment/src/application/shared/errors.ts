@@ -73,4 +73,43 @@ export const PaymentErrors = {
     ),
   callerForbidden: () =>
     AppError.forbidden('PAYMENT_CALLER_FORBIDDEN', "Ce service n'est pas autorisé à appeler cette méthode."),
+
+  // --- Liens de paiement (ADR-040) ---------------------------------------------------------------
+  /** Jeton inconnu ou mal formé, ou lien d'un autre émetteur : rien n'est révélé. */
+  linkNotFound: () => AppError.notFound('PAYMENT_LINK_NOT_FOUND', 'Ce lien de paiement est introuvable.'),
+  linkAlreadyPaid: () =>
+    AppError.conflict(
+      'PAYMENT_LINK_ALREADY_PAID',
+      'Ce paiement a déjà été reçu. Merci, il n’y a rien à payer.',
+    ),
+  linkAlreadyActive: () =>
+    AppError.conflict(
+      'PAYMENT_LINK_ALREADY_ACTIVE',
+      'Un lien encore payable existe déjà pour cet objet : le révoquer avant d’en créer un autre.',
+    ),
+  linkRevoked: () =>
+    AppError.precondition(
+      'PAYMENT_LINK_REVOKED',
+      'Ce lien de paiement a été annulé. Contactez l’expéditeur du message pour obtenir un nouveau lien.',
+    ),
+  linkExpired: () =>
+    AppError.precondition(
+      'PAYMENT_LINK_EXPIRED',
+      'Ce lien de paiement a expiré. Contactez l’expéditeur du message pour obtenir un nouveau lien.',
+    ),
+  linkTooManyAttempts: () =>
+    AppError.rateLimited(
+      'PAYMENT_LINK_TOO_MANY_ATTEMPTS',
+      'Trop de tentatives de paiement sur ce lien. Réessayez dans une heure.',
+    ),
+
+  // --- Reversements (ADR-041) --------------------------------------------------------------------
+  payoutNotFound: () => AppError.notFound('PAYMENT_PAYOUT_NOT_FOUND', 'Ce reversement est introuvable.'),
+  payoutNotManual: () =>
+    AppError.precondition(
+      'PAYMENT_PAYOUT_NOT_MANUAL',
+      'Ce reversement est exécuté par le prestataire : son issue ne se saisit pas à la main.',
+    ),
+  payoutAlreadySettled: () =>
+    AppError.conflict('PAYMENT_PAYOUT_ALREADY_SETTLED', 'Ce reversement est déjà terminé.'),
 };

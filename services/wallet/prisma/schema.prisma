@@ -1,0 +1,127 @@
+// Base de données du service wallet. Aucun autre service n'y accède (règle d'or n° 1).
+
+generator client {
+  provider = "prisma-client-js"
+  // Client propre à ce service : plusieurs services cohabitent dans le dépôt.
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Événements à publier (pattern outbox, règle d'or n° 4). Écrits dans la même transaction que la donnée métier.
+model OutboxEvent {
+  id            String    @id @db.Uuid
+  eventType     String    @map("event_type")
+  payload       Json
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  publishedAt   DateTime? @map("published_at") @db.Timestamptz(3)
+  attempts      Int       @default(0)
+  /// Prochaine tentative après un échec (délai croissant, ADR-032).
+  nextAttemptAt DateTime? @map("next_attempt_at") @db.Timestamptz(3)
+  /// Mis de côté après 24 h d'échecs : rejouable par pnpm outbox:replay (ADR-032).
+  parkedAt      DateTime? @map("parked_at") @db.Timestamptz(3)
+  lastError     String?   @map("last_error")
+  /// Premier échec de publication : mise de côté après 24 h d'échecs (ADR-032).
+  firstFailedAt DateTime? @map("first_failed_at") @db.Timestamptz(3)
+
+  @@map("outbox")
+}
+
+/// Événements déjà traités par ce service (inbox) : un événement reçu deux fois n'a qu'un effet.
+model ProcessedEvent {
+  eventId     String   @map("event_id") @db.Uuid
+  consumer    String
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@id([eventId, consumer])
+  @@map("processed_events")
+}
+
+/// Comptes du grand livre (ADR-042) : un par titulaire, et les comptes internes de KSP. Le solde est
+/// tenu par la base à chaque écriture (déclencheur), jamais saisi.
+model LedgerAccount {
+  code       String   @id
+  /// internal ou holder.
+  kind       String
+  holderType String?  @map("holder_type")
+  holderId   String?  @map("holder_id") @db.Uuid
+  /// debit (fonds détenus) ou credit (dettes, commission).
+  normalSide String   @map("normal_side")
+  balance    BigInt   @default(0)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([holderType, holderId])
+  @@map("ledger_accounts")
+}
+
+/// Transaction du grand livre : immuable, équilibrée (contrôlée par la base à la validation).
+model LedgerTransaction {
+  id                    String   @id @db.Uuid
+  /// collection, payout_hold, payout_settlement, payout_release ou reversal.
+  kind                  String
+  caller                String
+  reference             String
+  holderType            String   @map("holder_type")
+  holderId              String   @map("holder_id") @db.Uuid
+  amount                BigInt
+  grossAmount           BigInt?  @map("gross_amount")
+  commission            BigInt?
+  commissionRateBps     Int?     @map("commission_rate_bps")
+  description           String
+  reversesTransactionId String?  @unique @map("reverses_transaction_id") @db.Uuid
+  payoutId              String?  @map("payout_id") @db.Uuid
+  createdAt             DateTime @map("created_at") @db.Timestamptz(3)
+
+  @@unique([caller, reference])
+  @@index([holderType, holderId])
+  @@map("ledger_transactions")
+}
+
+/// Écriture (ligne) d'une transaction : immuable ; balance_after calculé par la base.
+model LedgerEntry {
+  id            String   @id @db.Uuid
+  transactionId String   @map("transaction_id") @db.Uuid
+  accountCode   String   @map("account_code")
+  /// debit ou credit.
+  direction     String
+  amount        BigInt
+  balanceAfter  BigInt   @default(0) @map("balance_after")
+  createdAt     DateTime @map("created_at") @db.Timestamptz(3)
+
+  @@index([accountCode, id])
+  @@index([transactionId])
+  @@map("ledger_entries")
+}
+
+/// Reversement d'un titulaire (ADR-042) : numéro complet et nom effacés après transmission à payment.
+model WalletPayout {
+  id                      String    @id @db.Uuid
+  caller                  String
+  idempotencyKey          String    @map("idempotency_key")
+  holderType              String    @map("holder_type")
+  holderId                String    @map("holder_id") @db.Uuid
+  amount                  BigInt
+  /// pending_submission, submitted, completed ou failed.
+  status                  String
+  beneficiaryPhone        String?   @map("beneficiary_phone")
+  beneficiaryName         String?   @map("beneficiary_name")
+  beneficiaryPhoneMasked  String    @map("beneficiary_phone_masked")
+  beneficiaryOperator     String    @map("beneficiary_operator")
+  paymentPayoutId         String?   @map("payment_payout_id")
+  holdTransactionId       String    @map("hold_transaction_id") @db.Uuid
+  settlementTransactionId String?   @map("settlement_transaction_id") @db.Uuid
+  createdAt               DateTime  @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime  @map("updated_at") @db.Timestamptz(3)
+  submittedAt             DateTime? @map("submitted_at") @db.Timestamptz(3)
+  completedAt             DateTime? @map("completed_at") @db.Timestamptz(3)
+  failedAt                DateTime? @map("failed_at") @db.Timestamptz(3)
+  version                 Int       @default(0)
+
+  @@unique([caller, idempotencyKey])
+  @@index([holderType, holderId, id])
+  @@index([status, createdAt])
+  @@map("wallet_payouts")
+}

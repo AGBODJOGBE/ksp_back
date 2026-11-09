@@ -55,4 +55,18 @@ export class LoggerPaymentAlerts implements PaymentAlerts {
         'par la finance (POST /api/v1/admin/payment/payments/{id}/resolve-mismatch)',
     );
   }
+
+  payoutMismatch(input: {
+    payoutId: string;
+    providerPayoutId: string;
+    expectedAmount: number;
+    reportedAmount: number;
+    currency: string;
+  }): void {
+    this.logger.error(
+      `ALERTE reversement : ${input.payoutId} (prestataire ${input.providerPayoutId}) relu pour ` +
+        `${input.reportedAmount} ${input.currency} au lieu de ${input.expectedAmount} XOF ; statut non appliqué, ` +
+        'à vérifier par la finance',
+    );
+  }
 }

@@ -21,13 +21,15 @@ import { JwksHttpController } from '../src/interfaces/http/jwks.controller';
 import { OrganizationAdminHttpController } from '../src/interfaces/http/organizations-admin.controller';
 import { OrganizationHttpController } from '../src/interfaces/http/organizations.controller';
 import { PaymentHttpController } from '../src/interfaces/http/payment.controller';
+import { WalletHttpController } from '../src/interfaces/http/wallet.controller';
 import { expressPath } from '../src/interfaces/http/route.decorator';
 import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
 import { requestBodies } from '../src/interfaces/http/schemas';
 import { type BillingServer, startBillingStub } from './support/billing-stub';
 import { type CleaningServer, startCleaningStub } from './support/cleaning-stub';
 import { type FileServer, startFileStub } from './support/file-stub';
-import { type PaymentServer, startPaymentStub } from './support/payment-stub';
+import { LINK_TOKEN, type PaymentServer, startPaymentStub } from './support/payment-stub';
+import { startWalletStub, type WalletServer } from './support/wallet-stub';
 import {
   type IdentityServer,
   ORIGINS,
@@ -188,6 +190,7 @@ describe('contrat OpenAPI : manifeste de routage', () => {
       BillingHttpController,
       PaymentHttpController,
       FileHttpController,
+      WalletHttpController,
     ]) {
       expect(Reflect.getMetadata(PATH_METADATA, controller)).toBe('/');
       for (const handler of handlers(controller)) {
@@ -277,6 +280,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   let billing: BillingServer;
   let payment: PaymentServer;
   let file: FileServer;
+  let wallet: WalletServer;
   let app: NestExpressApplication;
   let token: string;
   let staffToken: string;
@@ -290,9 +294,11 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     billing = await startBillingStub(keys);
     payment = await startPaymentStub(keys);
     file = await startFileStub(keys);
+    wallet = await startWalletStub(keys);
     app = await startGateway({
       paymentUrl: payment.url,
       fileUrl: file.url,
+      walletUrl: wallet.url,
       identityUrl: identity.url,
       cleaningUrl: cleaning.url,
       billingUrl: billing.url,
@@ -321,6 +327,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     await billing?.close();
     await payment?.close();
     await file?.close();
+    await wallet?.close();
   });
 
   beforeEach(() => {
@@ -329,6 +336,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     billing.stub.reset();
     payment.stub.reset();
     file.stub.reset();
+    wallet.stub.reset();
   });
 
   const http = () => request(app.getHttpServer());
@@ -886,7 +894,11 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     const call = (operationId: string, options: { auth?: Auth; body?: unknown; key?: boolean } = {}) => {
       const { path, method, op } = operation(operationId);
       const backoffice = path.startsWith('/api/v1/admin/');
-      const url = path.replace('{id}', ID).replace('{code}', 'home_cleaning');
+      const url = path
+        .replace('{id}', ID)
+        .replace('{code}', 'home_cleaning')
+        .replace('{token}', LINK_TOKEN)
+        .replace('{type}', 'organization');
       let req = from(
         http()[method.toLowerCase() as 'get' | 'post' | 'put'](url),
         backoffice ? 'backoffice' : 'web',
@@ -918,6 +930,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           path.includes('/billing') ||
           (path.includes('/payment') && !path.includes('/webhooks/')) ||
           path.startsWith('/api/v1/file/') ||
+          path.includes('/wallet') ||
           path.includes('/organizations') ||
           path.includes('/accounts') ||
           path === '/api/v1/admin/identity/roles' ||

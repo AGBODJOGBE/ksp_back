@@ -41,12 +41,16 @@ export const CURRENCY = 'XOF';
 export const ONLINE_METHOD = 'mobile_money_online';
 
 export interface PaymentSubject {
-  type: SubjectType;
-  /** Mission (cleaning) ou facture (billing). */
+  /**
+   * `cleaning_mission` ou `billing_invoice` (paiement par compte) ; pour un lien de paiement, type
+   * choisi par l'émetteur (`recovery_installment`…, ADR-040).
+   */
+  type: SubjectType | (string & {});
+  /** Mission (cleaning), facture (billing) ou objet de l'émetteur d'un lien. */
   id: string;
   /** Mission seulement ; null pour une facture. */
   part: MissionPart | null;
-  /** Numéro de la facture ; null pour une mission. */
+  /** Numéro de la facture, ou référence de l'émetteur d'un lien ; null pour une mission. */
   reference: string | null;
 }
 
@@ -66,10 +70,15 @@ export interface PaymentIntent {
   subject: PaymentSubject;
   /** Entier en FCFA, strictement positif. */
   amount: number;
-  /** Payeur : le compte connecté qui a créé le paiement. */
-  customerId: string;
+  /** Payeur : le compte connecté qui a créé le paiement ; null pour un paiement par lien. */
+  customerId: string | null;
   /** Organisation payeuse (facture d'entreprise), null sinon. */
   organizationId: string | null;
+  /**
+   * Lien de paiement payé (payeur sans compte, ADR-040) ; null pour un paiement par compte. Un
+   * paiement a toujours un payeur connecté ou un lien, jamais les deux.
+   */
+  paymentLinkId: string | null;
   status: PaymentStatus;
   provider: ProviderName;
   /** Identifiant de la transaction chez le prestataire ; null tant qu'elle n'est pas créée. */
@@ -225,5 +234,9 @@ export function sameSubject(a: PaymentSubject, b: Pick<PaymentSubject, 'type' | 
 /** Libellé du paiement chez le prestataire : aucune donnée personnelle, aucune adresse. */
 export function providerDescription(subject: PaymentSubject): string {
   if (subject.type === 'billing_invoice') return `KSP - Facture ${subject.reference ?? ''}`.trim();
-  return subject.part === 'deposit' ? 'KSP Nettoyage - Acompte' : 'KSP Nettoyage - Solde';
+  if (subject.type === 'cleaning_mission') {
+    return subject.part === 'deposit' ? 'KSP Nettoyage - Acompte' : 'KSP Nettoyage - Solde';
+  }
+  // Lien de paiement : référence de l'émetteur (dossier, échéance), jamais le nom du payeur.
+  return `KSP - Paiement ${subject.reference ?? ''}`.trim();
 }
