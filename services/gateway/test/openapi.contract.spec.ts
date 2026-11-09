@@ -15,6 +15,7 @@ import { AccountAdminHttpController } from '../src/interfaces/http/account-admin
 import { BillingHttpController } from '../src/interfaces/http/billing.controller';
 import { CleaningAdminHttpController } from '../src/interfaces/http/cleaning-admin.controller';
 import { CleaningHttpController } from '../src/interfaces/http/cleaning.controller';
+import { DocumentHttpController } from '../src/interfaces/http/document.controller';
 import { FileHttpController } from '../src/interfaces/http/file.controller';
 import { IdentityHttpController } from '../src/interfaces/http/identity.controller';
 import { JwksHttpController } from '../src/interfaces/http/jwks.controller';
@@ -26,6 +27,7 @@ import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
 import { requestBodies } from '../src/interfaces/http/schemas';
 import { type BillingServer, startBillingStub } from './support/billing-stub';
 import { type CleaningServer, startCleaningStub } from './support/cleaning-stub';
+import { type DocumentServer, SIGNING_TOKEN, startDocumentStub } from './support/document-stub';
 import { type FileServer, startFileStub } from './support/file-stub';
 import { type PaymentServer, startPaymentStub } from './support/payment-stub';
 import {
@@ -188,6 +190,7 @@ describe('contrat OpenAPI : manifeste de routage', () => {
       BillingHttpController,
       PaymentHttpController,
       FileHttpController,
+      DocumentHttpController,
     ]) {
       expect(Reflect.getMetadata(PATH_METADATA, controller)).toBe('/');
       for (const handler of handlers(controller)) {
@@ -277,6 +280,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   let billing: BillingServer;
   let payment: PaymentServer;
   let file: FileServer;
+  let documents: DocumentServer;
   let app: NestExpressApplication;
   let token: string;
   let staffToken: string;
@@ -290,9 +294,11 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     billing = await startBillingStub(keys);
     payment = await startPaymentStub(keys);
     file = await startFileStub(keys);
+    documents = await startDocumentStub(keys);
     app = await startGateway({
       paymentUrl: payment.url,
       fileUrl: file.url,
+      documentUrl: documents.url,
       identityUrl: identity.url,
       cleaningUrl: cleaning.url,
       billingUrl: billing.url,
@@ -321,6 +327,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     await billing?.close();
     await payment?.close();
     await file?.close();
+    await documents?.close();
   });
 
   beforeEach(() => {
@@ -329,6 +336,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     billing.stub.reset();
     payment.stub.reset();
     file.stub.reset();
+    documents.stub.reset();
   });
 
   const http = () => request(app.getHttpServer());
@@ -886,7 +894,10 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     const call = (operationId: string, options: { auth?: Auth; body?: unknown; key?: boolean } = {}) => {
       const { path, method, op } = operation(operationId);
       const backoffice = path.startsWith('/api/v1/admin/');
-      const url = path.replace('{id}', ID).replace('{code}', 'home_cleaning');
+      const url = path
+        .replace('{id}', ID)
+        .replace('{code}', 'home_cleaning')
+        .replace('{token}', SIGNING_TOKEN);
       let req = from(
         http()[method.toLowerCase() as 'get' | 'post' | 'put'](url),
         backoffice ? 'backoffice' : 'web',
@@ -918,6 +929,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           path.includes('/billing') ||
           (path.includes('/payment') && !path.includes('/webhooks/')) ||
           path.startsWith('/api/v1/file/') ||
+          path.startsWith('/api/v1/document/') ||
           path.includes('/organizations') ||
           path.includes('/accounts') ||
           path === '/api/v1/identity/context',
@@ -937,6 +949,97 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       );
     const fileFails = (method: Parameters<typeof file.stub.on>[0], error: AppError) =>
       file.stub.on(method, () => Promise.reject(error));
+    const documentFails = (method: Parameters<typeof documents.stub.on>[0], error: AppError) =>
+      documents.stub.on(method, () => Promise.reject(error));
+    const documentErrors: typeof scenarios = [
+      [
+        'document d’un autre compte',
+        'getMyDocument',
+        404,
+        () => {
+          documentFails('getMyDocument', AppError.notFound('DOCUMENT_NOT_FOUND', 'Introuvable.'));
+          return call('getMyDocument');
+        },
+      ],
+      [
+        'code de signature demandé trop tôt',
+        'sendDocumentSignatureCode',
+        429,
+        () => {
+          documentFails(
+            'sendSignatureCode',
+            AppError.rateLimited('DOCUMENT_CODE_TOO_SOON', 'Patientez.', { retryAfterSeconds: 42 }),
+          );
+          return call('sendDocumentSignatureCode');
+        },
+      ],
+      [
+        'signature : code faux',
+        'signDocument',
+        400,
+        () => {
+          documentFails(
+            'signDocument',
+            AppError.invalid('DOCUMENT_CODE_INVALID', 'Code faux.', { attemptsLeft: 4 }),
+          );
+          return call('signDocument');
+        },
+      ],
+      [
+        'signature : code mal formé refusé par la gateway',
+        'signDocument',
+        400,
+        () => call('signDocument', { body: { code: '48 29', consent: true } }),
+      ],
+      [
+        'signature : document modifié depuis sa production',
+        'signDocument',
+        422,
+        () => {
+          documentFails(
+            'signDocument',
+            AppError.precondition('DOCUMENT_CONTENT_CHANGED', 'Le document a été modifié.'),
+          );
+          return call('signDocument');
+        },
+      ],
+      [
+        'lien de signature inconnu',
+        'getSigningSession',
+        404,
+        () => {
+          documentFails(
+            'getSigningSession',
+            AppError.notFound('DOCUMENT_SIGNATURE_NOT_FOUND', 'Introuvable.'),
+          );
+          return call('getSigningSession');
+        },
+      ],
+      [
+        'lien : demande expirée',
+        'sendSigningCode',
+        422,
+        () => {
+          documentFails(
+            'sendSigningCode',
+            AppError.precondition('DOCUMENT_SIGNATURE_CLOSED', 'Expirée.', { status: 'expired' }),
+          );
+          return call('sendSigningCode');
+        },
+      ],
+      [
+        'lien : document injoignable',
+        'signWithLink',
+        503,
+        () => {
+          documentFails(
+            'signWithLink',
+            AppError.unavailable('DOCUMENT_DEPENDENCY_UNAVAILABLE', 'Indisponible.', { dependency: 'file' }),
+          );
+          return call('signWithLink');
+        },
+      ],
+    ];
     const errors: typeof scenarios = [
       [
         'fichier : type refusé pour la finalité',
@@ -1556,7 +1659,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           ),
       ],
     ];
-    return [...successes, ...errors];
+    return [...successes, ...documentErrors, ...errors];
   }
 
   it('chaque opération du contrat a au moins un scénario de succès', () => {
