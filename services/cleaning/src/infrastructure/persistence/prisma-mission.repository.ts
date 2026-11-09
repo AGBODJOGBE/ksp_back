@@ -267,10 +267,17 @@ export async function updateMission(tx: Tx, mission: Mission): Promise<boolean> 
       update: { ...columns, checklist: json(intervention.checklist) },
     });
   }
-  // Un paiement enregistré n'est jamais modifié : seuls les nouveaux sont insérés.
+  // Un paiement enregistré n'est jamais modifié : seuls les nouveaux sont insérés, et un paiement
+  // par portefeuille peut seulement être marqué remboursé (ADR-046), une fois.
   await tx.missionPayment.createMany({
     data: mission.payment.payments.map((payment) => ({ ...payment, missionId: mission.id })),
     skipDuplicates: true,
   });
+  for (const payment of mission.payment.payments.filter((p) => p.refundedAt !== null)) {
+    await tx.missionPayment.updateMany({
+      where: { id: payment.id, refundedAt: null },
+      data: { refundedAt: payment.refundedAt },
+    });
+  }
   return true;
 }

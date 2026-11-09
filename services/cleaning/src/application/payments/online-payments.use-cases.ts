@@ -111,6 +111,7 @@ export class RecordOnlinePaymentUseCase {
         recordedBy: SYSTEM_ACTOR,
         recordedAt: Number.isNaN(succeededAt.getTime()) ? now : succeededAt,
         idempotencyKey: key,
+        refundedAt: null,
       };
       const excess = Math.max(0, paidAmount(mission.payment) + input.amount - mission.payment.total);
       const result = await this.deps.missions.saveFromEvent(

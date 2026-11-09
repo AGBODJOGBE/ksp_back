@@ -1,4 +1,4 @@
-import { identityV1 } from '@ksp/contracts';
+import { identityV1, walletV1 } from '@ksp/contracts';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -12,6 +12,7 @@ import { CLEANING_USE_CASES, createUseCases } from './application/use-cases';
 import { type ServiceConfig } from './config';
 import { createGeocoder } from './infrastructure/geocoding/fallback.geocoder';
 import { IdentityPeopleDirectory } from './infrastructure/identity/identity-people-directory';
+import { GrpcWalletLedger } from './infrastructure/wallet/grpc-wallet-ledger';
 import { BillingEventsConsumer } from './infrastructure/messaging/billing-events.consumer';
 import { IdentityEventsConsumer } from './infrastructure/messaging/identity-events.consumer';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
@@ -42,6 +43,7 @@ import {
 } from './interfaces/grpc/customer.controllers';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
+const WALLET_CLIENT = Symbol('WALLET_CLIENT');
 
 /** Racine de composition : relie les cas d'usage à leurs adaptateurs. */
 @Module({})
@@ -51,7 +53,10 @@ export class AppModule {
       module: AppModule,
       imports: [
         PlatformModule.forRoot(config),
-        ClientsModule.register([grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL)]),
+        ClientsModule.register([
+          grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
+          grpcClientOptions(WALLET_CLIENT, 'wallet', config.WALLET_GRPC_URL),
+        ]),
       ],
       controllers: [
         CatalogGrpcController,
@@ -87,6 +92,7 @@ export class AppModule {
             PrismaContractInvoiceRepository,
             PrismaOrganizationStandingRepository,
             IDENTITY_CLIENT,
+            WALLET_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
           ],
           useFactory: (
@@ -97,6 +103,7 @@ export class AppModule {
             invoices: PrismaContractInvoiceRepository,
             organizations: PrismaOrganizationStandingRepository,
             grpc: ClientGrpc,
+            walletGrpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
           ) => {
             const geocoder = createGeocoder(config);
@@ -107,7 +114,7 @@ export class AppModule {
             );
             if (!serviceTokens) {
               new Logger('Cleaning').warn(
-                'Aucun jeton de service : appels vers identity non authentifiés (développement uniquement).',
+                'Aucun jeton de service : appels vers identity et wallet non authentifiés (développement uniquement).',
               );
             }
             return createUseCases({
@@ -121,6 +128,13 @@ export class AppModule {
                 grpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
                 new GrpcCaller({
                   target: 'identity',
+                  ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+                }),
+              ),
+              wallet: new GrpcWalletLedger(
+                walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
+                new GrpcCaller({
+                  target: 'wallet',
                   ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
                 }),
               ),

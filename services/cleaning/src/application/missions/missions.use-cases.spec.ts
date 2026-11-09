@@ -332,6 +332,7 @@ describe('missions et passages (UC-CL-09, 10)', () => {
               recordedBy: 'sup',
               recordedAt: new Date('2026-10-23T08:00:00Z'),
               idempotencyKey: 'paiement-0003',
+              refundedAt: null,
             },
           ],
         },

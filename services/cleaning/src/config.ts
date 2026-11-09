@@ -20,6 +20,8 @@ export const configSchema = baseServiceConfigSchema
     CLEANING_LOCATION_PURGE_INTERVAL_MS: z.coerce.number().int().min(0).default(21_600_000),
     /** Adresse gRPC d'identity : noms affichés au back-office (GetUsersByIds, GetOrganizationsByIds, ADR-029). */
     IDENTITY_GRPC_URL: z.string().min(1).default('localhost:50051'),
+    /** Adresse gRPC de wallet : paiement d'une mission par le portefeuille prépayé (ADR-046). */
+    WALLET_GRPC_URL: z.string().min(1).default('localhost:50057'),
     /** Fuseau des contrôles de dates du terrain (Bénin). */
     CLEANING_TIME_ZONE: z
       .string()

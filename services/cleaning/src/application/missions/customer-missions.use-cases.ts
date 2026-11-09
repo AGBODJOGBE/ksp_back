@@ -2,7 +2,8 @@ import { eventSubject } from '../shared/event-subject';
 import { isCancellableByCustomer, type Mission, nextStart } from '../../domain/mission';
 import { isFreeCancellation } from '../../domain/schedule';
 import { type CleaningDeps, missionView, type MissionView } from '../deps';
-import { type Changes } from '../ports';
+import { type Changes, type OutboxMessage } from '../ports';
+import { unrefundedWalletPayments } from '../../domain/payment';
 import { currentCustomer } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import { optionalText, type PageRequest, type PageResult } from '../shared/validation';
@@ -38,6 +39,50 @@ export function cancelled(mission: Mission, reason: string | null, now: Date): M
         ? { ...intervention, status: 'cancelled', cancellationCause: 'manual', cancelledAt: now }
         : intervention,
     ),
+  };
+}
+
+/**
+ * À l'annulation (ADR-046) : si aucun passage n'a commencé, les paiements par portefeuille de la
+ * mission sont remboursés dans le portefeuille du client — marqués remboursés ici, et
+ * cleaning.mission.refunded publié dans la même transaction (wallet rembourse chaque débit, une seule
+ * fois). Un passage commencé ou fait : aucun remboursement automatique (la finance peut créditer le
+ * portefeuille au back-office). Les paiements en espèces ou Mobile Money ne sont pas concernés.
+ */
+export function refundOnCancellation(
+  mission: Mission,
+  now: Date,
+): { mission: Mission; events: OutboxMessage[] } {
+  const started = mission.interventions.some((i) => i.startedAt !== null || i.completedAt !== null);
+  const refunds = started ? [] : unrefundedWalletPayments(mission.payment);
+  if (refunds.length === 0) return { mission, events: [] };
+  const ids = new Set(refunds.map((payment) => payment.id));
+  return {
+    mission: {
+      ...mission,
+      payment: {
+        ...mission.payment,
+        payments: mission.payment.payments.map((payment) =>
+          ids.has(payment.id) ? { ...payment, refundedAt: now } : payment,
+        ),
+      },
+    },
+    events: [
+      {
+        type: 'cleaning.mission.refunded',
+        payload: {
+          missionId: mission.id,
+          customerId: mission.customerId,
+          refunds: refunds.map((payment) => ({
+            paymentRecordId: payment.id,
+            walletTransactionId: payment.reference!,
+            amount: { amount: payment.amount, currency: 'XOF' },
+          })),
+          reason: 'mission_cancelled',
+          refundedAt: now.toISOString(),
+        },
+      },
+    ],
   };
 }
 
@@ -79,8 +124,10 @@ export class CancelMyMissionUseCase {
     }
     const reason = optionalText('reason', input.reason, 500);
     const subject = await eventSubject(this.deps, mission);
-    return saveMission(this.deps, cancelled(mission, reason, this.deps.clock.now()), {
+    const { mission: refunded, events: refunds } = refundOnCancellation(cancelled(mission, reason, now), now);
+    return saveMission(this.deps, refunded, {
       events: [
+        ...refunds,
         {
           type: 'cleaning.request.cancelled',
           payload: {

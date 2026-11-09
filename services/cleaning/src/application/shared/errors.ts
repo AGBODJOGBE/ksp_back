@@ -151,6 +151,15 @@ export const CleaningErrors = {
     ),
   agentAlreadyRegistered: () =>
     AppError.conflict('CLEANING_AGENT_ALREADY_REGISTERED', 'Ce compte est déjà rattaché comme agent.'),
+  /** Rien à payer pour cette part (ADR-046) : acompte déjà reçu, ou mission déjà payée. */
+  nothingDue: (part: string) =>
+    AppError.precondition(
+      'CLEANING_NOTHING_DUE',
+      part === 'deposit'
+        ? 'Aucun acompte n’est attendu pour cette mission : payez le reste dû.'
+        : 'Cette mission est déjà entièrement payée.',
+      { part },
+    ),
   paymentInvalid: (reason: string) =>
     AppError.invalid('CLEANING_PAYMENT_INVALID', 'Ce paiement ne peut pas être enregistré.', { reason }),
   /** Paiement au-delà du reste dû : le montant encore attendu est rappelé (message et détails). */

@@ -96,6 +96,7 @@ function mission(): Mission {
           recordedBy: SUPERVISOR_ID,
           recordedAt: NOW,
           idempotencyKey: null,
+          refundedAt: null,
         },
       ],
     },

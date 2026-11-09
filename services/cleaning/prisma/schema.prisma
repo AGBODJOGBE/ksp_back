@@ -351,6 +351,8 @@ model MissionPayment {
   recordedAt     DateTime @map("recorded_at") @db.Timestamptz(3)
   /// Clé d'idempotence du paiement manuel (en-tête Idempotency-Key), null sans clé.
   idempotencyKey String?  @map("idempotency_key")
+  /// Paiement par portefeuille remboursé dans le portefeuille (ADR-046), null sinon.
+  refundedAt     DateTime? @map("refunded_at") @db.Timestamptz(3)
   mission        Mission  @relation(fields: [missionId], references: [id])
 
   @@unique([missionId, idempotencyKey])

@@ -245,6 +245,17 @@ export class MissionGrpcController implements cleaningV1.MissionServiceControlle
   async cancelMission(request: cleaningV1.CancelMissionRequest): Promise<cleaningV1.CancelMissionResponse> {
     return { mission: presentMission(await this.useCases.cancelMyMission.execute(request)) };
   }
+
+  async payMissionFromWallet(
+    request: cleaningV1.PayMissionFromWalletRequest,
+  ): Promise<cleaningV1.PayMissionFromWalletResponse> {
+    const view = await this.useCases.payMissionFromWallet.execute({
+      missionId: request.missionId,
+      part: request.part,
+      idempotencyKey: request.idempotencyKey,
+    });
+    return { mission: presentMission(view) };
+  }
 }
 
 /** ksp.common.v1.ObligationService, interrogé par identity avant la suppression d'un compte. */

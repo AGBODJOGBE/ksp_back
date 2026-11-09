@@ -10,6 +10,7 @@ import {
   type PeopleDirectory,
   type QuoteRequestRepository,
   type ReverseGeocoder,
+  type WalletLedger,
 } from './ports';
 import { type Clock, type IdGenerator } from './shared/system.ports';
 
@@ -26,6 +27,8 @@ export interface CleaningDeps {
   people: PeopleDirectory;
   /** Commune d'un point GPS (ADR-034) : Nominatim auto-hébergé, puis Google en secours. */
   geocoder: ReverseGeocoder;
+  /** Portefeuille prépayé des clients (service wallet, ADR-046). */
+  wallet: WalletLedger;
   /** Contrôles de dates du terrain, réglables par configuration. */
   fieldDates: FieldDatePolicy;
   clock: Clock;
