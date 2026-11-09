@@ -1,0 +1,217 @@
+import { walletV1 } from '@ksp/contracts';
+import { Controller, Inject } from '@nestjs/common';
+import { type PageResult, type StatementLine, type WalletSummary } from '../../application/ports';
+import { parsePage } from '../../application/shared';
+import { WALLET_USE_CASES, type WalletUseCases } from '../../application/use-cases';
+import { type LedgerTransaction } from '../../domain/ledger';
+import { type WalletPayout } from '../../domain/wallet-payout';
+
+const iso = (value: Date | null) => (value ? value.toISOString() : '');
+const xof = (amount: number) => ({ amount, currency: 'XOF' });
+/** Montant facultatif : absent (null) devient un montant nul, comme le veut le contrat. */
+const optionalXof = (amount: number | null) => (amount === null ? undefined : xof(amount));
+
+export function presentWallet(summary: WalletSummary): walletV1.Wallet {
+  return {
+    holder: { ...summary.holder },
+    balance: xof(summary.balance),
+    payoutsInProgress: xof(summary.payoutsInProgress),
+    totalCollected: xof(summary.totalCollected),
+    totalPaidOut: xof(summary.totalPaidOut),
+    lastEntryAt: iso(summary.lastEntryAt),
+  };
+}
+
+export function presentTransaction(transaction: LedgerTransaction): walletV1.LedgerTransaction {
+  return {
+    id: transaction.id,
+    kind: transaction.kind,
+    reference: transaction.reference,
+    holder: { ...transaction.holder },
+    amount: xof(transaction.amount),
+    grossAmount: optionalXof(transaction.grossAmount),
+    commission: optionalXof(transaction.commission),
+    commissionRateBps: transaction.commissionRateBps ?? 0,
+    description: transaction.description,
+    reversesTransactionId: transaction.reversesTransactionId ?? '',
+    createdAt: iso(transaction.createdAt),
+    entries: transaction.entries.map((line) => ({ ...line, amount: xof(line.amount) })),
+  };
+}
+
+/** Relevé : `payout_hold` est présenté comme `payout` (point de vue du titulaire). */
+export function presentStatement(page: PageResult<StatementLine>): walletV1.StatementPage {
+  return {
+    lines: page.items.map((line) => {
+      const t = line.transaction;
+      return {
+        transactionId: t.id,
+        kind: t.kind === 'payout_hold' ? 'payout' : t.kind,
+        direction: line.direction,
+        amount: xof(line.amount),
+        balanceAfter: xof(line.balanceAfter),
+        reference: t.reference,
+        description: t.description,
+        grossAmount: optionalXof(t.grossAmount),
+        commission: optionalXof(t.commission),
+        commissionRateBps: t.commissionRateBps ?? 0,
+        payoutId: t.payoutId ?? '',
+        payoutStatus: line.payoutStatus ?? '',
+        reversesTransactionId: t.reversesTransactionId ?? '',
+        createdAt: iso(t.createdAt),
+      };
+    }),
+    nextCursor: page.nextCursor ?? '',
+  };
+}
+
+/** Reversement : jamais le numéro complet ni le nom, seulement le numéro masqué et l'opérateur. */
+export function presentPayout(payout: WalletPayout): walletV1.WalletPayout {
+  return {
+    id: payout.id,
+    holder: { ...payout.holder },
+    amount: xof(payout.amount),
+    status: payout.status,
+    paymentPayoutId: payout.paymentPayoutId ?? '',
+    beneficiaryOperator: payout.beneficiaryOperator,
+    beneficiaryPhoneMasked: payout.beneficiaryPhoneMasked,
+    holdTransactionId: payout.holdTransactionId,
+    settlementTransactionId: payout.settlementTransactionId ?? '',
+    createdAt: iso(payout.createdAt),
+    updatedAt: iso(payout.updatedAt),
+    completedAt: iso(payout.completedAt),
+    failedAt: iso(payout.failedAt),
+  };
+}
+
+const payoutPage = (page: PageResult<WalletPayout>) => ({
+  payouts: page.items.map(presentPayout),
+  nextCursor: page.nextCursor ?? '',
+});
+
+/** Opérations des services métier (recovery). Droits vérifiés par les cas d'usage. */
+@Controller()
+@walletV1.WalletServiceControllerMethods()
+export class WalletGrpcController implements walletV1.WalletServiceController {
+  constructor(@Inject(WALLET_USE_CASES) private readonly useCases: WalletUseCases) {}
+
+  async recordCollection(
+    request: walletV1.RecordCollectionRequest,
+  ): Promise<walletV1.RecordCollectionResponse> {
+    const result = await this.useCases.recordCollection.execute({
+      holder: request.holder,
+      grossAmount: request.grossAmount,
+      commissionRateBps: request.commissionRateBps,
+      reference: request.reference,
+      description: request.description,
+    });
+    return {
+      transaction: presentTransaction(result.transaction),
+      wallet: presentWallet(result.wallet),
+      created: result.created,
+    };
+  }
+
+  async requestPayout(request: walletV1.RequestPayoutRequest): Promise<walletV1.RequestPayoutResponse> {
+    const result = await this.useCases.requestPayout.execute({
+      idempotencyKey: request.idempotencyKey,
+      holder: request.holder,
+      amount: request.amount,
+      beneficiary: request.beneficiary,
+    });
+    return {
+      payout: presentPayout(result.payout),
+      wallet: presentWallet(result.wallet),
+      created: result.created,
+    };
+  }
+
+  async reverseTransaction(
+    request: walletV1.ReverseTransactionRequest,
+  ): Promise<walletV1.ReverseTransactionResponse> {
+    const result = await this.useCases.reverseTransaction.execute({
+      transactionId: request.transactionId,
+      reason: request.reason,
+      reference: request.reference,
+    });
+    return {
+      transaction: presentTransaction(result.transaction),
+      wallet: presentWallet(result.wallet),
+      created: result.created,
+    };
+  }
+
+  async getBalance(request: walletV1.GetBalanceRequest): Promise<walletV1.GetBalanceResponse> {
+    return { wallet: presentWallet(await this.useCases.getBalance.execute(request.holder)) };
+  }
+
+  async listStatement(request: walletV1.ListStatementRequest): Promise<walletV1.ListStatementResponse> {
+    const page = await this.useCases.listStatement.execute(request.holder, parsePage(request.page));
+    return { statement: presentStatement(page) };
+  }
+}
+
+/** Espace du titulaire connecté (gateway). */
+@Controller()
+@walletV1.WalletAccountServiceControllerMethods()
+export class WalletAccountGrpcController implements walletV1.WalletAccountServiceController {
+  constructor(@Inject(WALLET_USE_CASES) private readonly useCases: WalletUseCases) {}
+
+  async getMyWallet(): Promise<walletV1.GetMyWalletResponse> {
+    return { wallet: presentWallet(await this.useCases.getMyWallet.execute()) };
+  }
+
+  async listMyStatement(request: walletV1.ListMyStatementRequest): Promise<walletV1.ListMyStatementResponse> {
+    return {
+      statement: presentStatement(await this.useCases.listMyStatement.execute(parsePage(request.page))),
+    };
+  }
+
+  async listMyPayouts(request: walletV1.ListMyPayoutsRequest): Promise<walletV1.ListMyPayoutsResponse> {
+    return payoutPage(
+      await this.useCases.listMyPayouts.execute({ page: parsePage(request.page), status: request.status }),
+    );
+  }
+}
+
+/** Back-office (finance). */
+@Controller()
+@walletV1.WalletAdminServiceControllerMethods()
+export class WalletAdminGrpcController implements walletV1.WalletAdminServiceController {
+  constructor(@Inject(WALLET_USE_CASES) private readonly useCases: WalletUseCases) {}
+
+  async getHolderWallet(request: walletV1.GetHolderWalletRequest): Promise<walletV1.GetHolderWalletResponse> {
+    return { wallet: presentWallet(await this.useCases.getHolderWallet.execute(request.holder)) };
+  }
+
+  async listHolderStatement(
+    request: walletV1.ListHolderStatementRequest,
+  ): Promise<walletV1.ListHolderStatementResponse> {
+    const page = await this.useCases.listHolderStatement.execute(request.holder, parsePage(request.page));
+    return { statement: presentStatement(page) };
+  }
+
+  async listWalletPayouts(
+    request: walletV1.ListWalletPayoutsRequest,
+  ): Promise<walletV1.ListWalletPayoutsResponse> {
+    return payoutPage(
+      await this.useCases.listWalletPayouts.execute({
+        page: parsePage(request.page),
+        status: request.status,
+        holder: request.holder,
+      }),
+    );
+  }
+
+  async getLedgerOverview(): Promise<walletV1.GetLedgerOverviewResponse> {
+    const overview = await this.useCases.getLedgerOverview.execute();
+    return {
+      internalAccounts: overview.internal.map((entry) => ({
+        account: entry.account,
+        balance: xof(entry.balance),
+      })),
+      owedToHolders: xof(overview.owedToHolders),
+      holdersCount: overview.holdersCount,
+    };
+  }
+}

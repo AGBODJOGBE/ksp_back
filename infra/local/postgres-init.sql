@@ -17,3 +17,6 @@ CREATE DATABASE billing OWNER billing;
 
 CREATE USER payment WITH PASSWORD 'payment' CREATEDB;
 CREATE DATABASE payment OWNER payment;
+
+CREATE USER wallet WITH PASSWORD 'wallet' CREATEDB;
+CREATE DATABASE wallet OWNER wallet;

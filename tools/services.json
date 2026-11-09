@@ -28,5 +28,10 @@
     "grpcPort": 50055,
     "httpPort": 3105,
     "database": true
+  },
+  "wallet": {
+    "grpcPort": 50057,
+    "httpPort": 3107,
+    "database": true
   }
 }
