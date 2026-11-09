@@ -1,6 +1,6 @@
 import { Writable } from 'node:stream';
 import pino from 'pino';
-import { REDACTED_PATHS } from './logger';
+import { maskSecretPaths, REDACTED_PATHS, serializeRequest } from './logger';
 
 /** Journal réel (pino) avec les chemins masqués : seule la sortie écrite compte. */
 function written(entry: Record<string, unknown>): string {
@@ -37,5 +37,18 @@ describe('journaux : données masquées', () => {
   it('jetons et secrets restent masqués', () => {
     const line = written({ body: { refreshToken: 'secret-1', code: '482913' } });
     expect(line).not.toMatch(/secret-1|482913/);
+  });
+});
+
+describe('journaux : adresses secrètes', () => {
+  it('le jeton d’un lien de signature est masqué dans l’adresse et les paramètres (ADR-044)', () => {
+    const token = 'Zk3vQ0b4H1m0w2nY5p7r9t1v3x5z7B9D1F3H5J7L9Nq';
+    expect(maskSecretPaths(`/api/v1/document/sign/${token}/otp`)).toBe('/api/v1/document/sign/[masqué]/otp');
+    expect(maskSecretPaths(`/api/v1/document/sign/${token}`)).toBe('/api/v1/document/sign/[masqué]');
+    expect(maskSecretPaths('/api/v1/document/documents/0192f1c4')).toBe(
+      '/api/v1/document/documents/0192f1c4',
+    );
+    const request = serializeRequest({ url: `/api/v1/document/sign/${token}/sign`, params: { token } });
+    expect(JSON.stringify(request)).not.toContain(token);
   });
 });

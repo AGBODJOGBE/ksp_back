@@ -255,6 +255,13 @@ export interface ListMessageTemplatesResponse {
  *   identity.email_verification
  *                  canal CHANNEL_EMAIL seul, recipient.email obligatoire ; variables : code,
  *                  expires_in_minutes. Code de confirmation de l'e-mail du profil. Modèle secret.
+ *   document.signature_code
+ *                  WhatsApp (modèle d'authentification, comme identity.otp) puis e-mail ; variables :
+ *                  code (6 chiffres), expires_in_minutes, document_title. Code de signature d'un
+ *                  document (ADR-044). Modèle secret.
+ *   document.signature_requested
+ *                  WhatsApp puis e-mail ; variables : document_title, link (lien personnel de
+ *                  signature, porte un jeton), expires_on, first_name facultatif. Modèle secret.
  *
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
@@ -286,6 +293,13 @@ export interface NotificationServiceClient {
  *   identity.email_verification
  *                  canal CHANNEL_EMAIL seul, recipient.email obligatoire ; variables : code,
  *                  expires_in_minutes. Code de confirmation de l'e-mail du profil. Modèle secret.
+ *   document.signature_code
+ *                  WhatsApp (modèle d'authentification, comme identity.otp) puis e-mail ; variables :
+ *                  code (6 chiffres), expires_in_minutes, document_title. Code de signature d'un
+ *                  document (ADR-044). Modèle secret.
+ *   document.signature_requested
+ *                  WhatsApp puis e-mail ; variables : document_title, link (lien personnel de
+ *                  signature, porte un jeton), expires_on, first_name facultatif. Modèle secret.
  *
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal

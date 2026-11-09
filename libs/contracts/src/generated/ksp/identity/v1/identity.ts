@@ -934,7 +934,8 @@ export interface IdentityServiceClient {
    * vérifiée par code (email_verified). Un compte supprimé est traité comme introuvable ;
    * GetUsersByIds omet les identifiants introuvables (100 au plus par appel).
    * GetUsersByIds — appelant autorisé aussi : cleaning (noms affichés au back-office, ADR-029),
-   * qui ne reçoit ni le téléphone ni l'e-mail.
+   * qui ne reçoit ni le téléphone ni l'e-mail ; document (signataire titulaire d'un compte,
+   * ADR-044), qui reçoit le téléphone et l'e-mail vérifié pour envoyer le code de signature.
    * Erreurs :
    *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
    *   IDENTITY_USER_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)
@@ -988,7 +989,8 @@ export interface IdentityServiceController {
    * vérifiée par code (email_verified). Un compte supprimé est traité comme introuvable ;
    * GetUsersByIds omet les identifiants introuvables (100 au plus par appel).
    * GetUsersByIds — appelant autorisé aussi : cleaning (noms affichés au back-office, ADR-029),
-   * qui ne reçoit ni le téléphone ni l'e-mail.
+   * qui ne reçoit ni le téléphone ni l'e-mail ; document (signataire titulaire d'un compte,
+   * ADR-044), qui reçoit le téléphone et l'e-mail vérifié pour envoyer le code de signature.
    * Erreurs :
    *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
    *   IDENTITY_USER_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)

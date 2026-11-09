@@ -84,6 +84,8 @@ tags:
     description: Portefeuilles des titulaires et vue d'ensemble du grand livre (ADR-042)
   - name: Fichiers
     description: Envoi et lecture des pièces jointes du compte connecté, directement dans le stockage par adresses présignées (ADR-038)
+  - name: Documents
+    description: Documents PDF produits par les services (mandat, mise en demeure, protocole d'accord) et signature électronique par code, avec ou sans compte (ADR-044)
 
 # Valeurs proposées par le cahier des charges Gateway (partie 4), réglables par configuration.
 x-ksp-rate-limits:
@@ -165,6 +167,31 @@ x-ksp-rate-limits:
     per: minute
     key: user
     description: Déclaration d'un envoi de fichier (ADR-038) ; file limite aussi les envois en attente et le volume par jour.
+  document_code_request:
+    limit: 3
+    per: minute
+    key: user
+    description: Code de signature d'un document (ADR-044) ; document limite aussi à un code par minute et 5 par heure par demande.
+  document_code_verify:
+    limit: 10
+    per: minute
+    key: user
+    description: Signature avec le code ; document épuise aussi le code après 5 essais faux.
+  document_link:
+    limit: 30
+    per: minute
+    key: ip
+    description: Ouverture d'un lien de signature sans compte (route publique, jeton vérifié par document).
+  document_link_code_request:
+    limit: 3
+    per: minute
+    key: ip
+    description: Code de signature demandé par un lien sans compte ; mêmes limites par demande dans document.
+  document_link_code_verify:
+    limit: 10
+    per: minute
+    key: ip
+    description: Signature par un lien sans compte ; 5 essais par code dans document.
 
 # Préfixes réservés, sans route pour l'instant.
 x-ksp-reserved-prefixes:
@@ -9999,6 +10026,404 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/document/documents/{id}:
+    get:
+      tags:
+        - Documents
+      operationId: getMyDocument
+      summary: Un document dont je suis titulaire ou signataire
+      description: |
+        Document PDF produit par un service métier (mandat de recouvrement, protocole d'accord…) : titre, numéro,
+        statut, empreinte SHA-256 du PDF et, après signature, celle du PDF signé (ADR-044). Lisible par le compte
+        titulaire du document et par le compte appelé à le signer ; pour tout autre compte, introuvable (404).
+
+        `signature` décrit la demande de signature en cours ou la plus récente (signataire désigné par son nom et
+        son téléphone masqué) ; `canSign` vaut `true` quand le compte connecté est le signataire attendu.
+
+        Statuts : `draft`, `pending_signature`, `signed`, `expired` (demande expirée), `cancelled`.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `DOCUMENT_NOT_FOUND` (404), `DOCUMENT_DEPENDENCY_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.document.v1.DocumentService/GetMyDocument
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+              example:
+                id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7001
+                template: recovery_mandate
+                templateVersion: 1
+                title: Mandat de recouvrement
+                number: MAN-2026-000042
+                status: pending_signature
+                subject:
+                  type: recovery_case
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7100
+                sha256: 87b47ba21363c6f263abb57eaea8ad8204222a0c1da0ec1a5a37087adf5eb12e
+                sizeBytes: 16188
+                signedSha256: null
+                createdAt: 2026-11-09T10:00:00Z
+                signedAt: null
+                cancelledAt: null
+                signature:
+                  id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7201
+                  status: pending
+                  signer:
+                    displayName: Awa Dossou
+                    phoneMasked: +229********11
+                    hasAccount: true
+                  canSign: true
+                  createdAt: 2026-11-09T10:00:01Z
+                  expiresAt: 2026-11-16T10:00:01Z
+                  signedAt: null
+                  codeExpiresAt: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/document/documents/{id}/download-url:
+    get:
+      tags:
+        - Documents
+      operationId: getMyDocumentDownloadUrl
+      summary: Adresse de lecture du PDF d’un document
+      description: |
+        Adresse présignée de **courte durée** (5 minutes) pour lire le PDF directement dans le stockage : le PDF
+        signé (pages d'origine et page de certificat) s'il est signé, sinon le PDF produit (`version`). Mêmes
+        droits que la lecture du document. À demander juste avant l'affichage ; ne jamais l'enregistrer.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `DOCUMENT_NOT_FOUND` (404), `DOCUMENT_DEPENDENCY_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.document.v1.DocumentService/CreateMyDownloadUrl
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentDownloadUrl'
+              example:
+                url: https://files.ksp.bj/ksp-files/generated_document/0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6101?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=300&X-Amz-Signature=7b2c
+                expiresAt: 2026-11-09T10:05:00Z
+                version: original
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/document/signatures/{id}/otp:
+    post:
+      tags:
+        - Documents
+      operationId: sendDocumentSignatureCode
+      summary: Recevoir un code pour signer
+      description: |
+        Sans corps. Envoie un code de 6 chiffres au signataire connecté de cette demande : par WhatsApp à son
+        téléphone, sinon (ou en repli) à son e-mail vérifié. Le code est valable 10 minutes et accepte 5 essais ;
+        un nouveau code remplace le précédent. Un nouveau code au plus toutes les 60 secondes et 5 par heure
+        (`DOCUMENT_CODE_TOO_SOON`, `DOCUMENT_CODE_LIMIT_REACHED`, 429 avec `details.retryAfterSeconds`).
+
+        Demande adressée à un autre compte : introuvable (404).
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `DOCUMENT_SIGNATURE_NOT_FOUND` (404),
+        `DOCUMENT_SIGNATURE_CLOSED` (422, `details.status`), `DOCUMENT_SIGNER_UNREACHABLE` (422),
+        `DOCUMENT_CODE_TOO_SOON`, `DOCUMENT_CODE_LIMIT_REACHED` (429), `DOCUMENT_DEPENDENCY_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.document.v1.DocumentService/SendSignatureCode
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: document_code_request
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureRequestId'
+      responses:
+        '200':
+          description: Code envoyé
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignatureCodeDelivery'
+              example:
+                channel: whatsapp
+                expiresAt: 2026-11-09T10:10:00Z
+                resendAfterSeconds: 60
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/document/signatures/{id}/sign:
+    post:
+      tags:
+        - Documents
+      operationId: signDocument
+      summary: Signer un document avec le code reçu
+      description: |
+        Signature électronique simple par code (ADR-044). `consent` doit valoir `true` : le signataire déclare
+        avoir lu le document et en accepter le contenu (`DOCUMENT_CONSENT_REQUIRED` sinon).
+
+        document relit le PDF stocké et compare son empreinte SHA-256 à celle enregistrée à sa production : un
+        document modifié n'est jamais signé (`DOCUMENT_CONTENT_CHANGED`). La signature ajoute aux pages d'origine,
+        inchangées, une page de certificat (signataire, moyen, horodatage, empreinte, adresse IP et navigateur) ;
+        la preuve est conservée et le service à l'origine du document est prévenu.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `DOCUMENT_CODE_INVALID` (400, `details.attemptsLeft`),
+        `DOCUMENT_CONSENT_REQUIRED` (400), `DOCUMENT_SIGNATURE_NOT_FOUND` (404), `DOCUMENT_CODE_EXPIRED`,
+        `DOCUMENT_SIGNATURE_CLOSED`, `DOCUMENT_CONTENT_CHANGED` (422), `DOCUMENT_DEPENDENCY_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.document.v1.DocumentService/SignDocument
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: document_code_verify
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignDocumentRequest'
+            example:
+              code: '482913'
+              consent: true
+      responses:
+        '200':
+          description: Document signé
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/document/sign/{token}:
+    get:
+      tags:
+        - Documents
+      operationId: getSigningSession
+      summary: Ouvrir un lien de signature
+      description: |
+        Route **publique** : signataire sans compte KSP (débiteur…), identifié par le jeton du lien personnel reçu
+        par WhatsApp ou e-mail. Rend le titre et le numéro du document, le nom et le téléphone masqué du
+        signataire, l'échéance de la demande et une adresse de lecture du PDF de courte durée (le PDF signé une
+        fois signé ; aucune adresse pour une demande expirée ou annulée). Jeton inconnu, mal formé ou d'une autre
+        personne : introuvable (404). Limitée par adresse IP ; le jeton n'est jamais journalisé.
+
+        Erreurs : `DOCUMENT_SIGNATURE_NOT_FOUND` (404), `DOCUMENT_DEPENDENCY_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.document.v1.DocumentSigningService/GetSigningSession
+      x-ksp-access: public
+      x-ksp-rate-limit: document_link
+      parameters:
+        - $ref: '#/components/parameters/SigningToken'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SigningSession'
+              example:
+                documentTitle: Protocole d’accord et échéancier de paiement
+                documentNumber: PAC-2026-000007
+                status: pending
+                signer:
+                  displayName: Koffi Mensah
+                  phoneMasked: +229********45
+                expiresAt: 2026-11-16T10:00:00Z
+                signedAt: null
+                codeExpiresAt: null
+                download:
+                  url: https://files.ksp.bj/ksp-files/generated_document/0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6102?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=300&X-Amz-Signature=1d4e
+                  expiresAt: 2026-11-09T10:05:00Z
+                  version: original
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/document/sign/{token}/otp:
+    post:
+      tags:
+        - Documents
+      operationId: sendSigningCode
+      summary: Recevoir un code par le lien de signature
+      description: |
+        Route **publique**, sans corps : envoie un code de 6 chiffres au téléphone du signataire désigné par le
+        service à l'origine du document (WhatsApp ; e-mail en repli s'il a été fourni). Mêmes règles que pour un
+        signataire connecté : 10 minutes, 5 essais, un code par minute et 5 par heure.
+
+        Erreurs : `DOCUMENT_SIGNATURE_NOT_FOUND` (404), `DOCUMENT_SIGNATURE_CLOSED`, `DOCUMENT_SIGNER_UNREACHABLE`
+        (422), `DOCUMENT_CODE_TOO_SOON`, `DOCUMENT_CODE_LIMIT_REACHED` (429), `DOCUMENT_DEPENDENCY_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.document.v1.DocumentSigningService/SendSigningCode
+      x-ksp-access: public
+      x-ksp-rate-limit: document_link_code_request
+      parameters:
+        - $ref: '#/components/parameters/SigningToken'
+      responses:
+        '200':
+          description: Code envoyé
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignatureCodeDelivery'
+              example:
+                channel: whatsapp
+                expiresAt: 2026-11-09T10:10:00Z
+                resendAfterSeconds: 60
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/document/sign/{token}/sign:
+    post:
+      tags:
+        - Documents
+      operationId: signWithLink
+      summary: Signer par le lien de signature
+      description: |
+        Route **publique** : signature avec le code reçu et l'accord explicite du signataire (`consent: true`).
+        Mêmes contrôles que pour un signataire connecté (code, essais, empreinte du PDF stocké), même page de
+        certificat et même preuve ; rend la demande signée et l'adresse de lecture du PDF signé.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED`, `DOCUMENT_CODE_INVALID` (`details.attemptsLeft`),
+        `DOCUMENT_CONSENT_REQUIRED` (400), `DOCUMENT_SIGNATURE_NOT_FOUND` (404), `DOCUMENT_CODE_EXPIRED`,
+        `DOCUMENT_SIGNATURE_CLOSED`, `DOCUMENT_CONTENT_CHANGED` (422), `DOCUMENT_DEPENDENCY_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.document.v1.DocumentSigningService/SignWithLink
+      x-ksp-access: public
+      x-ksp-rate-limit: document_link_code_verify
+      parameters:
+        - $ref: '#/components/parameters/SigningToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignDocumentRequest'
+            example:
+              code: '482913'
+              consent: true
+      responses:
+        '200':
+          description: Document signé
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SigningSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 components:
   securitySchemes:
     bearerAuth:
@@ -10116,6 +10541,30 @@ components:
       schema:
         type: string
         format: uuid
+    DocumentId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant du document (UUID).
+      schema:
+        type: string
+        format: uuid
+    SignatureRequestId:
+      name: id
+      in: path
+      required: true
+      description: Identifiant de la demande de signature (UUID), donné par `signature.id` d'un document.
+      schema:
+        type: string
+        format: uuid
+    SigningToken:
+      name: token
+      in: path
+      required: true
+      description: Jeton du lien personnel de signature (secret, jamais journalisé), reçu par WhatsApp ou e-mail.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{20,100}$'
     PaymentStatus:
       name: status
       in: query
@@ -17051,3 +17500,231 @@ components:
         expiresAt:
           type: string
           format: date-time
+    Document:
+      type: object
+      additionalProperties: false
+      description: Document PDF produit à partir d'un modèle versionné (ADR-044).
+      required:
+        - id
+        - template
+        - templateVersion
+        - title
+        - number
+        - status
+        - subject
+        - sha256
+        - sizeBytes
+        - signedSha256
+        - createdAt
+        - signedAt
+        - cancelledAt
+        - signature
+      properties:
+        id:
+          type: string
+          format: uuid
+        template:
+          type: string
+          description: Modèle du document (recovery_mandate, recovery_formal_notice, recovery_settlement_agreement…)
+        templateVersion:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+        number:
+          type: string
+          description: Numéro lisible unique (MAN-2026-000042).
+        status:
+          type: string
+          enum: [draft, pending_signature, signed, expired, cancelled]
+        subject:
+          description: Objet métier du document (dossier de recouvrement…).
+          oneOf:
+            - $ref: '#/components/schemas/DocumentSubject'
+            - type: 'null'
+        sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Empreinte SHA-256 du PDF produit (celui présenté au signataire).
+        sizeBytes:
+          type: integer
+          minimum: 1
+        signedSha256:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{64}$'
+          description: Empreinte SHA-256 du PDF signé (pages d'origine et page de certificat).
+        createdAt:
+          type: string
+          format: date-time
+        signedAt:
+          type: [string, 'null']
+          format: date-time
+        cancelledAt:
+          type: [string, 'null']
+          format: date-time
+        signature:
+          description: Demande de signature en cours ou la plus récente ; null si aucune.
+          oneOf:
+            - $ref: '#/components/schemas/DocumentSignature'
+            - type: 'null'
+    DocumentSubject:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+    DocumentSignature:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - signer
+        - canSign
+        - createdAt
+        - expiresAt
+        - signedAt
+        - codeExpiresAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identifiant de la demande de signature (routes /api/v1/document/signatures/{id}).
+        status:
+          type: string
+          enum: [pending, signed, expired, cancelled]
+        signer:
+          type: object
+          additionalProperties: false
+          required:
+            - displayName
+            - phoneMasked
+            - hasAccount
+          properties:
+            displayName:
+              type: string
+            phoneMasked:
+              type: [string, 'null']
+              description: Téléphone masqué (+229********45) ; jamais le numéro en clair.
+            hasAccount:
+              type: boolean
+              description: Le signataire signe depuis son compte KSP (sinon par un lien personnel).
+        canSign:
+          type: boolean
+          description: Le compte connecté est le signataire attendu d'une demande en attente.
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        signedAt:
+          type: [string, 'null']
+          format: date-time
+        codeExpiresAt:
+          type: [string, 'null']
+          format: date-time
+          description: Expiration du code en cours ; null si aucun code valable.
+    DocumentDownloadUrl:
+      type: object
+      additionalProperties: false
+      required:
+        - url
+        - expiresAt
+        - version
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Adresse présignée de lecture du PDF (secret de courte durée, à ne jamais enregistrer).
+        expiresAt:
+          type: string
+          format: date-time
+        version:
+          type: string
+          enum: [original, signed]
+          description: PDF produit, ou PDF signé (pages d'origine et page de certificat).
+    SignatureCodeDelivery:
+      type: object
+      additionalProperties: false
+      required:
+        - channel
+        - expiresAt
+        - resendAfterSeconds
+      properties:
+        channel:
+          type: string
+          enum: [whatsapp, email, sms]
+          description: Canal qui a acheminé le code (jamais le code lui-même).
+        expiresAt:
+          type: string
+          format: date-time
+        resendAfterSeconds:
+          type: integer
+          minimum: 0
+          description: Délai avant de pouvoir demander un nouveau code.
+    SignDocumentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - consent
+      properties:
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: Code de 6 chiffres reçu par WhatsApp ou e-mail.
+        consent:
+          type: boolean
+          description: Le signataire déclare avoir lu le document et en accepter le contenu ; doit valoir true.
+    SigningSession:
+      type: object
+      additionalProperties: false
+      description: Ce que voit un signataire sans compte par son lien personnel.
+      required:
+        - documentTitle
+        - documentNumber
+        - status
+        - signer
+        - expiresAt
+        - signedAt
+        - codeExpiresAt
+        - download
+      properties:
+        documentTitle:
+          type: string
+        documentNumber:
+          type: string
+        status:
+          type: string
+          enum: [pending, signed, expired, cancelled]
+        signer:
+          type: object
+          additionalProperties: false
+          required:
+            - displayName
+            - phoneMasked
+          properties:
+            displayName:
+              type: string
+            phoneMasked:
+              type: [string, 'null']
+        expiresAt:
+          type: string
+          format: date-time
+        signedAt:
+          type: [string, 'null']
+          format: date-time
+        codeExpiresAt:
+          type: [string, 'null']
+          format: date-time
+        download:
+          description: Lecture du PDF (signé s'il l'est) ; null pour une demande expirée ou annulée.
+          oneOf:
+            - $ref: '#/components/schemas/DocumentDownloadUrl'
+            - type: 'null'

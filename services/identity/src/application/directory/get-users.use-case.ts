@@ -19,6 +19,9 @@ export const DIRECTORY_CALLERS: Readonly<Record<string, { contact: boolean }>> =
   cleaning: { contact: false },
   // Nom du payeur affiché dans les paiements en ligne du back-office (ADR-029).
   payment: { contact: false },
+  // Signataire titulaire d'un compte (ADR-044) : nom imprimé sur le certificat, téléphone et e-mail
+  // vérifié pour lui envoyer le code de signature.
+  document: { contact: true },
 };
 
 /** Nombre maximum d'identifiants par appel à GetUsersByIds. */

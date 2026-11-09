@@ -19,3 +19,5 @@ export const FILE_GRPC_CLIENT = Symbol('FILE_GRPC_CLIENT');
 export const FILE_API = Symbol('FILE_API');
 export const WALLET_GRPC_CLIENT = Symbol('WALLET_GRPC_CLIENT');
 export const WALLET_API = Symbol('WALLET_API');
+export const DOCUMENT_GRPC_CLIENT = Symbol('DOCUMENT_GRPC_CLIENT');
+export const DOCUMENT_API = Symbol('DOCUMENT_API');
