@@ -23,6 +23,12 @@ export interface MetaWhatsAppOptions {
   baseUrl?: string;
 }
 
+/**
+ * Modèles KSP envoyés par le modèle d'authentification « Copier le code » de Meta : code de
+ * connexion (identity.otp) et code de signature d'un document (ADR-044).
+ */
+const AUTHENTICATION_TEMPLATES = new Set(['identity.otp', 'document.signature_code']);
+
 /** Erreurs Graph propres au destinataire : numéro sans WhatsApp, ou numéro de l'expéditeur lui-même. */
 const RECIPIENT_ERRORS = new Set([131021, 131026]);
 
@@ -106,11 +112,11 @@ export class MetaWhatsAppProvider implements ChannelProvider {
   }
 
   /**
-   * Modèle WhatsApp correspondant au modèle KSP : identity.otp → modèle d'authentification ;
-   * messages des événements → modèle « utility » approuvé (whatsapp-templates.ts).
+   * Modèle WhatsApp correspondant au modèle KSP : codes (identity.otp, document.signature_code) →
+   * modèle d'authentification ; autres messages → modèle « utility » approuvé (whatsapp-templates.ts).
    */
   private templateFor(message: OutgoingMessage): object | null {
-    if (message.templateCode !== 'identity.otp') {
+    if (!AUTHENTICATION_TEMPLATES.has(message.templateCode)) {
       const spec = Object.hasOwn(WHATSAPP_EVENT_TEMPLATES, message.templateCode)
         ? WHATSAPP_EVENT_TEMPLATES[message.templateCode]
         : null;

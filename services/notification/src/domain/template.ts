@@ -4,6 +4,7 @@ import { PAYMENT_TEMPLATES } from './messages/payment.messages';
 import { CLEANING_TEMPLATES } from './messages/cleaning.messages';
 import { IDENTITY_DIRECT_TEMPLATES } from './messages/identity.messages';
 import { ACCOUNT_TEMPLATES } from './messages/account.messages';
+import { DOCUMENT_DIRECT_TEMPLATES } from './messages/document.messages';
 import { ORGANIZATION_TEMPLATES } from './messages/organization.messages';
 
 /**
@@ -69,6 +70,7 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
     },
   },
   ...Object.fromEntries(IDENTITY_DIRECT_TEMPLATES.map((template) => [template.code, template])),
+  ...Object.fromEntries(DOCUMENT_DIRECT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(CLEANING_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(BILLING_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(ORGANIZATION_TEMPLATES.map((template) => [template.code, template])),

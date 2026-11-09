@@ -412,3 +412,36 @@ describe('SendNotificationUseCase — code de confirmation de l’e-mail (identi
     });
   });
 });
+
+describe('SendNotificationUseCase — codes de signature de document (ADR-044)', () => {
+  const signatureCode = (overrides: Partial<SendNotificationInput> = {}): SendNotificationInput =>
+    otp({
+      callerService: 'document',
+      templateCode: 'document.signature_code',
+      channel: 'whatsapp',
+      fallbackChannels: [],
+      recipient: { userId: '', phoneE164: '+2290197000045', email: '' },
+      variables: { code: '246810', expires_in_minutes: '10', document_title: 'Protocole' },
+      idempotencyKey: 'document.code:1',
+      ttlSeconds: 600,
+      ...overrides,
+    });
+
+  it('document envoie un code à un signataire sans compte, sans rien conserver du code', async () => {
+    const whatsapp = new FakeProvider('whatsapp', [{ accepted: true, providerMessageId: 'wamid.9' }]);
+    const { notifications, useCase } = setup([whatsapp]);
+    await expect(useCase.execute(signatureCode())).resolves.toMatchObject({ channelUsed: 'whatsapp' });
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'document.signature_code',
+      phoneE164: '+2290197000045',
+    });
+    expect(JSON.stringify(notifications.rows)).not.toContain('246810');
+  });
+
+  it('un autre service ne peut pas envoyer de code de signature', async () => {
+    const { useCase } = setup();
+    await expect(useCase.execute(signatureCode({ callerService: 'cleaning' }))).rejects.toMatchObject({
+      code: 'NOTIFICATION_CALLER_FORBIDDEN',
+    });
+  });
+});
