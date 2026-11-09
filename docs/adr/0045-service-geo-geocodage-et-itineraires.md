@@ -27,9 +27,10 @@ commune vient toujours de Nominatim (Google en secours).
      `GEOCODING_TIMEOUT_MS` par fournisseur, même repli, même journal sans coordonnées) ; jamais
      d'erreur de fournisseur (réponse vide). Le rapprochement commune → zone desservie reste chez
      l'appelant : les zones lui appartiennent.
-   - `Route(points, profil)` → distance (m) et durée (s) ; `DistanceMatrix(origines, destinations,
-profil)` → une cellule par couple (`reachable`, distance, durée) ; `Nearest(point, profil)` →
-     point du réseau routier, distance, nom de la voie. OSRM `/route`, `/table`, `/nearest`.
+   - `Route(points, profil)` → distance (m) et durée (s) ;
+     `DistanceMatrix(origines, destinations, profil)` → une cellule par couple (`reachable`,
+     distance, durée) ; `Nearest(point, profil)` → point du réseau routier, distance, nom de la
+     voie. OSRM `/route`, `/table`, `/nearest`.
    - Entiers arrondis (mètres, secondes) ; 2 à 25 points par itinéraire, 1 à 25 origines et
      destinations par matrice (50 points, sous la limite par défaut d'OSRM de 100).
    - Profil en texte, `car` par défaut (vide). **`car` seul** : OSRM ne fournit pas de profil moto ;
