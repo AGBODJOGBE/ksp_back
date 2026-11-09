@@ -34,7 +34,7 @@ ksp-backend/
 | Immobilier                         | `realestate`                                                                                              | 2     |
 | Marketplace, impression, livraison | `catalog`, `order`, `print`, `delivery`                                                                   | 3     |
 
-Services présents dans le dépôt : `gateway`, `identity`, `notification`, `cleaning`, `billing`, `payment` et `file` (stockage des pièces jointes par adresses présignées, ADR-038). Ports réservés : `tools/services.json`.
+Services présents dans le dépôt : `gateway`, `identity`, `notification`, `cleaning`, `billing`, `payment`, `file` (stockage des pièces jointes par adresses présignées, ADR-038) et `document` (PDF produits à partir de modèles et signature par code, ADR-044). Ports réservés : `tools/services.json`.
 
 ## Démarrer
 
@@ -52,8 +52,8 @@ pnpm --filter @ksp/identity-service dev
 
 Chaque service expose :
 
-- gRPC sur son port (`identity` : 50051, `notification` : 50052… `file` : 50056, voir `tools/services.json`) ;
-- HTTP technique (`identity` : 3101, `notification` : 3102… `file` : 3106) : `/health/live`, `/health/ready`, `/metrics`.
+- gRPC sur son port (`identity` : 50051, `notification` : 50052… `file` : 50056, `document` : 50057, voir `tools/services.json`) ;
+- HTTP technique (`identity` : 3101, `notification` : 3102… `file` : 3106, `document` : 3107) : `/health/live`, `/health/ready`, `/metrics`.
 
 La `gateway` n'a ni gRPC entrant ni base : elle sert l'API REST des fronts sur le port 3000 (`/api/v1/…`, `/.well-known/jwks.json`), avec les mêmes sondes et métriques (voir `services/gateway/README.md`).
 
