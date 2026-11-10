@@ -139,12 +139,15 @@ export function deriveMissionStatus(
   return 'to_schedule';
 }
 
-/** Premier passage à venir (ou le créneau choisi s'il n'y en a pas encore) : base du délai d'annulation. */
-export function nextStart(mission: Pick<Mission, 'interventions' | 'chosenSlot'>): Date {
+/**
+ * Premier passage planifié : base du délai d'annulation. Null sans passage planifié : rien n'est
+ * engagé, l'annulation est sans frais même si le créneau choisi au devis est passé (ADR-049).
+ */
+export function nextStart(mission: Pick<Mission, 'interventions'>): Date | null {
   const planned = mission.interventions
     .filter((intervention) => intervention.status === 'planned')
     .map((intervention) => intervention.scheduledStart.getTime());
-  return planned.length ? new Date(Math.min(...planned)) : mission.chosenSlot.start;
+  return planned.length ? new Date(Math.min(...planned)) : null;
 }
 
 /** Le client ne peut annuler qu'une mission pas encore commencée. */

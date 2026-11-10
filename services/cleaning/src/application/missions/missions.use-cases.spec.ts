@@ -369,6 +369,7 @@ describe('missions et passages (UC-CL-09, 10)', () => {
     expect(
       await code(asCustomer(() => new GetMyMissionUseCase(world).execute(MISSION_ID), OTHER_CUSTOMER_ID)),
     ).toBe('CLEANING_MISSION_NOT_FOUND');
+    await schedule('2026-10-30T08:00:00Z', [AGENT_ID]);
     world.clock.current = new Date('2026-10-29T09:00:00Z');
     expect(
       await code(
@@ -385,6 +386,14 @@ describe('missions et passages (UC-CL-09, 10)', () => {
       // Particulier : organisation null (billing n'attend pas de contrat, ADR-032).
       payload: { missionId: MISSION_ID, organizationId: null },
     });
+  });
+
+  it('aucun passage planifié : annulation sans frais, même créneau choisi passé (ADR-049)', async () => {
+    world.clock.current = new Date('2026-11-02T09:00:00Z');
+    const view = await asCustomer(() =>
+      new CancelMyMissionUseCase(world).execute({ missionId: MISSION_ID, reason: 'Plus besoin' }),
+    );
+    expect(view.mission.status).toBe('cancelled');
   });
 
   it('annulation par la supervision, motif obligatoire', async () => {
