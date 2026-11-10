@@ -115,7 +115,19 @@ describe('paiement d’une mission par le portefeuille (ADR-046)', () => {
     expect((await rejection(pay('deposit', KEY, OTHER_CUSTOMER_ID))).code).toBe('CLEANING_MISSION_NOT_FOUND');
     expect((await rejection(pay('all'))).code).toBe('CLEANING_VALIDATION_FAILED');
     world.missions.missions.set(MISSION_ID, mission({ organizationId: ORGANIZATION_ID }));
-    expect((await rejection(pay())).code).toBe('CLEANING_PAYMENT_VIA_INVOICE');
+    // Hors du contexte de l'organisation : introuvable (ADR-049) ; dans son contexte : par facture.
+    expect((await rejection(pay())).code).toBe('CLEANING_MISSION_NOT_FOUND');
+    const inOrganization = as(
+      CUSTOMER_ID,
+      () =>
+        new PayMissionFromWalletUseCase(world).execute({
+          missionId: MISSION_ID,
+          part: 'deposit',
+          idempotencyKey: KEY,
+        }),
+      { activeContext: ORGANIZATION_ID, orgRole: 'org_member' },
+    );
+    expect((await rejection(inOrganization)).code).toBe('CLEANING_PAYMENT_VIA_INVOICE');
     world.missions.missions.set(MISSION_ID, mission({ status: 'cancelled' }));
     expect((await rejection(pay())).code).toBe('CLEANING_INVALID_TRANSITION');
     expect(world.wallet.debits.size).toBe(0);

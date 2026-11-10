@@ -4,15 +4,18 @@ import { isFreeCancellation } from '../../domain/schedule';
 import { type CleaningDeps, missionView, type MissionView } from '../deps';
 import { type Changes, type OutboxMessage } from '../ports';
 import { unrefundedWalletPayments } from '../../domain/payment';
-import { currentCustomer } from '../shared/access';
+import { type CaseAccess, currentCustomer, ownsCase } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import { optionalText, type PageRequest, type PageResult } from '../shared/validation';
 
-/** Mission du client, sinon introuvable (404, sans révéler le dossier d'un autre). */
-async function ownMission(deps: CleaningDeps, missionId: string): Promise<Mission> {
+/**
+ * Mission du client, sinon introuvable (404, sans révéler le dossier d'un autre). Mission
+ * d'organisation : dans son contexte actif seulement ; agir exige org_admin ou org_member (ADR-049).
+ */
+async function ownMission(deps: CleaningDeps, missionId: string, access: CaseAccess): Promise<Mission> {
   const customer = currentCustomer();
   const mission = await deps.missions.findById(missionId);
-  if (!mission || mission.customerId !== customer.userId) throw CleaningErrors.missionNotFound();
+  if (!mission || !ownsCase(customer, mission, access)) throw CleaningErrors.missionNotFound();
   return mission;
 }
 
@@ -92,7 +95,11 @@ export class ListMyMissionsUseCase {
 
   async execute(page: PageRequest): Promise<PageResult<MissionView>> {
     const customer = currentCustomer();
-    const result = await this.deps.missions.list({ customerId: customer.userId }, page);
+    // Missions du contexte actif seulement (ADR-049) : personnelles, ou celles de l'organisation active.
+    const result = await this.deps.missions.list(
+      { customerId: customer.userId, organizationId: customer.organizationId },
+      page,
+    );
     return {
       items: await Promise.all(result.items.map((mission) => missionView(this.deps, mission))),
       nextCursor: result.nextCursor,
@@ -105,7 +112,7 @@ export class GetMyMissionUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
   async execute(missionId: string): Promise<MissionView> {
-    return missionView(this.deps, await ownMission(this.deps, missionId));
+    return missionView(this.deps, await ownMission(this.deps, missionId, 'read'));
   }
 }
 
@@ -114,7 +121,7 @@ export class CancelMyMissionUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
   async execute(input: { missionId: string; reason: string }): Promise<MissionView> {
-    const mission = await ownMission(this.deps, input.missionId);
+    const mission = await ownMission(this.deps, input.missionId, 'act');
     const now = this.deps.clock.now();
     if (!isCancellableByCustomer(mission))
       throw CleaningErrors.invalidTransition(mission.status, 'cancelled');

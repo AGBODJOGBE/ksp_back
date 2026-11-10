@@ -34,7 +34,12 @@ export interface Customer {
   userId: string;
   kind: CustomerKind;
   organizationId: string | null;
+  /** org_admin ou org_member de l'organisation active : il agit en son nom (org_viewer : lecture). */
+  actsForOrganization: boolean;
 }
+
+/** Rôles d'une organisation qui agissent en son nom (ADR-027) ; org_viewer : lecture seule. */
+const ORGANIZATION_ACTORS = ['org_admin', 'org_member'] as const;
 
 /**
  * Méthode réservée à certains services : l'appelant est authentifié par son jeton de service,
@@ -58,7 +63,44 @@ export function currentCustomer(): Customer {
   requireCaller(GATEWAY_CALLERS);
   const user = requireUser();
   const organizationId = user.activeContext && user.activeContext !== 'personal' ? user.activeContext : null;
-  return { userId: user.userId, kind: organizationId ? 'business' : 'individual', organizationId };
+  return {
+    userId: user.userId,
+    kind: organizationId ? 'business' : 'individual',
+    organizationId,
+    actsForOrganization:
+      organizationId !== null &&
+      ORGANIZATION_ACTORS.some((role) => hasRole(user, role, { type: 'org', id: organizationId })),
+  };
+}
+
+/** Accès du client à un dossier (demande, groupe, mission) : le consulter, ou agir dessus. */
+export type CaseAccess = 'read' | 'act';
+
+/**
+ * Dossier du client (ADR-049) : le sien ; celui d'une organisation, seulement dans le contexte actif
+ * de cette organisation (sinon introuvable : false, 404 chez l'appelant, sans révéler le dossier).
+ * Agir au nom de l'organisation exige org_admin ou org_member : AUTH_FORBIDDEN sinon.
+ */
+export function ownsCase(
+  customer: Customer,
+  owner: { customerId: string; organizationId: string | null },
+  access: CaseAccess,
+): boolean {
+  if (owner.customerId !== customer.userId) return false;
+  if (owner.organizationId === null) return true;
+  if (owner.organizationId !== customer.organizationId) return false;
+  if (access === 'act') requireOrganizationActor(customer);
+  return true;
+}
+
+/** Dans le contexte d'une organisation, agir en son nom exige org_admin ou org_member. */
+export function requireOrganizationActor(customer: Customer): void {
+  if (customer.organizationId && !customer.actsForOrganization) {
+    throw AppError.forbidden(
+      'AUTH_FORBIDDEN',
+      "Votre rôle dans cette organisation ne permet pas d'agir en son nom.",
+    );
+  }
 }
 
 export type BackofficeRole = (typeof ROLES)[keyof typeof ROLES];

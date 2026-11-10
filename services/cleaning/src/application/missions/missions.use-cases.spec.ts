@@ -22,6 +22,7 @@ import {
   asAdmin,
   asAgent,
   asCustomer,
+  asOrganizationMember,
   asSupervisor,
   asSuperAdmin,
   CUSTOMER_ID,
@@ -29,6 +30,7 @@ import {
   homeCleaning,
   OTHER_AGENT_ID,
   OTHER_CUSTOMER_ID,
+  ORGANIZATION_ID,
   testWorld,
   type TestWorld,
 } from '../testing/fakes';
@@ -44,7 +46,11 @@ import {
   StartInterventionUseCase,
   UpdateChecklistUseCase,
 } from './admin-missions.use-cases';
-import { CancelMyMissionUseCase, GetMyMissionUseCase } from './customer-missions.use-cases';
+import {
+  CancelMyMissionUseCase,
+  GetMyMissionUseCase,
+  ListMyMissionsUseCase,
+} from './customer-missions.use-cases';
 
 const code = (promise: Promise<unknown>) =>
   promise.then(
@@ -387,6 +393,20 @@ describe('missions et passages (UC-CL-09, 10)', () => {
       // Particulier : organisation null (billing n'attend pas de contrat, ADR-032).
       payload: { missionId: MISSION_ID, organizationId: null },
     });
+  });
+
+  it('mission d’organisation : son contexte actif exigé ; l’annuler exige org_admin ou org_member', async () => {
+    world.missions.missions.set(MISSION_ID, mission({ organizationId: ORGANIZATION_ID }));
+    const list = () => new ListMyMissionsUseCase(world).execute({ limit: 20, cursor: null });
+    expect((await asCustomer(list)).items).toEqual([]);
+    expect((await asOrganizationMember(list, 'org_viewer')).items).toHaveLength(1);
+    const get = () => new GetMyMissionUseCase(world).execute(MISSION_ID);
+    const cancel = () => new CancelMyMissionUseCase(world).execute({ missionId: MISSION_ID, reason: '' });
+    expect(await code(asCustomer(get))).toBe('CLEANING_MISSION_NOT_FOUND');
+    expect(await code(asCustomer(cancel))).toBe('CLEANING_MISSION_NOT_FOUND');
+    expect(await code(asOrganizationMember(get, 'org_viewer'))).toBe('ok');
+    expect(await code(asOrganizationMember(cancel, 'org_viewer'))).toBe('AUTH_FORBIDDEN');
+    expect((await asOrganizationMember(cancel, 'org_admin')).mission.status).toBe('cancelled');
   });
 
   it('aucun passage planifié : annulation sans frais, même créneau choisi passé (ADR-049)', async () => {

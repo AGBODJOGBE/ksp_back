@@ -48,6 +48,7 @@ export class PrismaMissionRepository implements MissionRepository {
     const rows = await this.prisma.mission.findMany({
       where: {
         ...(filter.customerId ? { customerId: filter.customerId } : {}),
+        ...(filter.organizationId !== undefined ? { organizationId: filter.organizationId } : {}),
         ...(filter.status ? { status: filter.status } : {}),
         ...(filter.groupId ? { groupId: filter.groupId } : {}),
         ...(filter.serviceCode ? { serviceCode: filter.serviceCode } : {}),

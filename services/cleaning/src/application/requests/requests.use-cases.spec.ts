@@ -5,6 +5,7 @@ import {
   as,
   asAgent,
   asCustomer,
+  asOrganizationMember,
   asSupervisor,
   asSuperAdmin,
   CUSTOMER_ID,
@@ -253,6 +254,7 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
   it('visite des lieux obligatoire avant le devis (entreprise comme particulier)', async () => {
     const created = await as(CUSTOMER_ID, () => new RequestQuoteUseCase(world).execute(requestInput()), {
       activeContext: ORGANIZATION_ID,
+      orgRole: 'org_member',
     });
     expect(created).toMatchObject({ customerKind: 'business', organizationId: ORGANIZATION_ID });
     expect(await code(sendQuote(created.id, { visit: false }))).toBe('CLEANING_VISIT_REQUIRED');
@@ -477,7 +479,7 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     const created = await as(
       CUSTOMER_ID,
       () => new RequestQuoteUseCase(world).execute({ ...requestInput(), daysPerWeek: 3 }),
-      { activeContext: ORGANIZATION_ID },
+      { activeContext: ORGANIZATION_ID, orgRole: 'org_member' },
     );
     expect(created.daysPerWeek).toBe(3);
     const visited = await asSupervisor(() =>
@@ -501,7 +503,7 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
           idempotencyKey: 'acc-b',
           slotStart: SLOT.start,
         }),
-      { activeContext: ORGANIZATION_ID },
+      { activeContext: ORGANIZATION_ID, orgRole: 'org_member' },
     );
     expect(accepted.mission.mission).toMatchObject({ daysPerWeek: 3, suspension: null });
     expect(accepted.mission.mission.payment.plan).toEqual({
@@ -524,6 +526,7 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
   it('entreprise : un plan de paiement envoyé est ignoré (règlement par facture mensuelle)', async () => {
     const created = await as(CUSTOMER_ID, () => new RequestQuoteUseCase(world).execute(requestInput()), {
       activeContext: ORGANIZATION_ID,
+      orgRole: 'org_member',
     });
     await sendQuote(created.id);
     const accepted = await as(
@@ -535,7 +538,7 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
           slotStart: SLOT.start,
           paymentPlan: { option: 'deposit', timing: 'before', method: 'mobile_money_online' },
         }),
-      { activeContext: ORGANIZATION_ID },
+      { activeContext: ORGANIZATION_ID, orgRole: 'org_member' },
     );
     expect(accepted.mission.mission.payment.plan).toEqual(BUSINESS_PAYMENT_PLAN);
     expect(accepted.mission.mission.payment).toMatchObject({ depositPercent: 100 });
@@ -544,6 +547,7 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
   it('organisation suspendue par KSP : ni demande ni acceptation en son nom (ADR-030)', async () => {
     const created = await as(CUSTOMER_ID, () => new RequestQuoteUseCase(world).execute(requestInput()), {
       activeContext: ORGANIZATION_ID,
+      orgRole: 'org_member',
     });
     await sendQuote(created.id);
     await world.organizations.record({
@@ -558,13 +562,14 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
       await code(
         as(CUSTOMER_ID, () => new RequestQuoteUseCase(world).execute(requestInput('k-org')), {
           activeContext: ORGANIZATION_ID,
+          orgRole: 'org_member',
         }),
       ),
     ).toBe('CLEANING_ORGANIZATION_SUSPENDED');
-    // Acceptation dans le contexte personnel : c'est la demande qui porte l'organisation.
+    // Acceptation dans le contexte de l'organisation (ADR-049) : c'est la demande qui la porte.
     expect(
       await code(
-        asCustomer(() =>
+        asOrganizationMember(() =>
           new AcceptQuoteUseCase(world).execute({
             requestId: created.id,
             idempotencyKey: 'acc-org',
@@ -576,6 +581,46 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect(world.missions.missions.size).toBe(0);
     // Le particulier, lui, n'est pas concerné.
     expect((await request('k-perso')).customerKind).toBe('individual');
+  });
+
+  it('demande d’organisation : son contexte actif exigé ; agir en son nom exige org_admin ou org_member', async () => {
+    expect(
+      await code(
+        asOrganizationMember(() => new RequestQuoteUseCase(world).execute(requestInput()), 'org_viewer'),
+      ),
+    ).toBe('AUTH_FORBIDDEN');
+    const created = await asOrganizationMember(() => new RequestQuoteUseCase(world).execute(requestInput()));
+    const list = () => new ListMyRequestsUseCase(world).execute({ limit: 20, cursor: null });
+    expect((await asCustomer(list)).items).toEqual([]);
+    expect((await asOrganizationMember(list)).items.map((r) => r.id)).toEqual([created.id]);
+    await sendQuote(created.id);
+    // Contexte personnel : la demande de l'organisation est introuvable (404, ADR-049).
+    expect(await code(asCustomer(() => new GetMyRequestUseCase(world).execute(created.id)))).toBe(
+      'CLEANING_REQUEST_NOT_FOUND',
+    );
+    const accept = () =>
+      new AcceptQuoteUseCase(world).execute({
+        requestId: created.id,
+        idempotencyKey: 'acc-o',
+        slotStart: SLOT.start,
+      });
+    expect(await code(asCustomer(accept))).toBe('CLEANING_REQUEST_NOT_FOUND');
+    // Membre lecteur : il consulte, mais n'accepte ni ne refuse.
+    expect(
+      await code(
+        asOrganizationMember(() => new GetMyRequestUseCase(world).execute(created.id), 'org_viewer'),
+      ),
+    ).toBe('ok');
+    expect(await code(asOrganizationMember(accept, 'org_viewer'))).toBe('AUTH_FORBIDDEN');
+    expect(
+      await code(
+        asOrganizationMember(
+          () => new DeclineQuoteUseCase(world).execute({ requestId: created.id, reason: '' }),
+          'org_viewer',
+        ),
+      ),
+    ).toBe('AUTH_FORBIDDEN');
+    expect((await asOrganizationMember(accept)).mission.mission.organizationId).toBe(ORGANIZATION_ID);
   });
 
   it('devis expiré : refus CLEANING_QUOTE_EXPIRED', async () => {
@@ -686,7 +731,7 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     const business = await as(
       OTHER_CUSTOMER_ID,
       () => new RequestQuoteUseCase(world).execute({ ...requestInput('biz-1'), commune: 'Abomey Calavi' }),
-      { activeContext: ORGANIZATION_ID },
+      { activeContext: ORGANIZATION_ID, orgRole: 'org_member' },
     );
     const list = (filters: { status?: string; commune?: string; customerKind?: string }, limit = 20) =>
       asSupervisor(() =>

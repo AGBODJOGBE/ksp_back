@@ -11,7 +11,7 @@ import {
 } from '../../domain/payment';
 import { isBusinessContract } from '../../domain/standing';
 import { type CleaningDeps, missionView, type MissionView } from '../deps';
-import { currentCustomer, requireCaller } from '../shared/access';
+import { currentCustomer, type Customer, ownsCase, requireCaller } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import { eventSubject } from '../shared/event-subject';
 import { oneOf, requireUuid } from '../shared/validation';
@@ -50,7 +50,7 @@ export class PayMissionFromWalletUseCase {
     }
     const part = oneOf<MissionPart>('part', input.part, MISSION_PARTS);
     const key = walletPaymentKey(input.idempotencyKey);
-    let mission = await this.ownMission(requireUuid('missionId', input.missionId), customer.userId);
+    let mission = await this.ownMission(requireUuid('missionId', input.missionId), customer);
     if (paymentWithKey(mission.payment, key)) return missionView(this.deps, mission);
     if (mission.status === 'cancelled') throw CleaningErrors.invalidTransition(mission.status, 'paid');
     if (isBusinessContract(mission)) throw CleaningErrors.paymentViaInvoice();
@@ -68,7 +68,7 @@ export class PayMissionFromWalletUseCase {
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       if (attempt > 0) {
-        mission = await this.ownMission(mission.id, customer.userId);
+        mission = await this.ownMission(mission.id, customer);
         if (paymentWithKey(mission.payment, key)) return missionView(this.deps, mission);
       }
       // Payée ou annulée entre-temps : le débit n'est pas enregistré, il est remboursé.
@@ -109,7 +109,7 @@ export class PayMissionFromWalletUseCase {
       });
       if (!saved) continue;
       if (mission.suspension) await this.evaluate.execute(mission.id);
-      return missionView(this.deps, await this.ownMission(mission.id, customer.userId));
+      return missionView(this.deps, await this.ownMission(mission.id, customer));
     }
     // Modifiée sans cesse en même temps : la même clé reprendra ce débit.
     if (
@@ -123,10 +123,10 @@ export class PayMissionFromWalletUseCase {
     throw CleaningErrors.paymentExceedsBalance(remainingDue(mission.payment));
   }
 
-  /** Mission du client, sinon introuvable (404). */
-  private async ownMission(missionId: string, userId: string): Promise<Mission> {
+  /** Mission du client, sinon introuvable (404) ; d'organisation : dans son contexte (ADR-049). */
+  private async ownMission(missionId: string, customer: Customer): Promise<Mission> {
     const mission = await this.deps.missions.findById(missionId);
-    if (!mission || mission.customerId !== userId) throw CleaningErrors.missionNotFound();
+    if (!mission || !ownsCase(customer, mission, 'act')) throw CleaningErrors.missionNotFound();
     return mission;
   }
 }
