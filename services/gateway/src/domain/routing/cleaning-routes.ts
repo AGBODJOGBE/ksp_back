@@ -394,6 +394,17 @@ export const CLEANING_ROUTES = [
     rateLimit: 'authenticated',
     requiresKnownClient: false,
   },
+  // Planification en lot des dates restantes du plan de passages (ADR-052) : clé obligatoire.
+  {
+    operationId: 'scheduleCleaningInterventionBatch',
+    method: 'POST',
+    path: '/api/v1/admin/cleaning/missions/{id}/interventions/batch',
+    grpc: `${ADMIN}/ScheduleInterventionBatch`,
+    access: { level: 'authenticated', anyRole: SUPERVISION, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+    idempotencyKey: 'required',
+  },
   {
     operationId: 'recordCleaningPayment',
     method: 'POST',

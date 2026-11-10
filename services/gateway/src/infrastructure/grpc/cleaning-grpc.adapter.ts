@@ -11,6 +11,7 @@ import {
   type GroupMeasurementBody,
   type MeasurementBody,
   type GroupQuotesInput,
+  type InterventionBatchInput,
   type ScheduleInput,
   type LocationCorrectionInput,
   type VisitFilters,
@@ -328,6 +329,35 @@ export class CleaningGrpcAdapter implements CleaningApi {
         reason: entry.reason,
       })),
       missions: res.missions.map(presentMission),
+    };
+  }
+
+  async scheduleInterventionBatch(
+    id: string,
+    input: InterventionBatchInput,
+    idempotencyKey: string,
+  ): Promise<Json> {
+    const res = await this.write('scheduleInterventionBatch', (m) =>
+      this.clients.admin.scheduleInterventionBatch(
+        {
+          missionId: id,
+          dates: input.dates ?? [],
+          until: input.until ?? '',
+          startTime: input.startTime ?? '',
+          durationMinutes: input.durationMinutes,
+          agentIds: input.agentIds ?? [],
+          teamId: input.teamId ?? '',
+          skipConflicts: input.skipConflicts ?? false,
+          idempotencyKey,
+        },
+        m,
+      ),
+    );
+    return {
+      mission: presentMission(res.mission),
+      interventionIds: res.interventionIds,
+      scheduledDates: res.scheduledDates,
+      skipped: res.skipped.map((conflict) => ({ date: conflict.date, agentIds: conflict.agentIds })),
     };
   }
 

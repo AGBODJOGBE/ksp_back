@@ -376,6 +376,19 @@ export const cleaningBodies = {
     agentIds: z.array(uuid).max(50).optional(),
     teamId: uuid.optional(),
   }),
+  // Planification en lot (ADR-052) : `dates` ou `until`, pas les deux (contrôlé par cleaning).
+  scheduleCleaningInterventionBatch: z.strictObject({
+    dates: z.array(day).min(1).max(1000).optional(),
+    until: day.optional(),
+    startTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional(),
+    durationMinutes: int(1, 1440),
+    agentIds: z.array(uuid).max(50).optional(),
+    teamId: uuid.optional(),
+    skipConflicts: z.boolean().optional(),
+  }),
   recordCleaningPayment: z.strictObject({
     amount: z.number().int().min(1),
     method: z.enum(['cash', 'mobile_money_offline']),

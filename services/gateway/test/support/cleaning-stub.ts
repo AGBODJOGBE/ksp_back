@@ -585,6 +585,12 @@ const DEFAULTS: Record<Method, () => unknown> = {
     communeApplied: true,
   }),
   previewSchedule: () => ({ preview: protoSchedulePreview }),
+  scheduleInterventionBatch: () => ({
+    mission: protoMission,
+    interventionIds: [IDS.intervention],
+    scheduledDates: ['2026-11-12'],
+    skipped: [{ date: '2026-11-05', agentIds: [IDS.agent] }],
+  }),
   getPlaceCatalog: () => ({
     placeTypes: [
       {

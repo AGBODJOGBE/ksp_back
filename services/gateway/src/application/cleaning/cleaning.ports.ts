@@ -259,6 +259,21 @@ export interface GroupQuotesInput {
   quotes: (Omit<QuoteInput, 'proposedSlots' | 'validityDays' | 'schedule'> & { requestId: string })[];
 }
 
+/** Planification en lot des dates restantes du plan de passages (ADR-052). */
+export interface InterventionBatchInput {
+  /** Sous-ensemble des dates restantes ; absent : selon `until`. */
+  dates?: string[] | undefined;
+  /** Toutes les dates restantes jusqu'à cette date incluse ; absente (avec dates) : toutes. */
+  until?: string | undefined;
+  /** HH:mm ; absente : heure de début du plan. */
+  startTime?: string | undefined;
+  durationMinutes: number;
+  agentIds?: string[] | undefined;
+  teamId?: string | undefined;
+  /** Vrai : sauter les dates en conflit ; faux (défaut) : tout ou rien. */
+  skipConflicts?: boolean | undefined;
+}
+
 export interface GroupInterventionsInput {
   missionIds?: string[] | undefined;
   scheduledStart: string;
@@ -352,6 +367,7 @@ export interface CleaningApi {
       teamId?: string | undefined;
     },
   ): Promise<Json>;
+  scheduleInterventionBatch(id: string, input: InterventionBatchInput, idempotencyKey: string): Promise<Json>;
   /** Idempotency-Key facultative : vide, aucun contrôle de rejeu. */
   recordPayment(
     id: string,

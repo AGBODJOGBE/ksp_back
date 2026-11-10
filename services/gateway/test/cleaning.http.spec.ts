@@ -1288,6 +1288,46 @@ describe('gateway → cleaning', () => {
     expect(cleaning.stub.last('scheduleIntervention')!.request).toMatchObject({ scheduledStart: '' });
   });
 
+  it('planification en lot : clé obligatoire transmise, dates sautées, conflits en 409 avec leurs dates', async () => {
+    const url = `/api/v1/admin/cleaning/missions/${IDS.mission}/interventions/batch`;
+    const body = { until: '2026-12-31', durationMinutes: 120, agentIds: [IDS.agent], skipConflicts: true };
+    const missing = await backoffice(http().post(url), staff).send(body);
+    expect(missing.status).toBe(400);
+    expect(cleaning.stub.last('scheduleInterventionBatch')).toBeUndefined();
+
+    const res = await backoffice(http().post(url), staff).set('Idempotency-Key', 'lot-cle-0001').send(body);
+    expect(res.status).toBe(200);
+    expect(cleaning.stub.last('scheduleInterventionBatch')!.request).toEqual({
+      missionId: IDS.mission,
+      dates: [],
+      until: '2026-12-31',
+      startTime: '',
+      durationMinutes: 120,
+      agentIds: [IDS.agent],
+      teamId: '',
+      skipConflicts: true,
+      idempotencyKey: 'lot-cle-0001',
+    });
+    expect(res.body).toMatchObject({
+      mission: { id: IDS.mission, scheduledDates: ['2026-11-05', '2026-11-12'] },
+      interventionIds: [IDS.intervention],
+      scheduledDates: ['2026-11-12'],
+      skipped: [{ date: '2026-11-05', agentIds: [IDS.agent] }],
+    });
+
+    const conflicts = [{ date: '2026-11-05', agentIds: [IDS.agent] }];
+    cleaning.stub.on('scheduleInterventionBatch', () =>
+      Promise.reject(
+        AppError.conflict('CLEANING_TEAM_UNAVAILABLE', 'Pris.', { agentIds: [IDS.agent], conflicts }),
+      ),
+    );
+    const refused = await backoffice(http().post(url), staff)
+      .set('Idempotency-Key', 'lot-cle-0002')
+      .send({ durationMinutes: 120, agentIds: [IDS.agent] });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatchObject({ code: 'CLEANING_TEAM_UNAVAILABLE', details: { conflicts } });
+  });
+
   it('planification commune des missions d’un groupe ; conflit d’agenda en 409', async () => {
     const url = `/api/v1/admin/cleaning/mission-groups/${IDS.group}/interventions`;
     const body = { scheduledStart: '2026-11-05T08:00:00Z', durationMinutes: 180, agentIds: [IDS.agent] };
