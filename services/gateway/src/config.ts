@@ -1,7 +1,11 @@
 import { requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 import { type ClientOrigins } from './domain/client/client-kind';
-import { DEFAULT_RATE_LIMITS, type RateLimitTable } from './domain/rate-limit/rate-limits';
+import {
+  DEFAULT_AUTHENTICATED_IP_LIMIT,
+  DEFAULT_RATE_LIMITS,
+  type RateLimitTable,
+} from './domain/rate-limit/rate-limits';
 
 /** Liste d'origines séparées par des virgules, chacune de la forme https://hôte[:port], sans chemin. */
 const origins = z
@@ -92,6 +96,8 @@ export const configSchema = z
 
     RATE_LIMIT_PUBLIC_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.public.limit),
     RATE_LIMIT_AUTHENTICATED_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.authenticated.limit),
+    /** Routes connectées, par adresse IP, avant la vérification du jeton (ADR-051). */
+    RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE: perMinute(DEFAULT_AUTHENTICATED_IP_LIMIT.limit),
     RATE_LIMIT_OTP_REQUEST_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.otp_request.limit),
     RATE_LIMIT_OTP_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.otp_verify.limit),
     RATE_LIMIT_MFA_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.mfa_verify.limit),
@@ -227,6 +233,10 @@ export function rateLimitsFrom(config: GatewayConfig): RateLimitTable {
       limit: config.RATE_LIMIT_DOCUMENT_LINK_CODE_VERIFY_PER_MINUTE,
     },
   };
+}
+
+export function authenticatedIpLimitFrom(config: GatewayConfig): { limit: number; windowSeconds: number } {
+  return { ...DEFAULT_AUTHENTICATED_IP_LIMIT, limit: config.RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE };
 }
 
 /** Valeur du réglage « trust proxy » d'Express : un nombre de sauts, ou une liste. */

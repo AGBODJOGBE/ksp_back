@@ -1,7 +1,12 @@
 import { AppError, type VerifiedAccessToken } from '@ksp/platform';
 import { checkAccess } from '../../domain/access/access-policy';
 import { type ClientKind, type ClientOrigins, resolveClientKind } from '../../domain/client/client-kind';
-import { rateLimitKey, type RateLimitTable } from '../../domain/rate-limit/rate-limits';
+import {
+  authenticatedIpKey,
+  DEFAULT_AUTHENTICATED_IP_LIMIT,
+  rateLimitKey,
+  type RateLimitTable,
+} from '../../domain/rate-limit/rate-limits';
 import { type RouteDefinition } from '../../domain/routing/route-manifest';
 import { type AccessTokenVerifierPort, type Clock, type RateLimiter } from './access.ports';
 
@@ -11,6 +16,8 @@ export interface IncomingRequest {
   authorization?: string | undefined;
   origin?: string | undefined;
   appVersion?: string | undefined;
+  /** En-tête Idempotency-Key brut. */
+  idempotencyKey?: string | undefined;
 }
 
 export interface AuthorizedRequest {
@@ -19,9 +26,13 @@ export interface AuthorizedRequest {
   caller: VerifiedAccessToken | null;
 }
 
+/** Format d'une clé d'idempotence, le même pour toutes les routes. */
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,100}$/;
+
 /**
  * Contrôles de la gateway avant tout appel à un service (UC-GW-02, 03, 04) :
- * limite par adresse IP, type de client, jeton d'accès, exigence d'accès, limite par utilisateur.
+ * limite par adresse IP, type de client, limite par adresse IP des routes connectées, jeton d'accès,
+ * exigence d'accès, limite par utilisateur, clé d'idempotence exigée par le manifeste (ADR-051).
  */
 export class AuthorizeRequestUseCase {
   constructor(
@@ -30,6 +41,10 @@ export class AuthorizeRequestUseCase {
     private readonly origins: ClientOrigins,
     private readonly limits: RateLimitTable,
     private readonly clock: Clock,
+    private readonly authenticatedIpLimit: {
+      limit: number;
+      windowSeconds: number;
+    } = DEFAULT_AUTHENTICATED_IP_LIMIT,
   ) {}
 
   async execute(route: RouteDefinition, request: IncomingRequest): Promise<AuthorizedRequest> {
@@ -44,6 +59,8 @@ export class AuthorizeRequestUseCase {
 
     let caller: VerifiedAccessToken | null = null;
     if (route.access.level === 'authenticated') {
+      // Avant le jeton : un jeton invalide compte aussi (ADR-051).
+      await this.consume(authenticatedIpKey(request.ip), this.authenticatedIpLimit);
       caller = await this.verifier.verify(bearerToken(request.authorization));
       const decision = checkAccess(route.access, caller.user, Math.floor(this.clock.now().getTime() / 1000));
       if (!decision.allowed && decision.reason === 'account_deletion_pending') {
@@ -68,6 +85,7 @@ export class AuthorizeRequestUseCase {
         );
       }
     }
+    checkIdempotencyKey(route.idempotencyKey, request.idempotencyKey);
     return { clientKind, caller };
   }
 
@@ -82,6 +100,18 @@ export class AuthorizeRequestUseCase {
       );
     }
   }
+}
+
+/**
+ * Clé d'idempotence d'après la ligne du manifeste : obligatoire (écriture sensible) ou facultative ;
+ * présente, elle a toujours le même format. Sans exigence au manifeste, l'en-tête est ignoré.
+ */
+function checkIdempotencyKey(requirement: RouteDefinition['idempotencyKey'], key: string | undefined): void {
+  if (!requirement || (requirement === 'optional' && key === undefined)) return;
+  if (key !== undefined && IDEMPOTENCY_KEY.test(key)) return;
+  throw AppError.invalid('GATEWAY_VALIDATION_FAILED', 'La requête est invalide.', {
+    fields: [{ field: 'Idempotency-Key', reason: key === undefined ? 'invalid_type' : 'invalid_format' }],
+  });
 }
 
 function bearerToken(header: string | undefined): string {

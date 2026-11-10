@@ -50,7 +50,13 @@ import {
   VerifyOtpUseCase,
 } from './application/identity/identity.use-cases';
 import { GetPublicKeysUseCase } from './application/keys/public-keys';
-import { clientOriginsFrom, DEV_IDENTITY_JWKS_URL, type GatewayConfig, rateLimitsFrom } from './config';
+import {
+  authenticatedIpLimitFrom,
+  clientOriginsFrom,
+  DEV_IDENTITY_JWKS_URL,
+  type GatewayConfig,
+  rateLimitsFrom,
+} from './config';
 import { AccountAdminGrpcAdapter } from './infrastructure/grpc/account-admin-grpc.adapter';
 import { BillingGrpcAdapter } from './infrastructure/grpc/billing-grpc.adapter';
 import { CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
@@ -400,6 +406,7 @@ export class AppModule {
               clientOriginsFrom(config),
               rateLimitsFrom(config),
               clock,
+              authenticatedIpLimitFrom(config),
             ),
         },
         RouteGuard,
