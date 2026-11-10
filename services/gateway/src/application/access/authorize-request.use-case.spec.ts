@@ -117,4 +117,64 @@ describe('AuthorizeRequestUseCase', () => {
     await rejection(authorize.execute(route('getMe'), { ip: '1.2.3.4', authorization: 'Bearer forged' }));
     expect(limiter.counts.get('authenticated:user:u-1')).toBe(2);
   });
+
+  it('route connectée : limite par adresse IP avant la vérification du jeton', async () => {
+    const { authorize, limiter, verifier } = setup();
+    const verify = jest.spyOn(verifier, 'verify');
+    await rejection(authorize.execute(route('getMe'), { ip: '1.2.3.4', authorization: 'Bearer forged' }));
+    expect(limiter.counts.get('authenticated_ip:ip:1.2.3.4')).toBe(1);
+    // Rafale de jetons forgés depuis une adresse : refusée avant toute vérification de signature.
+    const limited = new AuthorizeRequestUseCase(
+      verifier,
+      limiter,
+      origins,
+      DEFAULT_RATE_LIMITS,
+      { now: () => new Date() },
+      { limit: 1, windowSeconds: 60 },
+    );
+    verify.mockClear();
+    const error = await rejection(
+      limited.execute(route('getMe'), { ip: '1.2.3.4', authorization: 'Bearer forged' }),
+    );
+    expect(error).toMatchObject({ kind: 'RESOURCE_EXHAUSTED', code: 'GATEWAY_RATE_LIMITED' });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  describe('clé d’idempotence d’après le manifeste', () => {
+    const required: RouteDefinition = { ...route('getMe'), idempotencyKey: 'required' };
+    const optional: RouteDefinition = { ...route('getMe'), idempotencyKey: 'optional' };
+    const caller = { ip: '1.2.3.4', authorization: 'Bearer good' };
+
+    it('obligatoire : absente ou mal formée → 400 GATEWAY_VALIDATION_FAILED', async () => {
+      const { authorize } = setup();
+      for (const [idempotencyKey, reason] of [
+        [undefined, 'invalid_type'],
+        ['court', 'invalid_format'],
+        ['espace interdite', 'invalid_format'],
+      ] as const) {
+        const error = await rejection(authorize.execute(required, { ...caller, idempotencyKey }));
+        expect(error).toMatchObject({
+          kind: 'INVALID_ARGUMENT',
+          code: 'GATEWAY_VALIDATION_FAILED',
+          details: { fields: [{ field: 'Idempotency-Key', reason }] },
+        });
+      }
+      await expect(
+        authorize.execute(required, { ...caller, idempotencyKey: 'commande-0001' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('facultative : absente acceptée, mal formée refusée', async () => {
+      const { authorize } = setup();
+      await expect(authorize.execute(optional, caller)).resolves.toBeDefined();
+      const error = await rejection(authorize.execute(optional, { ...caller, idempotencyKey: 'court' }));
+      expect(error.code).toBe('GATEWAY_VALIDATION_FAILED');
+    });
+
+    it('jeton vérifié avant la clé : 401 plutôt que 400', async () => {
+      const { authorize } = setup();
+      const error = await rejection(authorize.execute(required, { ip: '1.2.3.4' }));
+      expect(error.kind).toBe('UNAUTHENTICATED');
+    });
+  });
 });

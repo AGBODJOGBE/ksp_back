@@ -1,0 +1,16 @@
+# Contexte de construction des images (docker build depuis la racine, ADR-051) : seules les sources
+# entrent dans l'image. Dépendances et sorties sont reconstruites par le Dockerfile ; aucun secret local.
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/*.log
+**/.env
+**/.env.*
+!**/.env.example
+# Client Prisma : régénéré dans l'image pour sa plateforme (Linux musl).
+**/prisma/generated
+.git
+.github
+.husky
+docs

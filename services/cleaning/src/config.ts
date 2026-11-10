@@ -1,4 +1,4 @@
-import { baseServiceConfigSchema } from '@ksp/platform';
+import { baseServiceConfigSchema, requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 
 /** Booléen d'environnement : « true » ou « false » (zod coerce.boolean prendrait « false » pour vrai). */
@@ -60,7 +60,9 @@ export const configSchema = baseServiceConfigSchema
         'IDENTITY_TOKEN_URL et SERVICE_CLIENT_SECRET sont obligatoires en production : cleaning lit les noms affichés au back-office dans identity (ADR-022, ADR-029).',
       path: ['SERVICE_CLIENT_SECRET'],
     },
-  );
+  )
+  // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
+  .superRefine(requireGrpcAddressesInProduction);
 
 function isTimeZone(value: string): boolean {
   try {

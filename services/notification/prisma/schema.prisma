@@ -79,6 +79,8 @@ model Notification {
   /// Au-delà, le message n'est plus envoyé (ttl_seconds de l'appel) ; null : pas de limite.
   expiresAt         DateTime?             @map("expires_at") @db.Timestamptz(3)
   acceptedAt        DateTime?             @map("accepted_at") @db.Timestamptz(3)
+  /// Dernière reprise d'une réservation restée « pending » (envoi jamais fait, ADR-047).
+  claimedAt         DateTime?             @map("claimed_at") @db.Timestamptz(3)
   failedAt          DateTime?             @map("failed_at") @db.Timestamptz(3)
 
   /// Envois d'un compte, retrouvés à son anonymisation (ADR-036).

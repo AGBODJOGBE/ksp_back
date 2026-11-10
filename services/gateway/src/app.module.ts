@@ -13,11 +13,11 @@ import {
   createLoggerModule,
   GrpcCaller,
   grpcClientOptions,
-  HealthController,
   ReadinessRegistry,
   SERVICE_TOKEN_PROVIDER,
   ServiceTokenClient,
   type ServiceTokenProvider,
+  ShutdownState,
 } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
@@ -49,7 +49,13 @@ import {
   VerifyOtpUseCase,
 } from './application/identity/identity.use-cases';
 import { GetPublicKeysUseCase } from './application/keys/public-keys';
-import { clientOriginsFrom, DEV_IDENTITY_JWKS_URL, type GatewayConfig, rateLimitsFrom } from './config';
+import {
+  authenticatedIpLimitFrom,
+  clientOriginsFrom,
+  DEV_IDENTITY_JWKS_URL,
+  type GatewayConfig,
+  rateLimitsFrom,
+} from './config';
 import { AccountAdminGrpcAdapter } from './infrastructure/grpc/account-admin-grpc.adapter';
 import { BillingGrpcAdapter } from './infrastructure/grpc/billing-grpc.adapter';
 import { CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
@@ -64,6 +70,7 @@ import { HttpJwksSource } from './infrastructure/keys/http-jwks.source';
 import { KeysReadiness } from './infrastructure/keys/keys-readiness';
 import { type JwksSource, SigningKeysCache } from './infrastructure/keys/signing-keys-cache';
 import { InMemoryRateLimiter } from './infrastructure/rate-limit/in-memory-rate-limiter';
+import { createRedisClient, RedisRateLimiter } from './infrastructure/rate-limit/redis-rate-limiter';
 import { SystemClock } from './infrastructure/system/system-clock';
 import { AccountAdminHttpController } from './interfaces/http/account-admin.controller';
 import { BillingHttpController } from './interfaces/http/billing.controller';
@@ -129,8 +136,8 @@ export class AppModule {
           grpcClientOptions(DOCUMENT_GRPC_CLIENT, 'document', config.DOCUMENT_GRPC_URL),
         ]),
       ],
+      // Santé et métriques : port interne seulement (main.ts, ADR-051).
       controllers: [
-        HealthController,
         IdentityHttpController,
         JwksHttpController,
         OrganizationHttpController,
@@ -147,6 +154,7 @@ export class AppModule {
       ],
       providers: [
         ReadinessRegistry,
+        ShutdownState,
         { provide: CLOCK, useValue: new SystemClock() },
         {
           provide: JWKS_SOURCE,
@@ -386,7 +394,11 @@ export class AppModule {
         {
           provide: RATE_LIMITER,
           inject: [CLOCK],
-          useFactory: (clock: Clock): RateLimiter => new InMemoryRateLimiter(clock),
+          // Compteurs communs aux répliques dans Redis (production) ; en mémoire sans REDIS_URL.
+          useFactory: (clock: Clock): RateLimiter =>
+            config.REDIS_URL
+              ? new RedisRateLimiter(createRedisClient(config.REDIS_URL), new InMemoryRateLimiter(clock))
+              : new InMemoryRateLimiter(clock),
         },
         {
           provide: AuthorizeRequestUseCase,
@@ -398,6 +410,7 @@ export class AppModule {
               clientOriginsFrom(config),
               rateLimitsFrom(config),
               clock,
+              authenticatedIpLimitFrom(config),
             ),
         },
         RouteGuard,

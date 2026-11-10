@@ -1,0 +1,44 @@
+# Mises à jour proposées chaque semaine (ADR-051) : dépendances npm du dépôt (pnpm), actions de la CI
+# et images de base des services. Les correctifs de sécurité arrivent dès leur publication.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      nestjs:
+        patterns: ['@nestjs/*']
+      opentelemetry:
+        patterns: ['@opentelemetry/*']
+      prisma:
+        patterns: ['prisma', '@prisma/*']
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: docker
+    directories:
+      - /services/*
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: build

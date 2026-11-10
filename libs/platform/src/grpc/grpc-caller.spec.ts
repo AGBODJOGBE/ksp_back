@@ -97,4 +97,15 @@ describe('GrpcCaller', () => {
     }
     expect(caller.isOpen).toBe(false);
   });
+
+  it('n’ouvre pas le coupe-circuit pour des erreurs internes : le service répond, il n’est pas en panne', async () => {
+    const caller = new GrpcCaller({ target: 'wallet', breaker: { volumeThreshold: 3 } });
+    const internal = () => ({ code: GrpcStatus.INTERNAL, details: 'bug' });
+    for (let i = 0; i < 5; i += 1) {
+      await expect(caller.call('Debit', () => throwError(internal))).rejects.toMatchObject({
+        kind: 'INTERNAL',
+      });
+    }
+    expect(caller.isOpen).toBe(false);
+  });
 });

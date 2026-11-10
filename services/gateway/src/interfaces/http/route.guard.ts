@@ -9,7 +9,7 @@ export const ROUTE_DEFINITION = 'ksp:gateway:route';
 
 /**
  * Contrôles de la route avant le contrôleur : limite d'appels, type de client, jeton d'accès,
- * exigence d'accès, d'après sa ligne du manifeste de routage.
+ * exigence d'accès, clé d'idempotence, d'après sa ligne du manifeste de routage.
  */
 @Injectable()
 export class RouteGuard implements CanActivate {
@@ -29,6 +29,7 @@ export class RouteGuard implements CanActivate {
       authorization: header(request, 'authorization'),
       origin: header(request, 'origin'),
       appVersion: header(request, 'x-app-version'),
+      idempotencyKey: header(request, 'idempotency-key'),
     });
     request.gateway = { route, ...result };
     return true;
