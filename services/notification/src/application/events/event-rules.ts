@@ -16,6 +16,14 @@ export interface NotificationIntent {
    * Quand la fiche est connue, sa raison sociale remplace la variable `organization_name`.
    */
   billingOrganizationId?: string;
+  /**
+   * Message adressé à l'organisation (factures, ADR-050) : `userId` est ignoré, ses administrateurs
+   * actuels (annuaire identity) le reçoivent dans l'espace et par leurs canaux, jamais un ancien
+   * membre. Avec un e-mail de facturation vérifié, l'e-mail part une seule fois à cette adresse, et
+   * les administrateurs le reçoivent sans e-mail ; sinon chacun à son adresse vérifiée. Sa raison
+   * sociale remplace `organization_name`. Organisation introuvable : personne n'est prévenu.
+   */
+  organizationId?: string;
 }
 
 /** Réglages utiles à la rédaction des messages. */

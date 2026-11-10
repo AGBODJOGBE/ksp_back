@@ -27,6 +27,8 @@ export interface OrganizationBillingContact {
   legalName: string;
   /** Adresse vérifiée par code ; null si l'organisation n'en a pas confirmé. */
   billingEmail: string | null;
+  /** Administrateurs actuels (membres org_admin non retirés), destinataires des factures. */
+  adminUserIds: string[];
 }
 
 /**
