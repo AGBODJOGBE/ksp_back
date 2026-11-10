@@ -38,7 +38,14 @@ describe('gateway → cleaning', () => {
     keys = await TestKeys.create();
     identity = await startIdentityStub(keys);
     cleaning = await startCleaningStub(keys);
-    app = await startGateway({ identityUrl: identity.url, cleaningUrl: cleaning.url, keys });
+    app = await startGateway({
+      identityUrl: identity.url,
+      cleaningUrl: cleaning.url,
+      keys,
+      // Simulations et aperçus de plans partagent la limite publique (20 par minute) : relevée ici,
+      // la limite elle-même est testée ailleurs.
+      env: { RATE_LIMIT_CLEANING_SIMULATION_PER_MINUTE: '1000' },
+    });
     customer = await keys.accessToken();
     staff = await keys.accessToken({
       claims: {
