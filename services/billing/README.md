@@ -31,7 +31,16 @@ partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/bill
   identity indisponible → aucune émission, reprise au passage suivant (le passage en impayée
   continue) ; organisation introuvable → contrat reporté et journalisé. Les factures émises
   avant cet en-tête n'en ont pas (`organization` nul).
-- **Numérotation** `FAC-<année>-<000001>`, continue par année (compteur dans la transaction).
+- **Prestation ponctuelle** (ADR-049) : facturée en une fois, en entier, sur la facture du mois de son
+  passage (heure du Bénin) ; rien si elle est annulée ce jour-là ou avant (`one_off`).
+- **Montant recalculé sous le verrou** du contrat à l'émission (ADR-049) : un événement enregistré
+  entre la lecture et l'émission compte. Les mois s'ajoutent au calendrier du Bénin.
+- **Numérotation** `FAC-<année>-<000001>`, continue par année (compteur dans la transaction) ; année de
+  la période facturée au Bénin (ADR-049) : la facture de décembre émise en janvier garde son année.
+- **Appelants** (ADR-049) : méthodes du client et du back-office réservées à la gateway
+  (`BILLING_CALLER_FORBIDDEN` sinon) ; `GetInvoiceAmountDue` à payment, `HasPendingObligations` à
+  identity, `WalletDebitCheckService.GetWalletDebitStatus` à wallet (un paiement par portefeuille de la
+  facture cite-t-il ce débit ?).
 - **Statuts** : `pending_payment` jusqu'à l'échéance (émission + délai réglable, 10 jours),
   puis `overdue` ; `paid` quand les paiements atteignent le total ; `cancelled` réservé.
 - **Tâche planifiée interne** (`BILLING_SCHEDULER_INTERVAL_MS`, 15 minutes) : émission puis
