@@ -1,7 +1,7 @@
 # Image du service payment. À construire depuis la racine du dépôt :
 #   docker build -f services/payment/Dockerfile -t ksp/payment .
 
-FROM node:22-alpine AS base
+FROM node:26-alpine AS base
 RUN corepack enable && apk add --no-cache openssl
 WORKDIR /repo
 
@@ -17,7 +17,7 @@ RUN pnpm --filter "@ksp/payment-service" deploy --legacy --prod --ignore-scripts
 # Le client Prisma est généré dans le dossier du service, inclus par le déploiement.
 RUN cp -r services/payment/prisma/generated /out/prisma/generated
 
-FROM node:22-alpine AS runtime
+FROM node:26-alpine AS runtime
 ENV NODE_ENV=production
 # Le moteur Prisma a besoin d’OpenSSL.
 RUN apk add --no-cache openssl
