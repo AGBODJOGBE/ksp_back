@@ -38,8 +38,12 @@ export interface CallOptions {
 
 type Invoke<T> = (metadata: Metadata) => Observable<T> | Promise<T>;
 
-/** Erreurs d'infrastructure : elles comptent pour le coupe-circuit et autorisent une nouvelle tentative. */
-const INFRASTRUCTURE_KINDS = new Set(['UNAVAILABLE', 'DEADLINE_EXCEEDED', 'INTERNAL']);
+/**
+ * Pannes du service appelé : elles seules comptent pour le coupe-circuit et autorisent une nouvelle
+ * tentative. Une erreur interne (INTERNAL) vient d'un service qui répond : un défaut sur une méthode
+ * ne doit pas couper toutes les autres (ADR-051).
+ */
+const OUTAGE_KINDS = new Set(['UNAVAILABLE', 'DEADLINE_EXCEEDED']);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -60,7 +64,7 @@ export class GrpcCaller {
       rollingCountTimeout: options.breaker?.rollingCountTimeout ?? 10_000,
       resetTimeout: options.breaker?.resetTimeout ?? 30_000,
       // Une erreur métier (introuvable, conflit…) ne signifie pas que le service est en panne.
-      errorFilter: (error: unknown) => !INFRASTRUCTURE_KINDS.has(fromGrpcError(error).kind),
+      errorFilter: (error: unknown) => !OUTAGE_KINDS.has(fromGrpcError(error).kind),
     });
   }
 
@@ -78,8 +82,7 @@ export class GrpcCaller {
         )) as T;
       } catch (error) {
         lastError = this.normalize(error);
-        const retryable = lastError.kind === 'UNAVAILABLE' || lastError.kind === 'DEADLINE_EXCEEDED';
-        if (!retryable || this.breaker.opened || attempt === attempts - 1) break;
+        if (!OUTAGE_KINDS.has(lastError.kind) || this.breaker.opened || attempt === attempts - 1) break;
         await sleep((this.options.retryBackoffMs ?? 100) * (attempt + 1));
       }
     }
