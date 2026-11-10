@@ -2,7 +2,7 @@
 #   docker build -f services/gateway/Dockerfile -t ksp/gateway .
 # Pas de base de données ni de Prisma : API publique sur 3000, santé et métriques sur 3100 (interne).
 
-FROM node:22-alpine AS base
+FROM node:26-alpine AS base
 RUN corepack enable
 WORKDIR /repo
 
@@ -15,7 +15,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts --filter "@ksp/gateway-servi
 RUN pnpm --filter "@ksp/gateway-service..." run build
 RUN pnpm --filter "@ksp/gateway-service" deploy --legacy --prod --ignore-scripts /out
 
-FROM node:22-alpine AS runtime
+FROM node:26-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
