@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { type ChannelModel, type ConfirmChannel, connect } from 'amqplib';
+import { rabbitMqConnectionUp } from '../metrics';
 
 /**
  * Connexion RabbitMQ partagée par le publieur et les consommateurs d'un service.
@@ -9,17 +10,26 @@ export class RabbitMqConnection {
   private readonly logger = new Logger(RabbitMqConnection.name);
   private connection?: Promise<ChannelModel>;
   private publishChannel?: Promise<ConfirmChannel>;
+  private closedByService = false;
 
   constructor(private readonly url: string) {}
+
+  /** Vrai après `close()` : les abonnements perdus ne sont plus rétablis. */
+  get closed(): boolean {
+    return this.closedByService;
+  }
 
   private getConnection(): Promise<ChannelModel> {
     if (!this.connection) {
       this.connection = connect(this.url).then((connection) => {
+        rabbitMqConnectionUp().set(1);
         connection.on('error', (error: Error) =>
           this.logger.error(`Connexion RabbitMQ en erreur : ${error.message}`),
         );
         connection.on('close', () => {
-          this.logger.warn('Connexion RabbitMQ fermée ; elle sera rétablie au prochain usage.');
+          rabbitMqConnectionUp().set(0);
+          if (!this.closedByService)
+            this.logger.warn('Connexion RabbitMQ fermée ; elle sera rétablie au prochain usage.');
           this.connection = undefined;
           this.publishChannel = undefined;
         });
@@ -70,6 +80,7 @@ export class RabbitMqConnection {
   }
 
   async close(): Promise<void> {
+    this.closedByService = true;
     const connection = this.connection;
     this.connection = undefined;
     this.publishChannel = undefined;
