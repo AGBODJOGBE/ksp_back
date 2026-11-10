@@ -7,6 +7,7 @@ import {
   appendToOutbox,
   type SqlExecutor,
   SqlInboxStore,
+  SqlMessageRetention,
   SqlOutboxStore,
   type TransactionalSqlClient,
 } from '../src/messaging/sql-stores';
@@ -261,5 +262,39 @@ describeWithDatabase('Outbox et inbox SQL (PostgreSQL)', () => {
       }),
     ).rejects.toThrow('échec');
     await expect(inbox.runOnce(eventId, 'notification', async () => undefined)).resolves.toBe('processed');
+  });
+
+  it('compte les événements en attente et mis de côté', async () => {
+    const [parked, waiting, retried, published] = [envelope(), envelope(), envelope(), envelope()];
+    for (const event of [parked, waiting, retried, published]) await appendToOutbox(client, event);
+    await pool.query('UPDATE outbox SET parked_at = now() WHERE id = $1', [parked.eventId]);
+    await pool.query('UPDATE outbox SET published_at = now() WHERE id = $1', [published.eventId]);
+    await expect(new SqlOutboxStore(client).stats()).resolves.toEqual({ pending: 2, parked: 1 });
+  });
+
+  it('purge l’outbox publiée et l’inbox au-delà de la rétention, rien d’autre', async () => {
+    const old = [envelope(), envelope()];
+    const recent = envelope();
+    const pending = envelope();
+    for (const event of [...old, recent, pending]) await appendToOutbox(client, event);
+    await pool.query(
+      "UPDATE outbox SET published_at = now() - interval '31 days' WHERE id = ANY($1::uuid[])",
+      [old.map((event) => event.eventId)],
+    );
+    await pool.query("UPDATE outbox SET published_at = now() - interval '29 days' WHERE id = $1", [
+      recent.eventId,
+    ]);
+    await pool.query(
+      "INSERT INTO processed_events (event_id, consumer, processed_at) VALUES ($1, 'a', now() - interval '31 days'), ($2, 'a', now())",
+      [uuidv7(), uuidv7()],
+    );
+
+    await expect(new SqlMessageRetention(client, 30, 1).purge()).resolves.toBe(3);
+    const { rows } = await pool.query('SELECT id::text FROM outbox ORDER BY id');
+    expect(rows.map((row: { id: string }) => row.id).sort()).toEqual(
+      [recent.eventId, pending.eventId].sort(),
+    );
+    const { rows: processed } = await pool.query('SELECT count(*)::int AS count FROM processed_events');
+    expect(processed[0].count).toBe(1);
   });
 });
