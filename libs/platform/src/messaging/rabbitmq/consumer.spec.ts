@@ -74,7 +74,7 @@ describe('handleDelivery', () => {
     const result = await handleDelivery(
       channel,
       queues,
-      message(JSON.stringify(env), { 'x-attempts': 1 }),
+      message(JSON.stringify(env), { 'x-attempts': 1, 'x-delivery-count': 3 }),
       failing,
       options,
       silentLogger,
@@ -86,6 +86,7 @@ describe('handleDelivery', () => {
       expect.objectContaining({ headers: expect.objectContaining({ 'x-attempts': 2 }) }),
       expect.any(Function),
     );
+    expect(channel.sendToQueue.mock.calls[0][2]).not.toHaveProperty(['headers', 'x-delivery-count']);
     expect(channel.ack).toHaveBeenCalledTimes(1);
   });
 

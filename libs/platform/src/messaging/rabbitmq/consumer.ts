@@ -94,11 +94,11 @@ export async function handleDelivery(
   const attempts = Number(headers[ATTEMPTS_HEADER] ?? 0);
 
   const copy = async (queue: string, extra: Record<string, unknown>): Promise<boolean> => {
+    // Le compteur de remises appartient à la file d'origine : une copie repart de zéro.
+    const kept: Record<string, unknown> = { ...headers, ...extra };
+    delete kept[DELIVERY_COUNT_HEADER];
     try {
-      await sendConfirmed(channel, queue, message.content, {
-        ...message.properties,
-        headers: { ...headers, ...extra },
-      });
+      await sendConfirmed(channel, queue, message.content, { ...message.properties, headers: kept });
       channel.ack(message);
       return true;
     } catch (error) {
