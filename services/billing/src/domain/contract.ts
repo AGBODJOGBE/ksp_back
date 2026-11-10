@@ -10,6 +10,8 @@
  * - Le dernier mois du contrat absorbe l'écart d'arrondi : hors suspension, la somme des
  *   factures vaut exactement le total. Un contrat annulé s'arrête au jour de l'annulation, sans
  *   absorption.
+ * - Prestation ponctuelle (ADR-049) : facturée en une fois, en entier, sur la facture du mois de
+ *   son passage ; rien si elle est annulée avant son jour.
  */
 export type BillingSource = 'cleaning';
 
@@ -31,6 +33,11 @@ export interface BillingContract {
   suspendedSince: Date | null;
   suspensions: SuspensionInterval[];
   lastResumedAt: Date | null;
+  /**
+   * Prestation ponctuelle (sans récurrence, ADR-049) : une seule facture, celle du mois du passage.
+   * Absent ou false : contrat récurrent, facturé au prorata des jours (contrats antérieurs compris).
+   */
+  oneOff?: boolean;
   /**
    * Nom de la prestation au moment de la confirmation (cleaning.booking.confirmed, ADR-035), repris
    * dans le libellé des lignes ; null ou absent : libellé générique.
@@ -119,6 +126,7 @@ function suspendedDaySet(
  * sont déduits ; la suspension en cours compte jusqu'à la fin de chaque mois concerné.
  */
 export function contractPeriods(contract: BillingContract): ContractPeriod[] {
+  if (contract.oneOff) return oneOffPeriods(contract);
   const firstDay = beninDay(contract.startsAt);
   const natural = beninDay(naturalEnd(contract));
   const terminated = contract.terminatedAt ? beninDay(contract.terminatedAt) : null;
@@ -168,6 +176,35 @@ export function contractPeriods(contract: BillingContract): ContractPeriod[] {
     }
   }
   return periods;
+}
+
+/**
+ * Prestation ponctuelle : le total en entier, sur le mois civil (Bénin) du jour du passage, émis à la
+ * fin de ce mois. Annulée ce jour-là ou avant : rien à facturer. Une suspension n'en déduit rien : le
+ * passage est fait ou la mission est annulée.
+ */
+function oneOffPeriods(contract: BillingContract): ContractPeriod[] {
+  const day = beninDay(contract.startsAt);
+  if (contract.terminatedAt && beninDay(contract.terminatedAt) <= day) return [];
+  const date = new Date(day * DAY_MS);
+  const year = date.getUTCFullYear();
+  const monthIndex = date.getUTCMonth();
+  const monthStart = dayOf(year, monthIndex);
+  const monthEnd = dayOf(year, monthIndex + 1);
+  return [
+    {
+      index: 1,
+      year,
+      month: monthIndex + 1,
+      start: beninMidnight(day),
+      end: beninMidnight(day + 1),
+      issueAt: beninMidnight(monthEnd),
+      daysInMonth: monthEnd - monthStart,
+      contractDays: 1,
+      suspendedDays: 0,
+      amount: contract.total,
+    },
+  ];
 }
 
 /**

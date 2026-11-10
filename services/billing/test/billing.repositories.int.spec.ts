@@ -249,8 +249,10 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
       },
     });
     await useCases.terminateContract.execute(cancellation);
-    expect((await deps.contracts.findById(missionId))?.terminatedAt).toEqual(
-      new Date('2026-11-20T08:00:00Z'),
-    );
+    const contract = await deps.contracts.findById(missionId);
+    expect(contract?.terminatedAt).toEqual(new Date('2026-11-20T08:00:00Z'));
+    // Prestation ponctuelle (ADR-049) : enregistrée comme telle, facturée en une fois.
+    expect(contract?.oneOff).toBe(true);
+    expect((await deps.contracts.findById(MISSION_ID))?.oneOff).toBe(false);
   });
 });

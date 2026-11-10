@@ -344,6 +344,61 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     ]);
   });
 
+  it('prestation ponctuelle : facturée en une fois, sur la facture du mois du passage (ADR-049)', async () => {
+    const ONE_OFF_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001';
+    const oneOff = booking(ORGANIZATION_ID, event(20));
+    await useCases.registerContract.execute({
+      ...oneOff,
+      payload: {
+        ...oneOff.payload,
+        missionId: ONE_OFF_ID,
+        total: { amount: 90_000, currency: 'XOF' },
+        plannedInterventions: 1,
+        recurrence: null,
+        // 20 novembre, 09:00 heure du Bénin : un mois de durée aurait coupé la prestation en deux.
+        startsAt: '2026-11-20T08:00:00.000Z',
+      },
+    });
+    world.clock.current = new Date('2027-01-05T00:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    const invoices = [...world.invoices.invoices.values()].filter((i) => i.contractId === ONE_OFF_ID);
+    expect(invoices.map((i) => [i.periodIndex, i.total, i.periodStart.toISOString()])).toEqual([
+      [1, 90_000, '2026-11-19T23:00:00.000Z'],
+    ]);
+    expect(invoices[0]!.issuedAt).toEqual(new Date('2027-01-05T00:00:00Z'));
+    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 0, deferredContractIds: [] });
+  });
+
+  it('prestation ponctuelle annulée avant son jour : rien n’est facturé', async () => {
+    const ONE_OFF_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1002';
+    const oneOff = booking(ORGANIZATION_ID, event(21));
+    await useCases.registerContract.execute({
+      ...oneOff,
+      payload: {
+        ...oneOff.payload,
+        missionId: ONE_OFF_ID,
+        recurrence: null,
+        startsAt: '2026-11-20T08:00:00.000Z',
+      },
+    });
+    await useCases.terminateContract.execute({
+      eventId: event(22),
+      type: 'cleaning.request.cancelled',
+      occurredAt: '2026-11-18T10:00:00Z',
+      payload: {
+        requestId: event(52),
+        missionId: ONE_OFF_ID,
+        customerId: CUSTOMER_ID,
+        organizationId: ORGANIZATION_ID,
+        cancelledBy: 'customer',
+        outcome: 'cancelled',
+      },
+    });
+    world.clock.current = new Date('2027-01-05T00:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    expect([...world.invoices.invoices.values()].filter((i) => i.contractId === ONE_OFF_ID)).toEqual([]);
+  });
+
   it('client : factures de son organisation active seulement ; autre client : 404', async () => {
     world.clock.current = new Date('2026-12-06T00:00:00Z');
     await useCases.issueDueInvoices.execute();
