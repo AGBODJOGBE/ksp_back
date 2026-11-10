@@ -1625,6 +1625,36 @@ export interface ScheduleInterventionRequest {
   teamId: string;
 }
 
+export interface ScheduleInterventionBatchRequest {
+  missionId: string;
+  /** Sous-ensemble des dates restantes du plan (AAAA-MM-JJ) ; vide : selon until. */
+  dates: string[];
+  /** Toutes les dates restantes jusqu'à cette date incluse ; vide (avec dates vide) : toutes. */
+  until: string;
+  /** HH:mm, heure locale ; vide : heure de début du plan. */
+  startTime: string;
+  durationMinutes: number;
+  agentIds: string[];
+  /** Facultatif : les membres de l'équipe s'ajoutent à agent_ids. */
+  teamId: string;
+  /** Vrai : planifier les dates libres et sauter les dates en conflit ; faux : tout ou rien. */
+  skipConflicts: boolean;
+  idempotencyKey: string;
+}
+
+/** Date sautée (ou en conflit) d'une planification en lot, avec ses agents déjà pris. */
+export interface BatchConflict {
+  date: string;
+  agentIds: string[];
+}
+
+export interface ScheduleInterventionBatchResponse {
+  mission?: Mission | undefined;
+  interventionIds: string[];
+  scheduledDates: string[];
+  skipped: BatchConflict[];
+}
+
 export interface ScheduleInterventionResponse {
   mission?: Mission | undefined;
 }
@@ -2709,6 +2739,20 @@ export interface CleaningAdminServiceClient {
     metadata?: Metadata,
   ): Observable<ScheduleGroupInterventionsResponse>;
 
+  /**
+   * Planification en lot des dates restantes du plan de passages (ADR-052) : un passage par date,
+   * mêmes agents, même heure, même durée, contrôlés date par date dans une transaction (agents
+   * verrouillés). Tout ou rien par défaut : CLEANING_TEAM_UNAVAILABLE avec details.conflicts (date et
+   * agents de chaque date en conflit) ; skip_conflicts planifie le reste et rend les dates sautées.
+   * Un seul événement cleaning.interventions.batch_scheduled. Idempotent par idempotency_key
+   * (obligatoire) et par mission. Plafond par appel réglable (400 par défaut).
+   */
+
+  scheduleInterventionBatch(
+    request: ScheduleInterventionBatchRequest,
+    metadata?: Metadata,
+  ): Observable<ScheduleInterventionBatchResponse>;
+
   startIntervention(request: StartInterventionRequest, metadata?: Metadata): Observable<StartInterventionResponse>;
 
   updateChecklist(request: UpdateChecklistRequest, metadata?: Metadata): Observable<UpdateChecklistResponse>;
@@ -2966,6 +3010,23 @@ export interface CleaningAdminServiceController {
     | Observable<ScheduleGroupInterventionsResponse>
     | ScheduleGroupInterventionsResponse;
 
+  /**
+   * Planification en lot des dates restantes du plan de passages (ADR-052) : un passage par date,
+   * mêmes agents, même heure, même durée, contrôlés date par date dans une transaction (agents
+   * verrouillés). Tout ou rien par défaut : CLEANING_TEAM_UNAVAILABLE avec details.conflicts (date et
+   * agents de chaque date en conflit) ; skip_conflicts planifie le reste et rend les dates sautées.
+   * Un seul événement cleaning.interventions.batch_scheduled. Idempotent par idempotency_key
+   * (obligatoire) et par mission. Plafond par appel réglable (400 par défaut).
+   */
+
+  scheduleInterventionBatch(
+    request: ScheduleInterventionBatchRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ScheduleInterventionBatchResponse>
+    | Observable<ScheduleInterventionBatchResponse>
+    | ScheduleInterventionBatchResponse;
+
   startIntervention(
     request: StartInterventionRequest,
     metadata?: Metadata,
@@ -3132,6 +3193,7 @@ export function CleaningAdminServiceControllerMethods() {
       "getMissionDetail",
       "scheduleIntervention",
       "scheduleGroupInterventions",
+      "scheduleInterventionBatch",
       "startIntervention",
       "updateChecklist",
       "reportIncident",

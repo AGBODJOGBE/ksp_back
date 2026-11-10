@@ -60,7 +60,8 @@ import "ksp/common/v1/money.proto";
 //                                                           choisie par le client : la lui demander (ADR-034)
 //   CLEANING_REQUEST_GROUP_NOT_FOUND    NOT_FOUND           groupe de demandes inconnu ou d'un autre client
 //   CLEANING_PAYMENT_VIA_INVOICE        FAILED_PRECONDITION mission d'entreprise : paiement par sa facture (billing)
-//   CLEANING_TEAM_UNAVAILABLE           ALREADY_EXISTS      details.agentIds : agents déjà pris sur le créneau
+//   CLEANING_TEAM_UNAVAILABLE           ALREADY_EXISTS      details.agentIds : agents déjà pris sur le créneau ;
+//                                                           en lot (ADR-052), details.conflicts : date et agentIds
 //   CLEANING_CONCURRENT_UPDATE          ALREADY_EXISTS      dossier modifié en même temps par un autre appel
 //   CLEANING_AGENT_ALREADY_REGISTERED   ALREADY_EXISTS
 //   CLEANING_PAYMENT_INVALID            INVALID_ARGUMENT    montant ou moyen de paiement refusé (details.reason) ;
@@ -217,6 +218,13 @@ service CleaningAdminService {
   // Planifie ensemble un passage de chaque mission d'un groupe (ADR-035), dans une transaction : la
   // même équipe sur des créneaux qui se chevauchent dans un même groupe n'est pas un conflit.
   rpc ScheduleGroupInterventions(ScheduleGroupInterventionsRequest) returns (ScheduleGroupInterventionsResponse);
+  // Planification en lot des dates restantes du plan de passages (ADR-052) : un passage par date,
+  // mêmes agents, même heure, même durée, contrôlés date par date dans une transaction (agents
+  // verrouillés). Tout ou rien par défaut : CLEANING_TEAM_UNAVAILABLE avec details.conflicts (date et
+  // agents de chaque date en conflit) ; skip_conflicts planifie le reste et rend les dates sautées.
+  // Un seul événement cleaning.interventions.batch_scheduled. Idempotent par idempotency_key
+  // (obligatoire) et par mission. Plafond par appel réglable (400 par défaut).
+  rpc ScheduleInterventionBatch(ScheduleInterventionBatchRequest) returns (ScheduleInterventionBatchResponse);
   rpc StartIntervention(StartInterventionRequest) returns (StartInterventionResponse);
   rpc UpdateChecklist(UpdateChecklistRequest) returns (UpdateChecklistResponse);
   rpc ReportIncident(ReportIncidentRequest) returns (ReportIncidentResponse);
@@ -1650,6 +1658,36 @@ message ScheduleInterventionRequest {
   repeated string agent_ids = 4;
   // Facultatif : les membres de l'équipe s'ajoutent à agent_ids.
   string team_id = 5;
+}
+
+message ScheduleInterventionBatchRequest {
+  string mission_id = 1;
+  // Sous-ensemble des dates restantes du plan (AAAA-MM-JJ) ; vide : selon until.
+  repeated string dates = 2;
+  // Toutes les dates restantes jusqu'à cette date incluse ; vide (avec dates vide) : toutes.
+  string until = 3;
+  // HH:mm, heure locale ; vide : heure de début du plan.
+  string start_time = 4;
+  int32 duration_minutes = 5;
+  repeated string agent_ids = 6;
+  // Facultatif : les membres de l'équipe s'ajoutent à agent_ids.
+  string team_id = 7;
+  // Vrai : planifier les dates libres et sauter les dates en conflit ; faux : tout ou rien.
+  bool skip_conflicts = 8;
+  string idempotency_key = 9;
+}
+
+// Date sautée (ou en conflit) d'une planification en lot, avec ses agents déjà pris.
+message BatchConflict {
+  string date = 1;
+  repeated string agent_ids = 2;
+}
+
+message ScheduleInterventionBatchResponse {
+  Mission mission = 1;
+  repeated string intervention_ids = 2;
+  repeated string scheduled_dates = 3;
+  repeated BatchConflict skipped = 4;
 }
 
 message ScheduleInterventionResponse {
