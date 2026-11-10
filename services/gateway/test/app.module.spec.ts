@@ -29,6 +29,11 @@ describe('AppModule', () => {
       TRUST_PROXY: 'uniquelocal',
       CORS_WEB_ORIGINS: 'https://ksp.bj',
       CORS_BACKOFFICE_ORIGINS: 'https://admin.ksp.bj',
+      ...Object.fromEntries(
+        ['IDENTITY', 'CLEANING', 'BILLING', 'PAYMENT', 'NOTIFICATION', 'FILE', 'WALLET', 'DOCUMENT'].map(
+          (service) => [`${service}_GRPC_URL`, `dns:///${service.toLowerCase()}-headless:50051`],
+        ),
+      ),
     });
     const moduleRef = await Test.createTestingModule({ imports: [AppModule.forRoot(config)] }).compile();
     expect(moduleRef.get(SERVICE_TOKEN_PROVIDER)).toBeInstanceOf(ServiceTokenClient);

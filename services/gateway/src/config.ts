@@ -1,3 +1,4 @@
+import { requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 import { type ClientOrigins } from './domain/client/client-kind';
 import { DEFAULT_RATE_LIMITS, type RateLimitTable } from './domain/rate-limit/rate-limits';
@@ -144,7 +145,9 @@ export const configSchema = z
       if (!origin.startsWith('https://'))
         fail('CORS_WEB_ORIGINS', `Origine non HTTPS en production : ${origin}`);
     }
-  });
+  })
+  // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
+  .superRefine(requireGrpcAddressesInProduction);
 
 export type GatewayConfig = z.infer<typeof configSchema>;
 

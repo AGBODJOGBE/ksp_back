@@ -11,6 +11,7 @@ export * from './errors/app-error';
 export * from './errors/grpc-error';
 export * from './errors/grpc-exception.filter';
 export * from './grpc/deadline';
+export * from './grpc/grpc-address';
 export * from './grpc/grpc-caller';
 export * from './grpc/grpc-context.interceptor';
 export * from './grpc/grpc-options';

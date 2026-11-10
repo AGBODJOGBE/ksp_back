@@ -27,6 +27,7 @@ const PRODUCTION = {
   IDENTITY_JWKS_URL: 'http://identity:3101/.well-known/jwks.json',
   IDENTITY_TOKEN_URL: 'http://identity:3101/oauth/token',
   SERVICE_CLIENT_SECRET: 'secret-de-notification',
+  IDENTITY_GRPC_URL: 'dns:///identity-headless:50051',
   ...BREVO,
 };
 
