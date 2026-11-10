@@ -13,7 +13,7 @@ pnpm --filter @ksp/gateway-service dev
 ```
 
 - API : `http://localhost:3000/api/v1/…`, clés publiques : `/.well-known/jwks.json`
-- Santé : `/health/live` et `/health/ready` (prêt = clés publiques d'identity en cache) ; métriques : `/metrics`
+- Santé, sur le port interne `http://localhost:3100` (`INTERNAL_HTTP_PORT`, jamais exposé, ADR-051) : `/health/live` et `/health/ready` (prêt = clés publiques d'identity en cache ; 503 dès le `SIGTERM`) ; métriques : `/metrics`
 
 Essai rapide (application mobile : pas d'origine, en-tête `X-App-Version`) :
 
@@ -139,7 +139,7 @@ qu'un jeton inconnu). Aucune donnée personnelle du payeur sur les routes publiq
 | Contexte transmis | `x-correlation-id` (créé par la gateway, renvoyé dans `X-Correlation-Id`), `x-client-ip`, `x-user-agent`, utilisateur vérifié (`x-user-id`, `x-session-id`, rôles…) et jeton de service de la gateway (`authorization`).                                                                                |
 | Appels gRPC       | `GrpcCaller` du kit : 3 s de délai, coupe-circuit par service, une nouvelle tentative pour les lectures (`GetMe`), jamais pour les écritures.                                                                                                                                                           |
 | Erreurs           | `{ error: { code, message, details, correlationId } }`, statut selon la table gRPC → HTTP du kit. Pannes techniques : `IDENTITY_UNAVAILABLE` (503), `IDENTITY_TIMEOUT` (504), sans détail interne. 429 avec `Retry-After`.                                                                              |
-| Limites d'appels  | Compteurs à fenêtre fixe **en mémoire** : valables pour une seule instance. Plusieurs répliques exigent un stockage partagé (Redis) derrière le port `RateLimiter`.                                                                                                                                     |
+| Limites d'appels  | Compteurs à fenêtre fixe dans **Redis** (`REDIS_URL`, obligatoire en production) partagés par les répliques, repli en mémoire si Redis ne répond pas ; en mémoire sans `REDIS_URL` (développement). Au moins deux répliques en production (ADR-051).                                                    |
 | Sécurité HTTP     | Corps JSON de 1 Mo au plus (413), champs inconnus refusés, CORS limité aux origines configurées avec cookies, HSTS, `nosniff`, `no-referrer`, `Cache-Control: no-store`, pas d'en-tête `X-Powered-By`. Cookies et jetons masqués dans les journaux.                                                     |
 
 En production, la configuration refuse de démarrer sans `IDENTITY_JWKS_URL`, `IDENTITY_TOKEN_URL` et `SERVICE_CLIENT_SECRET`, `TRUST_PROXY`, origines HTTPS, ou avec `REFRESH_COOKIE_INSECURE=true`.
@@ -150,7 +150,7 @@ En production, la configuration refuse de démarrer sans `IDENTITY_JWKS_URL`, `I
 | --------------------- | ------------------------------------------------------------------------------------------ |
 | `src/domain`          | Manifeste de routage et ses règles, exigences d'accès, type de client, limites, cookie     |
 | `src/application`     | `AuthorizeRequestUseCase` (contrôles avant appel), cas d'usage identity, ports             |
-| `src/infrastructure`  | Client gRPC d'identity, cache des clés publiques, limiteur en mémoire                      |
+| `src/infrastructure`  | Client gRPC d'identity, cache des clés publiques, limiteurs Redis et en mémoire            |
 | `src/interfaces/http` | Contrôleurs, décorateur `@Route`, garde, contexte de requête, format d'erreur, chaîne HTTP |
 
 Tests : unitaires dans `src`, bout en bout dans `test/gateway.http.spec.ts` (vraie gateway face à un serveur gRPC identity simulé à partir du contrôleur généré, qui vérifie le jeton de service), contrat dans `test/openapi.contract.spec.ts`.
