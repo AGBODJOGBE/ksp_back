@@ -23,6 +23,7 @@ import {
   type NotificationFailedEvent,
   type NotificationRepository,
   type OutgoingMessage,
+  PENDING_CLAIM_STALE_AFTER_MS,
   type ProviderResult,
 } from '../send/notification.ports';
 import {
@@ -44,6 +45,7 @@ export interface NotificationRow extends NewNotification {
   failureReason: FailureReason | null;
   acceptedAt: Date | null;
   failedAt: Date | null;
+  claimedAt?: Date;
 }
 
 export class InMemoryNotifications implements NotificationRepository {
@@ -52,6 +54,14 @@ export class InMemoryNotifications implements NotificationRepository {
 
   async claim(notification: NewNotification): Promise<ClaimResult> {
     const existing = this.rows.find((row) => row.idempotencyKey === notification.idempotencyKey);
+    const staleBefore = notification.createdAt.getTime() - PENDING_CLAIM_STALE_AFTER_MS;
+    if (
+      existing?.status === 'pending' &&
+      (existing.claimedAt ?? existing.createdAt).getTime() < staleBefore
+    ) {
+      existing.claimedAt = notification.createdAt;
+      return { created: true, id: existing.id };
+    }
     if (existing) {
       return {
         created: false,
@@ -75,7 +85,7 @@ export class InMemoryNotifications implements NotificationRepository {
       acceptedAt: null,
       failedAt: null,
     });
-    return { created: true };
+    return { created: true, id: notification.id };
   }
 
   async markAccepted(

@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import {
   type ClaimResult,
   type NewNotification,
+  PENDING_CLAIM_STALE_AFTER_MS,
   type NotificationFailedEvent,
   type NotificationRepository,
 } from '../../application/send/notification.ports';
@@ -20,12 +21,25 @@ export class PrismaNotificationRepository implements NotificationRepository {
       data: [{ ...notification, status: 'pending' }],
       skipDuplicates: true,
     });
-    if (count === 1) return { created: true };
+    if (count === 1) return { created: true, id: notification.id };
+
+    // Réservation abandonnée (panne entre la réservation et l'envoi) : reprise par un seul appel,
+    // la mise à jour conditionnelle étant atomique ; elle est datée pour ne pas être reprise de suite.
+    const staleBefore = new Date(notification.createdAt.getTime() - PENDING_CLAIM_STALE_AFTER_MS);
+    const { count: resumed } = await this.prisma.notification.updateMany({
+      where: {
+        idempotencyKey: notification.idempotencyKey,
+        status: 'pending',
+        OR: [{ claimedAt: { lt: staleBefore } }, { claimedAt: null, createdAt: { lt: staleBefore } }],
+      },
+      data: { claimedAt: notification.createdAt },
+    });
 
     const existing = await this.prisma.notification.findUniqueOrThrow({
       where: { idempotencyKey: notification.idempotencyKey },
       select: { id: true, status: true, channelUsed: true, channelsTried: true, errorCode: true },
     });
+    if (resumed === 1) return { created: true, id: existing.id };
     return { created: false, existing };
   }
 

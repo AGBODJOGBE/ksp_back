@@ -1,4 +1,5 @@
 import { type EventEnvelope } from '@ksp/contracts';
+import { type OutboxStats } from './metrics';
 
 /** Publie un événement sur le broker. */
 export interface EventPublisher {
@@ -45,6 +46,14 @@ export interface OutboxStore {
     limit: number,
     publish: (records: OutboxRecord[]) => Promise<OutboxBatchResult>,
   ): Promise<number>;
+  /** Nombre d'événements en attente et mis de côté (métriques `outbox_pending` et `outbox_parked`). */
+  stats?(): Promise<OutboxStats>;
+}
+
+/** Purge des messages devenus inutiles (outbox publiée, inbox) au-delà de la rétention. */
+export interface MessageRetention {
+  /** Renvoie le nombre de lignes supprimées. */
+  purge(): Promise<number>;
 }
 
 /**
