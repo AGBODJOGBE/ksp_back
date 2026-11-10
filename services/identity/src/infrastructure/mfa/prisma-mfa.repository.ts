@@ -51,13 +51,14 @@ export class PrismaMfaRepository implements MfaChallengeRepository, MfaFactorRep
     });
   }
 
-  async registerFailedAttempt(id: string): Promise<number> {
-    const updated = await this.prisma.mfaChallenge.update({
-      where: { id },
-      data: { attempts: { increment: 1 } },
-      select: { attempts: true },
-    });
-    return updated.attempts;
+  async takeAttempt(id: string, maxAttempts: number, now: Date): Promise<number | null> {
+    // Essai pris avant la comparaison, en une instruction (ADR-050).
+    const rows = await this.prisma.$queryRaw<{ attempts: number }[]>`
+      UPDATE "mfa_challenges" SET "attempts" = "attempts" + 1
+      WHERE "id" = ${id}::uuid AND "attempts" < ${maxAttempts}
+        AND "consumed_at" IS NULL AND "expires_at" > ${now}
+      RETURNING "attempts"`;
+    return rows[0]?.attempts ?? null;
   }
 
   async findTotp(userId: string): Promise<TotpFactor | null> {

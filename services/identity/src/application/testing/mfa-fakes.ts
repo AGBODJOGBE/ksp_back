@@ -199,8 +199,9 @@ export class InMemoryMfaStore implements MfaChallengeRepository, MfaFactorReposi
     return found ? { ...found } : null;
   }
 
-  async registerFailedAttempt(id: string): Promise<number> {
+  async takeAttempt(id: string, maxAttempts: number, now: Date): Promise<number | null> {
     const challenge = this.challenges.get(id)!;
+    if (challenge.consumedAt || challenge.expiresAt <= now || challenge.attempts >= maxAttempts) return null;
     challenge.attempts += 1;
     return challenge.attempts;
   }

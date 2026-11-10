@@ -225,8 +225,10 @@ describeWithDatabase('Rôles et double authentification (PostgreSQL)', () => {
       expiresAt: at(5),
       consumedAt: null,
     });
-    expect(await mfa.registerFailedAttempt(id)).toBe(1);
-    expect(await mfa.registerFailedAttempt(id)).toBe(2);
+    expect(await mfa.takeAttempt(id, 2, base)).toBe(1);
+    expect(await mfa.takeAttempt(id, 2, base)).toBe(2);
+    expect(await mfa.takeAttempt(id, 2, base)).toBeNull();
+    expect(await mfa.takeAttempt(id, 5, at(5))).toBeNull();
   });
 
   it('un secret non confirmé est remplacé ; une application active ne l’est jamais', async () => {

@@ -40,7 +40,7 @@ export class ConfirmTotpUseCase {
 
   async execute(input: ConfirmTotpInput): Promise<{ session: BackofficeSession; recoveryCodes: string[] }> {
     const now = this.clock.now();
-    const step = await this.guard.open(input, now);
+    const step = await this.guard.openForCode(input, now);
     const factor = await this.factors.findTotp(step.account.id);
     if (!factor) throw mfaErrors.enrollmentNotStarted();
     if (factor.enabledAt) throw mfaErrors.alreadyEnrolled();

@@ -52,6 +52,24 @@ type ChallengeRow = OtpChallenge & {
   consumedAt?: Date;
 };
 
+/** Essai pris sur une demande encore utilisable, comme l'instruction SQL du vrai dépôt. */
+function takeFakeAttempt(
+  row: {
+    attempts: number;
+    expiresAt: Date;
+    sentAt?: Date;
+    sendFailedAt?: Date;
+    consumedAt?: Date;
+  },
+  maxAttempts: number,
+  now: Date,
+): number | null {
+  const usable = row.sentAt && !row.sendFailedAt && !row.consumedAt && row.expiresAt > now;
+  if (!usable || row.attempts >= maxAttempts) return null;
+  row.attempts += 1;
+  return row.attempts;
+}
+
 export class InMemoryChallenges implements OtpChallengeRepository {
   readonly rows = new Map<string, ChallengeRow>();
   readonly events: OtpRequestedEvent[] = [];
@@ -85,10 +103,8 @@ export class InMemoryChallenges implements OtpChallengeRepository {
       consumedAt: row.consumedAt ?? null,
     };
   }
-  async registerFailedAttempt(id: string): Promise<number> {
-    const row = this.rows.get(id)!;
-    row.attempts += 1;
-    return row.attempts;
+  async takeAttempt(id: string, maxAttempts: number, now: Date): Promise<number | null> {
+    return takeFakeAttempt(this.rows.get(id)!, maxAttempts, now);
   }
 }
 
@@ -372,10 +388,8 @@ export class InMemoryEmailVerifications implements EmailVerificationRepository {
       consumedAt: row.consumedAt ?? null,
     };
   }
-  async registerFailedAttempt(id: string): Promise<number> {
-    const row = this.row(id);
-    row.attempts += 1;
-    return row.attempts;
+  async takeAttempt(id: string, maxAttempts: number, now: Date): Promise<number | null> {
+    return takeFakeAttempt(this.row(id), maxAttempts, now);
   }
   async confirm(confirmation: EmailConfirmation): Promise<Account> {
     const row = this.row(confirmation.verificationId);
