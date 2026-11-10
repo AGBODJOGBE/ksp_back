@@ -24,9 +24,9 @@
     "@grpc/grpc-js": "1.14.6",
     "@ksp/contracts": "workspace:*",
     "@ksp/platform": "workspace:*",
-    "@nestjs/common": "11.2.7",
-    "@nestjs/core": "11.2.7",
-    "@nestjs/microservices": "11.2.7",
+    "@nestjs/common": "12.4.0",
+    "@nestjs/core": "12.4.0",
+    "@nestjs/microservices": "12.4.0",
     "@prisma/client": "6.19.3",
     "prisma": "6.19.3",
     "reflect-metadata": "0.2.2",
@@ -35,7 +35,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@nestjs/testing": "11.2.7",
+    "@nestjs/testing": "12.4.0",
     "@types/pg": "8.15.6",
     "pg": "8.16.3"
   }
