@@ -1,5 +1,5 @@
 import { AppError } from '@ksp/platform';
-import { storageKeyFor } from '../domain/stored-file';
+import { incomingKeyFor, storageKeyFor } from '../domain/stored-file';
 import {
   asService,
   asUser,
@@ -40,7 +40,7 @@ const PHOTO = {
 /** Photo déclarée, envoyée au stockage et confirmée par son propriétaire. */
 async function availablePhoto(ctx: ReturnType<typeof setup>, owner = OWNER_ID) {
   const ticket = await asUser(owner, () => ctx.useCases.createUpload.execute(PHOTO));
-  ctx.storage.put(ticket.file.storageKey, PNG_BYTES, 'image/png');
+  ctx.storage.put(incomingKeyFor(ticket.file.id), PNG_BYTES, 'image/png');
   return asUser(owner, () => ctx.useCases.completeUpload.byOwner(ticket.file.id));
 }
 
@@ -114,7 +114,40 @@ describe('envoi par un compte connecté', () => {
   });
 });
 
+/** Clé du stockage que vise l'adresse d'envoi présignée (là où le client dépose le contenu). */
+function uploadKey(ticket: { upload: { url: string } }): string {
+  return decodeURIComponent(new URL(ticket.upload.url).pathname.replace('/ksp-files/', ''));
+}
+
 describe('confirmation de l’envoi', () => {
+  it('contenu vérifié puis copié : un nouvel envoi à l’adresse présignée ne le remplace pas (ADR-050)', async () => {
+    const ctx = setup();
+    const ticket = await asUser(OWNER_ID, () => ctx.useCases.createUpload.execute(PHOTO));
+    expect(uploadKey(ticket)).not.toBe(ticket.file.storageKey);
+    ctx.storage.put(uploadKey(ticket), PNG_BYTES, 'image/png');
+    const file = await asUser(OWNER_ID, () => ctx.useCases.completeUpload.byOwner(ticket.file.id));
+    expect(file.status).toBe('available');
+    expect(ctx.storage.objects.get(file.storageKey)?.bytes).toEqual(PNG_BYTES);
+    expect(ctx.storage.objects.has(uploadKey(ticket))).toBe(false);
+
+    // L'adresse présignée sert encore jusqu'à son expiration : le contenu vérifié ne change pas.
+    ctx.storage.put(uploadKey(ticket), new TextEncoder().encode('<html>piège</html>'), 'image/png');
+    expect(ctx.storage.objects.get(file.storageKey)?.bytes).toEqual(PNG_BYTES);
+  });
+
+  it('contenu remplacé entre la vérification et la copie : rien n’est publié', async () => {
+    const ctx = setup();
+    const ticket = await asUser(OWNER_ID, () => ctx.useCases.createUpload.execute(PHOTO));
+    ctx.storage.put(uploadKey(ticket), PNG_BYTES, 'image/png');
+    ctx.storage.replaceBeforeCopy = new TextEncoder().encode('<html>piège</html>');
+    const error = await rejection(
+      asUser(OWNER_ID, () => ctx.useCases.completeUpload.byOwner(ticket.file.id)),
+    );
+    expect(error.code).toBe('FILE_NOT_UPLOADED');
+    expect(ctx.storage.objects.has(ticket.file.storageKey)).toBe(false);
+    expect(ctx.files.rows.get(ticket.file.id)?.status).toBe('pending');
+  });
+
   it('contenu conforme : disponible ; confirmation rejouée sans effet', async () => {
     const ctx = setup();
     const file = await availablePhoto(ctx);
@@ -140,7 +173,7 @@ describe('confirmation de l’envoi', () => {
   ])('%s : rejeté, contenu effacé du stockage', async (_label, bytes, storedType, reason) => {
     const ctx = setup();
     const ticket = await asUser(OWNER_ID, () => ctx.useCases.createUpload.execute(PHOTO));
-    ctx.storage.put(ticket.file.storageKey, bytes, storedType);
+    ctx.storage.put(incomingKeyFor(ticket.file.id), bytes, storedType);
     const error = await rejection(
       asUser(OWNER_ID, () => ctx.useCases.completeUpload.byOwner(ticket.file.id)),
     );
@@ -159,7 +192,7 @@ describe('confirmation de l’envoi', () => {
     const ctx = setup();
     ctx.scanner.verdict = 'infected';
     const ticket = await asUser(OWNER_ID, () => ctx.useCases.createUpload.execute(PHOTO));
-    ctx.storage.put(ticket.file.storageKey, PNG_BYTES, 'image/png');
+    ctx.storage.put(incomingKeyFor(ticket.file.id), PNG_BYTES, 'image/png');
     const error = await rejection(
       asUser(OWNER_ID, () => ctx.useCases.completeUpload.byOwner(ticket.file.id)),
     );
@@ -311,7 +344,7 @@ describe('services métier', () => {
       }),
     );
     expect(ticket.file).toMatchObject({ subject, attachedBy: 'document', ownerId: OWNER_ID });
-    ctx.storage.put(ticket.file.storageKey, PDF_BYTES, 'application/pdf');
+    ctx.storage.put(incomingKeyFor(ticket.file.id), PDF_BYTES, 'application/pdf');
     const file = await asService('document', () => ctx.useCases.completeUpload.byService(ticket.file.id));
     expect(file.status).toBe('available');
     // Une autre finalité, ou un autre service : refus.
@@ -359,7 +392,7 @@ describe('purge', () => {
   it('envois non confirmés et fichiers jamais rattachés supprimés puis effacés', async () => {
     const ctx = setup();
     const pending = await asUser(OWNER_ID, () => ctx.useCases.createUpload.execute(PHOTO));
-    ctx.storage.put(pending.file.storageKey, PNG_BYTES, 'image/png');
+    ctx.storage.put(incomingKeyFor(pending.file.id), PNG_BYTES, 'image/png');
     const orphan = await availablePhoto(ctx);
     ctx.clock.advance(23 * HOUR);
     expect(await ctx.useCases.purgeFiles.execute()).toEqual({
@@ -403,7 +436,7 @@ describe('compte supprimé (identity.user.deleted)', () => {
     const avatarTicket = await asUser(OWNER_ID, () =>
       ctx.useCases.createUpload.execute({ ...PHOTO, purpose: 'avatar', fileName: 'Koffi Adjovi.png' }),
     );
-    ctx.storage.put(avatarTicket.file.storageKey, PNG_BYTES, 'image/png');
+    ctx.storage.put(incomingKeyFor(avatarTicket.file.id), PNG_BYTES, 'image/png');
     await asUser(OWNER_ID, () => ctx.useCases.completeUpload.byOwner(avatarTicket.file.id));
     await asService('identity', () =>
       ctx.useCases.attachFile.execute({

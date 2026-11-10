@@ -81,6 +81,15 @@ export function storageKeyFor(purpose: Purpose, id: string): string {
   return `${purpose}/${id}`;
 }
 
+/**
+ * Clé de dépôt visée par l'adresse d'envoi présignée (ADR-050) : le contenu y est vérifié, puis
+ * copié sous `storageKey`, que le client ne peut jamais écrire. Un nouvel envoi à l'adresse
+ * présignée, encore valable quelques minutes, ne remplace donc pas un contenu déjà vérifié.
+ */
+export function incomingKeyFor(id: string): string {
+  return `incoming/${id}`;
+}
+
 export function isContentType(value: string): value is ContentType {
   return (CONTENT_TYPES as readonly string[]).includes(value);
 }
