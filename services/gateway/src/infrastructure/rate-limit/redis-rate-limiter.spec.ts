@@ -10,6 +10,18 @@ const clock = { now: () => new Date() };
 const redisUrl = process.env.TEST_REDIS_URL;
 const describeWithRedis = redisUrl ? describe : describe.skip;
 
+/**
+ * Client connecté : sans file d'attente hors connexion, une commande envoyée avant la fin de la
+ * connexion échoue et se replie sur la mémoire, ce que ces tests ne mesurent pas.
+ */
+async function connectedClient(url: string) {
+  const client = createRedisClient(url);
+  for (let i = 0; i < 100 && !(client as unknown as { isReady: boolean }).isReady; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return client;
+}
+
 describe('limites d’appels de plusieurs répliques (ADR-051)', () => {
   it('compteurs en mémoire : chaque réplique compte à part, la limite est multipliée (défaut corrigé)', async () => {
     const replicas: RateLimiter[] = [new InMemoryRateLimiter(clock), new InMemoryRateLimiter(clock)];
@@ -36,8 +48,8 @@ describe('limites d’appels de plusieurs répliques (ADR-051)', () => {
 
   describeWithRedis('avec Redis', () => {
     it('deux répliques partagent le même compteur ; délai restant de la fenêtre', async () => {
-      const a = new RedisRateLimiter(createRedisClient(redisUrl!), new InMemoryRateLimiter(clock));
-      const b = new RedisRateLimiter(createRedisClient(redisUrl!), new InMemoryRateLimiter(clock));
+      const a = new RedisRateLimiter(await connectedClient(redisUrl!), new InMemoryRateLimiter(clock));
+      const b = new RedisRateLimiter(await connectedClient(redisUrl!), new InMemoryRateLimiter(clock));
       const key = `otp:ip:${randomUUID()}`;
       try {
         await expect(a.consume(key, rule)).resolves.toEqual({ allowed: true, retryAfterSeconds: 0 });
@@ -53,7 +65,7 @@ describe('limites d’appels de plusieurs répliques (ADR-051)', () => {
     });
 
     it('une nouvelle fenêtre remet le compteur à zéro', async () => {
-      const limiter = new RedisRateLimiter(createRedisClient(redisUrl!), new InMemoryRateLimiter(clock));
+      const limiter = new RedisRateLimiter(await connectedClient(redisUrl!), new InMemoryRateLimiter(clock));
       const key = `k:${randomUUID()}`;
       const short = { limit: 1, windowSeconds: 1 };
       try {
