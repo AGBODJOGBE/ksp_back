@@ -96,6 +96,17 @@ export const configSchema = z
      */
     REFRESH_COOKIE_INSECURE: z.stringbool().default(false),
 
+    /**
+     * Redis des compteurs de limites, partagés par les répliques (ADR-051). Absent : compteurs en
+     * mémoire, valables pour une seule instance (développement). Obligatoire en production.
+     */
+    REDIS_URL: z.preprocess(
+      unset,
+      z
+        .string()
+        .regex(/^rediss?:\/\//, 'Adresse redis:// ou rediss://')
+        .optional(),
+    ),
     RATE_LIMIT_PUBLIC_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.public.limit),
     RATE_LIMIT_AUTHENTICATED_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.authenticated.limit),
     /** Routes connectées, par adresse IP, avant la vérification du jeton (ADR-051). */
@@ -128,6 +139,9 @@ export const configSchema = z
     if (cfg.NODE_ENV !== 'production') return;
     const fail = (path: keyof typeof cfg, message: string) =>
       ctx.addIssue({ code: 'custom', path: [path], message });
+    if (!cfg.REDIS_URL) {
+      fail('REDIS_URL', 'Obligatoire en production : limites d’appels communes aux répliques de la gateway.');
+    }
     if (cfg.INTERNAL_HTTP_PORT === cfg.HTTP_PORT) {
       fail('INTERNAL_HTTP_PORT', 'Doit différer de HTTP_PORT : santé et métriques ne sont jamais publiques.');
     }

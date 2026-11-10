@@ -8,7 +8,7 @@ interface Window {
 /**
  * Compteurs à fenêtre fixe, en mémoire. Valable pour une seule instance de la gateway :
  * avec plusieurs répliques, chacune aurait ses propres compteurs (limite multipliée d'autant).
- * Le stockage partagé (Redis, INCR + EXPIRE) remplacera cet adaptateur derrière le même port.
+ * En production, RedisRateLimiter partage les compteurs (ADR-051) et se replie sur celui-ci.
  */
 export class InMemoryRateLimiter implements RateLimiter {
   private readonly windows = new Map<string, Window>();
