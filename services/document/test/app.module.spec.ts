@@ -40,6 +40,7 @@ describe('configuration', () => {
       length: 6,
       ttlSeconds: 600,
       maxAttempts: 5,
+      maxAttemptsPerRequest: 15,
       resendDelaySeconds: 60,
       maxPerHour: 5,
     });

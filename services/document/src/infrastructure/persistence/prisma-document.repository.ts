@@ -14,9 +14,11 @@ import {
 } from '../../../prisma/generated';
 import {
   type AccountErasure,
+  type CodeAttempt,
   type DocumentRepository,
   type SignatureCompletion,
 } from '../../application/ports';
+import { type SendDecision } from '../../domain/code-policy';
 import { type DocumentRecord, type DocumentStatus } from '../../domain/document';
 import {
   type CodeChannel,
@@ -81,6 +83,17 @@ function toCode(row: CodeRow): SignatureCode {
     attempts: row.attempts,
     consumedAt: row.consumedAt,
   };
+}
+
+/** Verrouille la demande si elle est en attente, jusqu'à la fin de la transaction. */
+async function lockPendingRequest(
+  tx: Prisma.TransactionClient,
+  requestId: string,
+): Promise<{ code_attempts: number } | null> {
+  const rows = await tx.$queryRaw<{ code_attempts: number }[]>`
+    SELECT code_attempts FROM signature_requests
+    WHERE id = ${requestId}::uuid AND status = 'pending' FOR UPDATE`;
+  return rows[0] ?? null;
 }
 
 const isUniqueViolation = (error: unknown) =>
@@ -276,25 +289,32 @@ export class PrismaDocumentRepository implements DocumentRepository {
     });
   }
 
-  async codeSentDates(requestId: string, since: Date): Promise<Date[]> {
-    const rows = await this.prisma.signatureCode.findMany({
-      where: { requestId, createdAt: { gte: since } },
-      select: { createdAt: true },
-    });
-    return rows.map((row) => row.createdAt);
-  }
-
-  async createCode(code: SignatureCode): Promise<void> {
-    await this.prisma.signatureCode.create({
-      data: {
-        id: code.id,
-        requestId: code.requestId,
-        codeHash: code.codeHash,
-        channel: code.channel,
-        createdAt: code.createdAt,
-        expiresAt: code.expiresAt,
-        attempts: code.attempts,
-      },
+  async createCodeWithinLimits(
+    code: SignatureCode,
+    since: Date,
+    decide: (sentAt: Date[]) => SendDecision,
+  ): Promise<SendDecision | null> {
+    return this.prisma.$transaction(async (tx) => {
+      // Verrou de la demande : deux envois simultanés voient chacun les codes de l'autre.
+      if (!(await lockPendingRequest(tx, code.requestId))) return null;
+      const sent = await tx.signatureCode.findMany({
+        where: { requestId: code.requestId, createdAt: { gte: since } },
+        select: { createdAt: true },
+      });
+      const decision = decide(sent.map((row) => row.createdAt));
+      if (!decision.allowed) return decision;
+      await tx.signatureCode.create({
+        data: {
+          id: code.id,
+          requestId: code.requestId,
+          codeHash: code.codeHash,
+          channel: code.channel,
+          createdAt: code.createdAt,
+          expiresAt: code.expiresAt,
+          attempts: code.attempts,
+        },
+      });
+      return decision;
     });
   }
 
@@ -316,13 +336,49 @@ export class PrismaDocumentRepository implements DocumentRepository {
     return toCode(row);
   }
 
-  async recordFailedAttempt(codeId: string): Promise<number> {
-    const row = await this.prisma.signatureCode.update({
-      where: { id: codeId },
-      data: { attempts: { increment: 1 } },
-      select: { attempts: true },
+  async takeCodeAttempt(
+    requestId: string,
+    now: Date,
+    limits: { perCode: number; perRequest: number },
+  ): Promise<CodeAttempt> {
+    return this.prisma.$transaction(async (tx) => {
+      // Verrou de la demande : les essais simultanés sont comptés l'un après l'autre.
+      const request = await lockPendingRequest(tx, requestId);
+      if (!request) return { kind: 'closed' };
+      if (request.code_attempts >= limits.perRequest) return { kind: 'request_exhausted' };
+      const taken = await tx.$queryRaw<{ id: string }[]>`
+        UPDATE signature_codes SET attempts = attempts + 1
+        WHERE id = (SELECT id FROM signature_codes WHERE request_id = ${requestId}::uuid
+                    ORDER BY created_at DESC, id DESC LIMIT 1)
+          AND attempts < ${limits.perCode} AND consumed_at IS NULL AND expires_at > ${now}
+        RETURNING id`;
+      const codeId = taken[0]?.id;
+      if (!codeId) return { kind: 'no_code' };
+      const counted = await tx.signatureRequest.update({
+        where: { id: requestId },
+        data: { codeAttempts: { increment: 1 } },
+        select: { codeAttempts: true },
+      });
+      const code = await tx.signatureCode.findUniqueOrThrow({ where: { id: codeId } });
+      return { kind: 'taken', code: toCode(code), requestAttempts: counted.codeAttempts };
     });
-    return row.attempts;
+  }
+
+  async closeExhaustedRequest(requestId: string, now: Date): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const request = await tx.signatureRequest.findUnique({ where: { id: requestId } });
+      if (!request) return false;
+      const { count } = await tx.signatureRequest.updateMany({
+        where: { id: requestId, status: 'pending' },
+        data: { status: 'expired', closedAt: now, ...CLOSE },
+      });
+      if (count === 0) return false;
+      await tx.document.updateMany({
+        where: { id: request.documentId, status: 'pending_signature' },
+        data: { status: 'expired' },
+      });
+      return true;
+    });
   }
 
   async completeSignature(completion: SignatureCompletion): Promise<boolean> {

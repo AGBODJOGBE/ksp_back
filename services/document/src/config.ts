@@ -44,8 +44,12 @@ export const configSchema = baseServiceConfigSchema
     /** Codes de signature : validité, essais, délai entre deux envois, envois par heure. */
     DOCUMENT_CODE_TTL_SECONDS: z.coerce.number().int().min(60).max(1800).default(600),
     DOCUMENT_CODE_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
+    /** Essais en tout par demande, tous codes confondus ; au-delà, la demande est close (ADR-050). */
+    DOCUMENT_SIGNATURE_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(50).default(15),
     DOCUMENT_CODE_RESEND_DELAY_SECONDS: z.coerce.number().int().min(10).max(600).default(60),
     DOCUMENT_CODE_MAX_PER_HOUR: z.coerce.number().int().min(1).max(20).default(5),
+    /** Jours pendant lesquels le lien de signature reste lisible après la signature (ADR-050). */
+    DOCUMENT_SIGNED_LINK_DAYS: z.coerce.number().int().min(1).max(90).default(7),
     /** Intervalle de la clôture des demandes expirées (10 minutes) ; 0 : désactivée. */
     DOCUMENT_EXPIRY_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
     /** Délai d'un envoi ou d'une lecture du PDF dans le stockage. */
@@ -79,6 +83,7 @@ export function codePolicyOf(config: ServiceConfig): CodePolicy {
     length: 6,
     ttlSeconds: config.DOCUMENT_CODE_TTL_SECONDS,
     maxAttempts: config.DOCUMENT_CODE_MAX_ATTEMPTS,
+    maxAttemptsPerRequest: config.DOCUMENT_SIGNATURE_MAX_ATTEMPTS,
     resendDelaySeconds: config.DOCUMENT_CODE_RESEND_DELAY_SECONDS,
     maxPerHour: config.DOCUMENT_CODE_MAX_PER_HOUR,
   };
