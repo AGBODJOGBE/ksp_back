@@ -1264,6 +1264,22 @@ describe('NotifyEventUseCase — suppression du compte (ADR-036)', () => {
     expect(whatsapp.sent[0]).toMatchObject({ templateCode: 'identity.account_deletion_cancelled.customer' });
     expect(whatsapp.sent[0]!.content!.text).toContain('il est de nouveau actif');
   });
+
+  it('double authentification réinitialisée : le titulaire est prévenu par WhatsApp et par e-mail (ADR-050)', async () => {
+    const { useCase, whatsapp, email, inbox } = setup([contact(CUSTOMER, { email: 'koffi@example.com' })]);
+    await expect(
+      useCase.execute(
+        event('identity.user.mfa_reset', { userId: CUSTOMER, enrollBefore: '2026-10-23T11:00:00.000Z' }),
+      ),
+    ).resolves.toMatchObject({ accepted: 2, inApp: 1 });
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'identity.mfa_reset.staff',
+      variables: { enroll_before: expect.stringContaining('23 octobre 2026') },
+    });
+    expect(email.sent).toHaveLength(1);
+    expect(email.sent[0]!.content!.text).toContain("Si vous n'êtes pas à l'origine de cette demande");
+    expect(inbox.inApp).toEqual([expect.objectContaining({ userId: CUSTOMER, link: null })]);
+  });
 });
 
 describe('NotifyEventUseCase — paiement en ligne (ADR-031)', () => {

@@ -109,6 +109,8 @@ Textes : `src/domain/messages/cleaning.messages.ts` et `billing.messages.ts` (fr
 
 **Suppression du compte (ADR-036)** : `identity.user.deletion_requested` (date prévue, comment annuler) et `identity.user.deletion_cancelled`, au titulaire du compte. Aucun message pour `identity.user.deleted` : le compte anonymisé n'a plus de coordonnées.
 
+**Double authentification réinitialisée (ADR-050)** : `identity.user.mfa_reset` → `identity.mfa_reset.staff` au titulaire (message important : WhatsApp et e-mail, jamais écarté par les préférences), avec l'échéance de la reconfiguration ; sans lien.
+
 **Compte anonymisé (`identity.user.deleted`, ADR-036)** : file `notification.identity.user.deleted` (`AccountErasureConsumer`, `EraseUserNotificationsUseCase`). En une transaction avec l'inbox (consommateur `notification.identity.user.deleted` dans `processed_events`) :
 
 - les notifications de l'espace KSP du compte (`in_app_notifications`, titre et texte avec le prénom) sont **supprimées** ;
@@ -164,6 +166,7 @@ Un message envoyé à l'initiative de KSP exige un modèle approuvé (catégorie
 | `ksp_identity_organization_reactivated`                                                                                                                                                                       | prénom, raison sociale, lien                                                          |
 | `ksp_identity_account_deletion_requested`                                                                                                                                                                     | prénom, date prévue, lien                                                             |
 | `ksp_identity_account_deletion_cancelled`                                                                                                                                                                     | prénom, lien                                                                          |
+| `ksp_identity_mfa_reset` (ADR-050)                                                                                                                                                                            | prénom, échéance de la reconfiguration                                                |
 | `ksp_document_signature_requested` (ADR-044)                                                                                                                                                                  | prénom, titre du document, date limite, lien de signature                             |
 
 ## E-mail (Brevo)
