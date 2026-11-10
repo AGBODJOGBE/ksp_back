@@ -118,6 +118,23 @@ positions des lieux du compte (ADR-035).
   transaction ; wallet rembourse chaque débit.
 - Configuration : `WALLET_GRPC_URL` ; jeton de service `cleaning` → `wallet`.
 
+## Plan de passages par dates (ADR-052)
+
+- Un plan `schedule` remplace la récurrence approximative : `dates` (liste de jours), `weekly` (jours de
+  semaine, toutes les N semaines, sur une période) ou `monthly` (jours du mois, ou 1er/3e/dernier lundi…),
+  avec heure de début, jours exclus et jours ajoutés. Moteur pur : `src/domain/intervention-schedule.ts`.
+- Nombre de passages = nombre exact de dates : prix du devis, acompte, `plannedInterventions` et prix d'un
+  passage du suivi des impayés en découlent.
+- `CatalogService.PreviewSchedule` (`POST /api/v1/cleaning/schedules/preview`, public) : dates, nombre,
+  premier et dernier passage, avertissements. La simulation, la demande (seule ou groupée) et le devis
+  acceptent `schedule` ; le devis peut ajuster le plan de la demande après la visite.
+- La supervision planifie chaque passage avec ses agents ; sans date, la prochaine date du plan encore sans
+  passage (`ScheduleIntervention`, `scheduled_start` vide).
+- `recurrence` dépréciée en entrée (traduite en plan quand c'est exact), déduite du plan en sortie.
+  Migration `0012_intervention_schedules` : devis et missions ponctuels convertis en plan d'une date.
+- Configuration : `CLEANING_SCHEDULE_MAX_MONTHS` (36), `CLEANING_SCHEDULE_MAX_VISITS` (400).
+- Guide d'intégration : `docs/integration/cleaning-schedule.md`.
+
 ## Règles (cahier des charges, parties 4 et 9)
 
 | Sujet      | Fonctionnement                                                                                                                                                                                                                                                                                                |
@@ -126,7 +143,7 @@ positions des lieux du compte (ADR-035).
 | Grille     | Versionnée : chaque enregistrement crée une version datée avec son auteur ; un devis envoyé garde son prix.                                                                                                                                                                                                   |
 | Réglages   | Validité des devis (15 j), délai minimum (48 h), annulation sans frais (24 h), 5 demandes ouvertes, acompte 30 %, seuils d'impayés : modifiables au back-office.                                                                                                                                              |
 | Demande    | reçue → visite planifiée → devis envoyé → acceptée / refusée / expirée / annulée, ou refusée par KSP. Visite des lieux réalisée obligatoire avant tout devis.                                                                                                                                                 |
-| Mission    | Un passage pour une prestation ponctuelle, plusieurs pour un contrat récurrent (passages par semaine ou par mois, sur N mois) ; chaque passage a ses agents, sa liste de contrôle et ses références de photos (service file).                                                                                 |
+| Mission    | Un passage par date du plan de passages (ADR-052) : un pour une prestation ponctuelle, plusieurs pour un contrat récurrent ; chaque passage a ses agents, sa liste de contrôle et ses références de photos (service file).                                                                                    |
 | Conflits   | Un agent ne peut être affecté à deux passages qui se chevauchent, ni pendant une indisponibilité (`CLEANING_TEAM_UNAVAILABLE`) ; agents verrouillés pendant la planification.                                                                                                                                 |
 | Paiement   | Option choisie à l'acceptation (acompte ou totalité, avant ou après, espèces ou Mobile Money) ; état dû / acompte reçu / payé ; paiements manuels cochés par le superviseur ; paiement en ligne : port prévu (`payment`).                                                                                     |
 | Droits     | Client : ses demandes et missions (404 sinon) ; agent : les missions où il est affecté ; superviseur et admin : rôle et double authentification revérifiés par le service.                                                                                                                                    |
