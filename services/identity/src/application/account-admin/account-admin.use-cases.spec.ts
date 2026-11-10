@@ -163,14 +163,23 @@ describe('GetAccountUseCase et ListAssignableRolesUseCase', () => {
     expect(self.actions).toEqual({ grantRole: true, suspend: false, reactivate: false, resetMfa: false });
   });
 
-  it('administrateur du Nettoyage : rôles de son métier seulement, aucune action sur le compte', async () => {
-    const { get } = setup();
-    const director = await asCleaningHead(() => get.execute(DIRECTOR));
-    expect(director.account.phoneE164).toBeNull();
-    expect(director.roles[0]).toMatchObject({ revocable: false });
-    expect(director.actions).toEqual({ grantRole: true, suspend: false, reactivate: false, resetMfa: false });
+  it('administrateur du Nettoyage : son équipe seulement, aucune action sur le compte', async () => {
+    const { get, grant } = setup();
     const agent = await asCleaningHead(() => get.execute(AGENT));
+    expect(agent.account.phoneE164).toBeNull();
     expect(agent.roles[0]!.revocable).toBe(true);
+    expect(agent.actions).toEqual({ grantRole: true, suspend: false, reactivate: false, resetMfa: false });
+    // Hors de son métier (ADR-050) : introuvable, comme un compte inconnu.
+    for (const id of [DIRECTOR, CUSTOMER]) {
+      expect((await failure(asCleaningHead(() => get.execute(id)))).code).toBe('IDENTITY_USER_NOT_FOUND');
+    }
+    // Un client retrouvé par son numéro complet rejoint l'équipe par l'attribution d'un rôle.
+    await asCleaningHead(() =>
+      grant.execute({ userId: CUSTOMER, roleCode: 'cleaning_agent', reason: REASON }),
+    );
+    await expect(asCleaningHead(() => get.execute(CUSTOMER))).resolves.toMatchObject({
+      account: { id: CUSTOMER },
+    });
   });
 
   it('compte inconnu, mal formé ou supprimé : introuvable', async () => {

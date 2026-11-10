@@ -61,6 +61,18 @@ export function canManageRole(
   );
 }
 
+/**
+ * Le compte est-il dans le périmètre de l'administrateur ? super_admin : tout compte ;
+ * administrateur de métier : un compte qui a un rôle actif de l'un de ses métiers (ADR-050).
+ */
+export function isInPerimeter(
+  perimeter: AdminPerimeter,
+  activeRoles: readonly Pick<RoleDefinition, 'service'>[],
+): boolean {
+  if (perimeter.kind === 'all') return true;
+  return activeRoles.some((role) => perimeter.services.includes(role.service));
+}
+
 /** Suspension, réactivation et réinitialisation de la double authentification : super_admin seul. */
 export function canManageAccounts(perimeter: AdminPerimeter): boolean {
   return perimeter.kind === 'all';

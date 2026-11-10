@@ -9,6 +9,7 @@ import {
   canManageAccounts,
   canManageRole,
   isAssignableScope,
+  isInPerimeter,
   parseAccountQuery,
   perimeterOf,
   seesFullPhone,
@@ -106,7 +107,12 @@ export class AccountDetails {
     return account;
   }
 
-  async load(userId: string, actor: AccountAdminActor): Promise<AccountDetailView> {
+  /**
+   * Fiche du compte. Un administrateur de métier ne lit que son équipe (ADR-043, ADR-050) : un
+   * autre compte est introuvable. `afterChange` : fiche rendue après sa propre écriture (un rôle
+   * qu'il vient de retirer peut avoir fait sortir le compte de son équipe).
+   */
+  async load(userId: string, actor: AccountAdminActor, afterChange = false): Promise<AccountDetailView> {
     const account = await this.account(userId);
     const [assignments, history, mfa, catalog] = await Promise.all([
       this.accounts.assignments(account.id),
@@ -114,6 +120,8 @@ export class AccountDetails {
       this.accounts.mfaStatus(account.id),
       this.accounts.catalog(),
     ]);
+    const activeRoles = assignments.filter((item) => item.revokedAt === null).map((item) => item.role);
+    if (!afterChange && !isInPerimeter(actor.perimeter, activeRoles)) throw accountAdminErrors.notFound();
     const manages = canManageAccounts(actor.perimeter);
     const self = account.id === actor.actorId;
     return {
@@ -266,7 +274,7 @@ export class RevokeAccountRoleUseCase {
       if (error instanceof LastSuperAdminError) throw accountAdminErrors.lastSuperAdmin();
       throw error;
     }
-    return this.details.load(account.id, actor);
+    return this.details.load(account.id, actor, true);
   }
 }
 
