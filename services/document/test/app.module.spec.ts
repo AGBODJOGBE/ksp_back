@@ -57,6 +57,9 @@ describe('configuration', () => {
       ...base,
       NODE_ENV: 'production',
       IDENTITY_JWKS_URL: 'http://identity:3101/.well-known/jwks.json',
+      FILE_GRPC_URL: 'dns:///file-headless:50056',
+      NOTIFICATION_GRPC_URL: 'dns:///notification-headless:50052',
+      IDENTITY_GRPC_URL: 'dns:///identity-headless:50051',
     };
     expect(() =>
       loadConfig(configSchema, { ...production, DOCUMENT_GENERIC_TEMPLATE_ENABLED: 'true' }),

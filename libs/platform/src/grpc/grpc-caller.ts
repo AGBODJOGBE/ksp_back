@@ -5,6 +5,7 @@ import { type ServiceTokenProvider } from '../auth/service-token';
 import { metadataFromContext } from '../context/request-context';
 import { AppError } from '../errors/app-error';
 import { fromGrpcError } from '../errors/grpc-error';
+import { currentDeadline, runWithDeadline } from './deadline';
 
 export interface GrpcCallerOptions {
   /** Service appelé, par exemple "notification". Sert aussi d'audience pour le jeton de service. */
@@ -38,8 +39,12 @@ export interface CallOptions {
 
 type Invoke<T> = (metadata: Metadata) => Observable<T> | Promise<T>;
 
-/** Erreurs d'infrastructure : elles comptent pour le coupe-circuit et autorisent une nouvelle tentative. */
-const INFRASTRUCTURE_KINDS = new Set(['UNAVAILABLE', 'DEADLINE_EXCEEDED', 'INTERNAL']);
+/**
+ * Pannes du service appelé : elles seules comptent pour le coupe-circuit et autorisent une nouvelle
+ * tentative. Une erreur interne (INTERNAL) vient d'un service qui répond : un défaut sur une méthode
+ * ne doit pas couper toutes les autres (ADR-051).
+ */
+const OUTAGE_KINDS = new Set(['UNAVAILABLE', 'DEADLINE_EXCEEDED']);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -60,7 +65,7 @@ export class GrpcCaller {
       rollingCountTimeout: options.breaker?.rollingCountTimeout ?? 10_000,
       resetTimeout: options.breaker?.resetTimeout ?? 30_000,
       // Une erreur métier (introuvable, conflit…) ne signifie pas que le service est en panne.
-      errorFilter: (error: unknown) => !INFRASTRUCTURE_KINDS.has(fromGrpcError(error).kind),
+      errorFilter: (error: unknown) => !OUTAGE_KINDS.has(fromGrpcError(error).kind),
     });
   }
 
@@ -72,21 +77,36 @@ export class GrpcCaller {
     const attempts = options.idempotent ? 1 + (options.retries ?? 1) : 1;
     let lastError: AppError | undefined;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
+      // Jamais au-delà de l'échéance de l'appel reçu : personne n'attendrait plus la réponse.
+      const deadline = this.deadlineOf(options.deadlineMs ?? this.deadlineMs);
+      // Échéance reçue déjà dépassée : échec immédiat, hors coupe-circuit (le service appelé n'y est pour rien).
+      if (deadline.getTime() <= Date.now()) throw lastError ?? this.deadlineError(name);
       try {
-        return (await this.breaker.fire(() =>
-          this.once(name, invoke, options.deadlineMs ?? this.deadlineMs),
-        )) as T;
+        return (await this.breaker.fire(() => this.once(name, invoke, deadline))) as T;
       } catch (error) {
         lastError = this.normalize(error);
-        const retryable = lastError.kind === 'UNAVAILABLE' || lastError.kind === 'DEADLINE_EXCEEDED';
-        if (!retryable || this.breaker.opened || attempt === attempts - 1) break;
+        if (!OUTAGE_KINDS.has(lastError.kind) || this.breaker.opened || attempt === attempts - 1) break;
         await sleep((this.options.retryBackoffMs ?? 100) * (attempt + 1));
       }
     }
     throw lastError;
   }
 
-  private async once<T>(name: string, invoke: Invoke<T>, deadlineMs: number): Promise<T> {
+  private deadlineOf(deadlineMs: number): Date {
+    const own = Date.now() + deadlineMs;
+    const inherited = currentDeadline()?.getTime() ?? Infinity;
+    return new Date(Math.min(own, inherited));
+  }
+
+  private deadlineError(name: string): AppError {
+    return new AppError(
+      'DEADLINE_EXCEEDED',
+      'GRPC_DEADLINE_EXCEEDED',
+      `${this.options.target}.${name} n'a pas répondu à temps.`,
+    );
+  }
+
+  private async once<T>(name: string, invoke: Invoke<T>, deadline: Date): Promise<T> {
     const metadata = metadataFromContext();
     if (this.options.serviceTokenProvider) {
       metadata.set(
@@ -94,30 +114,30 @@ export class GrpcCaller {
         `Bearer ${await this.options.serviceTokenProvider.getToken(this.options.target)}`,
       );
     }
-    const deadlineError = () =>
-      new AppError(
-        'DEADLINE_EXCEEDED',
-        'GRPC_DEADLINE_EXCEEDED',
-        `${this.options.target}.${name} n'a pas répondu à temps.`,
-      );
-    const result = invoke(metadata);
-    if (isObservable(result)) {
-      // Se désabonner annule l'appel gRPC en cours.
-      return firstValueFrom(
-        result.pipe(timeout({ first: deadlineMs, with: () => throwError(deadlineError) })),
-      );
-    }
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      return await Promise.race([
-        result,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(deadlineError()), deadlineMs);
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
+    const remainingMs = Math.max(0, deadline.getTime() - Date.now());
+    // L'échéance accompagne l'appel : l'intercepteur des clients (deadlineInterceptor) la transmet.
+    return runWithDeadline(deadline, async () => {
+      const result = invoke(metadata);
+      if (isObservable(result)) {
+        // Se désabonner annule l'appel gRPC en cours.
+        return firstValueFrom(
+          result.pipe(
+            timeout({ first: remainingMs, with: () => throwError(() => this.deadlineError(name)) }),
+          ),
+        );
+      }
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        return await Promise.race([
+          result,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(this.deadlineError(name)), remainingMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    });
   }
 
   private normalize(error: unknown): AppError {

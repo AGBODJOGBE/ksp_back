@@ -28,6 +28,8 @@ export const baseServiceConfigSchema = z
     /** Secret du service auprès d'identity (client credentials), fourni par le coffre. */
     SERVICE_CLIENT_SECRET: z.string().optional(),
     OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
+    /** Délai entre SIGTERM et la fermeture, pendant lequel la sonde « prêt » répond 503 (ADR-051). */
+    SHUTDOWN_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(5000),
   })
   .refine((cfg) => cfg.NODE_ENV !== 'production' || Boolean(cfg.IDENTITY_JWKS_URL), {
     message:

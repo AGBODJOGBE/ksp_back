@@ -68,7 +68,8 @@ describeWithDatabase('PrismaNotificationRepository (PostgreSQL)', () => {
   });
 
   it('enregistre une notification en attente, sans aucune colonne pour le texte ou les variables', async () => {
-    await expect(repository.claim(notification('challenge-1'))).resolves.toEqual({ created: true });
+    const created = notification('challenge-1');
+    await expect(repository.claim(created)).resolves.toEqual({ created: true, id: created.id });
     const { rows } = await pool.query(
       'SELECT idempotency_key, template_code, requested_channel, status, target_masked, expires_at FROM notifications',
     );
@@ -112,6 +113,38 @@ describeWithDatabase('PrismaNotificationRepository (PostgreSQL)', () => {
     });
     const { rows } = await pool.query('SELECT provider_message_id, accepted_at FROM notifications');
     expect(rows).toEqual([{ provider_message_id: 'wamid.1', accepted_at: NOW }]);
+  });
+
+  it('reprend une seule fois une réservation restée en attente au-delà de 10 min (envoi jamais fait)', async () => {
+    const abandoned = notification('challenge-abandoned');
+    await repository.claim(abandoned);
+    const later = (minutes: number) => ({
+      ...notification('challenge-abandoned'),
+      createdAt: new Date(NOW.getTime() + minutes * 60_000),
+    });
+
+    await expect(repository.claim(later(5))).resolves.toMatchObject({ created: false });
+    const resumed = await Promise.all(Array.from({ length: 5 }, () => repository.claim(later(11))));
+    expect(resumed.filter((result) => result.created)).toEqual([{ created: true, id: abandoned.id }]);
+    // Reprise datée : pas de seconde reprise avant 10 min de plus.
+    await expect(repository.claim(later(15))).resolves.toMatchObject({ created: false });
+    await expect(repository.claim(later(22))).resolves.toEqual({ created: true, id: abandoned.id });
+    const { rows } = await pool.query('SELECT count(*)::int AS n FROM notifications');
+    expect(rows).toEqual([{ n: 1 }]);
+  });
+
+  it('ne reprend jamais une notification acceptée ou en échec', async () => {
+    const done = notification('challenge-done');
+    await repository.claim(done);
+    await repository.markAccepted(done.id, {
+      channelUsed: 'whatsapp',
+      channelsTried: ['whatsapp'],
+      providerMessageId: 'wamid.2',
+      at: NOW,
+    });
+    await expect(
+      repository.claim({ ...notification('challenge-done'), createdAt: new Date(NOW.getTime() + 3_600_000) }),
+    ).resolves.toMatchObject({ created: false, existing: { status: 'accepted' } });
   });
 
   it('deux appels simultanés avec la même clé : un seul enregistrement', async () => {

@@ -1,4 +1,4 @@
-import { baseServiceConfigSchema } from '@ksp/platform';
+import { baseServiceConfigSchema, requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 import { type MfaPolicy } from './domain/mfa/mfa-challenge';
 import { type OtpPolicy } from './domain/otp/otp-policy';
@@ -112,6 +112,8 @@ export const configSchema = baseServiceConfigSchema
     ACCOUNT_DELETION_BATCH_SIZE: z.coerce.number().int().positive().max(500).default(50),
   })
   .superRefine((cfg, ctx) => {
+    // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
+    requireGrpcAddressesInProduction(cfg, ctx);
     if (cfg.NODE_ENV !== 'production') return;
     for (const [name, value] of Object.entries(DEV_SECRETS)) {
       if (cfg[name as keyof typeof DEV_SECRETS] === value) {

@@ -1,5 +1,6 @@
 import { type EventEnvelope } from '@ksp/contracts';
 import { Logger } from '@nestjs/common';
+import { register } from 'prom-client';
 import { runWithContext } from '../context/request-context';
 import { createEnvelope } from './envelope';
 import { OutboxRelay, outboxRetryDelayMs } from './outbox-relay';
@@ -314,6 +315,40 @@ describe('OutboxRelay', () => {
     expect(published).toEqual(events.map((e) => e.eventId));
   });
 
+  it('compte les échecs de publication et expose l’outbox en attente et mise de côté', async () => {
+    const outbox = Object.assign(new InMemoryOutbox(), {
+      stats: async () => ({ pending: 4, parked: 2 }),
+    });
+    const publisher = new RecordingPublisher();
+    publisher.down = true;
+    outbox.add(envelope(1));
+    const relay = new OutboxRelay(outbox, publisher, { idleDelayMs: 5 });
+    const failures = async () =>
+      (await register.getSingleMetric('outbox_publish_failures_total')?.get())?.values[0]?.value ?? 0;
+    const before = await failures();
+    await relay.runOnce();
+    expect(await failures()).toBe(before + 1);
+    relay.start();
+    const metrics = await register.metrics();
+    await relay.stop();
+    expect(metrics).toMatch(/^outbox_pending 4$/m);
+    expect(metrics).toMatch(/^outbox_parked 2$/m);
+  });
+
+  it('purge périodiquement les messages anciens (outbox publiée, inbox)', async () => {
+    const outbox = new InMemoryOutbox();
+    const purge = jest.fn(async () => 3);
+    const relay = new OutboxRelay(outbox, new RecordingPublisher(), {
+      idleDelayMs: 5,
+      retention: { purge },
+      retentionIntervalMs: 20,
+    });
+    relay.start();
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    await relay.stop();
+    expect(purge.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('tourne en tâche de fond et s’arrête proprement', async () => {
     const outbox = new InMemoryOutbox();
     const publisher = new RecordingPublisher();
@@ -411,6 +446,21 @@ describe('stores SQL', () => {
     expect(calls[0]!.sql).toContain('first_failed_at = NULL');
     expect(calls[0]!.values).toEqual([]);
     expect(calls[1]!.values).toEqual([['evt-1']]);
+  });
+
+  it('traite un événement reçu dans une transaction de 30 s par défaut, réglable', async () => {
+    const timeouts: unknown[] = [];
+    const { client } = fakeSqlClient({ execute: [1, 1] });
+    const spied: TransactionalSqlClient = {
+      ...client,
+      $transaction: (fn, options) => {
+        timeouts.push(options?.timeout);
+        return client.$transaction(fn, options);
+      },
+    };
+    await new SqlInboxStore(spied).runOnce('evt-1', 'notification', async () => undefined);
+    await new SqlInboxStore(spied, 60_000).runOnce('evt-2', 'notification', async () => undefined);
+    expect(timeouts).toEqual([30_000, 60_000]);
   });
 
   it('ne traite pas deux fois le même événement', async () => {

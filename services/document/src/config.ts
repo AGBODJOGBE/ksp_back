@@ -1,4 +1,4 @@
-import { baseServiceConfigSchema } from '@ksp/platform';
+import { baseServiceConfigSchema, requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 import { type CodePolicy } from './domain/code-policy';
 
@@ -79,7 +79,9 @@ export const configSchema = baseServiceConfigSchema
         'Jeton de service obligatoire en production (appels à file, notification, identity).',
       );
     }
-  });
+  })
+  // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
+  .superRefine(requireGrpcAddressesInProduction);
 
 export type ServiceConfig = z.infer<typeof configSchema>;
 

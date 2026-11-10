@@ -21,6 +21,7 @@ const production = {
   DATABASE_URL: 'postgresql://identity:secret@db:5432/identity',
   RABBITMQ_URL: 'amqp://rabbitmq',
   IDENTITY_JWKS_URL: 'http://identity:3101/.well-known/jwks.json',
+  NOTIFICATION_GRPC_URL: 'dns:///notification-headless:50052',
   OTP_HMAC_SECRET: 'secret-de-production-du-coffre-0123456789',
   IDENTITY_MFA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
 };
