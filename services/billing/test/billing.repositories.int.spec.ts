@@ -116,7 +116,8 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
     const numbers = (await pool.query('SELECT number FROM invoices ORDER BY number')).rows.map(
       (r) => r.number,
     );
-    expect(numbers).toEqual(['FAC-2027-000001', 'FAC-2027-000002']);
+    // Novembre et décembre 2026, émises en janvier 2027 : année de la période (ADR-049).
+    expect(numbers).toEqual(['FAC-2026-000001', 'FAC-2026-000002']);
     const headers = await pool.query(
       'SELECT DISTINCT organization_legal_name, organization_address, organization_ifu, organization_rccm FROM invoices',
     );

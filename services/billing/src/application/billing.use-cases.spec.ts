@@ -344,6 +344,41 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     ]);
   });
 
+  it('montant recalculé sous le verrou du contrat : un changement entre la lecture et l’émission compte (ADR-049)', async () => {
+    // La tâche lit le contrat avant la suspension ; la suspension est enregistrée avant l'émission.
+    const stale = await world.contracts.listOpen();
+    world.contracts.listOpen = async () => stale;
+    await useCases.suspendContract.execute({
+      eventId: event(30),
+      type: 'cleaning.contract.suspended',
+      occurredAt: '2026-11-16T00:00:00Z',
+      payload: {
+        missionId: MISSION_ID,
+        customerId: CUSTOMER_ID,
+        organizationId: ORGANIZATION_ID,
+        cause: 'unpaid_invoices',
+        unpaidCount: 2,
+        threshold: 2,
+        cancelledInterventionIds: [],
+        releasedAgentIds: [],
+        // 16 novembre à 00:00 au Bénin : 15 jours sur 30 suspendus.
+        suspendedAt: '2026-11-15T23:00:00Z',
+      },
+    });
+    world.clock.current = new Date('2026-12-01T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    expect([...world.invoices.invoices.values()].map((i) => i.total)).toEqual([50_000]);
+  });
+
+  it('numéro de facture : année de la période au Bénin, même émise l’année suivante (ADR-049)', async () => {
+    world.clock.current = new Date('2027-01-02T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    expect([...world.invoices.invoices.values()].map((i) => [i.periodIndex, i.number])).toEqual([
+      [1, 'FAC-2026-000001'],
+      [2, 'FAC-2026-000002'],
+    ]);
+  });
+
   it('prestation ponctuelle : facturée en une fois, sur la facture du mois du passage (ADR-049)', async () => {
     const ONE_OFF_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001';
     const oneOff = booking(ORGANIZATION_ID, event(20));

@@ -83,22 +83,26 @@ export function beninMidnight(day: number): Date {
 
 const dayOf = (year: number, monthIndex: number) => Date.UTC(year, monthIndex, 1) / DAY_MS;
 
-/** Ajoute des mois en UTC ; le jour est ramené au dernier jour du mois si besoin (31 → 28). */
+/**
+ * Ajoute des mois au calendrier du Bénin (ADR-049), heure conservée ; le jour est ramené au dernier
+ * jour du mois si besoin (31 → 28). En jours UTC, une date de fin de soirée (23:00 UTC et après,
+ * déjà le lendemain au Bénin) tomberait un jour trop loin.
+ */
 export function addMonths(date: Date, months: number): Date {
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth() + months;
+  const local = new Date(date.getTime() + BENIN_OFFSET_MS);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth() + months;
   const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  return new Date(
-    Date.UTC(
-      year,
-      month,
-      Math.min(date.getUTCDate(), lastDay),
-      date.getUTCHours(),
-      date.getUTCMinutes(),
-      date.getUTCSeconds(),
-      date.getUTCMilliseconds(),
-    ),
+  const shifted = Date.UTC(
+    year,
+    month,
+    Math.min(local.getUTCDate(), lastDay),
+    local.getUTCHours(),
+    local.getUTCMinutes(),
+    local.getUTCSeconds(),
+    local.getUTCMilliseconds(),
   );
+  return new Date(shifted - BENIN_OFFSET_MS);
 }
 
 /** Fin naturelle du contrat : début + durée en mois. */

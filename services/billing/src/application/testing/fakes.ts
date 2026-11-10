@@ -1,6 +1,6 @@
 import { AppError, type RoleClaim, runWithContext } from '@ksp/platform';
 import { type BillingContract, contractPeriods } from '../../domain/contract';
-import { formatInvoiceNumber, type Invoice, type InvoicePayment } from '../../domain/invoice';
+import { formatInvoiceNumber, type Invoice, type InvoicePayment, invoiceYear } from '../../domain/invoice';
 import { type BillingSettings, DEFAULT_BILLING_SETTINGS } from '../../domain/settings';
 import {
   type BillingDeps,
@@ -83,12 +83,23 @@ export class InMemoryInvoices implements InvoiceRepository {
 
   constructor(private readonly recorder: Recorder) {}
 
-  async issue(draft: Omit<Invoice, 'number'>, events: (invoice: Invoice) => OutboxMessage[]) {
+  /** Contrat relu « sous verrou » à l'émission (relié par testWorld). */
+  contractOf: (id: string) => BillingContract | null = () => null;
+
+  async issue(
+    contractId: string,
+    periodIndex: number,
+    build: (contract: BillingContract) => Omit<Invoice, 'number'> | null,
+    events: (invoice: Invoice) => OutboxMessage[],
+  ) {
     const exists = [...this.invoices.values()].some(
-      (i) => i.contractId === draft.contractId && i.periodIndex === draft.periodIndex,
+      (i) => i.contractId === contractId && i.periodIndex === periodIndex,
     );
     if (exists) return null;
-    const year = draft.issuedAt.getUTCFullYear();
+    const contract = this.contractOf(contractId);
+    const draft = contract ? build(contract) : null;
+    if (!draft) return null;
+    const year = invoiceYear(draft);
     const next = (this.sequence.get(year) ?? 0) + 1;
     this.sequence.set(year, next);
     const invoice = { ...draft, number: formatInvoiceNumber(year, next) };
@@ -231,11 +242,13 @@ export interface TestWorld extends BillingDeps {
 export function testWorld(): TestWorld {
   const recorder = new Recorder();
   const invoices = new InMemoryInvoices(recorder);
+  const contracts = new InMemoryContracts(invoices);
+  invoices.contractOf = (id) => contracts.contracts.get(id) ?? null;
   return {
     recorder,
     clock: new FixedClock(),
     ids: new SequentialIds(),
-    contracts: new InMemoryContracts(invoices),
+    contracts,
     invoices,
     settings: new InMemorySettings(),
     organizations: withOrganization(new InMemoryOrganizations()),
