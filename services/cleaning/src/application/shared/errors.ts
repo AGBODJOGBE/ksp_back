@@ -25,6 +25,9 @@ export const CleaningErrors = {
   serviceNotFound: () => AppError.notFound('CLEANING_SERVICE_NOT_FOUND', 'Cette prestation est introuvable.'),
   requestNotFound: () => AppError.notFound('CLEANING_REQUEST_NOT_FOUND', 'Cette demande est introuvable.'),
   missionNotFound: () => AppError.notFound('CLEANING_MISSION_NOT_FOUND', 'Cette mission est introuvable.'),
+  /** Méthode réservée à un autre service (en-tête de cleaning.proto). */
+  callerForbidden: () =>
+    AppError.forbidden('CLEANING_CALLER_FORBIDDEN', "Ce service n'est pas autorisé à appeler cette méthode."),
   visitNotFound: () => AppError.notFound('CLEANING_VISIT_NOT_FOUND', 'Cette visite est introuvable.'),
   interventionNotFound: () =>
     AppError.notFound('CLEANING_INTERVENTION_NOT_FOUND', 'Ce passage est introuvable.'),

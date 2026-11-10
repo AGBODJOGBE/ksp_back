@@ -1,5 +1,13 @@
-import { AppError, hasRole, requireRecentMfa, requireUser, type UserContext } from '@ksp/platform';
+import {
+  AppError,
+  currentContext,
+  hasRole,
+  requireRecentMfa,
+  requireUser,
+  type UserContext,
+} from '@ksp/platform';
 import { type CustomerKind } from '../../domain/quote-request';
+import { CleaningErrors } from './errors';
 
 /**
  * Contrôles d'accès du service. La gateway filtre déjà selon son manifeste, mais le service
@@ -26,6 +34,16 @@ export interface Customer {
   userId: string;
   kind: CustomerKind;
   organizationId: string | null;
+}
+
+/**
+ * Méthode réservée à certains services : l'appelant est authentifié par son jeton de service,
+ * vérifié par le kit. Sans vérificateur (développement local), il n'est pas connu et l'appel passe ;
+ * en production, le jeton de service est obligatoire.
+ */
+export function requireCaller(allowed: readonly string[]): void {
+  const caller = currentContext()?.callerService;
+  if (caller && !allowed.includes(caller)) throw CleaningErrors.callerForbidden();
 }
 
 /** Client connecté ; une organisation active (UC-ID-15) en fait un client entreprise. */

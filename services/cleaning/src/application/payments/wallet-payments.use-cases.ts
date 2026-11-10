@@ -11,7 +11,7 @@ import {
 } from '../../domain/payment';
 import { isBusinessContract } from '../../domain/standing';
 import { type CleaningDeps, missionView, type MissionView } from '../deps';
-import { currentCustomer } from '../shared/access';
+import { currentCustomer, requireCaller } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import { eventSubject } from '../shared/event-subject';
 import { oneOf, requireUuid } from '../shared/validation';
@@ -19,6 +19,8 @@ import { EvaluateStandingUseCase } from '../standing/standing.use-cases';
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,100}$/;
 const MAX_ATTEMPTS = 3;
+/** Seul wallet rapproche ses débits (ADR-048). */
+const WALLET_CALLERS = ['wallet'];
 
 /**
  * Acompte ou solde d'une mission payé depuis le portefeuille prépayé du client (ADR-046).
@@ -126,5 +128,26 @@ export class PayMissionFromWalletUseCase {
     const mission = await this.deps.missions.findById(missionId);
     if (!mission || mission.customerId !== userId) throw CleaningErrors.missionNotFound();
     return mission;
+  }
+}
+
+/**
+ * WalletDebitCheckService.GetWalletDebitStatus (ADR-048) : wallet rapproche un débit fait pour une
+ * mission dont l'enregistrement a pu échouer (panne entre le débit et l'enregistrement). true si un
+ * paiement par portefeuille de la mission cite ce débit, remboursé ou non ; false sinon, mission
+ * inconnue comprise : wallet rembourse alors le débit.
+ */
+export class GetWalletDebitStatusUseCase {
+  constructor(private readonly deps: CleaningDeps) {}
+
+  async execute(input: { missionId: string; transactionId: string }): Promise<boolean> {
+    requireCaller(WALLET_CALLERS);
+    const transactionId = requireUuid('transactionId', input.transactionId);
+    const mission = await this.deps.missions.findById(requireUuid('missionId', input.missionId));
+    return (
+      mission?.payment.payments.some(
+        (payment) => payment.method === 'wallet' && payment.reference === transactionId,
+      ) ?? false
+    );
   }
 }
