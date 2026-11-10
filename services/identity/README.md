@@ -107,3 +107,13 @@ organisation validée (`business`, avec `organization_name`), voir ci-dessous.
   numéro dans le corps) : identifiant, état, prénom, nom et numéro masqué, jamais l'e-mail ni le
   numéro complet. Rôles `cleaning_admin`, `super_admin`, double authentification revérifiée.
 - `GetUsersByIds` sert aussi cleaning (noms affichés au back-office), sans téléphone ni e-mail.
+
+## Confiance et comptes (ADR-050)
+
+- **Essais des codes** (téléphone, e-mail, double authentification) : l'essai est pris en base, de façon atomique, avant de comparer le code ; des essais simultanés ne dépassent jamais le plafond.
+- **Renouvellement entre onglets** : le successeur d'un jeton de renouvellement est dérivé de lui (HMAC, clé `OTP_HMAC_SECRET`) ; pendant `REFRESH_TOKEN_REUSE_GRACE_SECONDS` (10 s), l'ancien jeton rend le même successeur tant qu'il n'a pas servi. Au-delà, la réutilisation révoque la session (vol).
+- **Appelants** : `AuthService`, `AccountService`, `AccountAdminService`, `OrganizationService` et `OrganizationAdminService` n'acceptent que la gateway (`@AllowedCallers('gateway')`) ; `IdentityService` reste ouvert aux services.
+- **Administrateur de métier** : la fiche d'un compte hors de son équipe est introuvable ; écritures (rôles, suspension, réinitialisation) avec une double authentification de moins de 10 minutes.
+- **Réinitialisation de la double authentification** : `identity.user.mfa_reset` prévient le titulaire ; reconfiguration ouverte `MFA_RESET_ENROLLMENT_SECONDS` (1 heure), puis `IDENTITY_MFA_ENROLLMENT_EXPIRED`.
+- **Production** : `OTP_HMAC_SECRET` et `IDENTITY_MFA_ENCRYPTION_KEY` du `.env.example` refusés ; le portefeuille (`wallet`) est interrogé avant une suppression de compte.
+- **Annuaire** : `GetOrganizationsByIds` rend à notification les administrateurs actuels (`admin_user_ids`), destinataires des factures de l'organisation.
