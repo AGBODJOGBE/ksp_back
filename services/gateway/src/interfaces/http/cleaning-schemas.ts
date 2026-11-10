@@ -18,6 +18,32 @@ const recurrence = z.strictObject({
   visitsPerPeriod: int(1, 31),
   durationMonths: int(1, 36),
 });
+/**
+ * Plan de passages (ADR-052) : forme seulement ; les règles (champs de chaque mode, période, nombre
+ * de passages, délai minimum) sont dans cleaning.
+ */
+const day = z.iso.date();
+const schedule = z.strictObject({
+  mode: z.enum(['dates', 'weekly', 'monthly']),
+  dates: z.array(day).min(1).max(1000).optional(),
+  startDate: day.optional(),
+  endDate: day.optional(),
+  weekdays: z
+    .array(z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']))
+    .min(1)
+    .max(7)
+    .optional(),
+  everyWeeks: int(1, 12).optional(),
+  monthDays: z.array(int(1, 31)).min(1).max(31).optional(),
+  weeksOfMonth: z
+    .array(z.union([int(1, 4), z.literal('last')]))
+    .min(1)
+    .max(5)
+    .optional(),
+  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  excludedDates: z.array(day).max(400).optional(),
+  extraDates: z.array(day).max(100).optional(),
+});
 const nullableAmount = z.number().int().min(0).nullable();
 const optionalReason = z.strictObject({ reason: text(500, 0).optional() });
 const requiredReason = z.strictObject({ reason: text(500) });
@@ -189,8 +215,12 @@ export const cleaningBodies = {
       ...formAnswers,
       // Facultative (ADR-034) : sans elle, coefficient neutre et communeApplied = false.
       commune: text(100).optional(),
+      // Facultatif (ADR-052) : montant estimé sur le nombre exact de passages.
+      schedule: schedule.optional(),
     })
     .superRefine(oneFormat),
+  // Plan de passages (ADR-052) : le corps est le plan lui-même.
+  previewCleaningSchedule: schedule,
   estimateCleaning: z.strictObject({
     placeType: code,
     commune: text(100).optional(),
@@ -210,9 +240,11 @@ export const cleaningBodies = {
       .array(z.strictObject({ ...placeItem, requestedTeamSize: int(1, 50).optional() }))
       .min(1)
       .max(10),
-    preferredSlots: z.array(slot).min(1).max(3),
+    // Facultatifs avec un plan de passages (ADR-052) ; 1 à 3 sinon (contrôlé par cleaning).
+    preferredSlots: z.array(slot).max(3).optional(),
     comment: text(2000, 0).optional(),
     recurrence: recurrence.optional(),
+    schedule: schedule.optional(),
   }),
   saveCleaningPlaceType: z.strictObject({
     label: text(100),
@@ -228,9 +260,11 @@ export const cleaningBodies = {
       ...formAnswers,
       commune: text(100),
       address: text(500),
-      preferredSlots: z.array(slot).min(1).max(3),
+      // Facultatifs avec un plan de passages (ADR-052) ; 1 à 3 sinon (contrôlé par cleaning).
+      preferredSlots: z.array(slot).max(3).optional(),
       comment: text(2000, 0).optional(),
       recurrence: recurrence.optional(),
+      schedule: schedule.optional(),
       requestedTeamSize: int(1, 50).optional(),
       daysPerWeek: int(1, 7).optional(),
     })
@@ -272,8 +306,10 @@ export const cleaningBodies = {
   }),
   rejectCleaningRequestGroup: requiredReason,
   sendCleaningGroupQuotes: z.strictObject({
-    proposedSlots: z.array(slot).min(1).max(3),
+    // Ignorés pour un devis avec un plan de passages (ADR-052) ; 1 à 3 sinon (contrôlé par cleaning).
+    proposedSlots: z.array(slot).max(3).optional(),
     validityDays: int(1, 90).optional(),
+    schedule: schedule.optional(),
     quotes: z
       .array(
         z.strictObject({
@@ -325,14 +361,17 @@ export const cleaningBodies = {
       .array(z.strictObject({ label: text(200), quantity: int(1, 1_000_000), unitPrice: z.number().int() }))
       .max(50)
       .optional(),
-    proposedSlots: z.array(slot).min(1).max(3),
+    // Ignorés avec un plan de passages (ADR-052) ; 1 à 3 sinon (contrôlé par cleaning).
+    proposedSlots: z.array(slot).max(3).optional(),
     validityDays: int(1, 90).optional(),
     recurrence: recurrence.optional(),
+    schedule: schedule.optional(),
     teamSize: int(1, 50).optional(),
     durationMinutes: int(1, 1440),
   }),
   scheduleCleaningIntervention: z.strictObject({
-    scheduledStart: dateTime,
+    // Absent : prochaine date du plan de passages (ADR-052).
+    scheduledStart: dateTime.optional(),
     durationMinutes: int(1, 1440),
     agentIds: z.array(uuid).max(50).optional(),
     teamId: uuid.optional(),

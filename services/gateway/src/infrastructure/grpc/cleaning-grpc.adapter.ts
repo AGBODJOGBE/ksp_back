@@ -11,6 +11,7 @@ import {
   type GroupMeasurementBody,
   type MeasurementBody,
   type GroupQuotesInput,
+  type ScheduleInput,
   type LocationCorrectionInput,
   type VisitFilters,
   type Json,
@@ -43,7 +44,9 @@ import {
   presentServedZone,
   presentSettings,
   presentSibling,
+  presentSchedulePreview,
   presentSimulation,
+  scheduleToProto,
   presentTeam,
   presentVisit,
   presentZone,
@@ -99,11 +102,24 @@ export class CleaningGrpcAdapter implements CleaningApi {
   async simulate(input: SimulationInput): Promise<Json> {
     const res = await this.read('simulate', (m) =>
       this.clients.catalog.simulate(
-        { serviceCode: input.serviceCode, commune: input.commune ?? '', ...formToProto(input) },
+        {
+          serviceCode: input.serviceCode,
+          commune: input.commune ?? '',
+          ...formToProto(input),
+          ...(input.schedule ? { schedule: scheduleToProto(input.schedule) } : {}),
+        },
         m,
       ),
     );
     return presentSimulation(res);
+  }
+
+  async previewSchedule(input: ScheduleInput): Promise<Json> {
+    // Rien n'est enregistré : l'aperçu est une lecture, rejouable.
+    const res = await this.read('previewSchedule', (m) =>
+      this.clients.catalog.previewSchedule({ schedule: scheduleToProto(input) }, m),
+    );
+    return presentSchedulePreview(res.preview);
   }
 
   async listServedZones(): Promise<Json> {
@@ -155,9 +171,10 @@ export class CleaningGrpcAdapter implements CleaningApi {
             ...placeItem(item),
             requestedTeamSize: item.requestedTeamSize ?? 0,
           })),
-          preferredSlots: input.preferredSlots,
+          preferredSlots: input.preferredSlots ?? [],
           comment: input.comment ?? '',
           ...(input.recurrence ? { recurrence: input.recurrence } : {}),
+          ...(input.schedule ? { schedule: scheduleToProto(input.schedule) } : {}),
         },
         m,
       ),
@@ -260,8 +277,9 @@ export class CleaningGrpcAdapter implements CleaningApi {
       this.clients.admin.sendGroupQuotes(
         {
           groupId: id,
-          proposedSlots: input.proposedSlots,
+          proposedSlots: input.proposedSlots ?? [],
           validityDays: input.validityDays ?? 0,
+          ...(input.schedule ? { schedule: scheduleToProto(input.schedule) } : {}),
           quotes: input.quotes.map((quote) => ({
             requestId: quote.requestId,
             lines: (quote.lines ?? []).map((l) => ({
@@ -395,9 +413,10 @@ export class CleaningGrpcAdapter implements CleaningApi {
           ...formToProto(input),
           commune: input.commune,
           address: input.address,
-          preferredSlots: input.preferredSlots,
+          preferredSlots: input.preferredSlots ?? [],
           comment: input.comment ?? '',
           ...(input.recurrence ? { recurrence: input.recurrence } : {}),
+          ...(input.schedule ? { schedule: scheduleToProto(input.schedule) } : {}),
           requestedTeamSize: input.requestedTeamSize ?? 0,
           daysPerWeek: input.daysPerWeek ?? 0,
         },
@@ -578,9 +597,10 @@ export class CleaningGrpcAdapter implements CleaningApi {
             unitPrice: xof(l.unitPrice),
             amount: xof(l.quantity * l.unitPrice),
           })),
-          proposedSlots: input.proposedSlots,
+          proposedSlots: input.proposedSlots ?? [],
           validityDays: input.validityDays ?? 0,
           ...(input.recurrence ? { recurrence: input.recurrence } : {}),
+          ...(input.schedule ? { schedule: scheduleToProto(input.schedule) } : {}),
           teamSize: input.teamSize ?? 0,
           durationMinutes: input.durationMinutes,
         },
@@ -615,7 +635,7 @@ export class CleaningGrpcAdapter implements CleaningApi {
   async scheduleIntervention(
     id: string,
     input: {
-      scheduledStart: string;
+      scheduledStart?: string | undefined;
       durationMinutes: number;
       agentIds?: string[] | undefined;
       teamId?: string | undefined;
@@ -625,7 +645,7 @@ export class CleaningGrpcAdapter implements CleaningApi {
       this.clients.admin.scheduleIntervention(
         {
           missionId: id,
-          scheduledStart: input.scheduledStart,
+          scheduledStart: input.scheduledStart ?? '',
           durationMinutes: input.durationMinutes,
           agentIds: input.agentIds ?? [],
           teamId: input.teamId ?? '',

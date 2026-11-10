@@ -42,6 +42,16 @@ export const CLEANING_ROUTES = [
     rateLimit: 'cleaning_simulation',
     requiresKnownClient: false,
   },
+  // Plan de passages (ADR-052) : aperçu des dates, public et limité comme la simulation.
+  {
+    operationId: 'previewCleaningSchedule',
+    method: 'POST',
+    path: '/api/v1/cleaning/schedules/preview',
+    grpc: `${CATALOG}/PreviewSchedule`,
+    access: { level: 'public' },
+    rateLimit: 'cleaning_simulation',
+    requiresKnownClient: false,
+  },
   {
     operationId: 'listServedCleaningZones',
     method: 'GET',
