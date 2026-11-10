@@ -1,4 +1,4 @@
-import { AppError, requireUser } from '@ksp/platform';
+import { AppError, requireRecentMfa, requireUser } from '@ksp/platform';
 import { normalizeReason } from '../../domain/organization/organization';
 import { defaultAssignmentScope, type RoleDefinition } from '../../domain/role/role';
 import {
@@ -52,12 +52,25 @@ export interface AccountAdminActor {
 const forbidden = () =>
   AppError.forbidden('AUTH_FORBIDDEN', "Vous n'avez pas les droits nécessaires pour cette action.");
 
+/**
+ * Écritures (rôles, suspension, double authentification) : double authentification de moins de
+ * 10 minutes, et non celle de l'ouverture de la session (ADR-050 ; même durée à la gateway).
+ */
+export const CRITICAL_MFA_MAX_AGE_SECONDS = 600;
+
 /** Administrateur des comptes (super_admin ou administrateur de métier), avec son périmètre. */
 export function requireAccountAdmin(): AccountAdminActor {
   const actorId = requireStaff(ACCOUNT_ADMIN_ROLES);
   const perimeter = perimeterOf(requireUser().roles.map((claim) => claim.role));
   if (!perimeter) throw forbidden();
   return { actorId, perimeter };
+}
+
+/** Administrateur des comptes qui écrit : double authentification récente exigée. */
+function requireAccountWriter(): AccountAdminActor {
+  const actor = requireAccountAdmin();
+  requireRecentMfa(CRITICAL_MFA_MAX_AGE_SECONDS);
+  return actor;
 }
 
 /** Compte présenté à l'appelant : numéro complet pour super_admin, masqué pour tous. */
@@ -211,7 +224,7 @@ export class GrantAccountRoleUseCase {
   ) {}
 
   async execute(input: { userId: string; roleCode: string; reason?: string }): Promise<AccountDetailView> {
-    const actor = requireAccountAdmin();
+    const actor = requireAccountWriter();
     const reason = reasonOf(input.reason);
     const account = await this.details.account(input.userId);
     const role = await this.roles.findDefinition(input.roleCode);
@@ -249,7 +262,7 @@ export class RevokeAccountRoleUseCase {
     assignmentId: string;
     reason?: string;
   }): Promise<AccountDetailView> {
-    const actor = requireAccountAdmin();
+    const actor = requireAccountWriter();
     const reason = reasonOf(input.reason);
     const account = await this.details.account(input.userId);
     const assignment = isUuid(input.assignmentId)
@@ -280,7 +293,7 @@ export class RevokeAccountRoleUseCase {
 
 /** Réservé à super_admin : suspension, réactivation, réinitialisation de la double authentification. */
 function requireAccountManager(): AccountAdminActor {
-  const actor = requireAccountAdmin();
+  const actor = requireAccountWriter();
   if (!canManageAccounts(actor.perimeter)) throw forbidden();
   return actor;
 }

@@ -57,7 +57,7 @@ function as<T>(
   userId: string,
   roleCodes: string[],
   fn: () => Promise<T>,
-  options = { mfa: true },
+  options: { mfa: boolean; mfaAgeSeconds?: number } = { mfa: true },
 ): Promise<T> {
   const context: RequestContext = {
     correlationId: 'c',
@@ -67,7 +67,7 @@ function as<T>(
       activeContext: 'personal',
       roles: roleCodes.map((role) => ({ role, scopeType: 'global' })),
       mfa: options.mfa,
-      authTime: Math.floor(Date.now() / 1000),
+      authTime: Math.floor(Date.now() / 1000) - (options.mfaAgeSeconds ?? 0),
     },
   };
   return runWithContext(context, fn);
@@ -142,6 +142,27 @@ describe('SearchAccountsUseCase', () => {
       }),
     );
     expect(noMfa.code).toBe('AUTH_MFA_REQUIRED');
+  });
+
+  it('écritures : double authentification de moins de 10 minutes ; lecture : celle de la session', async () => {
+    const { get, grant, revoke, status, resetMfa } = setup();
+    const stale = { mfa: true, mfaAgeSeconds: 11 * 60 };
+    const director = <T>(fn: () => Promise<T>) => as(DIRECTOR, ['super_admin'], fn, stale);
+    await expect(director(() => get.execute(AGENT))).resolves.toMatchObject({ account: { id: AGENT } });
+    const writes = [
+      () => grant.execute({ userId: CUSTOMER, roleCode: 'cleaning_agent', reason: REASON }),
+      () =>
+        revoke.execute({
+          userId: AGENT,
+          assignmentId: '0192f1c4-0000-7000-8000-0000000a0004',
+          reason: REASON,
+        }),
+      () => status.execute({ userId: AGENT, action: 'suspend', reason: REASON }),
+      () => resetMfa.execute({ userId: AGENT, reason: REASON }),
+    ];
+    for (const write of writes) {
+      expect((await failure(director(write))).code).toBe('AUTH_MFA_REQUIRED');
+    }
   });
 });
 

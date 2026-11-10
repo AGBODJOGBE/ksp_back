@@ -1,4 +1,4 @@
-import { BACKOFFICE_MFA_SECONDS } from './cleaning-routes';
+import { BACKOFFICE_MFA_SECONDS, CRITICAL_MFA_SECONDS } from './cleaning-routes';
 import { type RouteDefinition } from './route-manifest';
 
 const ACCOUNT = 'ksp.wallet.v1.WalletAccountService';
@@ -78,7 +78,8 @@ export const WALLET_ROUTES = [
     method: 'POST',
     path: '/api/v1/admin/wallet/holders/{type}/{id}/credits',
     grpc: `${ADMIN}/CreditPrepaidWallet`,
-    access: staff,
+    // Argent : double authentification de moins de 10 minutes (ADR-050).
+    access: { ...staff, recentMfaSeconds: CRITICAL_MFA_SECONDS },
     rateLimit: 'authenticated',
     requiresKnownClient: false,
     idempotencyKey: 'required',
