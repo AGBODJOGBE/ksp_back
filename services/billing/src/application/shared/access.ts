@@ -1,4 +1,5 @@
-import { AppError, hasRole, requireRecentMfa, requireUser } from '@ksp/platform';
+import { AppError, currentContext, hasRole, requireRecentMfa, requireUser } from '@ksp/platform';
+import { BillingErrors } from './errors';
 
 /**
  * Contrôles d'accès de billing. La gateway filtre déjà selon son manifeste ; le service
@@ -14,6 +15,16 @@ export const BILLING_SETTINGS_ADMINS = ['cleaning_admin', 'finance_officer', 'su
 
 /** Double authentification faite pendant la session back-office en cours (12 heures au plus). */
 export const BACKOFFICE_MFA_MAX_AGE_SECONDS = 12 * 3600;
+
+/**
+ * Méthode réservée à certains services : l'appelant est authentifié par son jeton de service,
+ * vérifié par le kit. Sans vérificateur (développement local), il n'est pas connu et l'appel passe ;
+ * en production, le jeton de service est obligatoire.
+ */
+export function requireCaller(allowed: readonly string[]): void {
+  const caller = currentContext()?.callerService;
+  if (caller && !allowed.includes(caller)) throw BillingErrors.callerForbidden();
+}
 
 /** Périmètre du client : son organisation active, sinon ses factures personnelles. */
 export interface CustomerScope {

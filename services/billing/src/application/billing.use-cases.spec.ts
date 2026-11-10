@@ -665,4 +665,18 @@ describe('facture payée par le portefeuille prépayé (ADR-046)', () => {
     expect(await code(pay())).toBe('BILLING_INVALID_TRANSITION');
     expect(world.wallet.refunds).toHaveLength(1);
   });
+
+  it('débit du portefeuille enregistré ? true si un paiement de la facture le cite ; wallet seul (ADR-048)', async () => {
+    const status = (transactionId: string, invoiceId = invoice().id, caller = 'wallet') =>
+      runWithContext({ correlationId: 'c-test', callerService: caller }, () =>
+        useCases.getWalletDebitStatus.execute({ invoiceId, transactionId }),
+      );
+    const unknown = '0192f1c4-0000-7000-d000-000000000999';
+    expect(await status(unknown)).toBe(false);
+    await pay();
+    const debit = invoice().payments[0]!.reference!;
+    expect(await status(debit)).toBe(true);
+    expect(await status(debit, MISSION_ID)).toBe(false);
+    expect(await code(status(debit, invoice().id, 'payment'))).toBe('BILLING_CALLER_FORBIDDEN');
+  });
 });
