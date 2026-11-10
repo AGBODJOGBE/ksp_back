@@ -58,8 +58,17 @@ export const configSchema = baseServiceConfigSchema
     PAYMENT_RETURN_URL: z.url().default('http://localhost:3010/mon-espace/paiements'),
     /** Prestataire simulé : page du portail qui joue la page de paiement (?paymentId=…). */
     PAYMENT_SIMULATION_CHECKOUT_URL: z.url().default('http://localhost:3010/mon-espace/paiements/simulation'),
-    /** Délai après lequel un paiement encore en attente expire (30 minutes). */
+    /**
+     * Délai après lequel un paiement encore en attente expire (30 minutes), si le prestataire sait
+     * annuler sa page ; sinon PAYMENT_CHECKOUT_VALIDITY_MINUTES (ADR-048).
+     */
     PAYMENT_INTENT_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(30),
+    /**
+     * Validité d'une page du prestataire qui ne sait pas l'annuler (FedaPay : non documentée, 24 h
+     * par défaut, à valider avec le compte) : le paiement reste en attente et sa page réutilisée
+     * jusque-là ; aucune autre page n'est ouverte pour le même objet (ADR-048).
+     */
+    PAYMENT_CHECKOUT_VALIDITY_MINUTES: z.coerce.number().int().min(5).max(43_200).default(1440),
     /** Intervalle minimal entre deux relectures d'un même paiement chez le prestataire. */
     PAYMENT_RECHECK_AFTER_SECONDS: z.coerce.number().int().min(1).max(3600).default(10),
     /** Fenêtre de réussite tardive : paiements non aboutis encore relus pendant 24 heures. */
@@ -113,6 +122,13 @@ export const configSchema = baseServiceConfigSchema
     }
     if (cfg.PAYOUT_PROVIDER === 'fedapay' && !cfg.FEDAPAY_SECRET_KEY) {
       fail('FEDAPAY_SECRET_KEY', 'Obligatoire avec PAYOUT_PROVIDER=fedapay.');
+    }
+    // Une réussite tardive doit rester relue au moins aussi longtemps qu'une page peut être payée.
+    if (cfg.PAYMENT_LATE_SUCCESS_WINDOW_HOURS * 60 < cfg.PAYMENT_CHECKOUT_VALIDITY_MINUTES) {
+      fail(
+        'PAYMENT_LATE_SUCCESS_WINDOW_HOURS',
+        'Fenêtre de réussite tardive au moins égale à PAYMENT_CHECKOUT_VALIDITY_MINUTES (ADR-048).',
+      );
     }
     const usesFedapay = cfg.PAYMENT_PROVIDER === 'fedapay' || cfg.PAYOUT_PROVIDER === 'fedapay';
     // Clé et environnement concordants : jamais de clé réelle contre le bac à sable, ni l'inverse.

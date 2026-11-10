@@ -29,7 +29,6 @@ import {
 import { PaymentSync } from './sync';
 
 const HOUR_MS = 3_600_000;
-const MINUTE_MS = 60_000;
 /** Téléphone du payeur, facultatif : E.164. */
 const E164 = /^\+[1-9]\d{7,14}$/;
 
@@ -328,8 +327,14 @@ export class PayPaymentLinkUseCase {
     if (refusal === 'expired') throw PaymentErrors.linkExpired();
     if (refusal) throw PaymentErrors.linkAlreadyPaid();
 
-    const open = lastAttempt(attempts.filter((a) => a.status === 'pending' && a.expiresAt > now));
-    if (open) return { payment: await this.links.withCheckout(open, input.token), created: false };
+    // Essai encore en attente : réutilisé tant que sa page peut être payée (une seule par lien).
+    const open = lastAttempt(attempts.filter((a) => a.status === 'pending'));
+    if (open) {
+      const current = await this.links.sync.expire(open);
+      if (current.status === 'pending') {
+        return { payment: await this.links.withCheckout(current, input.token), created: false };
+      }
+    }
     const recent = attempts.filter((a) => now.getTime() - a.createdAt.getTime() < HOUR_MS).length;
     if (recent >= this.deps.settings.linkAttemptsPerHour) throw PaymentErrors.linkTooManyAttempts();
 
@@ -349,7 +354,7 @@ export class PayPaymentLinkUseCase {
       failureReason: null,
       createdAt: now,
       updatedAt: now,
-      expiresAt: new Date(now.getTime() + this.deps.settings.intentTtlMinutes * MINUTE_MS),
+      expiresAt: this.links.sync.expiry(now),
       completedAt: null,
       lastCheckedAt: null,
       mismatchResolution: null,

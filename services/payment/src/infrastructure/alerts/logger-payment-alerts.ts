@@ -8,6 +8,18 @@ import { type PaymentAlerts } from '../../application/ports';
 export class LoggerPaymentAlerts implements PaymentAlerts {
   private readonly logger = new Logger('PaymentAlert');
 
+  checkoutClosedUnconfirmed(input: {
+    paymentId: string;
+    transactionId: string;
+    reason: 'expired' | 'superseded';
+  }): void {
+    this.logger.warn(
+      `Page de paiement close sans annulation chez le prestataire : paiement ${input.paymentId}, ` +
+        `transaction ${input.transactionId} (${input.reason}) ; une réussite tardive reste relue ` +
+        '(fenêtre de réussite tardive), puis enregistrée en trop-perçu si l’objet est déjà réglé',
+    );
+  }
+
   amountMismatch(input: {
     paymentId: string;
     transactionId: string;

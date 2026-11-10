@@ -125,6 +125,21 @@ describe('configuration de payment', () => {
     expect(fedapay('sandbox', 'sk_sandbox_x')).not.toThrow();
   });
 
+  it('fenêtre de réussite tardive au moins égale à la validité d’une page (ADR-048)', () => {
+    const config = loadConfig(configSchema, BASE);
+    expect(config.PAYMENT_CHECKOUT_VALIDITY_MINUTES).toBe(1440);
+    expect(() => loadConfig(configSchema, { ...BASE, PAYMENT_CHECKOUT_VALIDITY_MINUTES: '2880' })).toThrow(
+      /PAYMENT_LATE_SUCCESS_WINDOW_HOURS/,
+    );
+    expect(() =>
+      loadConfig(configSchema, {
+        ...BASE,
+        PAYMENT_CHECKOUT_VALIDITY_MINUTES: '2880',
+        PAYMENT_LATE_SUCCESS_WINDOW_HOURS: '48',
+      }),
+    ).not.toThrow();
+  });
+
   it('liens et reversements : émetteurs autorisés, reversements manuels par défaut (ADR-040, ADR-041)', () => {
     const config = loadConfig(configSchema, { ...BASE, PAYMENT_LINK_ISSUERS: 'recovery, realestate' });
     expect(config.PAYMENT_LINK_ISSUERS).toEqual(['recovery', 'realestate']);

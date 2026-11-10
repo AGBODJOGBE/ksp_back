@@ -127,16 +127,12 @@ export class CreatePaymentUseCase {
       this.deps.alerts.unrecordedPayment({ subjectType: type, subjectId, ...unrecorded });
       throw PaymentErrors.reconciliationPending();
     }
-    const open = await this.deps.payments.findOpen({
-      customerId: payer.userId,
-      subjectType: type,
-      subjectId,
-      part,
-      now,
-    });
-    if (open && open.amount === amount) return { payment: await this.withCheckout(open), created: false };
-    // Montant dû changé (paiement reçu entre-temps) : l'ancienne page ne doit plus être payée.
-    if (open) await this.sync.supersede(open);
+    // Une seule page payable par objet, toutes parts et tous payeurs (ADR-048).
+    const open = await this.deps.payments.findPendingForSubject({ subjectType: type, subjectId });
+    if (open) {
+      const reused = await this.reuseOrRefuse(open, { payer: payer.userId, part, amount });
+      if (reused) return { payment: reused, created: false };
+    }
 
     const draft: PaymentIntent = {
       id: this.deps.ids.next(),
@@ -154,15 +150,44 @@ export class CreatePaymentUseCase {
       failureReason: null,
       createdAt: now,
       updatedAt: now,
-      expiresAt: new Date(now.getTime() + this.deps.settings.intentTtlMinutes * MINUTE_MS),
+      expiresAt: this.sync.expiry(now),
       completedAt: null,
       lastCheckedAt: null,
       mismatchResolution: null,
       version: 0,
     };
     const stored = await this.deps.payments.create(draft);
-    if (!stored.created && !sameSubject(stored.intent.subject, subject)) throw PaymentErrors.keyReused();
-    return { payment: await this.withCheckout(stored.intent), created: stored.created };
+    if (stored.created) return { payment: await this.withCheckout(stored.intent), created: true };
+    if (stored.conflict === 'open_checkout') {
+      // Page ouverte au même instant par un autre envoi (deux clics, deux membres).
+      if (isSamePage(stored.intent, { payer: payer.userId, part, amount })) {
+        return { payment: await this.withCheckout(stored.intent), created: false };
+      }
+      throw PaymentErrors.checkoutOpen(stored.intent.expiresAt);
+    }
+    if (!sameSubject(stored.intent.subject, subject)) throw PaymentErrors.keyReused();
+    return { payment: await this.withCheckout(stored.intent), created: false };
+  }
+
+  /**
+   * Paiement déjà en attente pour l'objet (ADR-048) : réutilisé s'il est celui que le payeur demande
+   * (même payeur, même part, même montant). Sinon, relu chez le prestataire : clos (payé, refusé,
+   * expiré), il ne bloque plus ; sans page, ou du même payeur pour la même part (montant dû changé),
+   * il est remplacé si sa page peut être annulée. Une page encore payable d'un autre payeur ou d'une
+   * autre part n'est jamais annulée : 409.
+   */
+  private async reuseOrRefuse(
+    pending: PaymentIntent,
+    wanted: { payer: string; part: MissionPart | null; amount: number },
+  ): Promise<PaymentIntent | null> {
+    let current = pending.expiresAt <= this.deps.clock.now() ? await this.sync.expire(pending) : pending;
+    if (current.status === 'pending' && isSamePage(current, wanted)) return this.withCheckout(current);
+    current = await this.sync.current(current);
+    if (current.status !== 'pending') return null;
+    const own = current.customerId === wanted.payer && current.subject.part === wanted.part;
+    if (!current.providerTransactionId || own) current = await this.sync.supersede(current);
+    if (current.status === 'pending') throw PaymentErrors.checkoutOpen(current.expiresAt);
+    return null;
   }
 
   private async amountDue(
@@ -253,6 +278,18 @@ export class ListMyPaymentsUseCase {
       input.page,
     );
   }
+}
+
+/** Page demandée par le payeur : la sienne, pour la même part et le même montant. */
+function isSamePage(
+  intent: PaymentIntent,
+  wanted: { payer: string; part: MissionPart | null; amount: number },
+): boolean {
+  return (
+    intent.customerId === wanted.payer &&
+    intent.subject.part === wanted.part &&
+    intent.amount === wanted.amount
+  );
 }
 
 const present = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is string => Boolean(id)))];

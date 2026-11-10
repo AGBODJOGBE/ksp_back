@@ -103,6 +103,14 @@ export const PaymentErrors = {
       'Trop de tentatives de paiement sur ce lien. Réessayez dans une heure.',
     ),
 
+  /** Une page de paiement est déjà ouverte pour l'objet (une seule à la fois, ADR-048). */
+  checkoutOpen: (expiresAt: Date) =>
+    AppError.conflict(
+      'PAYMENT_CHECKOUT_OPEN',
+      'Un paiement est déjà en cours pour cet objet. Terminez-le, ou réessayez après son expiration.',
+      { expiresAt: expiresAt.toISOString() },
+    ),
+
   // --- Reversements (ADR-041) --------------------------------------------------------------------
   payoutNotFound: () => AppError.notFound('PAYMENT_PAYOUT_NOT_FOUND', 'Ce reversement est introuvable.'),
   payoutNotManual: () =>

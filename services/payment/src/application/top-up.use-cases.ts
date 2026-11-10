@@ -6,7 +6,6 @@ import { PaymentErrors } from './shared/errors';
 import { IDEMPOTENCY_KEY, requireXof } from './shared/validation';
 import { PaymentSync } from './sync';
 
-const MINUTE_MS = 60_000;
 /** Seul wallet demande une recharge : il en contrôle les limites (ADR-046). */
 const TOP_UP_CALLERS = ['wallet'];
 
@@ -79,7 +78,7 @@ export class CreateTopUpPaymentUseCase {
       failureReason: null,
       createdAt: now,
       updatedAt: now,
-      expiresAt: new Date(now.getTime() + this.deps.settings.intentTtlMinutes * MINUTE_MS),
+      expiresAt: this.sync.expiry(now),
       completedAt: null,
       lastCheckedAt: null,
       mismatchResolution: null,
