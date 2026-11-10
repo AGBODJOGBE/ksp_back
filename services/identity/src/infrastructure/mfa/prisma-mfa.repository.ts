@@ -61,6 +61,14 @@ export class PrismaMfaRepository implements MfaChallengeRepository, MfaFactorRep
     return rows[0]?.attempts ?? null;
   }
 
+  async enrollmentDeadline(userId: string): Promise<Date | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { mfaEnrollmentDeadline: true },
+    });
+    return user?.mfaEnrollmentDeadline ?? null;
+  }
+
   async findTotp(userId: string): Promise<TotpFactor | null> {
     return this.prisma.mfaFactor.findUnique({
       where: { userId_type: { userId, type: 'totp' } },
@@ -168,6 +176,8 @@ async function applyProof(
     data: { enabledAt: now, lastUsedStep: proof.step, lastUsedAt: now },
   });
   if (enabled.count !== 1) throw new TotpAlreadyEnabledError();
+  // Application reconfigurée : l'échéance ouverte par une réinitialisation est levée (ADR-050).
+  await tx.user.update({ where: { id: userId }, data: { mfaEnrollmentDeadline: null } });
   // De nouveaux codes remplacent ceux qui n'ont pas servi ; les codes utilisés restent pour l'historique.
   await tx.mfaRecoveryCode.deleteMany({ where: { userId, usedAt: null } });
   await tx.mfaRecoveryCode.createMany({

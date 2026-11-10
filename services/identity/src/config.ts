@@ -78,6 +78,13 @@ export const configSchema = baseServiceConfigSchema
     MFA_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(300),
     /** Codes faux acceptés par jeton de double authentification ; au-delà, il est annulé. */
     MFA_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+    /** Après une réinitialisation, délai pour reconfigurer l'application (1 heure, ADR-050). */
+    MFA_RESET_ENROLLMENT_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(300)
+      .max(7 * 24 * 3600)
+      .default(3600),
     /** Adresse gRPC du service notification (envoi des codes, ADR-014). */
     NOTIFICATION_GRPC_URL: z.string().min(1).default('localhost:50052'),
     /** Suppression du compte (UC-ID-11, ADR-036) : délai entre la demande et l'anonymisation, en jours. */

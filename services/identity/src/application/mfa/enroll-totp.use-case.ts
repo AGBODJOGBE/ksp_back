@@ -23,6 +23,16 @@ export interface TotpEnrollment {
   periodSeconds: number;
 }
 
+/** Après une réinitialisation, la reconfiguration n'est ouverte que jusqu'à son échéance (ADR-050). */
+export async function requireEnrollmentOpen(
+  factors: Pick<MfaFactorRepository, 'enrollmentDeadline'>,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  const deadline = await factors.enrollmentDeadline(userId);
+  if (deadline && deadline <= now) throw mfaErrors.enrollmentExpired();
+}
+
 /**
  * UC-ID-09, première connexion d'un compte interne : crée le secret de l'application
  * d'authentification. Il reste inactif jusqu'à ConfirmTotp ; un nouvel appel le remplace.
@@ -43,6 +53,7 @@ export class EnrollTotpUseCase {
     const { account } = await this.guard.open(input, now);
     const existing = await this.factors.findTotp(account.id);
     if (existing?.enabledAt) throw mfaErrors.alreadyEnrolled();
+    await requireEnrollmentOpen(this.factors, account.id, now);
 
     const secret = this.totp.generateSecret();
     try {

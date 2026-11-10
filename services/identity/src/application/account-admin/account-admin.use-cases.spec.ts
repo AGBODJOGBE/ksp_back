@@ -48,7 +48,7 @@ function setup() {
     grant: new GrantAccountRoleUseCase(details, roles, ids, clock),
     revoke: new RevokeAccountRoleUseCase(details, accounts, roles, ids, clock),
     status: new ChangeAccountStatusUseCase(details, accounts, ids, clock),
-    resetMfa: new ResetAccountMfaUseCase(details, accounts, ids, clock),
+    resetMfa: new ResetAccountMfaUseCase(details, accounts, ids, clock, 3600),
   };
 }
 
@@ -425,6 +425,10 @@ describe('ResetAccountMfaUseCase', () => {
     expect(detail.mfa).toEqual({ configuredAt: null, recoveryCodesRemaining: 0, resettable: false });
     expect(detail.actions.resetMfa).toBe(false);
     expect(accounts.revokedSessions).toEqual([{ userId: AGENT, reason: 'mfa_reset' }]);
+    // Reconfiguration ouverte une heure, titulaire prévenu par l'événement (ADR-050).
+    expect(accounts.mfaResets).toEqual([
+      { userId: AGENT, enrollBefore: new Date(new Date('2026-11-07T10:00:00Z').getTime() + 3600_000) },
+    ]);
     expect(detail.history[0]).toMatchObject({ action: 'user.mfa_reset', reason: 'Téléphone perdu' });
 
     const again = await failure(

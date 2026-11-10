@@ -476,7 +476,13 @@ export class AppModule {
           provide: ResetAccountMfaUseCase,
           inject: [AccountDetails, PrismaAccountAdminRepository],
           useFactory: (details: AccountDetails, accounts: PrismaAccountAdminRepository) =>
-            new ResetAccountMfaUseCase(details, accounts, new UuidV7Generator(), new SystemClock()),
+            new ResetAccountMfaUseCase(
+              details,
+              accounts,
+              new UuidV7Generator(),
+              new SystemClock(),
+              config.MFA_RESET_ENROLLMENT_SECONDS,
+            ),
         },
         {
           provide: GetUsersUseCase,

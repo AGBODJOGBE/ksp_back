@@ -263,6 +263,34 @@ describe('EnrollTotp et ConfirmTotp (UC-ID-09, première connexion)', () => {
     });
   });
 
+  it('après une réinitialisation, la reconfiguration n’est ouverte que jusqu’à l’échéance (ADR-050)', async () => {
+    const { enroll, confirm, mfa, internalAccount, backofficeLogin, codeAt, clock } = setup();
+    const account = await internalAccount();
+    mfa.enrollmentDeadlines.set(account.id, new Date(clock.now().getTime() + 3600_000));
+    const { mfaToken } = await backofficeLogin();
+    await enroll.execute({ mfaToken, clientKind: 'backoffice' });
+    await confirm.execute({ mfaToken, code: codeAt(), clientKind: 'backoffice', ...client });
+    // Application configurée : l'échéance est levée.
+    expect(mfa.enrollmentDeadlines.has(account.id)).toBe(false);
+  });
+
+  it('échéance de reconfiguration passée : configuration et confirmation refusées', async () => {
+    const { enroll, confirm, mfa, internalAccount, backofficeLogin, codeAt, clock } = setup();
+    const account = await internalAccount();
+    const { mfaToken } = await backofficeLogin();
+    await enroll.execute({ mfaToken, clientKind: 'backoffice' });
+    mfa.enrollmentDeadlines.set(account.id, clock.now());
+    await expectAppError(
+      enroll.execute({ mfaToken, clientKind: 'backoffice' }),
+      'IDENTITY_MFA_ENROLLMENT_EXPIRED',
+    );
+    await expectAppError(
+      confirm.execute({ mfaToken, code: codeAt(), clientKind: 'backoffice', ...client }),
+      'IDENTITY_MFA_ENROLLMENT_EXPIRED',
+    );
+    expect(mfa.factors[0]!.enabledAt).toBeNull();
+  });
+
   it('confirmer sans avoir commencé est refusé', async () => {
     const { confirm, internalAccount, backofficeLogin, codeAt } = setup();
     await internalAccount();

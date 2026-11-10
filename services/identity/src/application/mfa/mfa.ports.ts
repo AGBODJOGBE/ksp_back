@@ -39,6 +39,8 @@ export interface TotpFactor {
 
 export interface MfaFactorRepository {
   findTotp(userId: string): Promise<TotpFactor | null>;
+  /** Échéance de la reconfiguration après une réinitialisation (ADR-050) ; null : aucune. */
+  enrollmentDeadline(userId: string): Promise<Date | null>;
   /**
    * Enregistre un secret en attente de confirmation, en remplaçant un secret non confirmé.
    * Lève TotpAlreadyEnabledError si l'application est déjà active.

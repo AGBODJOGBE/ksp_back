@@ -346,7 +346,9 @@ export class ChangeAccountStatusUseCase {
 
 /**
  * Téléphone perdu (UC-ID-18, ADR-023) : efface l'application d'authentification et les codes de
- * récupération ; la prochaine connexion au back-office impose une nouvelle configuration.
+ * récupération ; la prochaine connexion au back-office impose une nouvelle configuration. Le
+ * titulaire est prévenu, et la reconfiguration n'est ouverte que `enrollmentWindowSeconds`
+ * (1 heure par défaut) : au-delà, une nouvelle réinitialisation est nécessaire (ADR-050).
  */
 export class ResetAccountMfaUseCase {
   constructor(
@@ -354,6 +356,7 @@ export class ResetAccountMfaUseCase {
     private readonly accounts: AccountAdminRepository,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
+    private readonly enrollmentWindowSeconds: number,
   ) {}
 
   async execute(input: { userId: string; reason?: string }): Promise<AccountDetailView> {
@@ -361,12 +364,14 @@ export class ResetAccountMfaUseCase {
     const reason = reasonOf(input.reason);
     const account = await this.details.account(input.userId);
     if (account.id === actor.actorId) throw accountAdminErrors.selfAction();
+    const now = this.clock.now();
     const reset = await this.accounts.resetMfa({
       userId: account.id,
       actorId: actor.actorId,
       reason,
       auditId: this.ids.next(),
-      now: this.clock.now(),
+      now,
+      enrollBefore: new Date(now.getTime() + this.enrollmentWindowSeconds * 1000),
     });
     if (!reset) throw accountAdminErrors.mfaNotEnrolled();
     return this.details.load(account.id, actor);

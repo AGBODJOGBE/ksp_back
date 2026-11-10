@@ -181,6 +181,8 @@ export class InMemoryMfaStore implements MfaChallengeRepository, MfaFactorReposi
   readonly recoveryCodes: { id: string; userId: string; hash: string; usedAt: Date | null }[] = [];
   /** Simule une autre connexion qui consomme la même preuve juste avant (course entre deux requêtes). */
   raceOnNextLogin = false;
+  /** Échéances de reconfiguration après une réinitialisation, par compte. */
+  readonly enrollmentDeadlines = new Map<string, Date>();
 
   constructor(
     private readonly otp: InMemoryChallenges,
@@ -204,6 +206,10 @@ export class InMemoryMfaStore implements MfaChallengeRepository, MfaFactorReposi
     if (challenge.consumedAt || challenge.expiresAt <= now || challenge.attempts >= maxAttempts) return null;
     challenge.attempts += 1;
     return challenge.attempts;
+  }
+
+  async enrollmentDeadline(userId: string): Promise<Date | null> {
+    return this.enrollmentDeadlines.get(userId) ?? null;
   }
 
   async findTotp(userId: string): Promise<TotpFactor | null> {
@@ -279,6 +285,7 @@ export class InMemoryMfaStore implements MfaChallengeRepository, MfaFactorReposi
       return () => {
         factor.enabledAt = now;
         factor.lastUsedStep = proof.step;
+        this.enrollmentDeadlines.delete(userId);
         const kept = this.recoveryCodes.filter((code) => code.userId !== userId || code.usedAt);
         this.recoveryCodes.splice(0, this.recoveryCodes.length, ...kept);
         this.recoveryCodes.push(...proof.recoveryCodes.map((code) => ({ ...code, userId, usedAt: null })));

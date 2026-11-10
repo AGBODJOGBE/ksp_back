@@ -26,6 +26,7 @@ export interface FakeMfa {
 export class InMemoryAccountAdmin implements AccountAdminRepository {
   readonly accounts = new Map<string, FakeAdminAccount>();
   readonly mfa = new Map<string, FakeMfa>();
+  readonly mfaResets: { userId: string; enrollBefore: Date }[] = [];
   /** Événements publiés (identity.user.suspended, identity.user.reactivated). */
   readonly events: { type: string; payload: Record<string, unknown> }[] = [];
   /** Sessions fermées : compte et motif. */
@@ -195,8 +196,10 @@ export class InMemoryAccountAdmin implements AccountAdminRepository {
     reason: string;
     auditId: string;
     now: Date;
+    enrollBefore: Date;
   }): Promise<boolean> {
     if (!this.mfa.delete(change.userId)) return false;
+    this.mfaResets.push({ userId: change.userId, enrollBefore: change.enrollBefore });
     this.revokedSessions.push({ userId: change.userId, reason: 'mfa_reset' });
     this.roles.audit.push({
       id: change.auditId,
