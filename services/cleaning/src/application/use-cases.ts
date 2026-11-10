@@ -1,3 +1,4 @@
+import { ScheduleInterventionBatchUseCase } from './missions/intervention-batch.use-case';
 import { PayMissionFromWalletUseCase } from './payments/wallet-payments.use-cases';
 import { ResolveBackofficeNamesUseCase } from './backoffice/backoffice-names.use-case';
 import {
@@ -173,6 +174,7 @@ export function createUseCases(deps: CleaningDeps) {
     sendGroupQuotes: new SendGroupQuotesUseCase(deps),
     acceptGroupQuotes: new AcceptGroupQuotesUseCase(deps),
     scheduleGroupInterventions: new ScheduleGroupInterventionsUseCase(deps),
+    scheduleInterventionBatch: new ScheduleInterventionBatchUseCase(deps),
     groupTotals: new GroupTotalsUseCase(deps),
     getRequestGroup: new GetRequestGroupUseCase(deps),
     correctLocation: new CorrectLocationUseCase(deps),

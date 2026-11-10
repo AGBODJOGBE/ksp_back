@@ -129,6 +129,22 @@ export interface CleaningEventPayloads {
     serviceName?: string;
     groupId?: string;
   };
+  /** Passages planifiés en lot (ADR-052) : un seul événement, aucun cleaning.mission.scheduled. */
+  'cleaning.interventions.batch_scheduled': {
+    missionId: string;
+    customerId: string;
+    interventionIds: string[];
+    count: number;
+    firstStart: string;
+    lastStart: string;
+    durationMinutes: number;
+    agentIds: string[];
+    /** Dates sautées pour conflit d'agenda (skipConflicts), vide sinon. */
+    skippedDates: string[];
+    serviceCode?: string;
+    serviceName?: string;
+    groupId?: string;
+  };
   'cleaning.mission.completed': {
     missionId: string;
     customerId: string;

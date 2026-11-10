@@ -49,9 +49,11 @@ export interface SchedulePolicy {
   /** La période couvre au plus N mois : fin strictement avant le début + N mois. */
   maxMonths: number;
   maxVisits: number;
+  /** Passages planifiés au plus par appel de planification en lot (CLEANING_SCHEDULE_MAX_BATCH). */
+  maxBatch: number;
 }
 
-export const DEFAULT_SCHEDULE_POLICY: SchedulePolicy = { maxMonths: 36, maxVisits: 400 };
+export const DEFAULT_SCHEDULE_POLICY: SchedulePolicy = { maxMonths: 36, maxVisits: 400, maxBatch: 400 };
 export const MAX_EVERY_WEEKS = 12;
 export const MAX_EXCLUDED_DATES = 400;
 export const MAX_EXTRA_DATES = 100;
@@ -165,7 +167,10 @@ function unusedProblem(schedule: InterventionSchedule, fields: (keyof Interventi
   return null;
 }
 
-function periodProblem(schedule: InterventionSchedule, limits: SchedulePolicy): ScheduleProblem | null {
+function periodProblem(
+  schedule: InterventionSchedule,
+  limits: Pick<SchedulePolicy, 'maxMonths' | 'maxVisits'>,
+): ScheduleProblem | null {
   const start = schedule.startDate === null ? null : parseDay(schedule.startDate);
   if (start === null) return problemOf('startDate', 'Date de début obligatoire, au format AAAA-MM-JJ.');
   const end = schedule.endDate === null ? null : parseDay(schedule.endDate);
@@ -183,7 +188,7 @@ function periodProblem(schedule: InterventionSchedule, limits: SchedulePolicy): 
  */
 export function scheduleProblem(
   schedule: InterventionSchedule,
-  limits: SchedulePolicy,
+  limits: Pick<SchedulePolicy, 'maxMonths' | 'maxVisits'>,
 ): ScheduleProblem | null {
   if (!SCHEDULE_MODES.includes(schedule.mode)) {
     return problemOf('mode', 'Mode attendu : dates, weekly ou monthly.');

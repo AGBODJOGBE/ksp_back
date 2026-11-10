@@ -32,6 +32,8 @@ export const configSchema = baseServiceConfigSchema
     CLEANING_SCHEDULE_MAX_MONTHS: z.coerce.number().int().min(1).max(120).default(36),
     /** Plan de passages (ADR-052) : nombre maximal de passages d'une demande ou d'un devis. */
     CLEANING_SCHEDULE_MAX_VISITS: z.coerce.number().int().min(1).max(5000).default(400),
+    /** Planification en lot (ADR-052) : passages planifiés au plus par appel. */
+    CLEANING_SCHEDULE_MAX_BATCH: z.coerce.number().int().min(1).max(5000).default(400),
     /** Refuser de démarrer un passage avant le jour prévu (proposition à valider). */
     CLEANING_BLOCK_EARLY_INTERVENTION_START: flag(true),
     /** Refuser le compte rendu d'une visite avant l'heure prévue (proposition à valider). */

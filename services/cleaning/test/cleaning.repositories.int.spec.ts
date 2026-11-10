@@ -417,6 +417,30 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       }),
     );
     expect(view.mission.interventions[0]?.scheduledStart.toISOString()).toBe('2026-11-02T07:00:00.000Z');
+    // Planification en lot (ADR-052) : dates restantes jusqu'au 12, une seule fois par clé.
+    const batch = () =>
+      asSupervisor(() =>
+        useCases.scheduleInterventionBatch.execute({
+          missionId: mission.mission.id,
+          idempotencyKey: 'int-lot-0001',
+          dates: [],
+          until: '2026-11-12',
+          startTime: '',
+          durationMinutes: 120,
+          agentIds: [AGENT_ID],
+          teamId: '',
+          skipConflicts: false,
+        }),
+      );
+    const first = await batch();
+    expect(first.outcome.scheduledDates).toEqual(['2026-11-05', '2026-11-09', '2026-11-12']);
+    expect((await batch()).outcome).toEqual(first.outcome);
+    expect((await deps.missions.findById(mission.mission.id))!.interventions).toHaveLength(4);
+    const batches = await pool.query('SELECT count(*)::int AS n FROM intervention_batches');
+    expect(batches.rows[0].n).toBe(1);
+    expect((await outbox()).filter((type) => type === 'cleaning.interventions.batch_scheduled')).toHaveLength(
+      1,
+    );
     // Plusieurs passages d'un particulier : récurrent, donc suivi pour les impayés (partie 10).
     expect((await deps.missions.listIndividualRecurring()).map((m) => m.id)).toContain(mission.mission.id);
     // Mission close : elle ne pèse pas sur les contrôles d'impayés des tests suivants.

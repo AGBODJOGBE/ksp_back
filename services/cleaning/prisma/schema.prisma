@@ -314,6 +314,7 @@ model Mission {
   version              Int              @default(0)
   interventions        Intervention[]
   payments             MissionPayment[]
+  batches              InterventionBatch[]
 
   @@index([customerId, id])
   @@index([status, id])
@@ -477,4 +478,18 @@ model RequestGroupOperation {
 
   @@id([actorId, operation, idempotencyKey])
   @@map("request_group_operations")
+}
+
+/// Planification en lot des dates restantes d'un plan de passages (ADR-052) : trace d'idempotence
+/// par (mission, clé), avec le résultat rendu au rejeu (passages créés, dates sautées).
+model InterventionBatch {
+  missionId      String   @map("mission_id") @db.Uuid
+  idempotencyKey String   @map("idempotency_key")
+  actorId        String   @map("actor_id") @db.Uuid
+  outcome        Json
+  createdAt      DateTime @map("created_at") @db.Timestamptz(3)
+  mission        Mission  @relation(fields: [missionId], references: [id])
+
+  @@id([missionId, idempotencyKey])
+  @@map("intervention_batches")
 }

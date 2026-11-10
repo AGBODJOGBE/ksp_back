@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.interventions.batch_scheduled.v1.schema.json",
+  "title": "cleaning.interventions.batch_scheduled",
+  "description": "Plusieurs passages d'une mission planifiés ensemble, un par date restante du plan de passages, avec les mêmes agents (ADR-052). Un seul événement récapitulatif : aucun cleaning.mission.scheduled par passage.",
+  "x-event-type": "cleaning.interventions.batch_scheduled",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "missionId",
+    "customerId",
+    "interventionIds",
+    "count",
+    "firstStart",
+    "lastStart",
+    "durationMinutes",
+    "agentIds",
+    "skippedDates"
+  ],
+  "properties": {
+    "missionId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "interventionIds": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "count": { "type": "integer", "minimum": 1, "description": "Nombre de passages planifiés" },
+    "firstStart": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Début du premier passage planifié"
+    },
+    "lastStart": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Début du dernier passage planifié"
+    },
+    "durationMinutes": { "type": "integer", "minimum": 1 },
+    "agentIds": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "skippedDates": {
+      "type": "array",
+      "description": "Dates sautées pour conflit d'agenda (skipConflicts), vide sinon",
+      "items": { "type": "string", "format": "date" }
+    },
+    "serviceCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Facultatif (ADR-034) : prestation de la demande"
+    },
+    "serviceName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Facultatif (ADR-034) : nom de la prestation au moment de l'événement"
+    },
+    "groupId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu"
+    }
+  }
+}
