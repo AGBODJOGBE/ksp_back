@@ -11,9 +11,10 @@ import { WALLET_RULES } from './wallet.rules';
  * Événements écoutés par notification, avec leur règle. Chaque événement a sa file
  * `notification.<événement>` (et ses files `.retry` et `.dlq`).
  *
- * Nettoyage : les 14 événements publiés (demande, envoi groupé, visite, devis, devis du groupe,
+ * Nettoyage : les 19 événements publiés (demande, envoi groupé, visite, devis, devis du groupe,
  * réservation, planification, fin, annulation, avertissement d'impayés, suspension, changement de
- * cause de suspension, reprise, reprogrammation incomplète).
+ * cause de suspension, reprise, reprogrammation incomplète ; ADR-053 : rappel avant l'expiration et
+ * expiration des devis, passage reporté ou annulé pour être replanifié, visite annulée).
  * Facturation : les 3 événements publiés par billing (facture émise, impayée, réglée).
  * Comptes entreprise (identity) : nouvelle demande (équipe KSP), validation, refus, suspension et
  * réactivation (demandeur).

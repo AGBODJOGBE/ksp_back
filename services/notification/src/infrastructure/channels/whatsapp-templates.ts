@@ -186,6 +186,35 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
     'mission_id',
     'failed_count',
   ]),
+  // Compléments du Nettoyage (ADR-053).
+  'cleaning.quote_expiry_reminder.customer': spec(
+    (v) =>
+      v['quote_count'] === '1' ? 'ksp_cleaning_quote_expiry_reminder' : 'ksp_cleaning_quotes_expiry_reminder',
+    ['quotes', 'valid_until', 'link'],
+  ),
+  'cleaning.quote_expired.customer': spec(
+    (v) => (v['quote_count'] === '1' ? 'ksp_cleaning_quote_expired' : 'ksp_cleaning_quotes_expired'),
+    ['quotes', 'link'],
+  ),
+  'cleaning.intervention_rescheduled.customer': withService('ksp_cleaning_intervention_rescheduled', [
+    'previous_date',
+    'date',
+    'duration',
+    'link',
+  ]),
+  'cleaning.intervention_rescheduled.agent': withService('ksp_cleaning_intervention_rescheduled_agent', [
+    'previous_date',
+    'date',
+    'duration',
+  ]),
+  'cleaning.intervention_released.agent': withService('ksp_cleaning_intervention_released', [
+    'previous_date',
+  ]),
+  'cleaning.intervention_unscheduled.customer': withService('ksp_cleaning_intervention_unscheduled', [
+    'previous_date',
+    'link',
+  ]),
+  'cleaning.visit_cancelled.agent': spec('ksp_cleaning_visit_cancelled', ['date', 'services']),
   // Facturation mensuelle des contrats d'entreprise (ADR-025).
   'billing.invoice_issued.customer': spec('ksp_billing_invoice_issued', [
     'invoice_number',

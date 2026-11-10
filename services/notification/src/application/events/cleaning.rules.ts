@@ -71,6 +71,31 @@ function customer(
   return { userId, templateCode, variables: { ...variables, link }, link };
 }
 
+/** Devis cités par l'expiration ou son rappel (ADR-053) : « « Vitres » (25 000 FCFA) », un par devis. */
+function quoteList(quotes: readonly { serviceName?: string | undefined; total: { amount: number } }[]) {
+  return enumeration(
+    quotes.map((quote) => `${quotedService(quote.serviceName)} (${formatXof(quote.total.amount)})`),
+  );
+}
+
+/** Lien d'un lot de devis (ADR-053) : le groupe, sinon la demande du premier devis. */
+function quotesLink(
+  context: RuleContext,
+  event: { groupId?: string; quotes: readonly { requestId: string }[] },
+) {
+  return event.groupId ? groupLink(context, event.groupId) : requestLink(context, event.quotes[0]!.requestId);
+}
+
+/** Agents libérés d'un passage (ADR-053) : un message chacun, avec la date d'avant. */
+function released(agentIds: readonly string[], variables: Record<string, string>): NotificationIntent[] {
+  return [...new Set(agentIds)].map((agentId) => ({
+    userId: agentId,
+    templateCode: 'cleaning.intervention_released.agent',
+    variables,
+    link: null,
+  }));
+}
+
 /**
  * Tous les événements du Nettoyage, sauf cleaning.mission.refunded (ADR-046) : le remboursement est
  * annoncé par wallet quand il est crédité (wallet.prepaid.credited).
@@ -322,4 +347,79 @@ export const CLEANING_RULES: { readonly [T in NotifiedCleaningEvent]: EventRule<
       mission_id: event.missionId,
       failed_count: String(event.failedCount),
     }),
+
+  // Compléments du Nettoyage (ADR-053).
+  // Rappel avant l'expiration : un message par lot (groupe, ou demande seule).
+  'cleaning.quote.expiry_reminded': (event, context) => [
+    customer(event.customerId, 'cleaning.quote_expiry_reminder.customer', quotesLink(context, event), {
+      quote_count: String(event.quotes.length),
+      quotes: quoteList(event.quotes),
+      valid_until: day(event.validUntil, context),
+    }),
+  ],
+
+  'cleaning.quote.expired': (event, context) => [
+    customer(event.customerId, 'cleaning.quote_expired.customer', quotesLink(context, event), {
+      quote_count: String(event.quotes.length),
+      quotes: quoteList(event.quotes),
+    }),
+  ],
+
+  // Passage reporté : le client, les agents du passage, et les agents qui n'y sont plus.
+  'cleaning.intervention.rescheduled': (event, context) => {
+    const service = withService(event.serviceName);
+    const previous_date = dateTime(event.previousStart, context);
+    const variables = {
+      date: dateTime(event.scheduledStart, context),
+      previous_date,
+      duration: formatDuration(event.durationMinutes),
+      ...service,
+    };
+    return [
+      customer(
+        event.customerId,
+        'cleaning.intervention_rescheduled.customer',
+        missionLink(context, event.missionId),
+        variables,
+      ),
+      ...[...new Set(event.agentIds)].map((agentId) => ({
+        userId: agentId,
+        templateCode: 'cleaning.intervention_rescheduled.agent',
+        variables,
+        link: null,
+      })),
+      ...released(event.releasedAgentIds, { previous_date, ...service }),
+    ];
+  },
+
+  // Passage annulé pour être replanifié : le client (nouvelle date à venir) et les agents libérés.
+  'cleaning.intervention.unscheduled': (event, context) => {
+    const variables = {
+      previous_date: dateTime(event.previousStart, context),
+      ...withService(event.serviceName),
+    };
+    return [
+      customer(
+        event.customerId,
+        'cleaning.intervention_unscheduled.customer',
+        missionLink(context, event.missionId),
+        variables,
+      ),
+      ...released(event.releasedAgentIds, variables),
+    ];
+  },
+
+  // Visite annulée avec sa demande (ou toutes celles de la visite commune) : l'agent seul ; le client
+  // est déjà prévenu de la clôture de sa demande.
+  'cleaning.visit.cancelled': (event, context) => [
+    {
+      userId: event.agentId,
+      templateCode: 'cleaning.visit_cancelled.agent',
+      variables: {
+        date: dateTime(event.scheduledAt, context),
+        services: serviceList(event.requests ?? [{}]),
+      },
+      link: null,
+    },
+  ],
 };
