@@ -33,8 +33,20 @@ jobs:
           --health-cmd "pg_isready -U ksp"
           --health-interval 5s
           --health-retries 10
+      # Broker réel pour les tests d'intégration de la messagerie (ADR-047), même version qu'en local.
+      rabbitmq:
+        image: rabbitmq:4.1-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: ksp
+          RABBITMQ_DEFAULT_PASS: ksp
+        ports: ['5672:5672']
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-retries 12
     env:
       TEST_DATABASE_URL: postgresql://ksp:ksp@localhost:5432/ksp_test
+      TEST_RABBITMQ_URL: amqp://ksp:ksp@localhost:5672
     steps:
       - uses: actions/checkout@v4
         with:
