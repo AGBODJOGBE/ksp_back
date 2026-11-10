@@ -77,7 +77,9 @@ import "ksp/common/v1/money.proto";
 //                                                           details.activeMissions ; ADR-035)
 //   CLEANING_MEASUREMENTS_LOCKED        FAILED_PRECONDITION mesures constatées refusées : devis déjà envoyé ou demande
 //                                                           close (details.status ; ADR-037)
-//   CLEANING_CALLER_FORBIDDEN           PERMISSION_DENIED   HasPendingObligations appelé par un autre service qu'identity
+//   CLEANING_CALLER_FORBIDDEN           PERMISSION_DENIED   méthode réservée à un autre service (HasPendingObligations :
+//                                                           identity ; GetMissionAmountDue : payment ;
+//                                                           GetWalletDebitStatus : wallet ; les autres : gateway)
 //   AUTH_REQUIRED                       UNAUTHENTICATED
 //   AUTH_FORBIDDEN                      PERMISSION_DENIED   rôle du back-office manquant
 //   AUTH_MFA_REQUIRED                   PERMISSION_DENIED   double authentification absente
@@ -263,6 +265,16 @@ service CleaningAdminService {
 // CLEANING_CALLER_FORBIDDEN. Mission inconnue : CLEANING_MISSION_NOT_FOUND.
 service MissionPaymentDueService {
   rpc GetMissionAmountDue(GetMissionAmountDueRequest) returns (GetMissionAmountDueResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Débit du portefeuille enregistré ? — réservé au service wallet (ADR-048).
+// ---------------------------------------------------------------------------
+// wallet rapproche les débits du portefeuille prépayé faits pour une mission dont l'enregistrement a
+// pu échouer (panne entre le débit et l'enregistrement du paiement) : un débit qu'aucun paiement de
+// la mission ne cite est remboursé. Appel d'un autre service : CLEANING_CALLER_FORBIDDEN.
+service WalletDebitCheckService {
+  rpc GetWalletDebitStatus(GetWalletDebitStatusRequest) returns (GetWalletDebitStatusResponse);
 }
 
 // ===========================================================================
@@ -1991,6 +2003,19 @@ message GetMissionAmountDueResponse {
   // Paiements en ligne déjà enregistrés sur la mission (identifiants du service payment) : payment
   // refuse un nouveau paiement tant qu'un paiement réussi n'y figure pas encore (ADR-032).
   repeated string online_payment_ids = 10;
+}
+
+message GetWalletDebitStatusRequest {
+  // Mission payée (objet du débit).
+  string mission_id = 1;
+  // Débit du portefeuille (identifiant de la transaction wallet), cité en référence du paiement.
+  string transaction_id = 2;
+}
+
+message GetWalletDebitStatusResponse {
+  // true : un paiement de la mission (moyen "wallet") cite ce débit, remboursé ou non ; false : aucun
+  // (mission inconnue comprise).
+  bool recorded = 1;
 }
 
 message PayMissionFromWalletRequest {

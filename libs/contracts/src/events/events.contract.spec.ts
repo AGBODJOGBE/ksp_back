@@ -291,6 +291,14 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     reason: 'mission_cancelled',
     refundedAt: '2026-11-09T10:00:00Z',
   },
+  'cleaning.mission.credited': {
+    missionId: uuid,
+    customerId: uuid,
+    creditId: uuid,
+    amount: xof(30000),
+    reason: 'recurring_cancelled',
+    creditedAt: '2026-11-10T10:00:00Z',
+  },
 };
 
 describe('Contrats des événements cleaning', () => {

@@ -205,6 +205,18 @@ export interface CleaningEventPayloads {
     reason: 'mission_cancelled';
     refundedAt: string;
   };
+  /**
+   * Montant payé pour des passages non faits d'une mission récurrente arrêtée par le client, crédité
+   * au prorata dans son portefeuille prépayé (ADR-049) : wallet crédite une seule fois par creditId.
+   */
+  'cleaning.mission.credited': {
+    missionId: string;
+    customerId: string;
+    creditId: string;
+    amount: CleaningMoney;
+    reason: 'recurring_cancelled';
+    creditedAt: string;
+  };
 }
 
 /**
