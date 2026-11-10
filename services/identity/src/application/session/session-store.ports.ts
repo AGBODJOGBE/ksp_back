@@ -5,6 +5,8 @@ import { type Account } from './session.ports';
 export interface StoredRefreshToken {
   id: string;
   usedAt: Date | null;
+  /** Jeton qui l'a remplacé, s'il a servi : empreinte et date d'usage. */
+  successor: { hash: string; usedAt: Date | null } | null;
   session: {
     id: string;
     clientKind: ClientKind;

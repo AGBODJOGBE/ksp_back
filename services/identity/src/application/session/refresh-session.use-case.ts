@@ -17,7 +17,7 @@ import { type RoleRepository } from '../role/role.ports';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { type AccessTokenIssuer, type AccessTokenSubject } from '../token/access-token-issuer';
 import { type SessionStore, type StoredRefreshToken } from './session-store.ports';
-import { type RefreshTokenGenerator } from './session.ports';
+import { type RefreshTokenSuccessor } from './session.ports';
 import { type OpenedSession } from './verify-otp.use-case';
 
 const invalid = () =>
@@ -34,6 +34,9 @@ export type SessionPolicies = Record<SessionCategory, SessionPolicy>;
 /**
  * UC-ID-04 : renouveler la session. Chaque renouvellement remplace le jeton de renouvellement ;
  * un ancien jeton présenté de nouveau signale un vol : toute la session est révoquée.
+ * Délai de grâce (ADR-050) : quelques secondes après son remplacement, l'ancien jeton renvoie le
+ * même successeur (dérivé de lui avec une clé secrète), tant que ce successeur n'a pas servi ;
+ * deux onglets qui renouvellent ensemble gardent ainsi la session.
  * Back-office : échéance fixe, fermeture après inactivité, rôles relus à chaque renouvellement
  * (un rôle retiré prend effet ici, UC-ID-19).
  * Sites et applications : le contexte actif de la session est gardé (UC-ID-15) tant que
@@ -42,7 +45,7 @@ export type SessionPolicies = Record<SessionCategory, SessionPolicy>;
 export class RefreshSessionUseCase {
   constructor(
     private readonly sessions: SessionStore,
-    private readonly refreshTokens: RefreshTokenGenerator,
+    private readonly refreshTokens: RefreshTokenSuccessor,
     private readonly hashRefreshToken: (token: string) => string,
     private readonly accessTokens: AccessTokenIssuer,
     private readonly ids: IdGenerator,
@@ -50,6 +53,8 @@ export class RefreshSessionUseCase {
     private readonly policies: SessionPolicies,
     private readonly roles: RoleRepository,
     private readonly organizations: Pick<OrganizationRepository, 'membership'>,
+    /** Délai pendant lequel un jeton remplacé renvoie encore son successeur (10 s par défaut). */
+    private readonly reuseGraceSeconds: number,
   ) {}
 
   async execute(refreshToken: string): Promise<Omit<OpenedSession, 'isNewUser'>> {
@@ -65,7 +70,8 @@ export class RefreshSessionUseCase {
         'Cette session a été fermée, reconnectez-vous.',
       );
     }
-    if (stored.usedAt) {
+    const next = this.refreshTokens.successor(refreshToken);
+    if (stored.usedAt && !this.withinGrace(stored, next.hash, now)) {
       await this.sessions.revokeSession(session.id, account.id, 'refresh_token_reused', now);
       throw reused();
     }
@@ -83,20 +89,24 @@ export class RefreshSessionUseCase {
     const grants = await this.grantsOf(stored, now);
     const context = await this.contextOf(stored);
 
-    const next = this.refreshTokens.generate();
     const sessionExpiresAt = renewedExpiry(session.expiresAt, now, policy);
-    const rotated = await this.sessions.rotateRefreshToken({
-      oldTokenId: stored.id,
-      newToken: { id: this.ids.next(), hash: next.hash },
-      sessionId: session.id,
-      sessionExpiresAt,
-      activeOrgId: context.organizationId,
-      now,
-    });
-    if (!rotated) {
-      // Le même jeton a servi deux fois en même temps : on le traite comme une réutilisation.
-      await this.sessions.revokeSession(session.id, account.id, 'refresh_token_reused', now);
-      throw reused();
+    if (!stored.usedAt) {
+      const rotated = await this.sessions.rotateRefreshToken({
+        oldTokenId: stored.id,
+        newToken: { id: this.ids.next(), hash: next.hash },
+        sessionId: session.id,
+        sessionExpiresAt,
+        activeOrgId: context.organizationId,
+        now,
+      });
+      // Le même jeton a servi en même temps ailleurs : l'autre appel a enregistré le même successeur.
+      const latest = rotated
+        ? null
+        : await this.sessions.findRefreshToken(this.hashRefreshToken(refreshToken));
+      if (!rotated && !(latest && this.withinGrace(latest, next.hash, now))) {
+        await this.sessions.revokeSession(session.id, account.id, 'refresh_token_reused', now);
+        throw reused();
+      }
     }
 
     const access = await this.accessTokens.issue({
@@ -118,6 +128,16 @@ export class RefreshSessionUseCase {
       profileIncomplete: isProfileIncomplete(account),
       activeContext: access.activeContext,
     };
+  }
+
+  /** Jeton remplacé il y a moins du délai de grâce par ce successeur, qui n'a pas encore servi. */
+  private withinGrace(stored: StoredRefreshToken, successorHash: string, now: Date): boolean {
+    return (
+      stored.usedAt !== null &&
+      now.getTime() - stored.usedAt.getTime() <= this.reuseGraceSeconds * 1000 &&
+      stored.successor?.hash === successorHash &&
+      stored.successor.usedAt === null
+    );
   }
 
   /**

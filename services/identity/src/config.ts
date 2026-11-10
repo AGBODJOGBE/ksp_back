@@ -44,6 +44,11 @@ export const configSchema = baseServiceConfigSchema.safeExtend({
     .int()
     .positive()
     .default(30 * 24 * 3600),
+  /**
+   * Délai de grâce d'un jeton de renouvellement remplacé (ADR-050) : pendant ces secondes, il renvoie
+   * le même successeur (onglets qui renouvellent ensemble) ; au-delà, il signale un vol.
+   */
+  REFRESH_TOKEN_REUSE_GRACE_SECONDS: z.coerce.number().int().min(0).max(60).default(10),
   /** Sessions simultanées des sites et applications ; au-delà, la plus ancienne est révoquée. */
   MAX_SESSIONS: z.coerce.number().int().positive().default(5),
   /** Sessions du back-office : 12 heures sans prolongation, 2 sessions, fermeture après 30 minutes d'inactivité. */

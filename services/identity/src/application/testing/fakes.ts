@@ -249,9 +249,11 @@ export class InMemorySessionStore implements SessionStore {
     const token = this.tokens.find((candidate) => candidate.hash === hash);
     if (!token) return null;
     const session = this.sessions.find((candidate) => candidate.id === token.sessionId)!;
+    const successor = this.tokens.find((candidate) => candidate.id === token.replacedById);
     return {
       id: token.id,
       usedAt: token.usedAt,
+      successor: successor ? { hash: successor.hash, usedAt: successor.usedAt } : null,
       session: {
         id: session.id,
         clientKind: session.clientKind,

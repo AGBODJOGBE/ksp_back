@@ -71,7 +71,7 @@ function setup() {
   } as unknown as AccessTokenIssuer;
   const refresh = new RefreshSessionUseCase(
     store,
-    { generate: () => ({ token: `rt-${++seq + 1}`, hash: `h(rt-${seq + 1})` }) },
+    { successor: (token) => ({ token: `${token}+`, hash: `h(${token}+)` }) },
     (token) => `h(${token})`,
     accessTokens,
     { next: () => `t-${++seq + 100}` },
@@ -87,6 +87,7 @@ function setup() {
     },
     roles,
     organizations,
+    10,
   );
   const logout = new LogoutUseCase(store, { now: () => now });
   const advance = (ms: number) => {
@@ -148,9 +149,20 @@ describe('RefreshSessionUseCase (UC-ID-04)', () => {
     await expect(refresh.execute(first.refreshToken)).resolves.toMatchObject({ sessionId: 's-1' });
   });
 
-  it('un ancien jeton réutilisé révoque toute la session (vol), sans toucher aux autres', async () => {
-    const { refresh, store } = setup();
+  it('dans le délai de grâce, l’ancien jeton renvoie le même successeur (onglets)', async () => {
+    const { refresh, store, advance } = setup();
+    const first = await refresh.execute('rt-1');
+    advance(10_000);
+    const second = await refresh.execute('rt-1');
+    expect(second.refreshToken).toBe(first.refreshToken);
+    expect(store.sessions[0].revokedAt).toBeNull();
+    expect(store.tokens).toHaveLength(2);
+  });
+
+  it('un ancien jeton réutilisé après le délai de grâce révoque toute la session (vol)', async () => {
+    const { refresh, store, advance } = setup();
     const renewed = await refresh.execute('rt-1');
+    advance(10_001);
     await expectAppError(refresh.execute('rt-1'), 'IDENTITY_REFRESH_TOKEN_REUSED');
 
     expect(store.sessions[0]).toMatchObject({ revokeReason: 'refresh_token_reused' });
@@ -158,7 +170,7 @@ describe('RefreshSessionUseCase (UC-ID-04)', () => {
     await expectAppError(refresh.execute(renewed.refreshToken), 'IDENTITY_SESSION_REVOKED');
   });
 
-  it('deux renouvellements simultanés avec le même jeton : le second révoque la session', async () => {
+  it('jeton remplacé entre-temps par un autre successeur que le sien : la session est révoquée', async () => {
     const { refresh, store } = setup();
     store.raceOnNextRotation = true;
     await expectAppError(refresh.execute('rt-1'), 'IDENTITY_REFRESH_TOKEN_REUSED');
