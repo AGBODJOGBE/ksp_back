@@ -198,7 +198,7 @@ jobs:
         run: echo "IMAGE_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
       # Construite à chaque demande de fusion, publiée seulement depuis main.
       # Le déploiement est piloté par le dépôt ksp-infra, qui référence ces images par leur tag.
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: services/${{ matrix.service }}/Dockerfile
