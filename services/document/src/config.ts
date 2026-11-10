@@ -2,6 +2,9 @@ import { baseServiceConfigSchema } from '@ksp/platform';
 import { z } from 'zod';
 import { type CodePolicy } from './domain/code-policy';
 
+/** Secret de développement du .env.example : connu de tous, refusé en production (ADR-050). */
+export const DEV_CODE_HMAC_SECRET = 'dev-only-document-code-hmac-secret-0123456789';
+
 /** Variable vide (ligne « NOM= » d'un fichier .env) : considérée comme absente. */
 const unset = (value: unknown) => (value === '' ? undefined : value);
 
@@ -58,6 +61,12 @@ export const configSchema = baseServiceConfigSchema
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV !== 'production') return;
     const fail = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
+    if (cfg.DOCUMENT_CODE_HMAC_SECRET === DEV_CODE_HMAC_SECRET) {
+      fail(
+        'DOCUMENT_CODE_HMAC_SECRET',
+        'Secret de développement refusé en production : secret propre fourni par le coffre.',
+      );
+    }
     if (cfg.DOCUMENT_GENERIC_TEMPLATE_ENABLED) {
       fail('DOCUMENT_GENERIC_TEMPLATE_ENABLED', 'Le modèle de test est interdit en production.');
     }
