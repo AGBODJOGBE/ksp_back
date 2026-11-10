@@ -654,6 +654,9 @@ export const ORIGINS = {
 };
 
 /** La gateway complète, avec la même chaîne HTTP qu'en production. */
+/** Adresse gRPC où rien n'écoute : les routes du service répondent 503. */
+export const UNREACHABLE_GRPC_URL = '127.0.0.1:1';
+
 export async function startGateway(options: {
   identityUrl: string;
   /** Service cleaning simulé (cleaning-stub.ts) ; sans lui, les routes du Nettoyage répondent 503. */
@@ -678,13 +681,14 @@ export async function startGateway(options: {
     NODE_ENV: 'test',
     LOG_LEVEL: 'fatal',
     IDENTITY_GRPC_URL: options.identityUrl,
-    ...(options.cleaningUrl ? { CLEANING_GRPC_URL: options.cleaningUrl } : {}),
-    ...(options.billingUrl ? { BILLING_GRPC_URL: options.billingUrl } : {}),
-    ...(options.paymentUrl ? { PAYMENT_GRPC_URL: options.paymentUrl } : {}),
-    ...(options.notificationUrl ? { NOTIFICATION_GRPC_URL: options.notificationUrl } : {}),
-    ...(options.fileUrl ? { FILE_GRPC_URL: options.fileUrl } : {}),
-    ...(options.walletUrl ? { WALLET_GRPC_URL: options.walletUrl } : {}),
-    ...(options.documentUrl ? { DOCUMENT_GRPC_URL: options.documentUrl } : {}),
+    // Service non simulé : adresse sans serveur (connexion refusée), aussi acceptée en production.
+    CLEANING_GRPC_URL: options.cleaningUrl ?? UNREACHABLE_GRPC_URL,
+    BILLING_GRPC_URL: options.billingUrl ?? UNREACHABLE_GRPC_URL,
+    PAYMENT_GRPC_URL: options.paymentUrl ?? UNREACHABLE_GRPC_URL,
+    NOTIFICATION_GRPC_URL: options.notificationUrl ?? UNREACHABLE_GRPC_URL,
+    FILE_GRPC_URL: options.fileUrl ?? UNREACHABLE_GRPC_URL,
+    WALLET_GRPC_URL: options.walletUrl ?? UNREACHABLE_GRPC_URL,
+    DOCUMENT_GRPC_URL: options.documentUrl ?? UNREACHABLE_GRPC_URL,
     CORS_WEB_ORIGINS: `${ORIGINS.web},https://shop.ksp.bj,https://print.ksp.bj`,
     CORS_BACKOFFICE_ORIGINS: ORIGINS.backoffice,
     ...options.env,

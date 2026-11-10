@@ -56,7 +56,9 @@ Chaque service expose :
 - gRPC sur son port (`identity` : 50051, `notification` : 50052… `file` : 50056, `wallet` : 50057, `document` : 50058, voir `tools/services.json`) ;
 - HTTP technique (`identity` : 3101, `notification` : 3102… `file` : 3106, `wallet` : 3107, `document` : 3108) : `/health/live`, `/health/ready`, `/metrics`.
 
-La `gateway` n'a ni gRPC entrant ni base : elle sert l'API REST des fronts sur le port 3000 (`/api/v1/…`, `/.well-known/jwks.json`), avec les mêmes sondes et métriques (voir `services/gateway/README.md`).
+La `gateway` n'a ni gRPC entrant ni base : elle sert l'API REST des fronts sur le port 3000 (`/api/v1/…`, `/.well-known/jwks.json`) et ses sondes et métriques sur le port interne 3100, jamais exposé (voir `services/gateway/README.md`).
+
+Exploitation (ADR-051) : arrêt en deux temps au `SIGTERM` (`SHUTDOWN_DELAY_MS`), adresses `*_GRPC_URL` obligatoires en production (service headless `dns:///…`), gateway en deux répliques au moins avec `REDIS_URL`.
 
 En développement, `notification` n'envoie aucun message : le code de connexion s'affiche dans son terminal (voir `services/notification/README.md`).
 

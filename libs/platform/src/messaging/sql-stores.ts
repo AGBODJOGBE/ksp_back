@@ -1,5 +1,12 @@
 import { type EventEnvelope } from '@ksp/contracts';
-import { type InboxStore, type OutboxBatchResult, type OutboxRecord, type OutboxStore } from './ports';
+import { type OutboxStats } from './metrics';
+import {
+  type InboxStore,
+  type MessageRetention,
+  type OutboxBatchResult,
+  type OutboxRecord,
+  type OutboxStore,
+} from './ports';
 
 /**
  * Sous-ensemble du client Prisma utilisé par l'outbox et l'inbox. Le kit ne dépend pas du client
@@ -106,6 +113,14 @@ export class SqlOutboxStore implements OutboxStore {
     );
   }
 
+  async stats(): Promise<OutboxStats> {
+    const [row] = await this.client.$queryRawUnsafe<{ pending: number; parked: number }[]>(
+      'SELECT count(*) FILTER (WHERE parked_at IS NULL)::int AS pending, ' +
+        'count(*) FILTER (WHERE parked_at IS NOT NULL)::int AS parked FROM outbox WHERE published_at IS NULL',
+    );
+    return { pending: Number(row?.pending ?? 0), parked: Number(row?.parked ?? 0) };
+  }
+
   /**
    * Rejoue les événements mis de côté (ADR-032), une fois la cause corrigée : tous, ou ceux dont
    * l'identifiant est donné (commande `pnpm outbox:replay`). Ils repartent comme neufs : compteur de
@@ -123,22 +138,64 @@ export class SqlOutboxStore implements OutboxStore {
 }
 
 export class SqlInboxStore implements InboxStore<SqlExecutor> {
-  constructor(private readonly client: TransactionalSqlClient) {}
+  /**
+   * @param transactionTimeoutMs délai de la transaction du traitement (30 s, comme l'outbox ; Prisma
+   *   annulerait sinon au bout de 5 s un traitement un peu long, rejoué ensuite en boucle).
+   */
+  constructor(
+    private readonly client: TransactionalSqlClient,
+    private readonly transactionTimeoutMs = 30_000,
+  ) {}
 
   runOnce(
     eventId: string,
     consumer: string,
     work: (tx: SqlExecutor) => Promise<void>,
   ): Promise<'processed' | 'duplicate'> {
-    return this.client.$transaction(async (tx) => {
-      const inserted = await tx.$executeRawUnsafe(
-        'INSERT INTO processed_events (event_id, consumer, processed_at) VALUES ($1::uuid, $2, now()) ON CONFLICT DO NOTHING',
-        eventId,
-        consumer,
-      );
-      if (inserted === 0) return 'duplicate';
-      await work(tx);
-      return 'processed';
-    });
+    return this.client.$transaction(
+      async (tx) => {
+        const inserted = await tx.$executeRawUnsafe(
+          'INSERT INTO processed_events (event_id, consumer, processed_at) VALUES ($1::uuid, $2, now()) ON CONFLICT DO NOTHING',
+          eventId,
+          consumer,
+        );
+        if (inserted === 0) return 'duplicate';
+        await work(tx);
+        return 'processed';
+      },
+      { timeout: this.transactionTimeoutMs },
+    );
+  }
+}
+
+/**
+ * Purge des tables de messagerie (ADR-047) : événements de l'outbox publiés et marques de l'inbox
+ * (`processed_events`) plus anciens que la rétention (30 jours par défaut), par lots pour ne pas
+ * verrouiller longtemps. Au-delà de la rétention, un événement reçu de nouveau (rejeu tardif d'une
+ * file d'erreurs) serait retraité : la rétention doit dépasser le délai de traitement des .dlq.
+ */
+export class SqlMessageRetention implements MessageRetention {
+  constructor(
+    private readonly client: SqlExecutor,
+    private readonly retentionDays = 30,
+    private readonly batchSize = 5_000,
+  ) {}
+
+  async purge(): Promise<number> {
+    const outbox =
+      'DELETE FROM outbox WHERE id IN (SELECT id FROM outbox ' +
+      "WHERE published_at < now() - ($1 * interval '1 day') LIMIT $2)";
+    const inbox =
+      'DELETE FROM processed_events WHERE (event_id, consumer) IN (SELECT event_id, consumer ' +
+      "FROM processed_events WHERE processed_at < now() - ($1 * interval '1 day') LIMIT $2)";
+    let total = 0;
+    for (const query of [outbox, inbox]) {
+      let deleted: number;
+      do {
+        deleted = await this.client.$executeRawUnsafe(query, this.retentionDays, this.batchSize);
+        total += deleted;
+      } while (deleted === this.batchSize);
+    }
+    return total;
   }
 }

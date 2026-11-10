@@ -1,4 +1,4 @@
-import { baseServiceConfigSchema } from '@ksp/platform';
+import { baseServiceConfigSchema, requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 
 /** Variable vide (ligne « NOM= » d'un fichier .env) : considérée comme absente. */
@@ -119,7 +119,9 @@ export const configSchema = baseServiceConfigSchema
     if (!cfg.PAYMENT_RETURN_URL.startsWith('https://')) {
       fail('PAYMENT_RETURN_URL', 'Adresse HTTPS obligatoire en production.');
     }
-  });
+  })
+  // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
+  .superRefine(requireGrpcAddressesInProduction);
 
 export type ServiceConfig = z.infer<typeof configSchema>;
 

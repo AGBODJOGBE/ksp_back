@@ -5,6 +5,7 @@ import { type BaseServiceConfig } from '../config/config';
 import { GrpcContextInterceptor } from '../grpc/grpc-context.interceptor';
 import { HealthController } from '../health/health.controller';
 import { ReadinessRegistry } from '../health/readiness';
+import { ShutdownState } from '../health/shutdown';
 import { createLoggerModule } from '../logging/logger';
 import { RabbitMqConnection } from '../messaging/rabbitmq/connection';
 import { RabbitMqConsumer } from '../messaging/rabbitmq/consumer';
@@ -28,6 +29,7 @@ export class PlatformModule {
     const providers: Provider[] = [
       { provide: SERVICE_CONFIG, useValue: config },
       ReadinessRegistry,
+      ShutdownState,
       GrpcContextInterceptor,
       { provide: RabbitMqConnection, useFactory: () => new RabbitMqConnection(config.RABBITMQ_URL) },
       {
@@ -74,6 +76,7 @@ export class PlatformModule {
       exports: [
         SERVICE_CONFIG,
         ReadinessRegistry,
+        ShutdownState,
         GrpcContextInterceptor,
         RabbitMqConnection,
         RabbitMqPublisher,

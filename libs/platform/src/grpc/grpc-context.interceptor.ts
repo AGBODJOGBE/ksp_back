@@ -11,12 +11,14 @@ import {
 import { defer, Observable, switchMap } from 'rxjs';
 import { SERVICE_TOKEN_VERIFIER, type ServiceTokenVerifier } from '../auth/service-token';
 import { contextFromMetadata, runWithContext } from '../context/request-context';
+import { deadlineFrom, runWithDeadline } from './deadline';
 
 /**
  * Pour chaque appel gRPC entrant :
  * 1. vérifie le jeton de service de l'appelant (si un vérificateur est configuré, obligatoire en production) ;
  * 2. reconstruit le contexte (corrélation, utilisateur) depuis les métadonnées ;
- * 3. exécute le contrôleur dans ce contexte, pour que journaux, événements et appels sortants le portent.
+ * 3. exécute le contrôleur dans ce contexte, pour que journaux, événements et appels sortants le portent ;
+ *    les appels sortants reprennent aussi l'échéance de l'appel reçu (ADR-051).
  */
 @Injectable()
 export class GrpcContextInterceptor implements NestInterceptor {
@@ -33,6 +35,9 @@ export class GrpcContextInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     if (context.getType() !== 'rpc') return next.handle();
     const metadata = context.switchToRpc().getContext<Metadata>();
+    // Arguments d'une méthode gRPC dans NestJS : (requête, métadonnées, appel).
+    const call = context.getArgByIndex<{ getDeadline?: () => Date | number } | undefined>(2);
+    const deadline = deadlineFrom(call?.getDeadline?.());
     return defer(async () => {
       const requestContext = contextFromMetadata(metadata);
       if (this.verifier) requestContext.callerService = await this.verifier.verify(metadata);
@@ -41,7 +46,9 @@ export class GrpcContextInterceptor implements NestInterceptor {
       switchMap(
         (requestContext) =>
           new Observable((subscriber) =>
-            runWithContext(requestContext, () => next.handle().subscribe(subscriber)),
+            runWithContext(requestContext, () =>
+              runWithDeadline(deadline, () => next.handle().subscribe(subscriber)),
+            ),
           ),
       ),
     );

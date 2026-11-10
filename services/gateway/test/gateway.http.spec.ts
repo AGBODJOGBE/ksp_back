@@ -3,6 +3,7 @@ import { AppError } from '@ksp/platform';
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import { generateKeyPair } from 'jose';
 import request from 'supertest';
+import { createInternalHttpApp } from '../src/interfaces/http/internal-http';
 import {
   freePort,
   type IdentityServer,
@@ -524,9 +525,21 @@ describe('gateway : routes identity de bout en bout (serveur gRPC identity simul
       expect(exposed.headers['access-control-expose-headers']).toContain('X-Correlation-Id');
     });
 
-    it('sondes de santÃ© : vivant, et prÃªt quand les clÃ©s publiques sont en cache', async () => {
-      await http.get('/health/live').expect(200, { status: 'ok' });
-      await http.get('/health/ready').expect(200, { ready: true, checks: { 'identity-keys': 'ok' } });
+    it('sondes de santé et métriques sur le port interne, jamais sur le port public (ADR-051)', async () => {
+      for (const path of ['/health/live', '/health/ready', '/metrics']) {
+        expect((await http.get(path)).status).toBe(404);
+      }
+      const internal = await createInternalHttpApp(app);
+      try {
+        const probes = request(internal.getHttpServer());
+        await probes.get('/health/live').expect(200, { status: 'ok' });
+        await probes.get('/health/ready').expect(200, { ready: true, checks: { 'identity-keys': 'ok' } });
+        await probes.get('/metrics').expect(200);
+        // L'API n'est servie que sur le port public.
+        expect((await probes.get(ME)).status).toBe(404);
+      } finally {
+        await internal.close();
+      }
     });
   });
 });
@@ -632,7 +645,9 @@ describe('gateway : mode dÃ©gradÃ© (UC-GW-07)', () => {
       const res = await http.get(ME).set('Authorization', `Bearer ${await keys.accessToken()}`);
       expect(res.status).toBe(503);
       expect(res.body.error.code).toBe('IDENTITY_UNAVAILABLE');
-      const ready = await http.get('/health/ready');
+      const internal = await createInternalHttpApp(app);
+      const ready = await request(internal.getHttpServer()).get('/health/ready');
+      await internal.close();
       expect(ready.status).toBe(503);
     } finally {
       await app.close();
