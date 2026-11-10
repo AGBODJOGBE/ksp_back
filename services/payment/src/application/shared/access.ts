@@ -43,6 +43,13 @@ export function requireStaff(allowed: readonly string[], nowMs?: number): { user
 }
 
 /**
+ * Méthodes « utilisateur » (espace client, page publique d'un lien) et back-office : appelées par la
+ * gateway seulement (ADR-048). Un autre service ne peut pas s'en servir en transmettant un utilisateur
+ * dans ses métadonnées.
+ */
+export const GATEWAY = ['gateway'] as const;
+
+/**
  * Méthode réservée à certains services (jeton de service vérifié par le kit). Sans vérificateur
  * (développement), l'appelant n'est pas connu et l'appel passe.
  */
