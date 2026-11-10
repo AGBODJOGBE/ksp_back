@@ -216,6 +216,7 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     paymentPlan: { option: 'deposit', timing: 'before', method: 'cash' },
     depositAmount: xof(144000),
     startsAt: '2026-11-05T08:00:00Z',
+    schedulePeriod: { firstDate: '2026-11-05', lastDate: '2027-01-28' },
   },
   'cleaning.mission.scheduled': {
     missionId: uuid,
