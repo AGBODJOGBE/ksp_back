@@ -22,16 +22,18 @@ function services(): string[] {
   return Object.keys(JSON.parse(readFileSync(join(ROOT, 'tools', 'services.json'), 'utf8')) as object);
 }
 
-/** Types d'événements connus : un schéma par événement dans contracts/events/<domaine>/<type>.v1.schema.json. */
+/** Schéma d'un événement : contracts/events/<domaine>/<type>.v<version>.schema.json. */
+const SCHEMA_FILE = /^(.+)\.v\d+\.schema\.json$/;
+
+/** Types d'événements connus, toutes versions confondues (un type par schéma, sans doublon). */
 function eventTypes(): string[] {
   const root = join(ROOT, 'contracts', 'events');
-  return readdirSync(root, { withFileTypes: true })
+  const types = readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .flatMap((domain) =>
-      readdirSync(join(root, domain.name))
-        .filter((file) => file.endsWith('.v1.schema.json'))
-        .map((file) => file.slice(0, -'.v1.schema.json'.length)),
+      readdirSync(join(root, domain.name)).flatMap((file) => SCHEMA_FILE.exec(file)?.[1] ?? []),
     );
+  return [...new Set(types)];
 }
 
 function rabbitMqUrl(service: string): string | undefined {
