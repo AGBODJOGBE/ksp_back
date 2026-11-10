@@ -18,6 +18,7 @@ import {
 import { createUseCases } from '../src/application/use-cases';
 import { type RequestQuoteGroupInput } from '../src/application/places/request-groups.use-cases';
 import { definitionProblems, isFullyPriced } from '../src/domain/catalog';
+import { DEFAULT_SCHEDULE_POLICY } from '../src/domain/intervention-schedule';
 import { DEFAULT_FIELD_DATE_POLICY } from '../src/domain/schedule';
 import { homeCleaningService } from '../src/domain/testing';
 import { PrismaAgentRepository } from '../src/infrastructure/persistence/prisma-agent.repository';
@@ -77,6 +78,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       wallet: new FakeWallet(),
       people: { userNames: async () => new Map(), organizationNames: async () => new Map() },
       fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
+      schedules: { ...DEFAULT_SCHEDULE_POLICY },
       clock,
       ids: new UuidV7Generator(),
     };

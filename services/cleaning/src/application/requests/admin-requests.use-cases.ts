@@ -41,6 +41,15 @@ import {
   requirePositiveInt,
   requireUuid,
 } from '../shared/validation';
+import { legacyRecurrenceOf, scheduleFromLegacy } from '../../domain/intervention-schedule';
+import { type Recurrence } from '../../domain/recurrence';
+import {
+  firstPassageSlot,
+  parseSchedule,
+  type PlannedSchedule,
+  planSchedule,
+  type ScheduleInput,
+} from '../shared/schedules';
 import { assertRequestTransition, saveRequest } from './customer-requests.use-cases';
 import { measure, type MeasurementInput } from './measurements.use-cases';
 
@@ -284,7 +293,13 @@ export interface SendQuoteInput {
   lines: PriceLine[];
   proposedSlots: { start: string; end: string }[];
   validityDays: number;
+  /** Dépréciée (ADR-052) : traduite en plan quand c'est exact. */
   recurrence?: { period: string; visitsPerPeriod: number; durationMonths: number };
+  /**
+   * Plan de passages ajusté après la visite (ADR-052) ; absent : celui de la demande. Avec un plan,
+   * le créneau proposé est le premier passage (les créneaux envoyés sont ignorés).
+   */
+  schedule?: ScheduleInput | null | undefined;
   teamSize: number;
   durationMinutes: number;
 }
@@ -302,7 +317,9 @@ export class SendQuoteUseCase {
     const now = this.deps.clock.now();
     const settings = await this.deps.catalog.getSettings();
     assertRequestTransition(request, 'quote_sent', now);
-    const proposedSlots = parseProposedSlots(input.proposedSlots, settings, now);
+    const proposedSlots = input.proposedSlots.length
+      ? parseProposedSlots(input.proposedSlots, settings, now)
+      : null;
     const prepared = await prepareQuote(this.deps, request, input, proposedSlots, settings, now);
     const saved = await saveRequest(
       this.deps,
@@ -345,7 +362,8 @@ export async function prepareQuote(
   deps: CleaningDeps,
   request: QuoteRequest,
   input: Omit<SendQuoteInput, 'requestId' | 'proposedSlots'>,
-  proposedSlots: Slot[],
+  /** Créneaux proposés contrôlés ; null : aucun envoyé (admis seulement avec un plan de passages). */
+  proposedSlots: Slot[] | null,
   settings: CleaningSettings,
   now: Date,
 ): Promise<PreparedQuote> {
@@ -366,15 +384,21 @@ export async function prepareQuote(
     ? requirePositiveInt('teamSize', input.teamSize, 50)
     : (measuredTeamSize ?? request.recommendedTeamSize);
   const durationMinutes = requirePositiveInt('durationMinutes', input.durationMinutes, 24 * 60);
-  const recurrence = input.recurrence?.period ? parseRecurrence(input.recurrence) : request.recurrence;
+  const { planned, recurrence } = quotePlan(deps, request, input, proposedSlots, settings, now);
+  const slots = planned ? [firstPassageSlot(planned, durationMinutes, deps)] : proposedSlots;
+  if (!slots) {
+    throw CleaningErrors.slotInvalid(`Proposez de ${MIN_PROPOSED_SLOTS} à ${MAX_PROPOSED_SLOTS} créneaux.`);
+  }
 
   const quote = buildQuote({
     id: deps.ids.next(),
     lines,
-    proposedSlots,
+    proposedSlots: slots,
     validityDays,
     depositPercent: settings.depositPercent,
     recurrence,
+    schedule: planned?.schedule ?? null,
+    scheduledDates: planned?.dates ?? [],
     teamSize,
     durationMinutes,
     now,
@@ -385,6 +409,34 @@ export async function prepareQuote(
     pricingVersion: service.pricing.version,
     prefilledFrom: input.lines.length ? null : request.measurement ? 'measurement' : 'request',
   };
+}
+
+/**
+ * Plan de passages du devis (ADR-052), dans cet ordre : celui envoyé par la supervision ; une
+ * récurrence envoyée (dépréciée), traduite en plan si c'est exact, sinon gardée approximative ; le
+ * plan de la demande, recontrôlé (le premier passage doit encore respecter le délai minimum) ;
+ * l'ancienne récurrence de la demande.
+ */
+function quotePlan(
+  deps: CleaningDeps,
+  request: QuoteRequest,
+  input: Pick<SendQuoteInput, 'schedule' | 'recurrence'>,
+  proposedSlots: Slot[] | null,
+  settings: CleaningSettings,
+  now: Date,
+): { planned: PlannedSchedule | null; recurrence: Recurrence | null } {
+  const schedule = parseSchedule(input.schedule);
+  const legacy = input.recurrence?.period ? parseRecurrence(input.recurrence) : null;
+  if (schedule && legacy) {
+    throw CleaningErrors.invalid('recurrence', 'Envoyez schedule, ou recurrence (dépréciée), pas les deux.');
+  }
+  const first = proposedSlots?.[0];
+  const translated =
+    legacy && first ? scheduleFromLegacy(legacy, first.start, deps.fieldDates.timeZone) : null;
+  const plan = schedule ?? translated ?? (legacy ? null : (request.schedule ?? null));
+  if (!plan) return { planned: null, recurrence: legacy ?? request.recurrence };
+  const planned = planSchedule(deps, plan, settings, now);
+  return { planned, recurrence: legacyRecurrenceOf(planned.schedule, planned.dates) };
 }
 
 /** Événement cleaning.quote.sent et trace d'un devis envoyé. */

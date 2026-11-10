@@ -28,6 +28,10 @@ export const configSchema = baseServiceConfigSchema
       .min(1)
       .default('Africa/Porto-Novo')
       .refine(isTimeZone, { message: 'Fuseau horaire IANA inconnu.' }),
+    /** Plan de passages (ADR-052) : la période couvre au plus N mois (36, comme l'ancienne récurrence). */
+    CLEANING_SCHEDULE_MAX_MONTHS: z.coerce.number().int().min(1).max(120).default(36),
+    /** Plan de passages (ADR-052) : nombre maximal de passages d'une demande ou d'un devis. */
+    CLEANING_SCHEDULE_MAX_VISITS: z.coerce.number().int().min(1).max(5000).default(400),
     /** Refuser de démarrer un passage avant le jour prévu (proposition à valider). */
     CLEANING_BLOCK_EARLY_INTERVENTION_START: flag(true),
     /** Refuser le compte rendu d'une visite avant l'heure prévue (proposition à valider). */

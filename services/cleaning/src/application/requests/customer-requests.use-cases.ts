@@ -12,6 +12,7 @@ import {
   type RequestStatus,
 } from '../../domain/quote-request';
 import { respectsLeadTime, type Slot } from '../../domain/schedule';
+import { daysPerWeekOf, requestTiming, type ScheduleInput } from '../shared/schedules';
 import { calculatePrice } from '../../domain/simulator';
 import { activeService } from '../catalog/catalog.use-cases';
 import { type PricingInput, resolveAnswers } from '../catalog/pricing-input';
@@ -24,8 +25,6 @@ import {
   type PageRequest,
   type PageResult,
   parseDate,
-  parseRecurrence,
-  parseSlot,
   requiredText,
   requirePositiveInt,
 } from '../shared/validation';
@@ -64,15 +63,19 @@ export interface RequestQuoteInput extends PricingInput {
   serviceCode: string;
   commune: string;
   address: string;
+  /** 1 à 3 créneaux souhaités ; 0 à 3 avec un plan de passages (le premier passage sinon). */
   preferredSlots: { start: string; end: string }[];
   comment: string;
+  /** Dépréciée (ADR-052) : traduite en plan quand c'est exact. */
   recurrence?: { period: string; visitsPerPeriod: number; durationMonths: number };
+  /** Plan de passages (ADR-052) : dates exactes, prix estimé sur leur nombre. */
+  schedule?: ScheduleInput | null | undefined;
   requestedTeamSize: number;
   /** Entreprise : jours d'intervention par semaine (1 à 7), 0 ou absent si non précisés. */
   daysPerWeek?: number;
 }
 
-export const MAX_PREFERRED_SLOTS = 3;
+export { MAX_PREFERRED_SLOTS } from '../shared/schedules';
 
 /**
  * Plan de paiement d'une entreprise : elle règle ses factures mensuelles (service billing) et
@@ -98,7 +101,6 @@ export class RequestQuoteUseCase {
     const commune = requiredText('commune', input.commune, 100);
     const address = requiredText('address', input.address, 500);
     const comment = optionalText('comment', input.comment, 2000);
-    const recurrence = parseRecurrence(input.recurrence);
     const requestedTeamSize = input.requestedTeamSize
       ? requirePositiveInt('requestedTeamSize', input.requestedTeamSize, 50)
       : 0;
@@ -110,15 +112,7 @@ export class RequestQuoteUseCase {
       throw CleaningErrors.zoneNotCovered(commune);
 
     const settings = await this.deps.catalog.getSettings();
-    if (input.preferredSlots.length < 1 || input.preferredSlots.length > MAX_PREFERRED_SLOTS) {
-      throw CleaningErrors.slotInvalid(`Proposez de 1 à ${MAX_PREFERRED_SLOTS} créneaux.`);
-    }
-    const preferredSlots = input.preferredSlots.map((slot, index) =>
-      parseSlot(`preferredSlots[${index}]`, slot),
-    );
-    if (preferredSlots.some((slot) => !respectsLeadTime(slot.start, now, settings.minimumLeadHours))) {
-      throw CleaningErrors.leadTimeTooShort(settings.minimumLeadHours);
-    }
+    const timing = requestTiming(this.deps, input, settings, now);
     if ((await this.deps.requests.countOpen(customer.userId, now)) >= settings.maxOpenRequests) {
       throw CleaningErrors.tooManyOpenRequests(settings.maxOpenRequests);
     }
@@ -148,11 +142,10 @@ export class RequestQuoteUseCase {
       landmark: null,
       geocodingProvider: null,
       geocodedAddress: null,
-      preferredSlots,
+      ...timing,
       comment,
-      recurrence,
       requestedTeamSize,
-      daysPerWeek,
+      daysPerWeek: daysPerWeekOf(daysPerWeek, timing.schedule),
       recommendedTeamSize: calculation.recommendedTeamSize,
       estimate: calculation.estimate,
       visit: null,
@@ -260,6 +253,9 @@ export function newMission(
     placeType: request.placeType,
     chosenSlot: slot,
     recurrence: quote.recurrence,
+    // Plan de passages du devis (ADR-052) : ses dates sont celles des passages à planifier.
+    schedule: quote.schedule ?? null,
+    scheduledDates: quote.scheduledDates ?? [],
     plannedInterventions: quote.interventionCount,
     interventions: [],
     payment: newPaymentState(
@@ -302,6 +298,7 @@ export async function bookingChanges(
           total: { amount: quote.total, currency: 'XOF' },
           plannedInterventions: quote.interventionCount,
           recurrence: quote.recurrence,
+          ...schedulePeriod(quote.scheduledDates),
           paymentPlan: mission.payment.plan,
           depositAmount: { amount: mission.payment.depositAmount, currency: 'XOF' },
           startsAt: mission.chosenSlot.start.toISOString(),
@@ -325,6 +322,12 @@ export async function bookingChanges(
       },
     ],
   };
+}
+
+/** Premier et dernier passage d'un plan (ADR-052), pour billing ; rien sans plan. */
+function schedulePeriod(dates: string[] | undefined) {
+  const [firstDate, lastDate] = [dates?.[0], dates?.at(-1)];
+  return firstDate && lastDate ? { schedulePeriod: { firstDate, lastDate } } : {};
 }
 
 /** UC-CL-04 : accepter le devis ; la mission est créée avec l'option de paiement choisie. */

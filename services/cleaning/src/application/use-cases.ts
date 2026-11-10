@@ -6,7 +6,12 @@ import {
   SaveServiceUseCase,
   UpdateSettingsUseCase,
 } from './catalog/admin-catalog.use-cases';
-import { ListServedZonesUseCase, ListServicesUseCase, SimulateUseCase } from './catalog/catalog.use-cases';
+import {
+  ListServedZonesUseCase,
+  ListServicesUseCase,
+  PreviewScheduleUseCase,
+  SimulateUseCase,
+} from './catalog/catalog.use-cases';
 import { type CleaningDeps } from './deps';
 import {
   CancelMissionAsSupervisorUseCase,
@@ -97,6 +102,7 @@ export function createUseCases(deps: CleaningDeps) {
   return {
     listServices: new ListServicesUseCase(deps),
     simulate: new SimulateUseCase(deps),
+    previewSchedule: new PreviewScheduleUseCase(deps),
     listServedZones: new ListServedZonesUseCase(deps),
     getPlaceCatalog: new GetPlaceCatalogUseCase(deps),
     estimate: new EstimateUseCase(deps),

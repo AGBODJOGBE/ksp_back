@@ -110,6 +110,8 @@ export interface CleaningEventPayloads {
     depositAmount: CleaningMoney;
     /** Début du créneau choisi : départ des mois de facturation d'un contrat d'entreprise. */
     startsAt?: string;
+    /** Facultatif (ADR-052) : premier et dernier passage du plan (AAAA-MM-JJ), absent sans plan. */
+    schedulePeriod?: { firstDate: string; lastDate: string };
     /** Facultatifs (ADR-034) : prestation, son nom et groupe de la demande. */
     serviceCode?: string;
     serviceName?: string;

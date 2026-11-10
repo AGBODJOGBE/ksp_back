@@ -2,7 +2,9 @@ import { type ServiceDefinition } from '../../domain/catalog';
 import { calculatePrice, type PriceCalculation } from '../../domain/simulator';
 import { isCovered, type Zone } from '../../domain/zone';
 import { type CleaningDeps } from '../deps';
+import { type ScheduleWarning } from '../../domain/intervention-schedule';
 import { CleaningErrors } from '../shared/errors';
+import { parseSchedule, type PlannedSchedule, planSchedule, type ScheduleInput } from '../shared/schedules';
 import { optionalText } from '../shared/validation';
 import { type PricingInput, resolveAnswers } from './pricing-input';
 
@@ -51,6 +53,29 @@ export interface SimulateInput extends PricingInput {
   serviceCode: string;
   /** Facultative (ADR-034) : vide ou absente, coefficient de commune neutre. */
   commune?: string | null | undefined;
+  /** Facultatif (ADR-052) : plan de passages, montant estimé sur le nombre exact de passages. */
+  schedule?: ScheduleInput | null | undefined;
+}
+
+/** Aperçu d'un plan de passages (ADR-052) : dates exactes, à afficher en calendrier. */
+export interface SchedulePreview {
+  dates: string[];
+  count: number;
+  firstDate: string;
+  lastDate: string;
+  warnings: ScheduleWarning[];
+}
+
+export function schedulePreview({ dates, warnings }: PlannedSchedule): SchedulePreview {
+  return { dates, count: dates.length, firstDate: dates[0]!, lastDate: dates[dates.length - 1]!, warnings };
+}
+
+/** Montant d'un plan : prix d'un passage × nombre de passages, et la fourchette de même. */
+export interface ScheduleAmount {
+  preview: SchedulePreview;
+  /** null si la prestation n'a pas de prix. */
+  total: number | null;
+  estimate: { low: number; high: number } | null;
 }
 
 export interface SimulationResult {
@@ -61,6 +86,8 @@ export interface SimulationResult {
   covered: boolean;
   /** Faux sans commune : coefficient neutre, prix indicatif (ADR-034). */
   communeApplied: boolean;
+  /** Plan de passages envoyé (ADR-052), null sinon. */
+  schedule: ScheduleAmount | null;
 }
 
 /** UC-CL-01 : simulateur public. Calcul local, rien n'est enregistré. */
@@ -72,12 +99,43 @@ export class SimulateUseCase {
     const service = await activeService(this.deps, input.serviceCode);
     const { value, incomplete } = resolveAnswers(service, input);
     const calculation = calculatePrice(service, { ...value, commune, incomplete });
+    const plan = parseSchedule(input.schedule);
+    const planned = plan
+      ? planSchedule(this.deps, plan, await this.deps.catalog.getSettings(), this.deps.clock.now())
+      : null;
     return {
       serviceCode: service.code,
       calculation,
       notice: calculationNotice(calculation, commune !== null),
       covered: commune !== null && isCovered(await this.deps.catalog.listZones(), commune),
       communeApplied: commune !== null,
+      schedule: planned ? scheduleAmount(planned, calculation) : null,
     };
+  }
+}
+
+function scheduleAmount(planned: PlannedSchedule, calculation: PriceCalculation): ScheduleAmount {
+  const count = planned.dates.length;
+  const { computedPrice, estimate } = calculation;
+  return {
+    preview: schedulePreview(planned),
+    total: calculation.priced && computedPrice !== null ? computedPrice * count : null,
+    estimate:
+      calculation.priced && estimate ? { low: estimate.low * count, high: estimate.high * count } : null,
+  };
+}
+
+/**
+ * Aperçu public d'un plan de passages (ADR-052) : dates exactes, nombre, premier et dernier passage,
+ * avertissements ; mêmes contrôles qu'à la demande de devis. Rien n'est enregistré.
+ */
+export class PreviewScheduleUseCase {
+  constructor(private readonly deps: CleaningDeps) {}
+
+  async execute(input: ScheduleInput | null | undefined): Promise<SchedulePreview> {
+    const schedule = parseSchedule(input);
+    if (!schedule) throw CleaningErrors.invalid('schedule.mode', 'Mode attendu : dates, weekly ou monthly.');
+    const settings = await this.deps.catalog.getSettings();
+    return schedulePreview(planSchedule(this.deps, schedule, settings, this.deps.clock.now()));
   }
 }

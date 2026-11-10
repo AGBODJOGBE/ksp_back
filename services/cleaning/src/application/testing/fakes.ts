@@ -9,6 +9,7 @@ import {
   isTerminalMission,
   type Mission,
 } from '../../domain/mission';
+import { DEFAULT_SCHEDULE_POLICY, type SchedulePolicy } from '../../domain/intervention-schedule';
 import { type GeocodedPlace, type GeoPoint } from '../../domain/location';
 import { type PlaceType } from '../../domain/place-type';
 import { isOpenRequest, type QuoteRequest, type QuoteRequestGroup } from '../../domain/quote-request';
@@ -676,6 +677,7 @@ export interface TestWorld extends CleaningDeps {
   people: InMemoryPeople;
   geocoder: FakeGeocoder;
   fieldDates: FieldDatePolicy;
+  schedules: SchedulePolicy;
 }
 
 export function testWorld(): TestWorld {
@@ -696,6 +698,7 @@ export function testWorld(): TestWorld {
     wallet: new FakeWallet(),
     geocoder: new FakeGeocoder(),
     fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
+    schedules: { ...DEFAULT_SCHEDULE_POLICY },
   };
 }
 

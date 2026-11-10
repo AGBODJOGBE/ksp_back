@@ -1,3 +1,4 @@
+import { type InterventionSchedule } from './intervention-schedule';
 import { isWholeAmount, percentOf } from './money';
 import { plannedInterventions, type Recurrence } from './recurrence';
 import { type Slot } from './schedule';
@@ -22,6 +23,10 @@ export interface Quote {
   depositPercent: number;
   depositAmount: number;
   recurrence: Recurrence | null;
+  /** Plan de passages (ADR-052) ; absent ou null : ancienne récurrence, ou sans plan. */
+  schedule?: InterventionSchedule | null;
+  /** Dates exactes des passages tirées du plan (AAAA-MM-JJ), vides sans plan. */
+  scheduledDates?: string[];
   teamSize: number;
   durationMinutes: number;
   sentAt: Date;
@@ -34,6 +39,9 @@ export interface QuoteDraft {
   validityDays: number;
   depositPercent: number;
   recurrence: Recurrence | null;
+  /** Plan de passages (ADR-052) et ses dates : le nombre de passages est celui des dates. */
+  schedule?: InterventionSchedule | null;
+  scheduledDates?: string[];
   teamSize: number;
   durationMinutes: number;
   now: Date;
@@ -61,7 +69,9 @@ export function linesSubtotal(lines: PriceLine[]): number {
 
 export function buildQuote(draft: QuoteDraft): Quote {
   const subtotal = linesSubtotal(draft.lines);
-  const interventionCount = plannedInterventions(draft.recurrence);
+  const scheduledDates = draft.schedule ? (draft.scheduledDates ?? []) : [];
+  // Plan de passages : nombre exact de dates ; ancienne récurrence : approximation (ADR-023).
+  const interventionCount = scheduledDates.length || plannedInterventions(draft.recurrence);
   const total = subtotal * interventionCount;
   return {
     id: draft.id,
@@ -74,6 +84,8 @@ export function buildQuote(draft: QuoteDraft): Quote {
     depositPercent: draft.depositPercent,
     depositAmount: percentOf(total, draft.depositPercent),
     recurrence: draft.recurrence,
+    schedule: draft.schedule ?? null,
+    scheduledDates,
     teamSize: draft.teamSize,
     durationMinutes: draft.durationMinutes,
     sentAt: draft.now,
