@@ -74,11 +74,6 @@ export class RabbitMqConnection {
     return channel;
   }
 
-  /** Utilisé par la sonde de disponibilité. */
-  async ping(): Promise<void> {
-    await this.getConnection();
-  }
-
   async close(): Promise<void> {
     this.closedByService = true;
     const connection = this.connection;
