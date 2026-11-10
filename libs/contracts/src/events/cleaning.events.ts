@@ -122,6 +122,11 @@ export interface CleaningEventPayloads {
     scheduledStart: string;
     durationMinutes: number;
     agentIds: string[];
+    /**
+     * Facultatif (ADR-049) : paiement « avant » encore dû (acompte, ou totalité) ; le passage ne
+     * démarre pas sans lui. Absent sinon.
+     */
+    amountDueBeforeStart?: CleaningMoney;
     /** Facultatifs (ADR-034) : prestation, son nom et groupe de la demande. */
     serviceCode?: string;
     serviceName?: string;

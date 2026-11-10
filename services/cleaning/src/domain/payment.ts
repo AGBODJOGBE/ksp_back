@@ -100,6 +100,16 @@ export function depositDue(state: PaymentState): number {
   return Math.max(0, Math.min(state.depositAmount, state.total) - paidAmount(state));
 }
 
+/**
+ * Paiement « avant » (ADR-049) : montant encore dû avant le premier passage — l'acompte attendu, ou
+ * la totalité pour un plan « totalité ». Le passage peut être planifié, mais pas démarré tant qu'il
+ * reste dû. 0 pour un paiement « après ».
+ */
+export function upfrontDue(state: PaymentState): number {
+  if (state.plan.timing !== 'before') return 0;
+  return Math.max(0, Math.min(state.depositAmount, state.total) - paidAmount(state));
+}
+
 /** Clé d'idempotence d'un paiement en ligne : celle du paiement du service payment (ADR-031). */
 export function onlinePaymentKey(paymentId: string): string {
   return `online-${paymentId}`;

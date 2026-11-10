@@ -1,3 +1,6 @@
+import { type Mission } from '../../domain/mission';
+import { upfrontDue } from '../../domain/payment';
+import { isBusinessContract } from '../../domain/standing';
 import { type CleaningDeps } from '../deps';
 
 /**
@@ -21,4 +24,16 @@ export async function eventSubject(
     ...(service?.name ? { serviceName: service.name } : {}),
     ...(source.groupId ? { groupId: source.groupId } : {}),
   };
+}
+
+/**
+ * Paiement « avant » encore dû, annoncé avec chaque passage planifié (cleaning.mission.scheduled,
+ * ADR-049) pour prévenir le client : le passage ne démarrera pas sans lui. Absent sinon (paiement
+ * « après », déjà réglé, ou mission d'entreprise réglée par facture).
+ */
+export function upfrontNotice(mission: Pick<Mission, 'organizationId' | 'payment'>): {
+  amountDueBeforeStart?: { amount: number; currency: 'XOF' };
+} {
+  const due = isBusinessContract(mission) ? 0 : upfrontDue(mission.payment);
+  return due > 0 ? { amountDueBeforeStart: { amount: due, currency: 'XOF' } } : {};
 }

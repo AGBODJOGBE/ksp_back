@@ -174,6 +174,14 @@ export const CleaningErrors = {
         : 'Cette mission est déjà entièrement payée : aucun paiement de plus ne peut être enregistré.',
       { reason: 'exceeds_balance', remainingDue: { amount: remainingDue, currency: CURRENCY } },
     ),
+  /** Paiement « avant » encore dû : le passage ne peut pas démarrer (ADR-049). */
+  upfrontPaymentDue: (amountDue: number) =>
+    AppError.precondition(
+      'CLEANING_UPFRONT_PAYMENT_DUE',
+      `Le client a choisi de payer avant la prestation : ${formatXof(amountDue)} restent à régler ` +
+        'avant de démarrer ce passage.',
+      { amountDue: { amount: amountDue, currency: CURRENCY } },
+    ),
   interventionTooEarly: (scheduledStart: Date, timeZone: string) =>
     AppError.precondition(
       'CLEANING_INTERVENTION_TOO_EARLY',

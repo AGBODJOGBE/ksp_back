@@ -353,6 +353,14 @@ describe('Contrats des événements cleaning', () => {
     expect(validate({ ...base, landmark: 'Portail vert' })).toBe(false);
   });
 
+  it('cleaning.mission.scheduled : paiement « avant » encore dû, facultatif (ADR-049)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.mission.scheduled')!);
+    const base = cleaningExamples['cleaning.mission.scheduled'];
+    expect(validate({ ...base, amountDueBeforeStart: { amount: 15_000, currency: 'XOF' } })).toBe(true);
+    expect(validate({ ...base, amountDueBeforeStart: { amount: 0, currency: 'XOF' } })).toBe(false);
+    expect(validate({ ...base, amountDueBeforeStart: 15_000 })).toBe(false);
+  });
+
   it('cleaning.visit.scheduled : visite commune d’un groupe, demandes listées (ADR-035)', () => {
     const validate = ajv.compile(schemas.get('cleaning.visit.scheduled')!);
     const base = cleaningExamples['cleaning.visit.scheduled'];

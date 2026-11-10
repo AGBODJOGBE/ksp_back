@@ -80,7 +80,7 @@ function mission(overrides: Partial<Mission> = {}): Mission {
     recurrence: null,
     plannedInterventions: 1,
     interventions: [],
-    payment: newPaymentState({ option: 'deposit', timing: 'before', method: 'cash' }, 50_000, 30),
+    payment: newPaymentState({ option: 'deposit', timing: 'after', method: 'cash' }, 50_000, 30),
     cancellationReason: null,
     daysPerWeek: null,
     suspension: null,
@@ -129,6 +129,36 @@ describe('missions et passages (UC-CL-09, 10)', () => {
         payload: expect.objectContaining({ agentIds: [AGENT_ID] }),
       }),
     ]);
+  });
+
+  it('paiement « avant » : client prévenu à la planification ; démarrage refusé tant que l’acompte est dû', async () => {
+    const before = newPaymentState({ option: 'deposit', timing: 'before', method: 'cash' }, 50_000, 30);
+    world.missions.missions.set(MISSION_ID, mission({ payment: before }));
+    await schedule('2026-10-30T08:00:00Z', [AGENT_ID]);
+    expect(world.recorder.events.at(-1)).toMatchObject({
+      type: 'cleaning.mission.scheduled',
+      payload: { amountDueBeforeStart: { amount: 15_000, currency: 'XOF' } },
+    });
+    world.clock.current = new Date('2026-10-30T07:30:00Z');
+    const start = () => asAgent(() => new StartInterventionUseCase(world).execute(interventionOf()));
+    expect(await start().catch((error: AppError) => error)).toMatchObject({
+      code: 'CLEANING_UPFRONT_PAYMENT_DUE',
+      details: { amountDue: { amount: 15_000, currency: 'XOF' } },
+    });
+    await asSupervisor(() =>
+      new RecordPaymentUseCase(world).execute({
+        missionId: MISSION_ID,
+        amount: 15_000,
+        method: 'cash',
+        reference: 'R1',
+      }),
+    );
+    expect((await start()).mission.status).toBe('in_progress');
+  });
+
+  it('paiement « après » : aucun montant dû avant le passage annoncé', async () => {
+    await schedule('2026-10-30T08:00:00Z', [AGENT_ID]);
+    expect(world.recorder.events.at(-1)!.payload).not.toHaveProperty('amountDueBeforeStart');
   });
 
   it('refuse un agent déjà pris ou indisponible (CLEANING_TEAM_UNAVAILABLE)', async () => {
