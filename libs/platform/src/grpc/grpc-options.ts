@@ -20,6 +20,23 @@ export const PROTO_LOADER_OPTIONS = {
 /** Santé gRPC standard (grpc.health.v1), utilisée par les sondes k3s. */
 export const grpcHealth = new HealthImplementation({ '': 'SERVING' });
 
+/**
+ * Connexions gRPC entre services (ADR-051). Les clients répartissent les appels entre toutes les
+ * répliques (round_robin) : l'adresse d'un service en production est celle de son service headless,
+ * résolue par le DNS en une adresse par réplique (dns:///identity-headless.ksp.svc.cluster.local:50051).
+ * Le keepalive détecte une connexion morte (réplique disparue sans fermer) ; l'âge maximum des
+ * connexions côté serveur force une nouvelle résolution, qui fait découvrir les nouvelles répliques.
+ */
+const CLIENT_KEEPALIVE = {
+  keepaliveTimeMs: 30_000,
+  keepaliveTimeoutMs: 10_000,
+  keepalivePermitWithoutCalls: 1,
+};
+const ROUND_ROBIN = JSON.stringify({ loadBalancingConfig: [{ round_robin: {} }] });
+const MAX_CONNECTION_AGE_MS = 5 * 60_000;
+/** Délai laissé aux appels en cours sur une connexion arrivée à son âge maximum. */
+const MAX_CONNECTION_AGE_GRACE_MS = 30_000;
+
 export function grpcServerOptions(packages: GrpcPackageName[], port: number): GrpcOptions {
   return {
     transport: Transport.GRPC,
@@ -28,6 +45,12 @@ export function grpcServerOptions(packages: GrpcPackageName[], port: number): Gr
       protoPath: packages.map((name) => protoPath(GRPC_PACKAGES[name].file)),
       url: `0.0.0.0:${port}`,
       loader: PROTO_LOADER_OPTIONS,
+      channelOptions: {
+        'grpc.max_connection_age_ms': MAX_CONNECTION_AGE_MS,
+        'grpc.max_connection_age_grace_ms': MAX_CONNECTION_AGE_GRACE_MS,
+      },
+      // À l'arrêt, les appels en cours se terminent (tryShutdown) au lieu d'être coupés.
+      gracefulShutdown: true,
       onLoadPackageDefinition: (_definition: unknown, server: Pick<Server, 'addService'>) => {
         grpcHealth.addToServer(server as Server);
       },
@@ -35,7 +58,10 @@ export function grpcServerOptions(packages: GrpcPackageName[], port: number): Gr
   };
 }
 
-/** Déclaration d'un client gRPC vers un autre service, à passer à ClientsModule.register. */
+/**
+ * Déclaration d'un client gRPC vers un autre service, à passer à ClientsModule.register.
+ * `url` : localhost:50051 en développement, dns:///<service>-headless:<port> en production.
+ */
 export function grpcClientOptions(
   token: string | symbol,
   pkg: GrpcPackageName,
@@ -49,8 +75,12 @@ export function grpcClientOptions(
       protoPath: protoPath(GRPC_PACKAGES[pkg].file),
       url,
       loader: PROTO_LOADER_OPTIONS,
-      // Transmet l'échéance de chaque appel au service appelé (ADR-051).
-      channelOptions: { interceptors: [deadlineInterceptor] },
+      keepalive: CLIENT_KEEPALIVE,
+      channelOptions: {
+        'grpc.service_config': ROUND_ROBIN,
+        // Transmet l'échéance de chaque appel au service appelé (ADR-051).
+        interceptors: [deadlineInterceptor],
+      },
     },
   };
 }
