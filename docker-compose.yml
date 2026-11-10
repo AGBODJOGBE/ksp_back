@@ -73,7 +73,7 @@ services:
   # « docker compose --profile routing up -d osrm ». geo démarre aussi sans lui. Image officielle
   # du projet, version figée : osrm/osrm-backend sur Docker Hub n'est plus publiée depuis 2021.
   osrm:
-    image: ghcr.io/project-osrm/osrm-backend:v6.0.0
+    image: ghcr.io/project-osrm/osrm-backend:v26.4.0
     profiles: ['routing']
     command: osrm-routed --algorithm mld /data/region.osrm
     ports: ['127.0.0.1:5000:5000']
