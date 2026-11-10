@@ -2921,6 +2921,7 @@ paths:
                     notice: 'Estimation non contractuelle : le prix définitif figure dans le devis établi par KSP.'
                     covered: true
                     communeApplied: true
+                    schedule: null
                     reason: null
                     calculation:
                       pricingVersion: 3
@@ -3014,6 +3015,7 @@ paths:
                     notice: "Le prix de cette prestation n'est pas encore publié : demandez un devis, KSP vous répondra."
                     covered: true
                     communeApplied: true
+                    schedule: null
                     reason: price_not_set
                     calculation:
                       pricingVersion: 1
@@ -3571,6 +3573,8 @@ paths:
 
         Corps au nouveau format (`answers`, `options` en objets, `frequency`) ou à l’ancien format déprécié : voir `RequestCleaningQuoteRequest` (ADR-033). La demande garde les réponses, la version de la grille et le détail du calcul (`answers`, `selectedOptions`, `frequency`, `pricingVersion`, `calculation`).
 
+        Plan de passages (ADR-052) : ajouter `schedule` (exemples dans `previewCleaningSchedule`, par exemple `{ "mode": "weekly", "startDate": "2026-11-10", "endDate": "2027-11-11", "weekdays": ["mon", "wed", "sat"], "startTime": "08:00" }`) ; `preferredSlots` devient facultatif. La demande renvoie `schedule` et les dates exactes `scheduledDates`.
+
         Erreurs : `CLEANING_VALIDATION_FAILED` (`details.field`, `details.reason`), `CLEANING_SLOT_INVALID` (400), `CLEANING_SERVICE_NOT_FOUND` (404), `IDENTITY_PROFILE_INCOMPLETE`, `CLEANING_LEAD_TIME_TOO_SHORT`, `CLEANING_TOO_MANY_OPEN_REQUESTS`,
         `CLEANING_ZONE_NOT_COVERED` (422, commune hors des zones desservies, `details.commune`),
         `CLEANING_ORGANIZATION_SUSPENDED` (422, contexte actif sur une organisation suspendue par KSP, ADR-030).
@@ -3602,18 +3606,10 @@ paths:
               frequency: once
               commune: Abomey-Calavi
               address: Lot 12, quartier Zogbadjè, Abomey-Calavi
+              preferredSlots:
+                - start: 2026-11-05T08:00:00Z
+                  end: 2026-11-05T11:00:00Z
               comment: Portail bleu.
-              schedule:
-                mode: weekly
-                startDate: '2026-11-10'
-                endDate: '2027-11-11'
-                weekdays:
-                  - mon
-                  - wed
-                  - sat
-                startTime: '08:00'
-                excludedDates:
-                  - '2026-12-26'
       responses:
         '200':
           description: Succès
@@ -3642,6 +3638,8 @@ paths:
                     end: 2026-11-05T11:00:00Z
                 comment: Portail bleu.
                 recurrence: null
+                schedule: null
+                scheduledDates: []
                 requestedTeamSize: null
                 daysPerWeek: null
                 recommendedTeamSize: 2
@@ -3876,6 +3874,8 @@ paths:
                         end: 2026-11-05T11:00:00Z
                     comment: Portail bleu.
                     recurrence: null
+                    schedule: null
+                    scheduledDates: []
                     requestedTeamSize: null
                     daysPerWeek: null
                     recommendedTeamSize: 2
@@ -4084,6 +4084,8 @@ paths:
                         amount: 10710
                         currency: XOF
                       recurrence: null
+                      schedule: null
+                      scheduledDates: []
                       teamSize: 2
                       durationMinutes: 180
                       sentAt: 2026-10-23T08:00:00Z
@@ -4151,6 +4153,8 @@ paths:
                     end: 2026-11-05T11:00:00Z
                 comment: Portail bleu.
                 recurrence: null
+                schedule: null
+                scheduledDates: []
                 requestedTeamSize: null
                 daysPerWeek: null
                 recommendedTeamSize: 2
@@ -4359,6 +4363,8 @@ paths:
                     amount: 10710
                     currency: XOF
                   recurrence: null
+                  schedule: null
+                  scheduledDates: []
                   teamSize: 2
                   durationMinutes: 180
                   sentAt: 2026-10-23T08:00:00Z
@@ -4444,6 +4450,8 @@ paths:
                       end: 2026-11-05T11:00:00Z
                   comment: Portail bleu.
                   recurrence: null
+                  schedule: null
+                  scheduledDates: []
                   requestedTeamSize: null
                   daysPerWeek: null
                   recommendedTeamSize: 2
@@ -4652,6 +4660,8 @@ paths:
                       amount: 10710
                       currency: XOF
                     recurrence: null
+                    schedule: null
+                    scheduledDates: []
                     teamSize: 2
                     durationMinutes: 180
                     sentAt: 2026-10-23T08:00:00Z
@@ -4676,6 +4686,8 @@ paths:
                     start: 2026-11-05T08:00:00Z
                     end: 2026-11-05T11:00:00Z
                   recurrence: null
+                  schedule: null
+                  scheduledDates: []
                   plannedInterventions: 1
                   completedInterventions: 0
                   interventions:
@@ -4907,6 +4919,8 @@ paths:
                       start: 2026-11-05T08:00:00Z
                       end: 2026-11-05T11:00:00Z
                     recurrence: null
+                    schedule: null
+                    scheduledDates: []
                     plannedInterventions: 1
                     completedInterventions: 0
                     interventions:
@@ -5021,6 +5035,8 @@ paths:
                   start: 2026-11-05T08:00:00Z
                   end: 2026-11-05T11:00:00Z
                 recurrence: null
+                schedule: null
+                scheduledDates: []
                 plannedInterventions: 1
                 completedInterventions: 0
                 interventions:
