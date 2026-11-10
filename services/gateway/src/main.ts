@@ -1,6 +1,6 @@
 import './tracing';
 import 'reflect-metadata';
-import { loadConfig } from '@ksp/platform';
+import { enableGracefulShutdown, loadConfig, ShutdownState } from '@ksp/platform';
 import { NestFactory } from '@nestjs/core';
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import { Logger } from 'nestjs-pino';
@@ -20,10 +20,12 @@ async function main(): Promise<void> {
   });
   app.useLogger(app.get(Logger));
   configureHttpApp(app, config);
-  app.enableShutdownHooks();
+  const logger = app.get(Logger);
+  // Arrêt en deux temps (ADR-051) : sonde « prêt » en 503, puis fermeture après le délai.
+  enableGracefulShutdown(app, app.get(ShutdownState), { delayMs: config.SHUTDOWN_DELAY_MS, logger });
 
   await app.listen(config.HTTP_PORT, '0.0.0.0');
-  app.get(Logger).log(`${config.SERVICE_NAME} démarrée : HTTP :${config.HTTP_PORT}`);
+  logger.log(`${config.SERVICE_NAME} démarrée : HTTP :${config.HTTP_PORT}`);
 }
 
 void main();

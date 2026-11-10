@@ -18,6 +18,7 @@ import {
   SERVICE_TOKEN_PROVIDER,
   ServiceTokenClient,
   type ServiceTokenProvider,
+  ShutdownState,
 } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
@@ -147,6 +148,7 @@ export class AppModule {
       ],
       providers: [
         ReadinessRegistry,
+        ShutdownState,
         { provide: CLOCK, useValue: new SystemClock() },
         {
           provide: JWKS_SOURCE,
