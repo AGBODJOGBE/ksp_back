@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '@ksp/platform';
 import { configSchema, DEV_SECRETS } from '../src/config';
+import { parseObligationServices } from '../src/infrastructure/deletion/grpc-obligation-checker';
 
 /** Valeur d'une variable dans le .env.example du service (valeurs de développement). */
 function example(name: string): string {
@@ -50,5 +51,18 @@ describe('configuration en production (ADR-050)', () => {
       IDENTITY_MFA_ENCRYPTION_KEY: example('IDENTITY_MFA_ENCRYPTION_KEY'),
     });
     expect(development.NODE_ENV).toBe('development');
+  });
+});
+
+describe('obligations avant la suppression d’un compte', () => {
+  it('interroge aussi le portefeuille : un solde ou un reversement en cours bloque (ADR-050)', () => {
+    const config = loadConfig(configSchema, { ...production, NODE_ENV: 'development' });
+    expect(parseObligationServices(config.OBLIGATION_SERVICES).map(({ service }) => service)).toEqual([
+      'cleaning',
+      'billing',
+      'payment',
+      'wallet',
+    ]);
+    expect(example('OBLIGATION_SERVICES')).toBe(config.OBLIGATION_SERVICES);
   });
 });
