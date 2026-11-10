@@ -19,6 +19,17 @@ const serviceList = (fallback: string) =>
 /** Secret de développement des jetons de lien : refusé en production. */
 export const DEV_LINK_TOKEN_SECRET = 'ksp-dev-payment-link-secret-not-for-production';
 
+/** Préfixe des clés secrètes FedaPay selon l'environnement. */
+const FEDAPAY_KEY_PREFIX = { sandbox: 'sk_sandbox_', live: 'sk_live_' } as const;
+
+/** Adresse HTTPS d'un hôte de FedaPay (fedapay.com ou un sous-domaine). */
+function isFedapayHost(value: string): boolean {
+  const url = new URL(value);
+  return (
+    url.protocol === 'https:' && (url.hostname === 'fedapay.com' || url.hostname.endsWith('.fedapay.com'))
+  );
+}
+
 /**
  * Configuration du service : variables communes, plus celles propres à payment (ADR-031).
  * Les secrets FedaPay viennent du coffre, jamais du dépôt ; ils ne sont jamais journalisés.
@@ -29,14 +40,17 @@ export const configSchema = baseServiceConfigSchema
     PAYMENT_PROVIDER: z.enum(['fedapay', 'simulated']).default('simulated'),
     /** Environnement FedaPay : `sandbox` (clés de test) ou `live`. */
     FEDAPAY_ENVIRONMENT: z.enum(['sandbox', 'live']).default('sandbox'),
-    /** Adresse de l'API FedaPay ; par défaut celle de l'environnement. */
+    /**
+     * Adresse de l'API FedaPay ; par défaut celle de l'environnement. En production : seulement une
+     * adresse HTTPS d'un hôte *.fedapay.com (ADR-048).
+     */
     FEDAPAY_API_URL: z.preprocess(unset, z.url().optional()),
     /**
      * Identifiant FedaPay de la devise XOF (`currency_id`), à relever dans le compte de test : sans
      * lui, seule la devise ISO de la réponse établit le XOF (jamais de XOF par défaut, ADR-031).
      */
     FEDAPAY_XOF_CURRENCY_ID: optionalText,
-    /** Clé secrète FedaPay (sk_sandbox_… ou sk_live_…). */
+    /** Clé secrète FedaPay : sk_sandbox_… en bac à sable, sk_live_… en live (contrôlé au démarrage). */
     FEDAPAY_SECRET_KEY: optionalText,
     /** Secret de signature du webhook FedaPay. */
     FEDAPAY_WEBHOOK_SECRET: optionalText,
@@ -100,7 +114,25 @@ export const configSchema = baseServiceConfigSchema
     if (cfg.PAYOUT_PROVIDER === 'fedapay' && !cfg.FEDAPAY_SECRET_KEY) {
       fail('FEDAPAY_SECRET_KEY', 'Obligatoire avec PAYOUT_PROVIDER=fedapay.');
     }
+    const usesFedapay = cfg.PAYMENT_PROVIDER === 'fedapay' || cfg.PAYOUT_PROVIDER === 'fedapay';
+    // Clé et environnement concordants : jamais de clé réelle contre le bac à sable, ni l'inverse.
+    const key = cfg.FEDAPAY_SECRET_KEY;
+    if (usesFedapay && key && !key.startsWith(FEDAPAY_KEY_PREFIX[cfg.FEDAPAY_ENVIRONMENT])) {
+      fail(
+        'FEDAPAY_SECRET_KEY',
+        `Clé ${FEDAPAY_KEY_PREFIX[cfg.FEDAPAY_ENVIRONMENT]}… attendue avec FEDAPAY_ENVIRONMENT=${cfg.FEDAPAY_ENVIRONMENT}.`,
+      );
+    }
     if (cfg.NODE_ENV !== 'production') return;
+    if (usesFedapay) {
+      // ADR-048 : jamais le bac à sable ni une adresse libre en production.
+      if (cfg.FEDAPAY_ENVIRONMENT !== 'live') {
+        fail('FEDAPAY_ENVIRONMENT', 'FEDAPAY_ENVIRONMENT=live obligatoire en production.');
+      }
+      if (cfg.FEDAPAY_API_URL && !isFedapayHost(cfg.FEDAPAY_API_URL)) {
+        fail('FEDAPAY_API_URL', 'Adresse HTTPS d’un hôte *.fedapay.com obligatoire en production.');
+      }
+    }
     if (cfg.PAYMENT_LINK_TOKEN_SECRET === DEV_LINK_TOKEN_SECRET) {
       fail('PAYMENT_LINK_TOKEN_SECRET', 'Secret propre à la production obligatoire (coffre).');
     }

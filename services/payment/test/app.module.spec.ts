@@ -74,6 +74,57 @@ describe('configuration de payment', () => {
     expect(production).toThrow(/PAYMENT_LINK_BASE_URL/);
   });
 
+  it('production : FedaPay live seulement, clé sk_live_, adresse de l’API FedaPay en HTTPS (ADR-048)', () => {
+    const production = (overrides: Record<string, string>) => () =>
+      loadConfig(configSchema, {
+        ...BASE,
+        NODE_ENV: 'production',
+        IDENTITY_JWKS_URL: 'https://identity/.well-known/jwks.json',
+        IDENTITY_TOKEN_URL: 'https://identity/oauth/token',
+        SERVICE_CLIENT_SECRET: 's'.repeat(32),
+        PAYMENT_RETURN_URL: 'https://ksp.bj/mon-espace/paiements',
+        PAYMENT_LINK_BASE_URL: 'https://ksp.bj/payer',
+        PAYMENT_LINK_TOKEN_SECRET: 't'.repeat(40),
+        PAYMENT_PROVIDER: 'fedapay',
+        FEDAPAY_ENVIRONMENT: 'live',
+        FEDAPAY_SECRET_KEY: 'sk_live_x',
+        FEDAPAY_WEBHOOK_SECRET: 'wh_x',
+        FEDAPAY_XOF_CURRENCY_ID: '1',
+        ...overrides,
+      });
+    expect(production({})).not.toThrow();
+    expect(production({ FEDAPAY_ENVIRONMENT: 'sandbox', FEDAPAY_SECRET_KEY: 'sk_sandbox_x' })).toThrow(
+      /FEDAPAY_ENVIRONMENT/,
+    );
+    expect(production({ FEDAPAY_SECRET_KEY: 'sk_sandbox_x' })).toThrow(/FEDAPAY_SECRET_KEY/);
+    expect(production({ FEDAPAY_API_URL: 'http://api.fedapay.com/v1' })).toThrow(/FEDAPAY_API_URL/);
+    expect(production({ FEDAPAY_API_URL: 'https://fedapay.example.com/v1' })).toThrow(/FEDAPAY_API_URL/);
+    expect(production({ FEDAPAY_API_URL: 'https://api.fedapay.com/v1' })).not.toThrow();
+    // Reversements FedaPay en production : même clé, mêmes règles.
+    expect(
+      production({
+        PAYOUT_PROVIDER: 'fedapay',
+        FEDAPAY_ENVIRONMENT: 'sandbox',
+        FEDAPAY_SECRET_KEY: 'sk_sandbox_x',
+      }),
+    ).toThrow(/FEDAPAY_ENVIRONMENT/);
+  });
+
+  it('clé et environnement FedaPay concordants, en tout environnement', () => {
+    const fedapay = (env: string, key: string) => () =>
+      loadConfig(configSchema, {
+        ...BASE,
+        PAYMENT_PROVIDER: 'fedapay',
+        FEDAPAY_ENVIRONMENT: env,
+        FEDAPAY_SECRET_KEY: key,
+        FEDAPAY_WEBHOOK_SECRET: 'wh_x',
+        FEDAPAY_XOF_CURRENCY_ID: '1',
+      });
+    expect(fedapay('sandbox', 'sk_live_x')).toThrow(/FEDAPAY_SECRET_KEY/);
+    expect(fedapay('live', 'sk_sandbox_x')).toThrow(/FEDAPAY_SECRET_KEY/);
+    expect(fedapay('sandbox', 'sk_sandbox_x')).not.toThrow();
+  });
+
   it('liens et reversements : émetteurs autorisés, reversements manuels par défaut (ADR-040, ADR-041)', () => {
     const config = loadConfig(configSchema, { ...BASE, PAYMENT_LINK_ISSUERS: 'recovery, realestate' });
     expect(config.PAYMENT_LINK_ISSUERS).toEqual(['recovery', 'realestate']);
