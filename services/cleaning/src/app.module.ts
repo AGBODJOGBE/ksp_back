@@ -1,4 +1,4 @@
-import { geoV1, identityV1, walletV1 } from '@ksp/contracts';
+import { fileV1, geoV1, identityV1, walletV1 } from '@ksp/contracts';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -15,6 +15,11 @@ import { createGeocoder } from './infrastructure/geocoding/fallback.geocoder';
 import { GeoServiceGeocoder } from './infrastructure/geocoding/geo-service.geocoder';
 import { IdentityPeopleDirectory } from './infrastructure/identity/identity-people-directory';
 import { GrpcWalletLedger } from './infrastructure/wallet/grpc-wallet-ledger';
+import { GrpcPhotoStore } from './infrastructure/file/grpc-photo-store';
+import {
+  REQUEST_DEADLINES_INTERVAL_MS,
+  RequestDeadlinesService,
+} from './infrastructure/scheduling/request-deadlines.service';
 import { BillingEventsConsumer } from './infrastructure/messaging/billing-events.consumer';
 import { IdentityEventsConsumer } from './infrastructure/messaging/identity-events.consumer';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
@@ -47,6 +52,7 @@ import {
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
 const GEO_CLIENT = Symbol('GEO_CLIENT');
+const FILE_CLIENT = Symbol('FILE_CLIENT');
 
 /**
  * Géocodage inverse (ADR-045) : le service geo si GEO_GRPC_URL est renseignée, sinon les
@@ -87,6 +93,7 @@ export class AppModule {
         ClientsModule.register([
           grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
           grpcClientOptions(WALLET_CLIENT, 'wallet', config.WALLET_GRPC_URL),
+          grpcClientOptions(FILE_CLIENT, 'file', config.FILE_GRPC_URL),
           ...(config.GEO_GRPC_URL ? [grpcClientOptions(GEO_CLIENT, 'geo', config.GEO_GRPC_URL)] : []),
         ]),
       ],
@@ -114,6 +121,8 @@ export class AppModule {
         { provide: PAYMENT_WATCH_INTERVAL_MS, useValue: config.CLEANING_PAYMENT_WATCH_INTERVAL_MS },
         LocationPurgeService,
         { provide: LOCATION_PURGE_INTERVAL_MS, useValue: config.CLEANING_LOCATION_PURGE_INTERVAL_MS },
+        RequestDeadlinesService,
+        { provide: REQUEST_DEADLINES_INTERVAL_MS, useValue: config.CLEANING_REQUEST_DEADLINES_INTERVAL_MS },
         {
           provide: CLEANING_USE_CASES,
           inject: [
@@ -127,6 +136,7 @@ export class AppModule {
             WALLET_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
             { token: GEO_CLIENT, optional: true },
+            FILE_CLIENT,
           ],
           useFactory: (
             catalog: PrismaCatalogRepository,
@@ -139,11 +149,12 @@ export class AppModule {
             walletGrpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
             geoGrpc: ClientGrpc | undefined,
+            fileGrpc: ClientGrpc,
           ) => {
             const geocoder = selectGeocoder(config, geoGrpc, serviceTokens);
             if (!serviceTokens) {
               new Logger('Cleaning').warn(
-                'Aucun jeton de service : appels vers identity et wallet non authentifiés (développement uniquement).',
+                'Aucun jeton de service : appels vers identity, wallet et file non authentifiés (développement uniquement).',
               );
             }
             return createUseCases({
@@ -164,6 +175,13 @@ export class AppModule {
                 walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
                 new GrpcCaller({
                   target: 'wallet',
+                  ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+                }),
+              ),
+              photos: new GrpcPhotoStore(
+                fileGrpc.getService<fileV1.FileInternalServiceClient>(fileV1.FILE_INTERNAL_SERVICE_NAME),
+                new GrpcCaller({
+                  target: 'file',
                   ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
                 }),
               ),

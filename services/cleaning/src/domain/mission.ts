@@ -48,9 +48,15 @@ export interface Intervention {
   /** Passage annulé par une suspension (reprogrammable au déblocage) ou à la main. */
   cancellationCause: InterventionCancellationCause | null;
   cancelledAt: Date | null;
+  /** Motif du dernier report, ou de l'annulation pour replanifier (ADR-053) ; absent ou null sinon. */
+  changeReason?: string | null;
 }
 
-export type InterventionCancellationCause = 'suspension' | 'manual';
+/**
+ * Suspension (reprogrammable au déblocage), annulation à la main, ou annulation pour replanifier
+ * (`unscheduled`, ADR-053 : la mission a de nouveau un passage à planifier).
+ */
+export type InterventionCancellationCause = 'suspension' | 'manual' | 'unscheduled';
 
 /**
  * Factures d'entreprise impayées, passages impayés d'un particulier en récurrent, ou organisation

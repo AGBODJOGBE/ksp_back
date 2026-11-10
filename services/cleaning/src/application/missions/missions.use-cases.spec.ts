@@ -523,7 +523,7 @@ describe('administration du catalogue et des équipes (UC-CL-11, 12)', () => {
         asAdmin(() => new RegisterAgentUseCase(world).execute({ agentId: AGENT_ID, displayName: 'Awa' })),
       ),
     ).toBe('CLEANING_AGENT_ALREADY_REGISTERED');
-    const agent = await asAdmin(() =>
+    const { agent } = await asAdmin(() =>
       new DeclareUnavailabilityUseCase(world).execute({
         agentId: AGENT_ID,
         start: '2026-11-01T00:00:00Z',

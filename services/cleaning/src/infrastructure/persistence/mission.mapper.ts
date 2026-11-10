@@ -43,6 +43,7 @@ function toIntervention(row: InterventionRow): Intervention {
     completedAt: row.completedAt,
     cancellationCause: row.cancellationCause as InterventionCancellationCause | null,
     cancelledAt: row.cancelledAt,
+    changeReason: row.changeReason,
   };
 }
 
@@ -152,6 +153,7 @@ export function interventionColumns(missionId: string, intervention: Interventio
     completedAt: intervention.completedAt,
     cancellationCause: intervention.cancellationCause,
     cancelledAt: intervention.cancelledAt,
+    changeReason: intervention.changeReason ?? null,
   };
 }
 

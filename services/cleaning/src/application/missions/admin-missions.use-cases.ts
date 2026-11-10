@@ -37,6 +37,8 @@ import { isBusinessContract } from '../../domain/standing';
 import { EvaluateStandingUseCase } from '../standing/standing.use-cases';
 import { cancelled, refundOnCancellation, saveMission } from './customer-missions.use-cases';
 import { missionForStaff } from '../groups/group-support';
+import { activeTeamMembers } from '../../domain/agent';
+import { ComplementErrors } from '../shared/complement-errors';
 
 const MISSION_STATUSES: readonly MissionStatus[] = [
   'to_schedule',
@@ -159,16 +161,16 @@ export async function resolveAgents(
   teamId: string,
 ): Promise<string[]> {
   const agentIds = agentIdsInput.map((id, index) => requireUuid(`agentIds[${index}]`, id));
-  if (teamId) {
-    const team = await deps.agents.findTeam(requireUuid('teamId', teamId));
-    if (!team) throw CleaningErrors.teamNotFound();
-    agentIds.push(...team.memberIds);
-  }
-  const unique = [...new Set(agentIds)];
-  if (!unique.length) throw CleaningErrors.invalid('agentIds', 'Affectez au moins un agent.');
-  const agents = await deps.agents.findAgents(unique);
-  const missing = unique.filter((id) => !agents.some((agent) => agent.agentId === id && agent.active));
+  const team = teamId ? await deps.agents.findTeam(requireUuid('teamId', teamId)) : null;
+  if (teamId && !team) throw CleaningErrors.teamNotFound();
+  // Équipe désactivée refusée ; ses membres désactivés sont ignorés (ADR-053).
+  if (team && !team.active) throw ComplementErrors.teamInactive();
+  const named = [...new Set(agentIds)];
+  const agents = await deps.agents.findAgents([...new Set([...named, ...(team?.memberIds ?? [])])]);
+  const missing = named.filter((id) => !agents.some((agent) => agent.agentId === id && agent.active));
   if (missing.length) throw CleaningErrors.agentNotFound(missing);
+  const unique = [...new Set([...named, ...(team ? activeTeamMembers(team, agents) : [])])];
+  if (!unique.length) throw CleaningErrors.invalid('agentIds', 'Affectez au moins un agent.');
   return unique;
 }
 

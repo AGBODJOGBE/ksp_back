@@ -282,6 +282,7 @@ export function presentMission(
       startedAt: iso(intervention.startedAt),
       completedAt: iso(intervention.completedAt),
       cancellationCause: intervention.cancellationCause ?? '',
+      changeReason: text(intervention.changeReason),
     })),
     payment: {
       plan: { ...payment.plan },
@@ -399,6 +400,9 @@ export function presentSettings(settings: StoredSettings, names: NameBook = NO_N
     individualSuspensionUnpaidInterventions: settings.individualSuspensionUnpaidInterventions,
     individualPaymentGraceHours: settings.individualPaymentGraceHours,
     locationRetentionMonths: settings.locationRetentionMonths,
+    quoteExpiryReminderDays: settings.quoteExpiryReminderDays,
+    maxInterventionPhotos: settings.maxInterventionPhotos,
+    visitDurationMinutes: settings.visitDurationMinutes,
     updatedBy: text(settings.updatedBy),
     updatedAt: iso(settings.updatedAt),
     updatedByName: userName(names, settings.updatedBy),
@@ -425,6 +429,7 @@ export function presentTeam(team: Team, agents: Agent[]): cleaningV1.Team {
     id: team.id,
     name: team.name,
     members: team.memberIds.map((agentId) => ({ agentId, displayName: names.get(agentId) ?? '' })),
+    active: team.active,
   };
 }
 

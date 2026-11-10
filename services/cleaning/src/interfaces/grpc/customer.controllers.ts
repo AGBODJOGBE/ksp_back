@@ -15,6 +15,7 @@ import {
   presentRequest,
   presentServedZone,
 } from './presenters';
+import { presentPhoto } from './complement.presenters';
 import {
   answersFromProto,
   calculationToProto,
@@ -255,6 +256,14 @@ export class MissionGrpcController implements cleaningV1.MissionServiceControlle
       idempotencyKey: request.idempotencyKey,
     });
     return { mission: presentMission(view) };
+  }
+
+  /** Photos d'un passage de la mission du client (ADR-053). */
+  async listMyInterventionPhotos(
+    request: cleaningV1.ListMyInterventionPhotosRequest,
+  ): Promise<cleaningV1.ListMyInterventionPhotosResponse> {
+    const photos = await this.useCases.listMyInterventionPhotos.execute(request.interventionId);
+    return { photos: photos.map(presentPhoto) };
   }
 }
 

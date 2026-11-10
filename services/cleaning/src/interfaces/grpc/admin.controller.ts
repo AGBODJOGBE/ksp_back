@@ -22,6 +22,7 @@ import {
   presentVisit,
   presentZone,
 } from './presenters';
+import { presentAssignment, presentPhoto } from './complement.presenters';
 import {
   answersFromProto,
   calculationToProto,
@@ -384,6 +385,10 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
       individualSuspensionUnpaidInterventions: s?.individualSuspensionUnpaidInterventions ?? 0,
       individualPaymentGraceHours: s?.individualPaymentGraceHours ?? 0,
       locationRetentionMonths: s?.locationRetentionMonths ?? 0,
+      // ADR-053 : rappel absent gardé (0 le désactive) ; photos et durée à 0 gardées.
+      quoteExpiryReminderDays: s?.quoteExpiryReminderDays,
+      maxInterventionPhotos: s?.maxInterventionPhotos ?? 0,
+      visitDurationMinutes: s?.visitDurationMinutes ?? 0,
     });
     return { settings: await this.settings(saved) };
   }
@@ -448,7 +453,8 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
   async declareUnavailability(
     request: cleaningV1.DeclareUnavailabilityRequest,
   ): Promise<cleaningV1.DeclareUnavailabilityResponse> {
-    return { agent: presentAgent(await this.useCases.declareUnavailability.execute(request)) };
+    const { agent, overlapping } = await this.useCases.declareUnavailability.execute(request);
+    return { agent: presentAgent(agent), overlappingAssignments: overlapping.map(presentAssignment) };
   }
 
   async listTeams(): Promise<cleaningV1.ListTeamsResponse> {
@@ -466,6 +472,71 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
 
   async updateTeam(request: cleaningV1.UpdateTeamRequest): Promise<cleaningV1.UpdateTeamResponse> {
     const team = await this.useCases.updateTeam.execute(request);
+    return { team: presentTeam(team, await this.useCases.listAgents.execute()) };
+  }
+
+  // --- Compléments du Nettoyage (ADR-053) ---------------------------------------------------------
+
+  async addInterventionPhoto(
+    request: cleaningV1.AddInterventionPhotoRequest,
+  ): Promise<cleaningV1.AddInterventionPhotoResponse> {
+    return { mission: await this.mission(await this.useCases.addInterventionPhoto.execute(request)) };
+  }
+
+  async removeInterventionPhoto(
+    request: cleaningV1.RemoveInterventionPhotoRequest,
+  ): Promise<cleaningV1.RemoveInterventionPhotoResponse> {
+    return { mission: await this.mission(await this.useCases.removeInterventionPhoto.execute(request)) };
+  }
+
+  async listInterventionPhotos(
+    request: cleaningV1.ListInterventionPhotosRequest,
+  ): Promise<cleaningV1.ListInterventionPhotosResponse> {
+    const photos = await this.useCases.listInterventionPhotos.execute(request.interventionId);
+    return { photos: photos.map(presentPhoto) };
+  }
+
+  async rescheduleIntervention(
+    request: cleaningV1.RescheduleInterventionRequest,
+  ): Promise<cleaningV1.RescheduleInterventionResponse> {
+    return { mission: await this.mission(await this.useCases.rescheduleIntervention.execute(request)) };
+  }
+
+  async unscheduleIntervention(
+    request: cleaningV1.UnscheduleInterventionRequest,
+  ): Promise<cleaningV1.UnscheduleInterventionResponse> {
+    return { mission: await this.mission(await this.useCases.unscheduleIntervention.execute(request)) };
+  }
+
+  async deactivateAgent(
+    request: cleaningV1.DeactivateAgentRequest,
+  ): Promise<cleaningV1.DeactivateAgentResponse> {
+    return { agent: presentAgent(await this.useCases.deactivateAgent.execute(request.agentId)) };
+  }
+
+  async reactivateAgent(
+    request: cleaningV1.ReactivateAgentRequest,
+  ): Promise<cleaningV1.ReactivateAgentResponse> {
+    return { agent: presentAgent(await this.useCases.reactivateAgent.execute(request.agentId)) };
+  }
+
+  async removeUnavailability(
+    request: cleaningV1.RemoveUnavailabilityRequest,
+  ): Promise<cleaningV1.RemoveUnavailabilityResponse> {
+    return { agent: presentAgent(await this.useCases.removeUnavailability.execute(request)) };
+  }
+
+  async deactivateTeam(
+    request: cleaningV1.DeactivateTeamRequest,
+  ): Promise<cleaningV1.DeactivateTeamResponse> {
+    const team = await this.useCases.deactivateTeam.execute(request.teamId);
+    return { team: presentTeam(team, await this.useCases.listAgents.execute()) };
+  }
+
+  async reactivateTeam(
+    request: cleaningV1.ReactivateTeamRequest,
+  ): Promise<cleaningV1.ReactivateTeamResponse> {
+    const team = await this.useCases.reactivateTeam.execute(request.teamId);
     return { team: presentTeam(team, await this.useCases.listAgents.execute()) };
   }
 

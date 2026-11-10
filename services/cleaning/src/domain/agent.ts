@@ -21,6 +21,14 @@ export interface Team {
   id: string;
   name: string;
   memberIds: string[];
+  /** Équipe désactivée (ADR-053) : gardée, mais plus proposée à la planification. */
+  active: boolean;
+}
+
+/** Membres d'une équipe affectables à un passage : les agents actifs seulement (ADR-053). */
+export function activeTeamMembers(team: Team, agents: readonly Agent[]): string[] {
+  const active = new Set(agents.filter((agent) => agent.active).map((agent) => agent.agentId));
+  return team.memberIds.filter((agentId) => active.has(agentId));
 }
 
 export const DISPLAY_NAME_MAX_LENGTH = 100;

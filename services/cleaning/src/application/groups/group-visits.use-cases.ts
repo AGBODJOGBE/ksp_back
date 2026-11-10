@@ -6,6 +6,7 @@ import { type AuditEntry, type GroupOutcome, type VisitEntry, type VisitFilter }
 import { eventSubject } from '../shared/event-subject';
 import { FIELD_WORK, requireStaff, seesEverything, type Staff, SUPERVISION } from '../shared/access';
 import { measure, type MeasurementInput } from '../requests/measurements.use-cases';
+import { assertVisitAgentFree } from '../shared/agenda';
 import { CleaningErrors } from '../shared/errors';
 import {
   oneOf,
@@ -58,6 +59,14 @@ export class ScheduleGroupVisitUseCase {
 
     const plan = planGroupVisit(view.requests, excluded, now);
     if (!plan.selected.length) throw CleaningErrors.groupNothingEligible(plan.skipped);
+    // Agenda de l'agent (ADR-053) : les visites remplacées par la visite commune ne comptent pas.
+    await assertVisitAgentFree(
+      this.deps,
+      agentId,
+      scheduledAt,
+      plan.selected.flatMap((request) => (request.visit ? [request.visit.id] : [])),
+      view.group.id,
+    );
     const current = plan.selected.find((request) => request.visit?.status === 'scheduled')?.visit;
     const groupVisitId = current?.groupVisitId ?? this.deps.ids.next();
     const audit: AuditEntry[] = [];

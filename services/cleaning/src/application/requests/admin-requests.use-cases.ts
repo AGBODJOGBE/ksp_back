@@ -42,6 +42,7 @@ import {
   requireUuid,
 } from '../shared/validation';
 import { assertRequestTransition, saveRequest } from './customer-requests.use-cases';
+import { assertVisitAgentFree } from '../shared/agenda';
 import { measure, type MeasurementInput } from './measurements.use-cases';
 
 const REQUEST_STATUSES: readonly RequestStatus[] = [
@@ -181,6 +182,14 @@ export class ScheduleVisitUseCase {
     const agentId = requireUuid('agentId', input.agentId);
     const [agent] = await this.deps.agents.findAgents([agentId]);
     if (!agent?.active) throw CleaningErrors.agentNotFound([agentId]);
+    // Agenda de l'agent (ADR-053) : la visite replanifiée ne se compte pas elle-même.
+    await assertVisitAgentFree(
+      this.deps,
+      agentId,
+      scheduledAt,
+      request.visit ? [request.visit.id] : [],
+      request.groupId,
+    );
 
     // Une demande de la visite commune de son groupe en est détachée : elle reçoit sa propre visite (ADR-035).
     const detachedFrom = request.visit?.status === 'scheduled' ? (request.visit.groupVisitId ?? null) : null;
