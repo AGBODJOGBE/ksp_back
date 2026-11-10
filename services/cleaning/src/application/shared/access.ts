@@ -46,8 +46,16 @@ export function requireCaller(allowed: readonly string[]): void {
   if (caller && !allowed.includes(caller)) throw CleaningErrors.callerForbidden();
 }
 
-/** Client connecté ; une organisation active (UC-ID-15) en fait un client entreprise. */
+/**
+ * Méthodes du client, du back-office et du catalogue public (ADR-049) : seule la gateway les appelle.
+ * Le contexte utilisateur qu'elle transmet n'est cru que d'elle ; un autre service est refusé
+ * (CLEANING_CALLER_FORBIDDEN). Les méthodes internes gardent leurs appelants (identity, payment, wallet).
+ */
+export const GATEWAY_CALLERS = ['gateway'] as const;
+
+/** Client connecté (relayé par la gateway) ; une organisation active (UC-ID-15) le fait entreprise. */
 export function currentCustomer(): Customer {
+  requireCaller(GATEWAY_CALLERS);
   const user = requireUser();
   const organizationId = user.activeContext && user.activeContext !== 'personal' ? user.activeContext : null;
   return { userId: user.userId, kind: organizationId ? 'business' : 'individual', organizationId };
@@ -63,8 +71,9 @@ export interface Staff {
   isAgent: boolean;
 }
 
-/** Membre du back-office ayant au moins un des rôles, avec double authentification récente. */
+/** Membre du back-office (relayé par la gateway) ayant un des rôles, double authentification récente. */
 export function requireStaff(allowed: readonly BackofficeRole[], nowMs?: number): Staff {
+  requireCaller(GATEWAY_CALLERS);
   const user: UserContext = requireUser();
   if (!allowed.some((role) => hasRole(user, role))) {
     throw AppError.forbidden('AUTH_FORBIDDEN', "Vous n'avez pas les droits nécessaires pour cette action.");

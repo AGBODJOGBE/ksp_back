@@ -10,6 +10,7 @@ import {
   type ServiceDefinitionInput,
   UpdateSettingsUseCase,
 } from '../catalog/admin-catalog.use-cases';
+import { ListServicesUseCase } from '../catalog/catalog.use-cases';
 import { HasPendingObligationsUseCase } from '../obligations/has-pending-obligations.use-case';
 import {
   CreateTeamUseCase,
@@ -403,6 +404,34 @@ describe('missions et passages (UC-CL-09, 10)', () => {
       );
     expect(await code(cancel(''))).toBe('CLEANING_VALIDATION_FAILED');
     expect((await cancel('Client injoignable')).mission.status).toBe('cancelled');
+  });
+
+  it('client, back-office et catalogue : appelés par la gateway seulement (ADR-049)', async () => {
+    const from = <T>(callerService: string, roles: string[], fn: () => Promise<T>) =>
+      runWithContext(
+        {
+          correlationId: 'c-test',
+          callerService,
+          user: {
+            userId: CUSTOMER_ID,
+            sessionId: 's-test',
+            activeContext: 'personal',
+            roles: roles.map((role) => ({ role, scopeType: 'global' as const })),
+            mfa: true,
+            authTime: Math.floor(Date.now() / 1000),
+          },
+        },
+        fn,
+      );
+    const mine = () => new GetMyMissionUseCase(world).execute(MISSION_ID);
+    const staff = () => new GetMissionDetailUseCase(world).execute(MISSION_ID);
+    const catalog = () => new ListServicesUseCase(world).execute();
+    expect(await code(from('payment', ['customer'], mine))).toBe('CLEANING_CALLER_FORBIDDEN');
+    expect(await code(from('wallet', ['cleaning_supervisor'], staff))).toBe('CLEANING_CALLER_FORBIDDEN');
+    expect(await code(from('identity', [], catalog))).toBe('CLEANING_CALLER_FORBIDDEN');
+    expect(await code(from('gateway', ['customer'], mine))).toBe('ok');
+    expect(await code(from('gateway', ['cleaning_supervisor'], staff))).toBe('ok');
+    expect(await code(from('gateway', [], catalog))).toBe('ok');
   });
 
   it('obligations : une mission non terminée bloque la suppression du compte', async () => {

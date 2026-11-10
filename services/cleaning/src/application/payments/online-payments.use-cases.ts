@@ -1,4 +1,3 @@
-import { AppError, currentContext } from '@ksp/platform';
 import { type Mission } from '../../domain/mission';
 import {
   depositDue,
@@ -11,12 +10,13 @@ import {
 } from '../../domain/payment';
 import { isBusinessContract } from '../../domain/standing';
 import { type CleaningDeps } from '../deps';
+import { requireCaller } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import { requireUuid } from '../shared/validation';
 import { type EvaluateStandingUseCase, SYSTEM_ACTOR } from '../standing/standing.use-cases';
 
 /** Seul payment lit le montant dû d'une mission (ADR-031). */
-const PAYMENT_CALLERS = new Set(['payment']);
+const PAYMENT_CALLERS = ['payment'];
 /** Consommateur des événements de payment : file `cleaning.<événement>`. */
 export const PAYMENT_CONSUMER = 'cleaning';
 const MAX_ATTEMPTS = 3;
@@ -39,14 +39,7 @@ export class GetMissionAmountDueUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
   async execute(missionId: string): Promise<MissionAmountDue> {
-    // Renseigné par le kit après vérification du jeton de service ; absent sans vérificateur (développement).
-    const caller = currentContext()?.callerService;
-    if (caller && !PAYMENT_CALLERS.has(caller)) {
-      throw AppError.forbidden(
-        'CLEANING_CALLER_FORBIDDEN',
-        "Ce service n'est pas autorisé à appeler cette méthode.",
-      );
-    }
+    requireCaller(PAYMENT_CALLERS);
     const mission = await this.deps.missions.findById(requireUuid('missionId', missionId));
     if (!mission) throw CleaningErrors.missionNotFound();
     return {

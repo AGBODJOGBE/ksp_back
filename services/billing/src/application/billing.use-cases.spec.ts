@@ -369,6 +369,17 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     ).toBe('BILLING_VALIDATION_FAILED');
   });
 
+  it('client et back-office : appelés par la gateway seulement (ADR-049)', async () => {
+    const mine = () => useCases.listMyInvoices.execute({ page: { limit: 20, cursor: null }, status: '' });
+    const staff = () => useCases.getSettings.execute();
+    const from = (callerService: string, fn: () => Promise<unknown>, roles = ['customer']) =>
+      as(CUSTOMER_ID, fn, { callerService, roles, mfa: true, activeContext: ORGANIZATION_ID });
+    expect(await code(from('payment', mine))).toBe('BILLING_CALLER_FORBIDDEN');
+    expect(await code(from('wallet', staff, ['finance_officer']))).toBe('BILLING_CALLER_FORBIDDEN');
+    expect(await code(from('gateway', mine))).toBe('ok');
+    expect(await code(from('gateway', staff, ['finance_officer']))).toBe('ok');
+  });
+
   it('back-office : rôles et double authentification exigés ; réglages réservés', async () => {
     const list = () =>
       useCases.listInvoices.execute({

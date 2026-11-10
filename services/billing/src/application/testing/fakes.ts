@@ -266,7 +266,14 @@ function withOrganization(organizations: InMemoryOrganizations): InMemoryOrganiz
 export function as<T>(
   userId: string,
   fn: () => T,
-  options: { roles?: string[]; mfa?: boolean; activeContext?: string; orgRole?: string } = {},
+  options: {
+    roles?: string[];
+    mfa?: boolean;
+    activeContext?: string;
+    orgRole?: string;
+    /** Service appelant (jeton vérifié par le kit) ; absent : non vérifié, comme en développement. */
+    callerService?: string;
+  } = {},
 ): T {
   const roles: RoleClaim[] = (options.roles ?? ['customer']).map((role) => ({ role, scopeType: 'global' }));
   if (options.orgRole && options.activeContext) {
@@ -275,6 +282,7 @@ export function as<T>(
   return runWithContext(
     {
       correlationId: 'c-test',
+      ...(options.callerService ? { callerService: options.callerService } : {}),
       user: {
         userId,
         sessionId: 's-test',

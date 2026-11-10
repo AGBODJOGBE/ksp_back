@@ -26,6 +26,13 @@ export function requireCaller(allowed: readonly string[]): void {
   if (caller && !allowed.includes(caller)) throw BillingErrors.callerForbidden();
 }
 
+/**
+ * Méthodes du client et du back-office (ADR-049) : seule la gateway les appelle. Le contexte
+ * utilisateur qu'elle transmet n'est cru que d'elle ; un autre service est refusé
+ * (BILLING_CALLER_FORBIDDEN). Les méthodes internes gardent leurs appelants (identity, payment, wallet).
+ */
+export const GATEWAY_CALLERS = ['gateway'] as const;
+
 /** Périmètre du client : son organisation active, sinon ses factures personnelles. */
 export interface CustomerScope {
   userId: string;
@@ -33,6 +40,7 @@ export interface CustomerScope {
 }
 
 export function currentCustomer(): CustomerScope {
+  requireCaller(GATEWAY_CALLERS);
   const user = requireUser();
   const organizationId = user.activeContext && user.activeContext !== 'personal' ? user.activeContext : null;
   return { userId: user.userId, organizationId };
@@ -62,6 +70,7 @@ export function currentPayer(): CustomerScope {
 }
 
 export function requireStaff(allowed: readonly string[], nowMs?: number): { userId: string } {
+  requireCaller(GATEWAY_CALLERS);
   const user = requireUser();
   if (!allowed.some((role) => hasRole(user, role))) {
     throw AppError.forbidden('AUTH_FORBIDDEN', "Vous n'avez pas les droits nécessaires pour cette action.");
