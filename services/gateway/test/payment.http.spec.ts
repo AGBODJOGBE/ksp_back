@@ -45,6 +45,8 @@ describe('gateway → payment', () => {
       keys,
       env: {
         NODE_ENV: 'production',
+        // Redis injoignable : limites en mémoire (repli).
+        REDIS_URL: 'redis://127.0.0.1:1',
         IDENTITY_JWKS_URL: 'http://identity:3101/.well-known/jwks.json',
         IDENTITY_TOKEN_URL: 'http://identity:3101/oauth/token',
         SERVICE_CLIENT_SECRET: 'secret',

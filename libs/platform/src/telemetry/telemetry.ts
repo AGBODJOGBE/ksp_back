@@ -1,6 +1,7 @@
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
-import { NodeSDK } from '@opentelemetry/sdk-node';
+import { NodeSDK, tracing } from '@opentelemetry/sdk-node';
+import { maskSecretPaths } from '../logging/secret-paths';
 
 /**
  * Hôtes dont les appels sortants ne sont jamais tracés : leur adresse porte des données
@@ -55,6 +56,42 @@ export function instrumentationConfig(options: TelemetryOptions = {}) {
   };
 }
 
+/** Attributs de span qui portent l'adresse d'une requête (conventions récentes et anciennes). */
+const URL_ATTRIBUTES = ['url.full', 'url.path', 'http.url', 'http.target'] as const;
+
+/**
+ * Masque les jetons des adresses secrètes (lien de paiement, lien de signature) dans les attributs
+ * des spans (ADR-051) : à la création (instrumentations http et NestJS) et juste avant la fin.
+ */
+export class SecretUrlSpanProcessor implements tracing.SpanProcessor {
+  onStart(span: tracing.Span): void {
+    this.mask(span);
+  }
+
+  onEnding(span: tracing.Span): void {
+    this.mask(span);
+  }
+
+  onEnd(): void {}
+
+  forceFlush(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  shutdown(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  private mask(span: tracing.Span): void {
+    for (const key of URL_ATTRIBUTES) {
+      const value = span.attributes[key];
+      if (typeof value !== 'string') continue;
+      const masked = maskSecretPaths(value) as string;
+      if (masked !== value) span.setAttribute(key, masked);
+    }
+  }
+}
+
 /**
  * Démarre les traces OpenTelemetry (gRPC, HTTP, PostgreSQL, RabbitMQ…).
  * À appeler en tout premier dans main.ts, avant l'import de NestJS, pour que les bibliothèques soient instrumentées.
@@ -68,7 +105,11 @@ export function startTelemetry(
   if (!endpoint) return undefined;
   const sdk = new NodeSDK({
     serviceName,
-    traceExporter: new OTLPTraceExporter({ url: endpoint }),
+    // Masquage d'abord, puis envoi par lots au collecteur.
+    spanProcessors: [
+      new SecretUrlSpanProcessor(),
+      new tracing.BatchSpanProcessor(new OTLPTraceExporter({ url: endpoint })),
+    ],
     instrumentations: [getNodeAutoInstrumentations(instrumentationConfig(options))],
   });
   sdk.start();

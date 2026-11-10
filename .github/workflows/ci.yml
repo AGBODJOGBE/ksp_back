@@ -44,9 +44,21 @@ jobs:
           --health-cmd "rabbitmq-diagnostics -q ping"
           --health-interval 10s
           --health-retries 12
+      # Compteurs des limites d'appels partagés par les répliques de la gateway (ADR-051).
+      redis:
+        image: redis:7.4-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-retries 10
     env:
       TEST_DATABASE_URL: postgresql://ksp:ksp@localhost:5432/ksp_test
       TEST_RABBITMQ_URL: amqp://ksp:ksp@localhost:5672
+      TEST_REDIS_URL: redis://localhost:6379
+      # Outil de comparaison des contrats OpenAPI, version et empreinte figées.
+      OASDIFF_VERSION: 1.34.1
+      OASDIFF_SHA256: 75775f65b0adebd26a8e013af51a799342dfdc6262d89efa9e3b7bdf89657d90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,6 +92,25 @@ jobs:
           git fetch --no-tags origin main:main
           pnpm contracts:breaking
 
+      # Les fronts branchés sur l'API ne doivent jamais casser : toute rupture passe par /api/v2.
+      - name: Contrats — API REST (OpenAPI) sans rupture
+        if: github.event_name == 'pull_request'
+        run: |
+          archive="oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive"             "https://github.com/oasdiff/oasdiff/releases/download/v${OASDIFF_VERSION}/$archive"
+          echo "$OASDIFF_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" oasdiff
+          git show main:contracts/openapi/ksp-api.v1.yaml > "$RUNNER_TEMP/ksp-api.main.yaml"
+          "$RUNNER_TEMP/oasdiff" breaking "$RUNNER_TEMP/ksp-api.main.yaml"             contracts/openapi/ksp-api.v1.yaml --fail-on ERR
+
+      # Une version d'événement publiée ne change que par ajout ; sinon un fichier v2 à côté.
+      - name: Contrats — événements sans rupture
+        if: github.event_name == 'pull_request'
+        run: pnpm exec tsx tools/ci/event-schemas-compat.ts main
+
+      - name: Outils de la CI — tests
+        run: pnpm exec tsx --test tools/ci/*.test.ts
+
       - name: Contrats — code généré à jour
         run: |
           pnpm contracts:generate
@@ -109,6 +140,15 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      # Bloquant pour une faille critique. Les failles hautes et moyennes, présentes à
+      # l'introduction du contrôle (ADR-051), sont signalées sans bloquer, le temps des montées de version.
+      - name: Dépendances de production — failles critiques
+        run: pnpm audit --prod --audit-level critical
+
+      - name: Dépendances de production — rapport complet (non bloquant)
+        continue-on-error: true
+        run: pnpm audit --prod --audit-level moderate
 
   changes:
     name: Services modifiés

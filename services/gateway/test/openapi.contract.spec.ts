@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { AppError, HealthController } from '@ksp/platform';
+import { AppError, HealthController, loadConfig } from '@ksp/platform';
+import { AppModule } from '../src/app.module';
+import { configSchema } from '../src/config';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020';
@@ -219,6 +221,9 @@ describe('contrat OpenAPI : manifeste de routage', () => {
       .map((handler) => Reflect.getMetadata(PATH_METADATA, handler))
       .filter(Boolean);
     expect(paths.sort()).toEqual(['health/live', 'health/ready', 'metrics']);
+    // Servies sur le port interne seulement (ADR-051), jamais par l'application publique.
+    const config = loadConfig(configSchema, { NODE_ENV: 'test', LOG_LEVEL: 'fatal' });
+    expect(AppModule.forRoot(config).controllers).not.toContain(HealthController);
   });
 });
 
