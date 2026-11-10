@@ -35,7 +35,7 @@
   "devDependencies": {
     "@nestjs/testing": "11.2.7",
     "@types/pg": "8.15.6",
-    "jose": "5.10.0",
+    "jose": "6.2.15",
     "pg": "8.16.3"
   }
 }
