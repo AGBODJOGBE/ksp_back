@@ -1,6 +1,6 @@
 import { type AppError, runWithContext } from '@ksp/platform';
 import { type Mission } from '../../domain/mission';
-import { newPaymentState } from '../../domain/payment';
+import { newPaymentState, paidAmount, remainingDue } from '../../domain/payment';
 import { gardenService } from '../../domain/testing';
 import {
   GetCatalogUseCase,
@@ -437,6 +437,86 @@ describe('missions et passages (UC-CL-09, 10)', () => {
     expect(await code(asOrganizationMember(get, 'org_viewer'))).toBe('ok');
     expect(await code(asOrganizationMember(cancel, 'org_viewer'))).toBe('AUTH_FORBIDDEN');
     expect((await asOrganizationMember(cancel, 'org_admin')).mission.status).toBe('cancelled');
+  });
+
+  describe('arrêt de la suite d’une mission récurrente par le client (ADR-049)', () => {
+    const passage = (n: number, status: 'completed' | 'planned', day: string) => ({
+      id: `0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d4${String(n).padStart(3, '0')}`,
+      status,
+      scheduledStart: new Date(`${day}T08:00:00Z`),
+      durationMinutes: 180,
+      agentIds: [AGENT_ID],
+      checklist: [],
+      incidentNote: null,
+      beforePhotoFileIds: [],
+      afterPhotoFileIds: [],
+      startedAt: status === 'completed' ? new Date(`${day}T08:00:00Z`) : null,
+      completedAt: status === 'completed' ? new Date(`${day}T11:00:00Z`) : null,
+      cancellationCause: null,
+      cancelledAt: null,
+    });
+    const paid = (amount: number, method: 'cash' | 'wallet') => ({
+      id: `0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7${String(amount).slice(0, 3)}`,
+      amount,
+      method,
+      reference: method === 'wallet' ? '0192f1c4-0000-7000-d000-000000000001' : null,
+      recordedBy: CUSTOMER_ID,
+      recordedAt: new Date('2026-10-24T09:00:00Z'),
+      idempotencyKey: null,
+      refundedAt: null,
+    });
+    /** 4 passages à 10 000 FCFA : 1 fait, 1 planifié, 2 à planifier. */
+    const recurring = (payments: ReturnType<typeof paid>[]) =>
+      mission({
+        status: 'scheduled',
+        recurrence: { period: 'week', visitsPerPeriod: 1, durationMonths: 1 },
+        plannedInterventions: 4,
+        interventions: [passage(1, 'completed', '2026-10-30'), passage(2, 'planned', '2026-11-06')],
+        payment: {
+          ...newPaymentState({ option: 'full', timing: 'before', method: 'cash' }, 40_000, 30),
+          payments,
+        },
+      });
+    const stop = () =>
+      asCustomer(() =>
+        new CancelMyMissionUseCase(world).execute({ missionId: MISSION_ID, reason: 'Déménagement' }),
+      );
+
+    beforeEach(() => {
+      world.clock.current = new Date('2026-11-02T08:00:00Z');
+    });
+
+    it('payé d’avance : passages faits dus, le reste crédité au portefeuille, quel que soit le moyen', async () => {
+      world.missions.missions.set(MISSION_ID, recurring([paid(30_000, 'cash'), paid(10_000, 'wallet')]));
+      const view = await stop();
+      expect(view.mission.status).toBe('cancelled');
+      expect(view.mission.interventions.map((i) => i.status)).toEqual(['completed', 'cancelled']);
+      const stored = world.missions.missions.get(MISSION_ID)!;
+      expect(stored.payment).toMatchObject({ total: 10_000, credit: { amount: 30_000 } });
+      expect(paidAmount(stored.payment)).toBe(10_000);
+      expect(remainingDue(stored.payment)).toBe(0);
+      // Aucun remboursement débit par débit : le crédit couvre tout ce qui a été payé en trop.
+      expect(stored.payment.payments.every((p) => p.refundedAt === null)).toBe(true);
+      const credited = world.recorder.events.find((e) => e.type === 'cleaning.mission.credited');
+      expect(credited?.payload).toEqual({
+        missionId: MISSION_ID,
+        customerId: CUSTOMER_ID,
+        creditId: stored.payment.credit!.id,
+        amount: { amount: 30_000, currency: 'XOF' },
+        reason: 'recurring_cancelled',
+        creditedAt: '2026-11-02T08:00:00.000Z',
+      });
+      expect(world.recorder.events.some((e) => e.type === 'cleaning.mission.refunded')).toBe(false);
+    });
+
+    it('payé moins que les passages faits : rien à créditer, le reste dû demeure', async () => {
+      world.missions.missions.set(MISSION_ID, recurring([paid(4_000, 'cash')]));
+      await stop();
+      const stored = world.missions.missions.get(MISSION_ID)!;
+      expect(stored.payment).toMatchObject({ total: 10_000, credit: null });
+      expect(remainingDue(stored.payment)).toBe(6_000);
+      expect(world.recorder.events.some((e) => e.type === 'cleaning.mission.credited')).toBe(false);
+    });
   });
 
   it('aucun passage planifié : annulation sans frais, même créneau choisi passé (ADR-049)', async () => {

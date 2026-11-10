@@ -1,5 +1,11 @@
 import { eventSubject } from '../shared/event-subject';
-import { isCancellableByCustomer, type Mission, nextStart } from '../../domain/mission';
+import {
+  isCancellableByCustomer,
+  isRecurringStop,
+  type Mission,
+  nextStart,
+  stopSettlement,
+} from '../../domain/mission';
 import { isFreeCancellation } from '../../domain/schedule';
 import { type CleaningDeps, missionView, type MissionView } from '../deps';
 import { type Changes, type OutboxMessage } from '../ports';
@@ -89,6 +95,46 @@ export function refundOnCancellation(
   };
 }
 
+/**
+ * Arrêt de la suite d'une mission récurrente par le client, après des passages faits (ADR-049) : la
+ * mission ne coûte plus que ses passages faits ; ce qui a été payé au-delà, quel que soit le moyen,
+ * est crédité dans son portefeuille prépayé — crédit enregistré ici et cleaning.mission.credited
+ * publié dans la même transaction (wallet crédite une seule fois par identifiant). Payé moins que les
+ * passages faits : rien à créditer, le reste dû demeure.
+ */
+export function creditOnStop(
+  mission: Mission,
+  creditId: string,
+  now: Date,
+): { mission: Mission; events: OutboxMessage[] } {
+  const { dueTotal, credit } = stopSettlement(mission);
+  const settled: Mission = {
+    ...mission,
+    payment: {
+      ...mission.payment,
+      total: dueTotal,
+      credit: credit > 0 ? { id: creditId, amount: credit, creditedAt: now } : null,
+    },
+  };
+  if (credit === 0) return { mission: settled, events: [] };
+  return {
+    mission: settled,
+    events: [
+      {
+        type: 'cleaning.mission.credited',
+        payload: {
+          missionId: mission.id,
+          customerId: mission.customerId,
+          creditId,
+          amount: { amount: credit, currency: 'XOF' },
+          reason: 'recurring_cancelled',
+          creditedAt: now.toISOString(),
+        },
+      },
+    ],
+  };
+}
+
 /** UC-CL-03 : mes missions. */
 export class ListMyMissionsUseCase {
   constructor(private readonly deps: CleaningDeps) {}
@@ -116,7 +162,10 @@ export class GetMyMissionUseCase {
   }
 }
 
-/** UC-CL-05 : annuler sa mission, sans frais jusqu'au délai limite ; au-delà, par le support. */
+/**
+ * UC-CL-05 : annuler sa mission, sans frais jusqu'au délai limite ; au-delà, par le support. Une
+ * mission récurrente dont des passages sont faits : arrêt de la suite, crédit au prorata (ADR-049).
+ */
 export class CancelMyMissionUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
@@ -131,7 +180,10 @@ export class CancelMyMissionUseCase {
     }
     const reason = optionalText('reason', input.reason, 500);
     const subject = await eventSubject(this.deps, mission);
-    const { mission: refunded, events: refunds } = refundOnCancellation(cancelled(mission, reason, now), now);
+    const stopped = cancelled(mission, reason, now);
+    const { mission: refunded, events: refunds } = isRecurringStop(mission)
+      ? creditOnStop(stopped, this.deps.ids.next(), now)
+      : refundOnCancellation(stopped, now);
     return saveMission(this.deps, refunded, {
       events: [
         ...refunds,
@@ -155,6 +207,16 @@ export class CancelMyMissionUseCase {
           entityType: 'mission',
           entityId: mission.id,
           at: now,
+          // Arrêt d'une mission récurrente : montant initial, montant des passages faits, crédit.
+          ...(refunded.payment.total !== mission.payment.total || refunded.payment.credit
+            ? {
+                details: {
+                  previousTotal: mission.payment.total,
+                  total: refunded.payment.total,
+                  credited: refunded.payment.credit?.amount ?? 0,
+                },
+              }
+            : {}),
         },
       ],
     });

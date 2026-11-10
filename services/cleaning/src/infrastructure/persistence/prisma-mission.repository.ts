@@ -18,7 +18,13 @@ import { type BusyPeriod } from '../../domain/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { UuidV7Generator } from '../system/system';
 import { cursorFilter, json, pageArgs, toPage, type Tx, writeChanges } from './changes';
-import { interventionColumns, MISSION_INCLUDE, suspensionColumns, toMission } from './mission.mapper';
+import {
+  creditColumns,
+  interventionColumns,
+  MISSION_INCLUDE,
+  suspensionColumns,
+  toMission,
+} from './mission.mapper';
 import { locationColumns } from './quote-request.mapper';
 import { recordGroupOperation } from './group-operations';
 
@@ -255,6 +261,9 @@ export async function updateMission(tx: Tx, mission: Mission): Promise<boolean> 
       ...locationColumns(mission.location),
       landmark: mission.landmark,
       ...suspensionColumns(mission),
+      // Le montant change à l'arrêt d'une mission récurrente : celui des passages faits (ADR-049).
+      paymentTotal: mission.payment.total,
+      ...creditColumns(mission),
       updatedAt: mission.updatedAt,
       version: { increment: 1 },
     },
