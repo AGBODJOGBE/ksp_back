@@ -20,6 +20,8 @@ import {
   locationFromColumns,
   recurrenceFromJson,
   recurrenceToJson,
+  scheduleColumns,
+  scheduleFromColumns,
 } from './quote-request.mapper';
 
 export const MISSION_INCLUDE = {
@@ -63,6 +65,7 @@ export function toMission(row: MissionWithRelations): Mission {
     placeType: row.placeType,
     chosenSlot: { start: row.chosenSlotStart, end: row.chosenSlotEnd },
     recurrence: recurrenceFromJson(row.recurrence),
+    ...scheduleFromColumns(row),
     plannedInterventions: row.plannedInterventions,
     interventions: row.interventions.map(toIntervention),
     payment: {
@@ -122,6 +125,7 @@ export function missionCreateColumns(mission: Mission, acceptanceKey: string) {
     chosenSlotStart: mission.chosenSlot.start,
     chosenSlotEnd: mission.chosenSlot.end,
     recurrence: recurrenceToJson(mission.recurrence),
+    ...scheduleColumns(mission),
     plannedInterventions: mission.plannedInterventions,
     paymentPlan: json(mission.payment.plan),
     paymentTotal: mission.payment.total,

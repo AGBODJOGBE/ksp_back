@@ -127,6 +127,9 @@ model QuoteRequest {
   preferredSlots      Json               @map("preferred_slots")
   comment             String?
   recurrence          Json?
+  /// Plan de passages (ADR-052) et dates exactes qu'il donne (AAAA-MM-JJ) ; null et vide sans plan.
+  schedule            Json?
+  scheduledDates      String[]           @default([]) @map("scheduled_dates")
   requestedTeamSize   Int                @default(0) @map("requested_team_size")
   /// Entreprise : jours d'intervention par semaine, null si non précisés.
   daysPerWeek         Int?               @map("days_per_week")
@@ -250,6 +253,9 @@ model Quote {
   depositPercent    Int          @map("deposit_percent")
   depositAmount     Int          @map("deposit_amount")
   recurrence        Json?
+  /// Plan de passages (ADR-052) et dates exactes, figés à l'envoi ; null et vide sans plan.
+  schedule          Json?
+  scheduledDates    String[]     @default([]) @map("scheduled_dates")
   teamSize          Int          @map("team_size")
   durationMinutes   Int          @map("duration_minutes")
   sentAt            DateTime     @map("sent_at") @db.Timestamptz(3)
@@ -283,6 +289,9 @@ model Mission {
   chosenSlotStart      DateTime         @map("chosen_slot_start") @db.Timestamptz(3)
   chosenSlotEnd        DateTime         @map("chosen_slot_end") @db.Timestamptz(3)
   recurrence           Json?
+  /// Plan de passages du devis accepté (ADR-052) et ses dates ; null et vide sans plan.
+  schedule             Json?
+  scheduledDates       String[]         @default([]) @map("scheduled_dates")
   plannedInterventions Int              @map("planned_interventions")
   /// Option de paiement choisie par le client : option, timing, method.
   paymentPlan          Json             @map("payment_plan")
