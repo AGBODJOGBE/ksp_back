@@ -2,7 +2,8 @@
 # (ils tournent avec « pnpm --filter @ksp/<service>-service dev »).
 #   pnpm infra:up      démarre l'ensemble
 #   pnpm infra:down    l'arrête (les données sont conservées dans les volumes)
-# Mots de passe de développement uniquement.
+# Mots de passe de développement uniquement : chaque port n'écoute que sur 127.0.0.1, jamais sur le
+# réseau local (ADR-051).
 
 name: ksp
 
@@ -13,7 +14,7 @@ services:
       POSTGRES_USER: ksp
       POSTGRES_PASSWORD: ksp
       POSTGRES_DB: ksp
-    ports: ['5432:5432']
+    ports: ['127.0.0.1:5432:5432']
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # Une base et un utilisateur par service, créés au premier démarrage.
@@ -29,8 +30,8 @@ services:
       RABBITMQ_DEFAULT_USER: ksp
       RABBITMQ_DEFAULT_PASS: ksp
     ports:
-      - '5672:5672'
-      - '15672:15672' # console d'administration : http://localhost:15672
+      - '127.0.0.1:5672:5672'
+      - '127.0.0.1:15672:15672' # console d'administration : http://localhost:15672
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
@@ -40,7 +41,7 @@ services:
 
   redis:
     image: redis:7.4-alpine
-    ports: ['6379:6379']
+    ports: ['127.0.0.1:6379:6379']
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -55,8 +56,8 @@ services:
       MINIO_ROOT_USER: ksp
       MINIO_ROOT_PASSWORD: ksp-local-secret
     ports:
-      - '9000:9000'
-      - '9001:9001' # console : http://localhost:9001
+      - '127.0.0.1:9000:9000'
+      - '127.0.0.1:9001:9001' # console : http://localhost:9001
     volumes:
       - minio-data:/data
 
@@ -64,8 +65,8 @@ services:
   jaeger:
     image: jaegertracing/jaeger:2.5.0
     ports:
-      - '4317:4317'
-      - '16686:16686'
+      - '127.0.0.1:4317:4317'
+      - '127.0.0.1:16686:16686'
 
   # Moteur d'itinéraires du service geo (ADR-045), algorithme MLD, sur http://localhost:5000.
   # Données à préparer une fois (tools/geo/prepare-osrm) ; démarré seulement avec
@@ -75,7 +76,7 @@ services:
     image: ghcr.io/project-osrm/osrm-backend:v6.0.0
     profiles: ['routing']
     command: osrm-routed --algorithm mld /data/region.osrm
-    ports: ['5000:5000']
+    ports: ['127.0.0.1:5000:5000']
     volumes:
       - osrm-data:/data
 
@@ -86,7 +87,7 @@ services:
     environment:
       MEILI_MASTER_KEY: ksp-local-master-key
       MEILI_ENV: development
-    ports: ['7700:7700']
+    ports: ['127.0.0.1:7700:7700']
     volumes:
       - meilisearch-data:/meili_data
 
