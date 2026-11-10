@@ -24,12 +24,15 @@ import {
   type QuoteInput,
   type QuoteRequestFilters,
   type QuoteRequestInput,
+  type RescheduleInput,
   type ServiceInput,
   type SettingsInput,
   type SimulationInput,
 } from '../../application/cleaning/cleaning.ports';
 import {
   presentAgent,
+  presentAssignment,
+  presentPhoto,
   presentDefinition,
   presentEstimate,
   presentGroup,
@@ -774,6 +777,10 @@ export class CleaningGrpcAdapter implements CleaningApi {
             individualSuspensionUnpaidInterventions: input.individualSuspensionUnpaidInterventions ?? 0,
             individualPaymentGraceHours: input.individualPaymentGraceHours ?? 0,
             locationRetentionMonths: input.locationRetentionMonths ?? 0,
+            // ADR-053 : rappel absent gardé (0 le désactive) ; photos et durée à 0 gardées.
+            quoteExpiryReminderDays: input.quoteExpiryReminderDays,
+            maxInterventionPhotos: input.maxInterventionPhotos ?? 0,
+            visitDurationMinutes: input.visitDurationMinutes ?? 0,
             updatedBy: '',
             updatedAt: '',
             updatedByName: '',
@@ -823,15 +830,25 @@ export class CleaningGrpcAdapter implements CleaningApi {
 
   async declareUnavailability(
     agentId: string,
-    input: { start: string; end: string; reason?: string | undefined },
+    input: { start: string; end: string; reason?: string | undefined; force?: boolean | undefined },
   ): Promise<Json> {
     const res = await this.write('declareUnavailability', (m) =>
       this.clients.admin.declareUnavailability(
-        { agentId, start: input.start, end: input.end, reason: input.reason ?? '' },
+        {
+          agentId,
+          start: input.start,
+          end: input.end,
+          reason: input.reason ?? '',
+          force: input.force ?? false,
+        },
         m,
       ),
     );
-    return presentAgent(res.agent);
+    // Avertissement (ADR-053) : passages et visites chevauchés, indisponibilité enregistrée avec force.
+    return {
+      ...presentAgent(res.agent),
+      overlappingAssignments: res.overlappingAssignments.map(presentAssignment),
+    };
   }
 
   async listTeams(): Promise<Json> {
@@ -848,6 +865,91 @@ export class CleaningGrpcAdapter implements CleaningApi {
       (await this.write('updateTeam', (m) => this.clients.admin.updateTeam({ teamId: id, ...input }, m)))
         .team,
     );
+  }
+
+  // --- Compléments du Nettoyage (ADR-053) -------------------------------------------------------
+
+  async listMyInterventionPhotos(interventionId: string): Promise<Json> {
+    const res = await this.read('listMyInterventionPhotos', (m) =>
+      this.clients.missions.listMyInterventionPhotos({ interventionId }, m),
+    );
+    return { data: res.photos.map(presentPhoto) };
+  }
+
+  async addInterventionPhoto(interventionId: string, input: { fileId: string; kind: string }): Promise<Json> {
+    const res = await this.write('addInterventionPhoto', (m) =>
+      this.clients.admin.addInterventionPhoto({ interventionId, ...input }, m),
+    );
+    return presentMission(res.mission);
+  }
+
+  async removeInterventionPhoto(interventionId: string, fileId: string): Promise<Json> {
+    const res = await this.write('removeInterventionPhoto', (m) =>
+      this.clients.admin.removeInterventionPhoto({ interventionId, fileId }, m),
+    );
+    return presentMission(res.mission);
+  }
+
+  async listInterventionPhotos(interventionId: string): Promise<Json> {
+    const res = await this.read('listInterventionPhotos', (m) =>
+      this.clients.admin.listInterventionPhotos({ interventionId }, m),
+    );
+    return { data: res.photos.map(presentPhoto) };
+  }
+
+  async rescheduleIntervention(interventionId: string, input: RescheduleInput): Promise<Json> {
+    const res = await this.write('rescheduleIntervention', (m) =>
+      this.clients.admin.rescheduleIntervention(
+        {
+          interventionId,
+          scheduledStart: input.scheduledStart,
+          durationMinutes: input.durationMinutes ?? 0,
+          agentIds: input.agentIds ?? [],
+          teamId: input.teamId ?? '',
+          reason: input.reason,
+        },
+        m,
+      ),
+    );
+    return presentMission(res.mission);
+  }
+
+  async unscheduleIntervention(interventionId: string, reason: string): Promise<Json> {
+    const res = await this.write('unscheduleIntervention', (m) =>
+      this.clients.admin.unscheduleIntervention({ interventionId, reason }, m),
+    );
+    return presentMission(res.mission);
+  }
+
+  async deactivateAgent(agentId: string): Promise<Json> {
+    const res = await this.write('deactivateAgent', (m) =>
+      this.clients.admin.deactivateAgent({ agentId }, m),
+    );
+    return presentAgent(res.agent);
+  }
+
+  async reactivateAgent(agentId: string): Promise<Json> {
+    const res = await this.write('reactivateAgent', (m) =>
+      this.clients.admin.reactivateAgent({ agentId }, m),
+    );
+    return presentAgent(res.agent);
+  }
+
+  async removeUnavailability(agentId: string, unavailabilityId: string): Promise<Json> {
+    const res = await this.write('removeUnavailability', (m) =>
+      this.clients.admin.removeUnavailability({ agentId, unavailabilityId }, m),
+    );
+    return presentAgent(res.agent);
+  }
+
+  async deactivateTeam(teamId: string): Promise<Json> {
+    const res = await this.write('deactivateTeam', (m) => this.clients.admin.deactivateTeam({ teamId }, m));
+    return presentTeam(res.team);
+  }
+
+  async reactivateTeam(teamId: string): Promise<Json> {
+    const res = await this.write('reactivateTeam', (m) => this.clients.admin.reactivateTeam({ teamId }, m));
+    return presentTeam(res.team);
   }
 
   // --- Appels -----------------------------------------------------------------------------------

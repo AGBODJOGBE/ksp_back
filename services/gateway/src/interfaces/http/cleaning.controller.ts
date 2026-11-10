@@ -168,4 +168,10 @@ export class CleaningHttpController {
     const { part } = parseBody(requestBodies.payMyCleaningMissionFromWallet, body) as { part: string };
     return this.cleaning.payMissionFromWallet(missionId, part, idempotencyKey);
   }
+
+  /** Photos avant et après d'un passage de sa mission (ADR-053). */
+  @Route('listMyCleaningInterventionPhotos')
+  listMyInterventionPhotos(@Param('id') id: unknown) {
+    return this.cleaning.listMyInterventionPhotos(idFrom(id));
+  }
 }

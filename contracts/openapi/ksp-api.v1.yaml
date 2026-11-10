@@ -4830,6 +4830,60 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/interventions/{id}/photos:
+    get:
+      tags:
+        - Nettoyage
+      operationId: listMyCleaningInterventionPhotos
+      summary: Photos d’un passage de ma mission
+      description: |
+        ADR-053. Photos « avant » puis « après » d’un passage d’une mission du client connecté, avec des adresses de
+        lecture de courte durée (à ne pas conserver : en demander de nouvelles).
+
+        Erreurs : `CLEANING_INTERVENTION_NOT_FOUND` (404, passage d’une autre mission).
+      x-ksp-grpc: ksp.cleaning.v1.MissionService/ListMyInterventionPhotos
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningInterventionPhotoList'
+              example:
+                data:
+                  - fileId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6101
+                    kind: before
+                    fileName: salon-avant.jpg
+                    contentType: image/jpeg
+                    sizeBytes: 482113
+                    uploadedAt: '2026-11-10T08:05:00Z'
+                    downloadUrl: https://files.ksp.bj/ksp-files/cleaning_intervention_photo/0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6101?X-Amz-Expires=300&X-Amz-Signature=9a0e
+                    downloadExpiresAt: '2026-11-10T08:10:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/cleaning/missions/{id}/pay:
     post:
       tags:
@@ -6686,6 +6740,566 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/interventions/{id}/photos:
+    get:
+      tags:
+        - Nettoyage (back-office)
+      operationId: listCleaningInterventionPhotos
+      summary: Photos d’un passage
+      description: |
+        ADR-053. Photos « avant » puis « après », avec des adresses de lecture de courte durée.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent` (ses passages seulement), `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ListInterventionPhotos
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningInterventionPhotoList'
+              example:
+                data:
+                  - fileId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6101
+                    kind: before
+                    fileName: salon-avant.jpg
+                    contentType: image/jpeg
+                    sizeBytes: 482113
+                    uploadedAt: '2026-11-10T08:05:00Z'
+                    downloadUrl: https://files.ksp.bj/ksp-files/cleaning_intervention_photo/0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6101?X-Amz-Expires=300&X-Amz-Signature=9a0e
+                    downloadExpiresAt: '2026-11-10T08:10:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: addCleaningInterventionPhoto
+      summary: Ajouter une photo à un passage
+      description: |
+        ADR-053. Passage non clos (`CLEANING_INTERVENTION_CLOSED`, 422, sinon). Le fichier est d’abord envoyé au
+        service file (`POST /api/v1/file/uploads`, finalité `cleaning_intervention_photo`, puis confirmation) par le
+        compte qui le rattache ici ; erreurs de file transmises (`FILE_OWNER_MISMATCH`, `FILE_NOT_AVAILABLE`…). Nombre
+        maximal par type réglable (`maxInterventionPhotos`, `CLEANING_PHOTO_LIMIT_REACHED`, 422). Ajout idempotent.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent` (ses passages seulement), `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/AddInterventionPhoto
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddCleaningInterventionPhotoRequest'
+            example:
+              fileId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6101
+              kind: before
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/interventions/{id}/photos/{file}:
+    delete:
+      tags:
+        - Nettoyage (back-office)
+      operationId: removeCleaningInterventionPhoto
+      summary: Retirer une photo d’un passage
+      description: |
+        ADR-053. Passage non clos ; fichier supprimé chez file. Idempotent : une photo déjà retirée renvoie la mission.
+
+        Rôles : `cleaning_supervisor`, `cleaning_agent` (ses passages seulement), `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RemoveInterventionPhoto
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_agent
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/CleaningFileId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/interventions/{id}/reschedule:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: rescheduleCleaningIntervention
+      summary: Reporter un passage
+      description: |
+        ADR-053. Passage planifié seulement (`CLEANING_INVALID_TRANSITION` sinon). Nouveau début dans le futur, mêmes
+        contrôles que la planification : agents actifs, conflits d’agenda (passages, visites, indisponibilités ;
+        `CLEANING_TEAM_UNAVAILABLE`, 409), mission suspendue refusée. Sans `agentIds` ni `teamId`, les agents du passage
+        sont gardés. Motif gardé sur le passage (`changeReason`) ; le client et les agents sont prévenus
+        (`cleaning.intervention.rescheduled`).
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RescheduleIntervention
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RescheduleCleaningInterventionRequest'
+            example:
+              scheduledStart: '2026-11-07T08:00:00Z'
+              agentIds:
+                - 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0003
+              reason: Client absent ce jour-là.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/interventions/{id}/unschedule:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: unscheduleCleaningIntervention
+      summary: Annuler un passage pour le replanifier
+      description: |
+        ADR-053. Passage planifié seulement. Il est annulé (cause `unscheduled`) et la mission a de nouveau un passage à
+        planifier : le nombre de passages prévus ne change pas, aucun effet sur l’argent. Client et agents prévenus
+        (`cleaning.intervention.unscheduled`).
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/UnscheduleIntervention
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnscheduleCleaningInterventionRequest'
+            example:
+              reason: Pluie annoncée, à replanifier avec le client.
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/agents/{id}/deactivate:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: deactivateCleaningAgent
+      summary: Désactiver un agent
+      description: |
+        ADR-053. Refusé s’il a des passages ou des visites à venir (`CLEANING_AGENT_HAS_ASSIGNMENTS`, 409,
+        `details.assignments`) : les reporter ou les réaffecter d’abord. Jamais de suppression ; sans effet sur un agent
+        déjà inactif.
+
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/DeactivateAgent
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningAgent'
+              example:
+                agentId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+                displayName: Awa B.
+                active: false
+                unavailabilities: []
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/agents/{id}/reactivate:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: reactivateCleaningAgent
+      summary: Réactiver un agent
+      description: |
+        ADR-053.
+
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ReactivateAgent
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningAgent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/agents/{id}/unavailabilities/{unavailability}:
+    delete:
+      tags:
+        - Nettoyage (back-office)
+      operationId: removeCleaningUnavailability
+      summary: Supprimer une indisponibilité
+      description: |
+        ADR-053. Erreurs : `CLEANING_UNAVAILABILITY_NOT_FOUND` (404).
+
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/RemoveUnavailability
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/CleaningUnavailabilityId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningAgent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/teams/{id}/deactivate:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: deactivateCleaningTeam
+      summary: Désactiver une équipe
+      description: |
+        ADR-053. L’équipe est gardée mais n’est plus proposée à la planification (`CLEANING_TEAM_INACTIVE`, 422).
+
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/DeactivateTeam
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningTeam'
+              example:
+                id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001
+                name: Équipe Calavi
+                members:
+                  - agentId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+                    displayName: Awa B.
+                active: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/teams/{id}/reactivate:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: reactivateCleaningTeam
+      summary: Réactiver une équipe
+      description: |
+        ADR-053.
+
+        Rôles : `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ReactivateTeam
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningTeam'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -10908,6 +11522,22 @@ components:
       schema:
         type: string
         format: uuid
+    CleaningFileId:
+      name: file
+      in: path
+      required: true
+      description: Identifiant du fichier chez le service file (UUID).
+      schema:
+        type: string
+        format: uuid
+    CleaningUnavailabilityId:
+      name: unavailability
+      in: path
+      required: true
+      description: Identifiant de l’indisponibilité (UUID).
+      schema:
+        type: string
+        format: uuid
     CleaningZoneCode:
       name: code
       in: path
@@ -13845,12 +14475,19 @@ components:
           format: date-time
         cancellationCause:
           description: |
-            Passage annulé : `suspension` (reprogrammé automatiquement au déblocage) ou `manual` ; null sinon.
+            Passage annulé : `suspension` (reprogrammé automatiquement au déblocage), `manual`, ou `unscheduled`
+            (ADR-053 : annulé pour être replanifié, la mission a de nouveau un passage à planifier) ; null sinon.
           oneOf:
             - enum:
                 - suspension
                 - manual
+                - unscheduled
             - type: 'null'
+        changeReason:
+          type:
+            - string
+            - 'null'
+          description: Motif du dernier report, ou de l’annulation pour replanifier (ADR-053) ; null sinon.
     CleaningPaymentPlan:
       type: object
       additionalProperties: false
@@ -14555,6 +15192,21 @@ components:
           minimum: 1
           maximum: 120
           description: Mois de conservation de la position GPS des demandes et missions clôturées (12 par défaut, ADR-035).
+        quoteExpiryReminderDays:
+          type: integer
+          minimum: 0
+          maximum: 30
+          description: Rappel au client N jours avant l’expiration d’un devis (ADR-053) ; 2 par défaut, 0 = aucun rappel.
+        maxInterventionPhotos:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Photos au plus par type (avant, après) et par passage (ADR-053) ; 10 par défaut.
+        visitDurationMinutes:
+          type: integer
+          minimum: 15
+          maximum: 480
+          description: Durée d’une visite technique dans l’agenda de l’agent, pour les conflits (ADR-053) ; 60 par défaut.
         updatedBy:
           type:
             - string
@@ -14630,6 +15282,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CleaningUnavailability'
+        overlappingAssignments:
+          type: array
+          description: |
+            Réponse à la déclaration d’une indisponibilité (ADR-053) : passages et visites déjà planifiés qu’elle
+            chevauche (enregistrée avec `force`), à reporter ou réaffecter ; vide sinon. Absent des autres réponses.
+          items:
+            $ref: '#/components/schemas/CleaningAgentAssignment'
     CleaningAgentList:
       type: object
       additionalProperties: false
@@ -14657,6 +15316,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CleaningAgentRef'
+        active:
+          type: boolean
+          description: Équipe désactivée (false) gardée, mais plus proposée à la planification (ADR-053).
     CleaningTeamList:
       type: object
       additionalProperties: false
@@ -15469,6 +16131,21 @@ components:
           minimum: 1
           maximum: 120
           description: Mois de conservation de la position GPS (ADR-035). Si absent, la valeur en vigueur est conservée.
+        quoteExpiryReminderDays:
+          type: integer
+          minimum: 0
+          maximum: 30
+          description: Rappel au client N jours avant l’expiration d’un devis (ADR-053) ; absent, valeur en vigueur gardée ; 0 = aucun rappel.
+        maxInterventionPhotos:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Photos au plus par type (avant, après) et par passage (ADR-053) ; absent, valeur en vigueur gardée.
+        visitDurationMinutes:
+          type: integer
+          minimum: 15
+          maximum: 480
+          description: Durée d’une visite technique dans l’agenda de l’agent, pour les conflits (ADR-053) ; absent, valeur en vigueur gardée.
     RegisterCleaningAgentRequest:
       type: object
       additionalProperties: false
@@ -15500,6 +16177,151 @@ components:
           type: string
           minLength: 0
           maxLength: 200
+        force:
+          type: boolean
+          description: |
+            ADR-053 : la période chevauche des passages ou des visites déjà planifiés. Sans `force`, refus
+            `CLEANING_UNAVAILABILITY_CONFLICT` (409, `details.assignments`) ; avec `force: true`, enregistrée et la liste
+            est renvoyée dans `overlappingAssignments`.
+    CleaningInterventionPhoto:
+      type: object
+      additionalProperties: false
+      description: Photo d’un passage (ADR-053) ; fichier du service file rattaché au passage.
+      required:
+        - fileId
+        - kind
+        - fileName
+        - contentType
+        - sizeBytes
+        - uploadedAt
+        - downloadUrl
+        - downloadExpiresAt
+      properties:
+        fileId:
+          type: string
+          format: uuid
+        kind:
+          enum:
+            - before
+            - after
+        fileName:
+          type: string
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        uploadedAt:
+          type: string
+          format: date-time
+        downloadUrl:
+          type:
+            - string
+            - 'null'
+          description: Adresse de lecture de courte durée (secret, à ne jamais journaliser ni conserver).
+        downloadExpiresAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    CleaningInterventionPhotoList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningInterventionPhoto'
+    CleaningAgentAssignment:
+      type: object
+      additionalProperties: false
+      description: Passage ou visite technique planifié d’un agent (ADR-053).
+      required:
+        - kind
+        - id
+        - missionId
+        - requestId
+        - start
+        - end
+      properties:
+        kind:
+          enum:
+            - intervention
+            - visit
+        id:
+          type: string
+          format: uuid
+        missionId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        requestId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+    AddCleaningInterventionPhotoRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - fileId
+        - kind
+      properties:
+        fileId:
+          type: string
+          format: uuid
+        kind:
+          enum:
+            - before
+            - after
+    RescheduleCleaningInterventionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - scheduledStart
+        - reason
+      properties:
+        scheduledStart:
+          type: string
+          format: date-time
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+          description: Absente, durée inchangée.
+        agentIds:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+        teamId:
+          type: string
+          format: uuid
+          description: Équipe active ; sans `agentIds` ni `teamId`, les agents du passage sont gardés.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+    UnscheduleCleaningInterventionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
     CleaningTeamRequest:
       type: object
       additionalProperties: false

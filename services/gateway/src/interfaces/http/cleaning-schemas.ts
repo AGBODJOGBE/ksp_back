@@ -368,6 +368,10 @@ export const cleaningBodies = {
     individualPaymentGraceHours: int(1, 720).optional(),
     // Conservation de la position (ADR-035) : absente, valeur en vigueur gardée.
     locationRetentionMonths: int(1, 120).optional(),
+    // Compléments (ADR-053) : absents, valeurs en vigueur gardées ; un rappel à 0 est désactivé.
+    quoteExpiryReminderDays: int(0, 30).optional(),
+    maxInterventionPhotos: int(1, 50).optional(),
+    visitDurationMinutes: int(15, 480).optional(),
   }),
   saveCleaningZone: z.strictObject({
     commune: text(100),
@@ -379,9 +383,21 @@ export const cleaningBodies = {
     start: dateTime,
     end: dateTime,
     reason: text(200, 0).optional(),
+    // ADR-053 : enregistrée malgré des passages ou visites déjà planifiés qui la chevauchent.
+    force: z.boolean().optional(),
   }),
   createCleaningTeam: team,
   updateCleaningTeam: team,
+  // Compléments du Nettoyage (ADR-053).
+  addCleaningInterventionPhoto: z.strictObject({ fileId: uuid, kind: z.enum(['before', 'after']) }),
+  rescheduleCleaningIntervention: z.strictObject({
+    scheduledStart: dateTime,
+    durationMinutes: int(1, 1440).optional(),
+    agentIds: z.array(uuid).max(50).optional(),
+    teamId: uuid.optional(),
+    reason: text(500),
+  }),
+  unscheduleCleaningIntervention: requiredReason,
 };
 
 /** Paramètres de chemin et de requête (pagination par curseur, filtres d'état). */

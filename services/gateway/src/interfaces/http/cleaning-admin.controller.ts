@@ -351,4 +351,76 @@ export class CleaningAdminHttpController {
     const teamId = idFrom(id);
     return this.cleaning.updateTeam(teamId, parseBody(requestBodies.updateCleaningTeam, body));
   }
+
+  // --- Compléments du Nettoyage (ADR-053) ---------------------------------------------------------
+
+  @Route('addCleaningInterventionPhoto')
+  addInterventionPhoto(@Param('id') id: unknown, @Body() body: unknown) {
+    const interventionId = idFrom(id);
+    return this.cleaning.addInterventionPhoto(
+      interventionId,
+      parseBody(requestBodies.addCleaningInterventionPhoto, body),
+    );
+  }
+
+  @Route('listCleaningInterventionPhotos')
+  listInterventionPhotos(@Param('id') id: unknown) {
+    return this.cleaning.listInterventionPhotos(idFrom(id));
+  }
+
+  @Route('removeCleaningInterventionPhoto')
+  removeInterventionPhoto(@Param('id') id: unknown, @Param('file') fileId: unknown) {
+    const interventionId = idFrom(id);
+    return this.cleaning.removeInterventionPhoto(
+      interventionId,
+      parseParam(cleaningParams.id, fileId, 'fileId'),
+    );
+  }
+
+  @Route('rescheduleCleaningIntervention')
+  rescheduleIntervention(@Param('id') id: unknown, @Body() body: unknown) {
+    const interventionId = idFrom(id);
+    return this.cleaning.rescheduleIntervention(
+      interventionId,
+      parseBody(requestBodies.rescheduleCleaningIntervention, body),
+    );
+  }
+
+  @Route('unscheduleCleaningIntervention')
+  unscheduleIntervention(@Param('id') id: unknown, @Body() body: unknown) {
+    const interventionId = idFrom(id);
+    return this.cleaning.unscheduleIntervention(
+      interventionId,
+      parseBody(requestBodies.unscheduleCleaningIntervention, body).reason,
+    );
+  }
+
+  @Route('deactivateCleaningAgent')
+  deactivateAgent(@Param('id') id: unknown) {
+    return this.cleaning.deactivateAgent(idFrom(id));
+  }
+
+  @Route('reactivateCleaningAgent')
+  reactivateAgent(@Param('id') id: unknown) {
+    return this.cleaning.reactivateAgent(idFrom(id));
+  }
+
+  @Route('removeCleaningUnavailability')
+  removeUnavailability(@Param('id') id: unknown, @Param('unavailability') unavailabilityId: unknown) {
+    const agentId = idFrom(id);
+    return this.cleaning.removeUnavailability(
+      agentId,
+      parseParam(cleaningParams.id, unavailabilityId, 'unavailabilityId'),
+    );
+  }
+
+  @Route('deactivateCleaningTeam')
+  deactivateTeam(@Param('id') id: unknown) {
+    return this.cleaning.deactivateTeam(idFrom(id));
+  }
+
+  @Route('reactivateCleaningTeam')
+  reactivateTeam(@Param('id') id: unknown) {
+    return this.cleaning.reactivateTeam(idFrom(id));
+  }
 }

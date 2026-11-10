@@ -237,6 +237,7 @@ export const protoMission: cleaningV1.Mission = {
       incidentNote: '',
       beforePhotoFileIds: [],
       afterPhotoFileIds: [],
+      changeReason: '',
       startedAt: '',
       completedAt: '',
       cancellationCause: '',
@@ -374,6 +375,9 @@ const settings: cleaningV1.Settings = {
   individualSuspensionUnpaidInterventions: 1,
   individualPaymentGraceHours: 24,
   locationRetentionMonths: 12,
+  quoteExpiryReminderDays: 2,
+  maxInterventionPhotos: 10,
+  visitDurationMinutes: 60,
   updatedBy: '',
   updatedAt: '',
   updatedByName: '',
@@ -399,6 +403,27 @@ const team: cleaningV1.Team = {
   id: IDS.team,
   name: 'Équipe Calavi',
   members: [{ agentId: IDS.agent, displayName: 'Awa B.' }],
+  active: true,
+};
+/** Photo d'un passage (ADR-053). */
+export const protoPhoto: cleaningV1.InterventionPhoto = {
+  fileId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6101',
+  kind: 'before',
+  fileName: 'salon-avant.jpg',
+  contentType: 'image/jpeg',
+  sizeBytes: 482113,
+  uploadedAt: '2026-11-10T08:05:00.000Z',
+  downloadUrl: 'https://files.ksp.bj/ksp-files/cleaning_intervention_photo/x?X-Amz-Signature=9a0e',
+  downloadExpiresAt: '2026-11-10T08:10:00.000Z',
+};
+/** Passage chevauché par une indisponibilité (ADR-053). */
+export const protoAssignment: cleaningV1.AgentAssignment = {
+  kind: 'intervention',
+  id: IDS.intervention,
+  missionId: IDS.mission,
+  requestId: '',
+  start: SLOT.start,
+  end: SLOT.end,
 };
 
 type Method =
@@ -693,10 +718,22 @@ const DEFAULTS: Record<Method, () => unknown> = {
   deactivateZone: () => ({ zone: { ...zone, active: false } }),
   listAgents: () => ({ agents: [agent] }),
   registerAgent: () => ({ agent }),
-  declareUnavailability: () => ({ agent }),
+  declareUnavailability: () => ({ agent, overlappingAssignments: [] }),
   listTeams: () => ({ teams: [team] }),
   createTeam: () => ({ team }),
   updateTeam: () => ({ team }),
+  // Compléments du Nettoyage (ADR-053).
+  listMyInterventionPhotos: () => ({ photos: [protoPhoto] }),
+  addInterventionPhoto: () => ({ mission: protoMission }),
+  removeInterventionPhoto: () => ({ mission: protoMission }),
+  listInterventionPhotos: () => ({ photos: [protoPhoto] }),
+  rescheduleIntervention: () => ({ mission: protoMission }),
+  unscheduleIntervention: () => ({ mission: protoMission }),
+  deactivateAgent: () => ({ agent: { ...agent, active: false } }),
+  reactivateAgent: () => ({ agent }),
+  removeUnavailability: () => ({ agent }),
+  deactivateTeam: () => ({ team: { ...team, active: false } }),
+  reactivateTeam: () => ({ team }),
 };
 
 export class CleaningStub {
@@ -781,7 +818,13 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
         cleaningV1.QuoteServiceControllerMethods,
       ),
       stubController(
-        pick(['listMyMissions', 'getMission', 'cancelMission', 'payMissionFromWallet']),
+        pick([
+          'listMyMissions',
+          'getMission',
+          'cancelMission',
+          'payMissionFromWallet',
+          'listMyInterventionPhotos',
+        ]),
         cleaningV1.MissionServiceControllerMethods,
       ),
       stubController(
@@ -808,6 +851,7 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
               'getMission',
               'cancelMission',
               'payMissionFromWallet',
+              'listMyInterventionPhotos',
             ].includes(m),
         ),
         cleaningV1.CleaningAdminServiceControllerMethods,

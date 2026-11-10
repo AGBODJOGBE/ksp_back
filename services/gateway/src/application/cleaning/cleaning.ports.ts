@@ -209,6 +209,19 @@ export interface SettingsInput {
   individualPaymentGraceHours?: number | undefined;
   /** Conservation de la position (ADR-035) : absente, valeur en vigueur gardée. */
   locationRetentionMonths?: number | undefined;
+  /** Compléments (ADR-053) : absents, valeurs en vigueur gardées ; un rappel à 0 est désactivé. */
+  quoteExpiryReminderDays?: number | undefined;
+  maxInterventionPhotos?: number | undefined;
+  visitDurationMinutes?: number | undefined;
+}
+
+/** Report d'un passage (ADR-053) : sans agents ni équipe, ceux du passage sont gardés. */
+export interface RescheduleInput {
+  scheduledStart: string;
+  durationMinutes?: number | undefined;
+  agentIds?: string[] | undefined;
+  teamId?: string | undefined;
+  reason: string;
 }
 
 /** Filtres facultatifs et cumulables de la liste des demandes du back-office. */
@@ -345,11 +358,24 @@ export interface CleaningApi {
   deactivateZone(code: string, confirm?: boolean | undefined): Promise<Json>;
   listAgents(): Promise<Json>;
   registerAgent(input: { agentId: string; displayName: string }): Promise<Json>;
+  /** `force` (ADR-053) : enregistrée malgré des passages ou visites qui la chevauchent. */
   declareUnavailability(
     agentId: string,
-    input: { start: string; end: string; reason?: string | undefined },
+    input: { start: string; end: string; reason?: string | undefined; force?: boolean | undefined },
   ): Promise<Json>;
   listTeams(): Promise<Json>;
   createTeam(input: { name: string; memberIds: string[] }): Promise<Json>;
   updateTeam(id: string, input: { name: string; memberIds: string[] }): Promise<Json>;
+  // Compléments du Nettoyage (ADR-053).
+  listMyInterventionPhotos(interventionId: string): Promise<Json>;
+  addInterventionPhoto(interventionId: string, input: { fileId: string; kind: string }): Promise<Json>;
+  removeInterventionPhoto(interventionId: string, fileId: string): Promise<Json>;
+  listInterventionPhotos(interventionId: string): Promise<Json>;
+  rescheduleIntervention(interventionId: string, input: RescheduleInput): Promise<Json>;
+  unscheduleIntervention(interventionId: string, reason: string): Promise<Json>;
+  deactivateAgent(agentId: string): Promise<Json>;
+  reactivateAgent(agentId: string): Promise<Json>;
+  removeUnavailability(agentId: string, unavailabilityId: string): Promise<Json>;
+  deactivateTeam(teamId: string): Promise<Json>;
+  reactivateTeam(teamId: string): Promise<Json>;
 }

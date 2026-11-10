@@ -318,6 +318,7 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
       startedAt: orNull(i.startedAt),
       completedAt: orNull(i.completedAt),
       cancellationCause: orNull(i.cancellationCause),
+      changeReason: orNull(i.changeReason),
     })),
     payment: {
       plan: {
@@ -417,6 +418,10 @@ export function presentSettings(value: cleaningV1.Settings | undefined) {
     individualSuspensionUnpaidInterventions: value.individualSuspensionUnpaidInterventions,
     individualPaymentGraceHours: value.individualPaymentGraceHours,
     locationRetentionMonths: value.locationRetentionMonths || 12,
+    // Compléments (ADR-053) ; valeurs par défaut si cleaning ne les renvoie pas encore.
+    quoteExpiryReminderDays: value.quoteExpiryReminderDays ?? 2,
+    maxInterventionPhotos: value.maxInterventionPhotos || 10,
+    visitDurationMinutes: value.visitDurationMinutes || 60,
     updatedBy: orNull(value.updatedBy),
     updatedByName: orNull(value.updatedByName),
     updatedAt: orNull(value.updatedAt),
@@ -444,6 +449,33 @@ export function presentTeam(value: cleaningV1.Team | undefined) {
     id: value.id,
     name: value.name,
     members: value.members.map((m) => ({ agentId: m.agentId, displayName: m.displayName })),
+    active: value.active,
+  };
+}
+
+/** Photo d'un passage (ADR-053), avec son adresse de lecture de courte durée. */
+export function presentPhoto(value: cleaningV1.InterventionPhoto) {
+  return {
+    fileId: value.fileId,
+    kind: value.kind,
+    fileName: value.fileName,
+    contentType: value.contentType,
+    sizeBytes: Number(value.sizeBytes),
+    uploadedAt: value.uploadedAt,
+    downloadUrl: orNull(value.downloadUrl),
+    downloadExpiresAt: orNull(value.downloadExpiresAt),
+  };
+}
+
+/** Passage ou visite planifié d'un agent (ADR-053). */
+export function presentAssignment(value: cleaningV1.AgentAssignment) {
+  return {
+    kind: value.kind,
+    id: value.id,
+    missionId: orNull(value.missionId),
+    requestId: orNull(value.requestId),
+    start: value.start,
+    end: value.end,
   };
 }
 
