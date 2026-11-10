@@ -6,9 +6,10 @@ import {
   type Payout,
   type PayoutTransition,
   recordProviderPayout,
+  rejectByProvider,
 } from '../domain/payout';
 import { type OutboxMessage, type PaymentDeps } from './ports';
-import { PaymentErrors } from './shared/errors';
+import { PaymentErrors, rejectedStatus } from './shared/errors';
 
 const MAX_ATTEMPTS = 3;
 
@@ -62,14 +63,19 @@ export class PayoutSync {
   constructor(private readonly deps: PaymentDeps) {}
 
   /**
-   * Reversement `requested` d'un prestataire automatique : créé chez lui s'il ne l'est pas, relu
-   * (un lancement dont la réponse s'est perdue a pu aboutir), puis lancé s'il y attend encore. Une
-   * panne laisse le reversement en l'état : le rapprochement planifié reprend. Mode manuel : rien.
+   * Reversement `requested` d'un prestataire automatique : créé chez lui s'il ne l'est pas, puis
+   * lancé **une seule fois** (ADR-048) : il est noté `processing` avant l'appel de lancement, et un
+   * reversement soumis n'est plus jamais relancé (seulement relu). Une panne à la création le laisse
+   * `requested` (le rapprochement reprend ; une création perdue ne fait partir aucun argent). Une
+   * panne au lancement le laisse `processing`, avec une alerte : la relecture tranche. Un refus
+   * définitif du prestataire (HTTP 4xx) le met en échec `provider_rejected`, avec une alerte, sans
+   * nouvel essai. Mode manuel : rien.
    */
   async advance(payout: Payout): Promise<Payout> {
     const provider = this.deps.payoutProvider;
     if (!provider.automatic || payout.status !== 'requested') return payout;
     let current = payout;
+    let stage: 'create' | 'start' = 'create';
     try {
       if (!current.providerPayoutId) {
         const created = await provider.createPayout({
@@ -82,17 +88,43 @@ export class PayoutSync {
           recordProviderPayout(current, { ...created, now: this.deps.clock.now() }),
           null,
         );
-      } else {
-        current = await this.refresh(current);
-        if (current.status !== 'requested') return current;
+        if (current.status !== 'requested' || !current.providerPayoutId) return current;
       }
-      await provider.startPayout(current.providerPayoutId!);
+      // Soumission notée d'abord : quoi qu'il arrive ensuite, jamais un second lancement.
       const submitted = markSubmitted(current, this.deps.clock.now());
-      return submitted ? await this.store(submitted.payout, submitted) : current;
+      if (!submitted) return current;
+      const stored = await this.store(submitted.payout, submitted);
+      if (stored.status !== 'processing' || stored.version !== current.version + 1) return stored;
+      current = stored;
+      stage = 'start';
+      await provider.startPayout(current.providerPayoutId!);
+      return current;
     } catch (error) {
-      if (isOutage(error)) return current;
-      throw error;
+      const httpStatus = rejectedStatus(error);
+      if (httpStatus !== null) return this.reject(current, stage, httpStatus);
+      if (!isOutage(error)) throw error;
+      if (stage === 'start') {
+        this.deps.alerts.payoutStartUncertain({
+          payoutId: current.id,
+          providerPayoutId: current.providerPayoutId!,
+        });
+      }
+      return current;
     }
+  }
+
+  /** Refus définitif du prestataire : échec `provider_rejected` publié, alerte. */
+  private async reject(payout: Payout, stage: 'create' | 'start', httpStatus: number): Promise<Payout> {
+    const transition = rejectByProvider(payout, { httpStatus, now: this.deps.clock.now() });
+    if (!transition) return payout;
+    const saved = await this.store(transition.payout, transition);
+    this.deps.alerts.payoutRejected({
+      payoutId: payout.id,
+      providerPayoutId: payout.providerPayoutId,
+      stage,
+      httpStatus,
+    });
+    return saved;
   }
 
   /**

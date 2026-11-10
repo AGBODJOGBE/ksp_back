@@ -69,4 +69,25 @@ export class LoggerPaymentAlerts implements PaymentAlerts {
         'à vérifier par la finance',
     );
   }
+
+  payoutRejected(input: {
+    payoutId: string;
+    providerPayoutId: string | null;
+    stage: 'create' | 'start';
+    httpStatus: number;
+  }): void {
+    this.logger.error(
+      `ALERTE reversement : ${input.payoutId} refusé par le prestataire à la ` +
+        `${input.stage === 'create' ? 'création' : 'mise en paiement'} (HTTP ${input.httpStatus}` +
+        `${input.providerPayoutId ? `, prestataire ${input.providerPayoutId}` : ''}) ; échec définitif ` +
+        'provider_rejected, montant rendu au titulaire, à vérifier par la finance',
+    );
+  }
+
+  payoutStartUncertain(input: { payoutId: string; providerPayoutId: string }): void {
+    this.logger.error(
+      `ALERTE reversement : lancement de ${input.payoutId} (prestataire ${input.providerPayoutId}) sans ` +
+        'réponse ; jamais relancé automatiquement, la relecture chez le prestataire tranchera',
+    );
+  }
 }

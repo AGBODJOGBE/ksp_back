@@ -35,8 +35,8 @@
     "amount": { "$ref": "#/$defs/money" },
     "provider": { "enum": ["fedapay", "manual"] },
     "failureCode": {
-      "enum": ["provider_failed", "rejected_by_finance"],
-      "description": "provider_failed : refusé par le prestataire ; rejected_by_finance : mis en échec au back-office"
+      "enum": ["provider_failed", "provider_rejected", "rejected_by_finance"],
+      "description": "provider_failed : échec relu chez le prestataire ; provider_rejected : refus définitif du prestataire (HTTP 4xx) à la création ou au lancement, jamais réessayé (ADR-048) ; rejected_by_finance : mis en échec au back-office"
     },
     "failedAt": { "type": "string", "format": "date-time" }
   }

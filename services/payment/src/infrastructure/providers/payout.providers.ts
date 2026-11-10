@@ -36,6 +36,11 @@ export interface FedapayPayoutOptions {
 
 type Json = Record<string, unknown>;
 
+/** Réponse 4xx du prestataire, hors délai dépassé (408) et limite d'appels (429). */
+export function isDefinitiveRejection(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
 /**
  * Reversements FedaPay, écrits d'après sa documentation publique (à valider avec le compte de test) :
  * création sans envoi (POST /payouts), lancement (PUT /payouts/start), relecture (GET /payouts/{id}),
@@ -121,6 +126,8 @@ export class FedapayPayoutProvider {
     }
     if (!response.ok) {
       this.logger.warn(`${method} ${path.replace(/\/\d+$/, '/:id')} : HTTP ${response.status}`);
+      // Refus définitif (ADR-048) : jamais réessayé. Délai (408) et limite (429) : passagers.
+      if (isDefinitiveRejection(response.status)) throw PaymentErrors.providerRejected(response.status);
       throw PaymentErrors.providerUnavailable();
     }
     try {

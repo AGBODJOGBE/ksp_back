@@ -175,15 +175,57 @@ describe('reversements (cas d’usage, ADR-041)', () => {
       expect(provider.started).toEqual(['9001']);
     });
 
-    it('réponse du lancement perdue : relu avant tout nouveau lancement (jamais deux envois)', async () => {
+    it('réponse du lancement perdue : soumis, jamais relancé, alerte (ADR-048)', async () => {
       provider.loseStartResponse = true;
       const { payout } = await requestPayout();
-      expect(payout.status).toBe('requested');
+      expect(payout.status).toBe('processing');
+      expect((deps.alerts as RecordingAlerts).payoutStartsUncertain).toEqual([
+        { payoutId: payout.id, providerPayoutId: '9001' },
+      ]);
       provider.loseStartResponse = false;
+      // Le prestataire n'a pas encore pris le lancement en compte : relu, jamais relancé.
+      provider.set('9001', { status: 'pending' });
+      clock().advance(60_000);
+      await useCases.reconcilePayouts.execute();
+      clock().advance(60_000);
       await useCases.reconcilePayouts.execute();
       expect(provider.started).toEqual(['9001']);
       expect(provider.created).toHaveLength(1);
       expect(payouts().rows.get(payout.id)!.status).toBe('processing');
+    });
+
+    it('création refusée (4xx) : échec définitif provider_rejected, alerte, jamais relancé', async () => {
+      provider.rejectCreate = true;
+      const { payout } = await requestPayout();
+      expect(payout).toMatchObject({ status: 'failed', failureCode: 'provider_rejected' });
+      expect(payouts().outbox).toEqual([
+        expect.objectContaining({
+          type: 'payment.payout.failed',
+          payload: expect.objectContaining({ failureCode: 'provider_rejected' }),
+        }),
+      ]);
+      expect((deps.alerts as RecordingAlerts).payoutRejections).toEqual([
+        expect.objectContaining({ payoutId: payout.id, stage: 'create', httpStatus: 422 }),
+      ]);
+      provider.rejectCreate = false;
+      clock().advance(60_000);
+      expect(await useCases.reconcilePayouts.execute()).toMatchObject({ examined: 0 });
+      expect(provider.created).toHaveLength(0);
+      // Rejeu de la même demande : le même échec, rien de nouveau chez le prestataire.
+      const again = await requestPayout();
+      expect(again).toMatchObject({ created: false, payout: { status: 'failed' } });
+      expect(provider.created).toHaveLength(0);
+    });
+
+    it('lancement refusé (4xx) : échec définitif provider_rejected, jamais relancé', async () => {
+      provider.rejectStart = true;
+      const { payout } = await requestPayout();
+      expect(payout).toMatchObject({ status: 'failed', failureCode: 'provider_rejected' });
+      expect(payouts().outbox.map((e) => e.type)).toEqual(['payment.payout.failed']);
+      provider.rejectStart = false;
+      clock().advance(60_000);
+      await useCases.reconcilePayouts.execute();
+      expect(provider.started).toEqual([]);
     });
 
     it('refusé par le prestataire : payment.payout.failed ; notification payout.* traitée', async () => {

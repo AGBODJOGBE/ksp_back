@@ -365,6 +365,21 @@ export interface PaymentAlerts {
     reportedAmount: number;
     currency: string;
   }): void;
+  /**
+   * Reversement refusé définitivement par le prestataire (HTTP 4xx) à sa création ou à son
+   * lancement (ADR-048) : il passe en échec `provider_rejected`, la finance vérifie la cause.
+   */
+  payoutRejected(input: {
+    payoutId: string;
+    providerPayoutId: string | null;
+    stage: 'create' | 'start';
+    httpStatus: number;
+  }): void;
+  /**
+   * Lancement d'un reversement sans réponse (panne, délai) : il est peut-être parti. Il reste
+   * `processing` et n'est jamais relancé ; la relecture chez le prestataire tranche (ADR-048).
+   */
+  payoutStartUncertain(input: { payoutId: string; providerPayoutId: string }): void;
 }
 
 /**

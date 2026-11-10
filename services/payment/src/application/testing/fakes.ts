@@ -319,6 +319,14 @@ export class RecordingAlerts implements PaymentAlerts {
     this.underReview.push(input);
   }
   readonly payoutMismatches: Parameters<PaymentAlerts['payoutMismatch']>[0][] = [];
+  readonly payoutRejections: Parameters<PaymentAlerts['payoutRejected']>[0][] = [];
+  readonly payoutStartsUncertain: Parameters<PaymentAlerts['payoutStartUncertain']>[0][] = [];
+  payoutRejected(input: Parameters<PaymentAlerts['payoutRejected']>[0]): void {
+    this.payoutRejections.push(input);
+  }
+  payoutStartUncertain(input: Parameters<PaymentAlerts['payoutStartUncertain']>[0]): void {
+    this.payoutStartsUncertain.push(input);
+  }
   payoutMismatch(input: Parameters<PaymentAlerts['payoutMismatch']>[0]): void {
     this.payoutMismatches.push(input);
   }
@@ -436,9 +444,13 @@ export class FakePayoutProvider {
   down = false;
   /** Lancement qui atteint le prestataire mais dont la réponse se perd. */
   loseStartResponse = false;
+  /** Refus définitif (HTTP 4xx) à la création ou au lancement. */
+  rejectCreate = false;
+  rejectStart = false;
   private n = 0;
   async createPayout(request: { payoutId: string; amount: number; beneficiary: PayoutBeneficiary }) {
     if (this.down) throw PaymentErrors.providerUnavailable();
+    if (this.rejectCreate) throw PaymentErrors.providerRejected(422);
     this.n += 1;
     const providerPayoutId = String(9000 + this.n);
     this.created.push({ payoutId: request.payoutId, beneficiary: request.beneficiary });
@@ -453,6 +465,7 @@ export class FakePayoutProvider {
   }
   async startPayout(providerPayoutId: string) {
     if (this.down) throw PaymentErrors.providerUnavailable();
+    if (this.rejectStart) throw PaymentErrors.providerRejected(400);
     this.started.push(providerPayoutId);
     this.set(providerPayoutId, { status: 'processing' });
     if (this.loseStartResponse) throw PaymentErrors.providerUnavailable();
