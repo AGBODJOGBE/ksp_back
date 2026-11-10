@@ -205,6 +205,73 @@ export interface CleaningEventPayloads {
     reason: 'mission_cancelled';
     refundedAt: string;
   };
+  /**
+   * Devis expirés sans réponse (ADR-053), enregistrés par la tâche planifiée : un événement par client
+   * et par groupe (ou demande seule) traités ensemble.
+   */
+  'cleaning.quote.expired': {
+    customerId: string;
+    organizationId: string | null;
+    groupId?: string;
+    quotes: CleaningQuoteRef[];
+    expiredAt: string;
+  };
+  /** Rappel avant l'expiration des devis (ADR-053), une seule fois par devis. */
+  'cleaning.quote.expiry_reminded': {
+    customerId: string;
+    organizationId: string | null;
+    groupId?: string;
+    quotes: CleaningQuoteRef[];
+    /** Fin de validité la plus proche des devis cités. */
+    validUntil: string;
+    reminderDays: number;
+  };
+  /** Passage planifié reporté par la supervision (ADR-053) ; le motif reste dans cleaning. */
+  'cleaning.intervention.rescheduled': {
+    missionId: string;
+    interventionId: string;
+    customerId: string;
+    previousStart: string;
+    scheduledStart: string;
+    durationMinutes: number;
+    agentIds: string[];
+    /** Agents qui n'interviennent plus sur ce passage. */
+    releasedAgentIds: string[];
+    serviceCode?: string;
+    serviceName?: string;
+    groupId?: string;
+  };
+  /** Passage annulé pour être replanifié (ADR-053) : aucun effet sur l'argent. */
+  'cleaning.intervention.unscheduled': {
+    missionId: string;
+    interventionId: string;
+    customerId: string;
+    previousStart: string;
+    releasedAgentIds: string[];
+    serviceCode?: string;
+    serviceName?: string;
+    groupId?: string;
+  };
+  /** Visite planifiée annulée avec sa demande (ou toutes celles de la visite commune), ADR-053. */
+  'cleaning.visit.cancelled': {
+    /** Visite seule, ou identifiant de la visite commune. */
+    visitId: string;
+    requestIds: string[];
+    customerId: string;
+    agentId: string;
+    scheduledAt: string;
+    outcome: 'rejected' | 'cancelled' | 'declined' | 'expired';
+    cancelledAt: string;
+    groupId?: string;
+    requests?: CleaningGroupRequestRef[];
+  };
+}
+
+/** Devis cité par l'expiration ou son rappel (ADR-053). */
+export interface CleaningQuoteRef extends CleaningGroupRequestRef {
+  quoteId: string;
+  total: CleaningMoney;
+  validUntil: string;
 }
 
 /**

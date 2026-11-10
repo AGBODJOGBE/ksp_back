@@ -291,6 +291,67 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     reason: 'mission_cancelled',
     refundedAt: '2026-11-09T10:00:00Z',
   },
+  'cleaning.quote.expired': {
+    customerId: uuid,
+    organizationId: null,
+    groupId: uuid,
+    quotes: [
+      {
+        requestId: uuid,
+        quoteId: uuid,
+        serviceCode: 'home_cleaning',
+        serviceName: 'Ménage',
+        total: xof(25000),
+        validUntil: '2026-11-10T08:00:00Z',
+      },
+    ],
+    expiredAt: '2026-11-10T08:05:00Z',
+  },
+  'cleaning.quote.expiry_reminded': {
+    customerId: uuid,
+    organizationId: uuid,
+    quotes: [
+      {
+        requestId: uuid,
+        quoteId: uuid,
+        serviceCode: 'home_cleaning',
+        total: xof(25000),
+        validUntil: '2026-11-12T08:00:00Z',
+      },
+    ],
+    validUntil: '2026-11-12T08:00:00Z',
+    reminderDays: 2,
+  },
+  'cleaning.intervention.rescheduled': {
+    missionId: uuid,
+    interventionId: uuid,
+    customerId: uuid,
+    previousStart: '2026-11-12T08:00:00Z',
+    scheduledStart: '2026-11-14T08:00:00Z',
+    durationMinutes: 120,
+    agentIds: [uuid],
+    releasedAgentIds: [],
+    serviceCode: 'home_cleaning',
+    serviceName: 'Ménage',
+  },
+  'cleaning.intervention.unscheduled': {
+    missionId: uuid,
+    interventionId: uuid,
+    customerId: uuid,
+    previousStart: '2026-11-12T08:00:00Z',
+    releasedAgentIds: [uuid],
+    groupId: uuid,
+  },
+  'cleaning.visit.cancelled': {
+    visitId: uuid,
+    requestIds: [uuid],
+    customerId: uuid,
+    agentId: uuid,
+    scheduledAt: '2026-11-12T08:00:00Z',
+    outcome: 'rejected',
+    cancelledAt: '2026-11-10T08:00:00Z',
+    requests: [{ requestId: uuid, serviceCode: 'home_cleaning', serviceName: 'Ménage' }],
+  },
 };
 
 describe('Contrats des événements cleaning', () => {

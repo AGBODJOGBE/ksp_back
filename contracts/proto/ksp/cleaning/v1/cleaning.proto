@@ -78,6 +78,20 @@ import "ksp/common/v1/money.proto";
 //   CLEANING_MEASUREMENTS_LOCKED        FAILED_PRECONDITION mesures constatées refusées : devis déjà envoyé ou demande
 //                                                           close (details.status ; ADR-037)
 //   CLEANING_CALLER_FORBIDDEN           PERMISSION_DENIED   HasPendingObligations appelé par un autre service qu'identity
+//   CLEANING_INTERVENTION_CLOSED        FAILED_PRECONDITION photos d'un passage terminé ou annulé (ADR-053)
+//   CLEANING_PHOTO_LIMIT_REACHED        FAILED_PRECONDITION nombre maximal de photos atteint pour ce type
+//                                                           (details.kind, details.maximum ; ADR-053)
+//   CLEANING_AGENT_HAS_ASSIGNMENTS      ALREADY_EXISTS      désactivation d'un agent qui a des passages ou des visites
+//                                                           à venir (details.assignments ; ADR-053)
+//   CLEANING_UNAVAILABILITY_CONFLICT    ALREADY_EXISTS      indisponibilité qui chevauche des passages ou des visites
+//                                                           déjà planifiés, sans force = true (details.assignments ;
+//                                                           ADR-053)
+//   CLEANING_UNAVAILABILITY_NOT_FOUND   NOT_FOUND           indisponibilité inconnue pour cet agent (ADR-053)
+//   CLEANING_TEAM_INACTIVE              FAILED_PRECONDITION équipe désactivée : plus proposée à la planification
+//                                                           (ADR-053)
+//   FILE_*                              (voir file.proto)   photos des passages : erreurs du service file transmises
+//                                                           telles quelles (FILE_NOT_FOUND, FILE_OWNER_MISMATCH,
+//                                                           FILE_NOT_AVAILABLE, FILE_ALREADY_ATTACHED…)
 //   AUTH_REQUIRED                       UNAUTHENTICATED
 //   AUTH_FORBIDDEN                      PERMISSION_DENIED   rôle du back-office manquant
 //   AUTH_MFA_REQUIRED                   PERMISSION_DENIED   double authentification absente
@@ -153,6 +167,9 @@ service MissionService {
   // qu'un paiement enregistré (reste dû, statut, levée d'une suspension). Idempotent par clé.
   // Solde insuffisant : WALLET_INSUFFICIENT_FUNDS (details.missing : montant manquant).
   rpc PayMissionFromWallet(PayMissionFromWalletRequest) returns (PayMissionFromWalletResponse);
+  // Photos avant et après d'un passage d'une mission du client (ADR-053), avec des adresses de
+  // lecture de courte durée. Passage d'une autre mission : CLEANING_INTERVENTION_NOT_FOUND.
+  rpc ListMyInterventionPhotos(ListMyInterventionPhotosRequest) returns (ListMyInterventionPhotosResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +270,31 @@ service CleaningAdminService {
   rpc ListTeams(ListTeamsRequest) returns (ListTeamsResponse);
   rpc CreateTeam(CreateTeamRequest) returns (CreateTeamResponse);
   rpc UpdateTeam(UpdateTeamRequest) returns (UpdateTeamResponse);
+
+  // Compléments du Nettoyage (ADR-053).
+  // Photos avant et après d'un passage non clos : agent du passage, ou supervision. Le fichier est
+  // d'abord envoyé au service file (finalité cleaning_intervention_photo) par le compte qui le
+  // rattache ensuite ici. Ajout idempotent pour un fichier déjà rattaché au passage.
+  rpc AddInterventionPhoto(AddInterventionPhotoRequest) returns (AddInterventionPhotoResponse);
+  // Retrait idempotent (fichier supprimé chez file) ; passage non clos seulement.
+  rpc RemoveInterventionPhoto(RemoveInterventionPhotoRequest) returns (RemoveInterventionPhotoResponse);
+  // Photos d'un passage, avec des adresses de lecture de courte durée (agent du passage, supervision).
+  rpc ListInterventionPhotos(ListInterventionPhotosRequest) returns (ListInterventionPhotosResponse);
+  // Reporter un passage planifié (supervision) : nouveau début dans le futur, mêmes contrôles de
+  // conflit que la planification (CLEANING_TEAM_UNAVAILABLE), agents gardés ou changés, motif.
+  rpc RescheduleIntervention(RescheduleInterventionRequest) returns (RescheduleInterventionResponse);
+  // Annuler un passage planifié pour le replanifier (supervision, motif) : le passage est annulé
+  // (cause "unscheduled") et la mission a de nouveau un passage à planifier ; le nombre de passages
+  // prévus et l'argent ne changent pas.
+  rpc UnscheduleIntervention(UnscheduleInterventionRequest) returns (UnscheduleInterventionResponse);
+  // Désactiver un agent (cleaning_admin, super_admin) : refus s'il a des passages ou des visites à
+  // venir (CLEANING_AGENT_HAS_ASSIGNMENTS, avec la liste) ; les reporter ou les réaffecter d'abord.
+  rpc DeactivateAgent(DeactivateAgentRequest) returns (DeactivateAgentResponse);
+  rpc ReactivateAgent(ReactivateAgentRequest) returns (ReactivateAgentResponse);
+  rpc RemoveUnavailability(RemoveUnavailabilityRequest) returns (RemoveUnavailabilityResponse);
+  // Désactiver une équipe (jamais de suppression) : elle n'est plus proposée à la planification.
+  rpc DeactivateTeam(DeactivateTeamRequest) returns (DeactivateTeamResponse);
+  rpc ReactivateTeam(ReactivateTeamRequest) returns (ReactivateTeamResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -567,7 +609,10 @@ message Intervention {
   string started_at = 10;
   string completed_at = 11;
   // Passage annulé : "suspension" (reprogrammable au déblocage) ou "manual" ; vide sinon.
+  // "unscheduled" (ADR-053) : annulé pour être replanifié, la mission a de nouveau un passage à planifier.
   string cancellation_cause = 12;
+  // Motif du dernier report, ou de l'annulation pour replanifier (ADR-053) ; vide sinon.
+  string change_reason = 13;
 }
 
 message Mission {
@@ -1734,6 +1779,17 @@ message Settings {
   // géocodée sont effacés des demandes et missions clôturées depuis plus longtemps (12 par défaut, 1 à
   // 120). À l'écriture, 0 laisse la valeur en vigueur.
   int32 location_retention_months = 14;
+  // Compléments du Nettoyage (ADR-053).
+  // Rappel au client N jours avant l'expiration d'un devis (2 par défaut, 0 à 30 ; 0 : aucun rappel).
+  // À l'écriture, absent laisse la valeur en vigueur (0 désactive le rappel).
+  optional int32 quote_expiry_reminder_days = 15;
+  // Photos au plus par type ("before", "after") et par passage (10 par défaut, 1 à 50). À
+  // l'écriture, 0 laisse la valeur en vigueur.
+  int32 max_intervention_photos = 16;
+  // Durée d'une visite technique dans l'agenda de l'agent, pour les conflits avec ses passages, ses
+  // autres visites et ses indisponibilités (60 minutes par défaut, 15 à 480). À l'écriture, 0 laisse
+  // la valeur en vigueur.
+  int32 visit_duration_minutes = 17;
 }
 
 message GetCatalogRequest {}
@@ -1911,6 +1967,8 @@ message Team {
   string id = 1;
   string name = 2;
   repeated AgentRef members = 3;
+  // Équipe désactivée (ADR-053) : gardée, mais plus proposée à la planification.
+  bool active = 4;
 }
 
 message ListAgentsRequest {}
@@ -1933,10 +1991,16 @@ message DeclareUnavailabilityRequest {
   string start = 2;
   string end = 3;
   string reason = 4;
+  // ADR-053 : période qui chevauche des passages ou des visites déjà planifiés de l'agent. Sans
+  // force, refus CLEANING_UNAVAILABILITY_CONFLICT (details.assignments) ; avec force, elle est
+  // enregistrée et la liste est renvoyée en avertissement (à reporter ou réaffecter).
+  bool force = 5;
 }
 
 message DeclareUnavailabilityResponse {
   Agent agent = 1;
+  // Passages et visites planifiés qui chevauchent l'indisponibilité enregistrée (avec force) ; vide sinon.
+  repeated AgentAssignment overlapping_assignments = 2;
 }
 
 message ListTeamsRequest {}
@@ -2003,4 +2067,145 @@ message PayMissionFromWalletRequest {
 
 message PayMissionFromWalletResponse {
   Mission mission = 1;
+}
+
+// ===========================================================================
+// Compléments du Nettoyage (ADR-053)
+// ===========================================================================
+
+// Photo d'un passage : fichier du service file rattaché à l'objet "cleaning_intervention".
+message InterventionPhoto {
+  string file_id = 1;
+  // "before" ou "after".
+  string kind = 2;
+  string file_name = 3;
+  string content_type = 4;
+  int64 size_bytes = 5;
+  // Envoi du fichier (déclaration chez file).
+  string uploaded_at = 6;
+  // Adresse de lecture de courte durée (secret : jamais journalisée) et son expiration.
+  string download_url = 7;
+  string download_expires_at = 8;
+}
+
+// Passage ou visite technique planifié d'un agent.
+message AgentAssignment {
+  // "intervention" ou "visit".
+  string kind = 1;
+  // Identifiant du passage ou de la visite.
+  string id = 2;
+  // Mission du passage ; vide pour une visite.
+  string mission_id = 3;
+  // Demande de la visite ; vide pour un passage.
+  string request_id = 4;
+  // Début et fin (fin d'une visite : début plus la durée réglée d'une visite).
+  string start = 5;
+  string end = 6;
+}
+
+message ListMyInterventionPhotosRequest {
+  string intervention_id = 1;
+}
+
+message ListMyInterventionPhotosResponse {
+  // Photos "before" puis "after", dans l'ordre d'ajout.
+  repeated InterventionPhoto photos = 1;
+}
+
+message AddInterventionPhotoRequest {
+  string intervention_id = 1;
+  // Fichier disponible chez file, envoyé par le compte connecté.
+  string file_id = 2;
+  // "before" ou "after".
+  string kind = 3;
+}
+
+message AddInterventionPhotoResponse {
+  Mission mission = 1;
+}
+
+message RemoveInterventionPhotoRequest {
+  string intervention_id = 1;
+  string file_id = 2;
+}
+
+message RemoveInterventionPhotoResponse {
+  Mission mission = 1;
+}
+
+message ListInterventionPhotosRequest {
+  string intervention_id = 1;
+}
+
+message ListInterventionPhotosResponse {
+  // Photos "before" puis "after", dans l'ordre d'ajout.
+  repeated InterventionPhoto photos = 1;
+}
+
+message RescheduleInterventionRequest {
+  string intervention_id = 1;
+  // Nouveau début, dans le futur.
+  string scheduled_start = 2;
+  // 0 : durée inchangée.
+  int32 duration_minutes = 3;
+  // Agents et/ou équipe active ; tous deux vides : agents du passage gardés.
+  repeated string agent_ids = 4;
+  string team_id = 5;
+  // Motif (1 à 500 caractères), gardé sur le passage (change_reason) ; jamais dans les messages.
+  string reason = 6;
+}
+
+message RescheduleInterventionResponse {
+  Mission mission = 1;
+}
+
+message UnscheduleInterventionRequest {
+  string intervention_id = 1;
+  // Motif (1 à 500 caractères), gardé sur le passage (change_reason) ; jamais dans les messages.
+  string reason = 2;
+}
+
+message UnscheduleInterventionResponse {
+  Mission mission = 1;
+}
+
+message DeactivateAgentRequest {
+  string agent_id = 1;
+}
+
+message DeactivateAgentResponse {
+  Agent agent = 1;
+}
+
+message ReactivateAgentRequest {
+  string agent_id = 1;
+}
+
+message ReactivateAgentResponse {
+  Agent agent = 1;
+}
+
+message RemoveUnavailabilityRequest {
+  string agent_id = 1;
+  string unavailability_id = 2;
+}
+
+message RemoveUnavailabilityResponse {
+  Agent agent = 1;
+}
+
+message DeactivateTeamRequest {
+  string team_id = 1;
+}
+
+message DeactivateTeamResponse {
+  Team team = 1;
+}
+
+message ReactivateTeamRequest {
+  string team_id = 1;
+}
+
+message ReactivateTeamResponse {
+  Team team = 1;
 }

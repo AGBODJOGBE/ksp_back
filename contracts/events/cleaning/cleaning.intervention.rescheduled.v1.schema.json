@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.intervention.rescheduled.v1.schema.json",
+  "title": "cleaning.intervention.rescheduled",
+  "description": "Un passage planifié est reporté par la supervision (ADR-053) : nouveau début, agents gardés ou changés. Le motif reste dans cleaning, jamais dans l'événement.",
+  "x-event-type": "cleaning.intervention.rescheduled",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "missionId",
+    "interventionId",
+    "customerId",
+    "previousStart",
+    "scheduledStart",
+    "durationMinutes",
+    "agentIds",
+    "releasedAgentIds"
+  ],
+  "properties": {
+    "missionId": { "type": "string", "format": "uuid" },
+    "interventionId": { "type": "string", "format": "uuid" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "previousStart": { "type": "string", "format": "date-time" },
+    "scheduledStart": { "type": "string", "format": "date-time" },
+    "durationMinutes": { "type": "integer", "minimum": 1 },
+    "agentIds": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Agents du passage reporté",
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "releasedAgentIds": {
+      "type": "array",
+      "description": "Agents qui n'interviennent plus sur ce passage",
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "serviceCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Facultatif : prestation de la mission"
+    },
+    "serviceName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Facultatif : nom de la prestation au moment de l'événement"
+    },
+    "groupId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Facultatif : groupe des demandes créées ensemble pour un même lieu"
+    }
+  }
+}

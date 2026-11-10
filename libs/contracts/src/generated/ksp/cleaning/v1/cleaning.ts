@@ -375,8 +375,13 @@ export interface Intervention {
   afterPhotoFileIds: string[];
   startedAt: string;
   completedAt: string;
-  /** Passage annulé : "suspension" (reprogrammable au déblocage) ou "manual" ; vide sinon. */
+  /**
+   * Passage annulé : "suspension" (reprogrammable au déblocage) ou "manual" ; vide sinon.
+   * "unscheduled" (ADR-053) : annulé pour être replanifié, la mission a de nouveau un passage à planifier.
+   */
   cancellationCause: string;
+  /** Motif du dernier report, ou de l'annulation pour replanifier (ADR-053) ; vide sinon. */
+  changeReason: string;
 }
 
 export interface Mission {
@@ -1687,6 +1692,25 @@ export interface Settings {
    * 120). À l'écriture, 0 laisse la valeur en vigueur.
    */
   locationRetentionMonths: number;
+  /**
+   * Compléments du Nettoyage (ADR-053).
+   * Rappel au client N jours avant l'expiration d'un devis (2 par défaut, 0 à 30 ; 0 : aucun rappel).
+   * À l'écriture, absent laisse la valeur en vigueur (0 désactive le rappel).
+   */
+  quoteExpiryReminderDays?:
+    | number
+    | undefined;
+  /**
+   * Photos au plus par type ("before", "after") et par passage (10 par défaut, 1 à 50). À
+   * l'écriture, 0 laisse la valeur en vigueur.
+   */
+  maxInterventionPhotos: number;
+  /**
+   * Durée d'une visite technique dans l'agenda de l'agent, pour les conflits avec ses passages, ses
+   * autres visites et ses indisponibilités (60 minutes par défaut, 15 à 480). À l'écriture, 0 laisse
+   * la valeur en vigueur.
+   */
+  visitDurationMinutes: number;
 }
 
 export interface GetCatalogRequest {
@@ -1887,6 +1911,8 @@ export interface Team {
   id: string;
   name: string;
   members: AgentRef[];
+  /** Équipe désactivée (ADR-053) : gardée, mais plus proposée à la planification. */
+  active: boolean;
 }
 
 export interface ListAgentsRequest {
@@ -1910,10 +1936,20 @@ export interface DeclareUnavailabilityRequest {
   start: string;
   end: string;
   reason: string;
+  /**
+   * ADR-053 : période qui chevauche des passages ou des visites déjà planifiés de l'agent. Sans
+   * force, refus CLEANING_UNAVAILABILITY_CONFLICT (details.assignments) ; avec force, elle est
+   * enregistrée et la liste est renvoyée en avertissement (à reporter ou réaffecter).
+   */
+  force: boolean;
 }
 
 export interface DeclareUnavailabilityResponse {
-  agent?: Agent | undefined;
+  agent?:
+    | Agent
+    | undefined;
+  /** Passages et visites planifiés qui chevauchent l'indisponibilité enregistrée (avec force) ; vide sinon. */
+  overlappingAssignments: AgentAssignment[];
 }
 
 export interface ListTeamsRequest {
@@ -1987,6 +2023,143 @@ export interface PayMissionFromWalletRequest {
 
 export interface PayMissionFromWalletResponse {
   mission?: Mission | undefined;
+}
+
+/** Photo d'un passage : fichier du service file rattaché à l'objet "cleaning_intervention". */
+export interface InterventionPhoto {
+  fileId: string;
+  /** "before" ou "after". */
+  kind: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  /** Envoi du fichier (déclaration chez file). */
+  uploadedAt: string;
+  /** Adresse de lecture de courte durée (secret : jamais journalisée) et son expiration. */
+  downloadUrl: string;
+  downloadExpiresAt: string;
+}
+
+/** Passage ou visite technique planifié d'un agent. */
+export interface AgentAssignment {
+  /** "intervention" ou "visit". */
+  kind: string;
+  /** Identifiant du passage ou de la visite. */
+  id: string;
+  /** Mission du passage ; vide pour une visite. */
+  missionId: string;
+  /** Demande de la visite ; vide pour un passage. */
+  requestId: string;
+  /** Début et fin (fin d'une visite : début plus la durée réglée d'une visite). */
+  start: string;
+  end: string;
+}
+
+export interface ListMyInterventionPhotosRequest {
+  interventionId: string;
+}
+
+export interface ListMyInterventionPhotosResponse {
+  /** Photos "before" puis "after", dans l'ordre d'ajout. */
+  photos: InterventionPhoto[];
+}
+
+export interface AddInterventionPhotoRequest {
+  interventionId: string;
+  /** Fichier disponible chez file, envoyé par le compte connecté. */
+  fileId: string;
+  /** "before" ou "after". */
+  kind: string;
+}
+
+export interface AddInterventionPhotoResponse {
+  mission?: Mission | undefined;
+}
+
+export interface RemoveInterventionPhotoRequest {
+  interventionId: string;
+  fileId: string;
+}
+
+export interface RemoveInterventionPhotoResponse {
+  mission?: Mission | undefined;
+}
+
+export interface ListInterventionPhotosRequest {
+  interventionId: string;
+}
+
+export interface ListInterventionPhotosResponse {
+  /** Photos "before" puis "after", dans l'ordre d'ajout. */
+  photos: InterventionPhoto[];
+}
+
+export interface RescheduleInterventionRequest {
+  interventionId: string;
+  /** Nouveau début, dans le futur. */
+  scheduledStart: string;
+  /** 0 : durée inchangée. */
+  durationMinutes: number;
+  /** Agents et/ou équipe active ; tous deux vides : agents du passage gardés. */
+  agentIds: string[];
+  teamId: string;
+  /** Motif (1 à 500 caractères), gardé sur le passage (change_reason) ; jamais dans les messages. */
+  reason: string;
+}
+
+export interface RescheduleInterventionResponse {
+  mission?: Mission | undefined;
+}
+
+export interface UnscheduleInterventionRequest {
+  interventionId: string;
+  /** Motif (1 à 500 caractères), gardé sur le passage (change_reason) ; jamais dans les messages. */
+  reason: string;
+}
+
+export interface UnscheduleInterventionResponse {
+  mission?: Mission | undefined;
+}
+
+export interface DeactivateAgentRequest {
+  agentId: string;
+}
+
+export interface DeactivateAgentResponse {
+  agent?: Agent | undefined;
+}
+
+export interface ReactivateAgentRequest {
+  agentId: string;
+}
+
+export interface ReactivateAgentResponse {
+  agent?: Agent | undefined;
+}
+
+export interface RemoveUnavailabilityRequest {
+  agentId: string;
+  unavailabilityId: string;
+}
+
+export interface RemoveUnavailabilityResponse {
+  agent?: Agent | undefined;
+}
+
+export interface DeactivateTeamRequest {
+  teamId: string;
+}
+
+export interface DeactivateTeamResponse {
+  team?: Team | undefined;
+}
+
+export interface ReactivateTeamRequest {
+  teamId: string;
+}
+
+export interface ReactivateTeamResponse {
+  team?: Team | undefined;
 }
 
 /**
@@ -2337,6 +2510,16 @@ export interface MissionServiceClient {
     request: PayMissionFromWalletRequest,
     metadata?: Metadata,
   ): Observable<PayMissionFromWalletResponse>;
+
+  /**
+   * Photos avant et après d'un passage d'une mission du client (ADR-053), avec des adresses de
+   * lecture de courte durée. Passage d'une autre mission : CLEANING_INTERVENTION_NOT_FOUND.
+   */
+
+  listMyInterventionPhotos(
+    request: ListMyInterventionPhotosRequest,
+    metadata?: Metadata,
+  ): Observable<ListMyInterventionPhotosResponse>;
 }
 
 /**
@@ -2378,11 +2561,30 @@ export interface MissionServiceController {
     request: PayMissionFromWalletRequest,
     metadata?: Metadata,
   ): Promise<PayMissionFromWalletResponse> | Observable<PayMissionFromWalletResponse> | PayMissionFromWalletResponse;
+
+  /**
+   * Photos avant et après d'un passage d'une mission du client (ADR-053), avec des adresses de
+   * lecture de courte durée. Passage d'une autre mission : CLEANING_INTERVENTION_NOT_FOUND.
+   */
+
+  listMyInterventionPhotos(
+    request: ListMyInterventionPhotosRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ListMyInterventionPhotosResponse>
+    | Observable<ListMyInterventionPhotosResponse>
+    | ListMyInterventionPhotosResponse;
 }
 
 export function MissionServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["listMyMissions", "getMission", "cancelMission", "payMissionFromWallet"];
+    const grpcMethods: string[] = [
+      "listMyMissions",
+      "getMission",
+      "cancelMission",
+      "payMissionFromWallet",
+      "listMyInterventionPhotos",
+    ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("MissionService", method)(constructor.prototype[method], method, descriptor);
@@ -2606,6 +2808,73 @@ export interface CleaningAdminServiceClient {
   createTeam(request: CreateTeamRequest, metadata?: Metadata): Observable<CreateTeamResponse>;
 
   updateTeam(request: UpdateTeamRequest, metadata?: Metadata): Observable<UpdateTeamResponse>;
+
+  /**
+   * Compléments du Nettoyage (ADR-053).
+   * Photos avant et après d'un passage non clos : agent du passage, ou supervision. Le fichier est
+   * d'abord envoyé au service file (finalité cleaning_intervention_photo) par le compte qui le
+   * rattache ensuite ici. Ajout idempotent pour un fichier déjà rattaché au passage.
+   */
+
+  addInterventionPhoto(
+    request: AddInterventionPhotoRequest,
+    metadata?: Metadata,
+  ): Observable<AddInterventionPhotoResponse>;
+
+  /** Retrait idempotent (fichier supprimé chez file) ; passage non clos seulement. */
+
+  removeInterventionPhoto(
+    request: RemoveInterventionPhotoRequest,
+    metadata?: Metadata,
+  ): Observable<RemoveInterventionPhotoResponse>;
+
+  /** Photos d'un passage, avec des adresses de lecture de courte durée (agent du passage, supervision). */
+
+  listInterventionPhotos(
+    request: ListInterventionPhotosRequest,
+    metadata?: Metadata,
+  ): Observable<ListInterventionPhotosResponse>;
+
+  /**
+   * Reporter un passage planifié (supervision) : nouveau début dans le futur, mêmes contrôles de
+   * conflit que la planification (CLEANING_TEAM_UNAVAILABLE), agents gardés ou changés, motif.
+   */
+
+  rescheduleIntervention(
+    request: RescheduleInterventionRequest,
+    metadata?: Metadata,
+  ): Observable<RescheduleInterventionResponse>;
+
+  /**
+   * Annuler un passage planifié pour le replanifier (supervision, motif) : le passage est annulé
+   * (cause "unscheduled") et la mission a de nouveau un passage à planifier ; le nombre de passages
+   * prévus et l'argent ne changent pas.
+   */
+
+  unscheduleIntervention(
+    request: UnscheduleInterventionRequest,
+    metadata?: Metadata,
+  ): Observable<UnscheduleInterventionResponse>;
+
+  /**
+   * Désactiver un agent (cleaning_admin, super_admin) : refus s'il a des passages ou des visites à
+   * venir (CLEANING_AGENT_HAS_ASSIGNMENTS, avec la liste) ; les reporter ou les réaffecter d'abord.
+   */
+
+  deactivateAgent(request: DeactivateAgentRequest, metadata?: Metadata): Observable<DeactivateAgentResponse>;
+
+  reactivateAgent(request: ReactivateAgentRequest, metadata?: Metadata): Observable<ReactivateAgentResponse>;
+
+  removeUnavailability(
+    request: RemoveUnavailabilityRequest,
+    metadata?: Metadata,
+  ): Observable<RemoveUnavailabilityResponse>;
+
+  /** Désactiver une équipe (jamais de suppression) : elle n'est plus proposée à la planification. */
+
+  deactivateTeam(request: DeactivateTeamRequest, metadata?: Metadata): Observable<DeactivateTeamResponse>;
+
+  reactivateTeam(request: ReactivateTeamRequest, metadata?: Metadata): Observable<ReactivateTeamResponse>;
 }
 
 /**
@@ -2923,6 +3192,97 @@ export interface CleaningAdminServiceController {
     request: UpdateTeamRequest,
     metadata?: Metadata,
   ): Promise<UpdateTeamResponse> | Observable<UpdateTeamResponse> | UpdateTeamResponse;
+
+  /**
+   * Compléments du Nettoyage (ADR-053).
+   * Photos avant et après d'un passage non clos : agent du passage, ou supervision. Le fichier est
+   * d'abord envoyé au service file (finalité cleaning_intervention_photo) par le compte qui le
+   * rattache ensuite ici. Ajout idempotent pour un fichier déjà rattaché au passage.
+   */
+
+  addInterventionPhoto(
+    request: AddInterventionPhotoRequest,
+    metadata?: Metadata,
+  ): Promise<AddInterventionPhotoResponse> | Observable<AddInterventionPhotoResponse> | AddInterventionPhotoResponse;
+
+  /** Retrait idempotent (fichier supprimé chez file) ; passage non clos seulement. */
+
+  removeInterventionPhoto(
+    request: RemoveInterventionPhotoRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<RemoveInterventionPhotoResponse>
+    | Observable<RemoveInterventionPhotoResponse>
+    | RemoveInterventionPhotoResponse;
+
+  /** Photos d'un passage, avec des adresses de lecture de courte durée (agent du passage, supervision). */
+
+  listInterventionPhotos(
+    request: ListInterventionPhotosRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ListInterventionPhotosResponse>
+    | Observable<ListInterventionPhotosResponse>
+    | ListInterventionPhotosResponse;
+
+  /**
+   * Reporter un passage planifié (supervision) : nouveau début dans le futur, mêmes contrôles de
+   * conflit que la planification (CLEANING_TEAM_UNAVAILABLE), agents gardés ou changés, motif.
+   */
+
+  rescheduleIntervention(
+    request: RescheduleInterventionRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<RescheduleInterventionResponse>
+    | Observable<RescheduleInterventionResponse>
+    | RescheduleInterventionResponse;
+
+  /**
+   * Annuler un passage planifié pour le replanifier (supervision, motif) : le passage est annulé
+   * (cause "unscheduled") et la mission a de nouveau un passage à planifier ; le nombre de passages
+   * prévus et l'argent ne changent pas.
+   */
+
+  unscheduleIntervention(
+    request: UnscheduleInterventionRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<UnscheduleInterventionResponse>
+    | Observable<UnscheduleInterventionResponse>
+    | UnscheduleInterventionResponse;
+
+  /**
+   * Désactiver un agent (cleaning_admin, super_admin) : refus s'il a des passages ou des visites à
+   * venir (CLEANING_AGENT_HAS_ASSIGNMENTS, avec la liste) ; les reporter ou les réaffecter d'abord.
+   */
+
+  deactivateAgent(
+    request: DeactivateAgentRequest,
+    metadata?: Metadata,
+  ): Promise<DeactivateAgentResponse> | Observable<DeactivateAgentResponse> | DeactivateAgentResponse;
+
+  reactivateAgent(
+    request: ReactivateAgentRequest,
+    metadata?: Metadata,
+  ): Promise<ReactivateAgentResponse> | Observable<ReactivateAgentResponse> | ReactivateAgentResponse;
+
+  removeUnavailability(
+    request: RemoveUnavailabilityRequest,
+    metadata?: Metadata,
+  ): Promise<RemoveUnavailabilityResponse> | Observable<RemoveUnavailabilityResponse> | RemoveUnavailabilityResponse;
+
+  /** Désactiver une équipe (jamais de suppression) : elle n'est plus proposée à la planification. */
+
+  deactivateTeam(
+    request: DeactivateTeamRequest,
+    metadata?: Metadata,
+  ): Promise<DeactivateTeamResponse> | Observable<DeactivateTeamResponse> | DeactivateTeamResponse;
+
+  reactivateTeam(
+    request: ReactivateTeamRequest,
+    metadata?: Metadata,
+  ): Promise<ReactivateTeamResponse> | Observable<ReactivateTeamResponse> | ReactivateTeamResponse;
 }
 
 export function CleaningAdminServiceControllerMethods() {
@@ -2968,6 +3328,16 @@ export function CleaningAdminServiceControllerMethods() {
       "listTeams",
       "createTeam",
       "updateTeam",
+      "addInterventionPhoto",
+      "removeInterventionPhoto",
+      "listInterventionPhotos",
+      "rescheduleIntervention",
+      "unscheduleIntervention",
+      "deactivateAgent",
+      "reactivateAgent",
+      "removeUnavailability",
+      "deactivateTeam",
+      "reactivateTeam",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
