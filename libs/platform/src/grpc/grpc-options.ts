@@ -2,6 +2,7 @@ import { type Server } from '@grpc/grpc-js';
 import { GRPC_PACKAGES, type GrpcPackageName, PROTO_ROOT, protoPath } from '@ksp/contracts';
 import { type ClientProviderOptions, type GrpcOptions, Transport } from '@nestjs/microservices';
 import { HealthImplementation } from 'grpc-health-check';
+import { deadlineInterceptor } from './deadline';
 
 /**
  * Options de chargement des .proto, identiques côté serveur et côté client :
@@ -48,6 +49,8 @@ export function grpcClientOptions(
       protoPath: protoPath(GRPC_PACKAGES[pkg].file),
       url,
       loader: PROTO_LOADER_OPTIONS,
+      // Transmet l'échéance de chaque appel au service appelé (ADR-051).
+      channelOptions: { interceptors: [deadlineInterceptor] },
     },
   };
 }
