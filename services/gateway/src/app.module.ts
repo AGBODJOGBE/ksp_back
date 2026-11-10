@@ -13,7 +13,6 @@ import {
   createLoggerModule,
   GrpcCaller,
   grpcClientOptions,
-  HealthController,
   ReadinessRegistry,
   SERVICE_TOKEN_PROVIDER,
   ServiceTokenClient,
@@ -136,8 +135,8 @@ export class AppModule {
           grpcClientOptions(DOCUMENT_GRPC_CLIENT, 'document', config.DOCUMENT_GRPC_URL),
         ]),
       ],
+      // Santé et métriques : port interne seulement (main.ts, ADR-051).
       controllers: [
-        HealthController,
         IdentityHttpController,
         JwksHttpController,
         OrganizationHttpController,

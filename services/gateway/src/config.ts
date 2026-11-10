@@ -43,6 +43,8 @@ export const configSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     HTTP_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+    /** Port interne, jamais exposé : sondes de santé et métriques (ADR-051). */
+    INTERNAL_HTTP_PORT: z.coerce.number().int().min(1).max(65535).default(3100),
     /** Délai entre SIGTERM et la fermeture, pendant lequel la sonde « prêt » répond 503 (ADR-051). */
     SHUTDOWN_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(5000),
     OTEL_EXPORTER_OTLP_ENDPOINT: optionalText,
@@ -126,6 +128,9 @@ export const configSchema = z
     if (cfg.NODE_ENV !== 'production') return;
     const fail = (path: keyof typeof cfg, message: string) =>
       ctx.addIssue({ code: 'custom', path: [path], message });
+    if (cfg.INTERNAL_HTTP_PORT === cfg.HTTP_PORT) {
+      fail('INTERNAL_HTTP_PORT', 'Doit différer de HTTP_PORT : santé et métriques ne sont jamais publiques.');
+    }
     if (!cfg.IDENTITY_JWKS_URL) {
       fail('IDENTITY_JWKS_URL', 'Obligatoire en production : vérification des jetons d’accès.');
     }

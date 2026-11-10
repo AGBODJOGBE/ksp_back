@@ -16,6 +16,7 @@ export * from './grpc/grpc-caller';
 export * from './grpc/grpc-context.interceptor';
 export * from './grpc/grpc-options';
 export * from './health/health.controller';
+export * from './health/internal-http.module';
 export * from './health/readiness';
 export * from './health/shutdown';
 export * from './logging/logger';

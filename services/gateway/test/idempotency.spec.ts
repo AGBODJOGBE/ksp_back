@@ -38,7 +38,7 @@ function routes(): { route: RouteDefinition; readsKey: boolean }[] {
     Object.getOwnPropertyNames(controller.prototype)
       .filter((name) => name !== 'constructor')
       .flatMap((name) => {
-        const handler = (controller.prototype as Record<string, object>)[name]!;
+        const handler = (controller.prototype as unknown as Record<string, object>)[name]!;
         const route = Reflect.getMetadata(ROUTE_DEFINITION, handler) as RouteDefinition | undefined;
         if (!route) return [];
         const args = (Reflect.getMetadata(ROUTE_ARGS_METADATA, controller, name) ?? {}) as Record<
