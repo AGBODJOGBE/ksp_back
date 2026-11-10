@@ -1,4 +1,5 @@
 export * from './auth/access-token';
+export * from './auth/caller';
 export * from './auth/service-token';
 export * from './auth/service-token-client';
 export * from './auth/user-context';

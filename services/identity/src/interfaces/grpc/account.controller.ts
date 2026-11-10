@@ -1,5 +1,5 @@
 import { identityV1 } from '@ksp/contracts';
-import { currentContext, requireUser } from '@ksp/platform';
+import { AllowedCallers, currentContext, requireUser } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
 import { GetMeUseCase, type Profile, UpdateMeUseCase } from '../../application/account/account.use-cases';
 import {
@@ -26,6 +26,7 @@ function toProfileMessage(profile: Profile): identityV1.GetMeResponse {
  * jamais du message : on ne lit ni ne modifie que son propre compte.
  */
 @Controller()
+@AllowedCallers('gateway')
 @identityV1.AccountServiceControllerMethods()
 export class AccountGrpcController implements identityV1.AccountServiceController {
   constructor(
