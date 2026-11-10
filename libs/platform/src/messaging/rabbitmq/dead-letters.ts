@@ -2,7 +2,7 @@ import { type ConfirmChannel } from 'amqplib';
 import { type ConsumerQueues } from './topology';
 
 /** En-têtes du parcours d'échec, retirés au rejeu : le message repart comme neuf. */
-const FAILURE_HEADERS = ['x-attempts', 'x-last-error', 'x-failure-reason'] as const;
+const FAILURE_HEADERS = ['x-attempts', 'x-last-error', 'x-failure-reason', 'x-delivery-count'] as const;
 
 export type DeadLetterChannel = Pick<
   ConfirmChannel,

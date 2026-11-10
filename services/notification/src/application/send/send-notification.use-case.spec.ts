@@ -180,6 +180,29 @@ describe('SendNotificationUseCase — idempotence', () => {
     expect(providers[0]!.sent).toHaveLength(0);
   });
 
+  it('reprend l’envoi d’une réservation abandonnée (panne entre la réservation et l’envoi)', async () => {
+    const whatsapp = new FakeProvider('whatsapp', [{ accepted: true, providerMessageId: 'wamid.1' }]);
+    const { notifications, useCase } = setup([whatsapp]);
+    await notifications.claim({
+      id: 'n-0',
+      idempotencyKey: 'challenge-1',
+      templateCode: 'identity.otp',
+      requestedChannel: 'whatsapp',
+      targetMasked: '+229********45',
+      recipientUserId: null,
+      createdAt: new Date(NOW.getTime() - 11 * 60_000),
+      expiresAt: null,
+    });
+    await expect(useCase.execute(otp())).resolves.toEqual({
+      notificationId: 'n-0',
+      channelUsed: 'whatsapp',
+      status: 'accepted',
+    });
+    expect(whatsapp.sent.map((sent) => sent.notificationId)).toEqual(['n-0']);
+    expect(notifications.rows).toHaveLength(1);
+    expect(notifications.rows[0]).toMatchObject({ id: 'n-0', status: 'accepted' });
+  });
+
   it('sans clé, chaque appel est un envoi distinct', async () => {
     const { notifications, useCase } = setup();
     await useCase.execute(otp({ idempotencyKey: '' }));

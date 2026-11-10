@@ -40,13 +40,23 @@ export interface NotificationFailedEvent {
   targetMasked: string;
 }
 
-export type ClaimResult = { created: true } | { created: false; existing: StoredNotification };
+/**
+ * Délai au-delà duquel une notification encore `pending` est tenue pour abandonnée (panne entre la
+ * réservation et l'envoi) : un appel de même clé la reprend et l'envoie (ADR-047). Bien au-delà de
+ * la durée d'un envoi, bascules comprises.
+ */
+export const PENDING_CLAIM_STALE_AFTER_MS = 10 * 60_000;
+
+/** `id` : la notification à envoyer (la nouvelle, ou celle reprise). */
+export type ClaimResult = { created: true; id: string } | { created: false; existing: StoredNotification };
 
 export interface NotificationRepository {
   /**
    * Enregistre la notification (statut `pending`) si sa clé d'idempotence est nouvelle ; sinon
-   * renvoie la notification déjà enregistrée sous cette clé. Atomique : de deux appels simultanés
-   * avec la même clé, un seul obtient `created: true`.
+   * reprend celle de cette clé restée `pending` depuis plus de PENDING_CLAIM_STALE_AFTER_MS
+   * (mesuré à `createdAt` de la nouvelle, depuis sa création ou sa dernière reprise) ; sinon renvoie
+   * la notification déjà enregistrée. Atomique : de deux appels simultanés avec la même clé, un seul
+   * obtient `created: true`.
    */
   claim(notification: NewNotification): Promise<ClaimResult>;
   /** Le prestataire a pris le message en charge. */

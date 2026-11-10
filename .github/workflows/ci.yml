@@ -33,6 +33,17 @@ jobs:
           --health-cmd "pg_isready -U ksp"
           --health-interval 5s
           --health-retries 10
+      # Broker réel pour les tests d'intégration de la messagerie (ADR-047), même version qu'en local.
+      rabbitmq:
+        image: rabbitmq:4.1-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: ksp
+          RABBITMQ_DEFAULT_PASS: ksp
+        ports: ['5672:5672']
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-retries 12
       # Compteurs des limites d'appels partagés par les répliques de la gateway (ADR-051).
       redis:
         image: redis:7.4-alpine
@@ -43,6 +54,7 @@ jobs:
           --health-retries 10
     env:
       TEST_DATABASE_URL: postgresql://ksp:ksp@localhost:5432/ksp_test
+      TEST_RABBITMQ_URL: amqp://ksp:ksp@localhost:5672
       TEST_REDIS_URL: redis://localhost:6379
       # Outil de comparaison des contrats OpenAPI, version et empreinte figées.
       OASDIFF_VERSION: 1.34.1
