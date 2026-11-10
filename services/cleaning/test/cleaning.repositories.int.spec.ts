@@ -304,8 +304,8 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       providerReference: 'trx_1',
       succeededAt: new Date().toISOString(),
     };
-    expect(await useCases.recordOnlinePayment.execute(online)).toBe('recorded');
-    expect(await useCases.recordOnlinePayment.execute(online)).toBe('duplicate');
+    expect(await useCases.recordOnlinePayment.execute(online)).toMatchObject({ outcome: 'recorded' });
+    expect(await useCases.recordOnlinePayment.execute(online)).toMatchObject({ outcome: 'duplicate' });
     expect(
       (await deps.missions.findById(missionId))!.payment.payments.map((payment) => payment.method),
     ).toEqual(['cash', 'mobile_money_online']);
