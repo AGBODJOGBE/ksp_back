@@ -225,6 +225,59 @@ describe('cleaning en gRPC', () => {
     expect(legacy).toMatchObject({ priced: false, reason: 'answers_incomplete', breakdown: [] });
   });
 
+  it('plan de passages : aperçu des dates, simulation au nombre exact de passages (ADR-052)', async () => {
+    const schedule: cleaningV1.InterventionSchedule = {
+      mode: 'monthly',
+      dates: [],
+      startDate: '2027-01-01',
+      endDate: '2027-03-31',
+      weekdays: ['mon'],
+      everyWeeks: 0,
+      monthDays: [],
+      weeksOfMonth: ['1', '3'],
+      startTime: '08:00',
+      excludedDates: ['2027-02-15'],
+      extraDates: [],
+    };
+    const preview = await call((m) => catalog.previewSchedule({ schedule }, m));
+    expect(preview.preview).toEqual({
+      dates: ['2027-01-04', '2027-01-18', '2027-02-01', '2027-03-01', '2027-03-15'],
+      count: 5,
+      firstDate: '2027-01-04',
+      lastDate: '2027-03-15',
+      warnings: [{ code: 'excluded', date: '2027-02-15', message: expect.any(String) }],
+    });
+    const simulation = await call((m) =>
+      catalog.simulate(
+        {
+          serviceCode: 'home_cleaning',
+          premisesType: '',
+          quantity: 0,
+          options: [],
+          answers: ANSWERS,
+          optionSelections: WINDOWS,
+          commune: 'Abomey-Calavi',
+          frequency: 'once',
+          schedule,
+        },
+        m,
+      ),
+    );
+    expect(simulation).toMatchObject({
+      computedPrice: { amount: 35700, currency: 'XOF' },
+      schedule: { count: 5 },
+      scheduleTotal: { amount: 178500, currency: 'XOF' },
+      scheduleEstimate: { low: { amount: 160000 }, high: { amount: 205000 } },
+    });
+    const refused = await call((m) =>
+      catalog.previewSchedule({ schedule: { ...schedule, weeksOfMonth: ['5'] } }, m),
+    ).catch((error: AppError) => error);
+    expect(refused).toMatchObject({
+      code: 'CLEANING_VALIDATION_FAILED',
+      details: { field: 'schedule.weeksOfMonth' },
+    });
+  });
+
   it('zones desservies publiques : actives seulement, code et nom, sans utilisateur', async () => {
     const calavi = world.catalog.zones.get('abomey-calavi')!;
     world.catalog.zones.set('abomey-calavi', { ...calavi, active: false });

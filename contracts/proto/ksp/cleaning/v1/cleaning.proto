@@ -101,6 +101,10 @@ service CatalogService {
   // Estimation de plusieurs prestations d'un même lieu (ADR-034), avec le simulateur de l'ADR-033 ;
   // rien n'est enregistré. Commune facultative : sans elle, coefficient neutre.
   rpc Estimate(EstimateRequest) returns (EstimateResponse);
+  // Aperçu d'un plan de passages (ADR-052) : liste exacte des dates, nombre, premier et dernier
+  // passage, avertissements ; mêmes contrôles qu'à la demande de devis (plan bien formé, au plus le
+  // nombre de passages réglé, premier passage au-delà du délai minimum). Rien n'est enregistré.
+  rpc PreviewSchedule(PreviewScheduleRequest) returns (PreviewScheduleResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -277,11 +281,63 @@ message TimeSlot {
 
 // Contrat récurrent (client entreprise, ou particulier qui le demande) : nombre de passages
 // par période, pendant une durée en mois. La facture mensuelle viendra avec billing.
+// Ancien format (ADR-023), déprécié en entrée depuis l'ADR-052 : remplacé par InterventionSchedule.
+// En sortie, déduit du plan de passages pour les anciens lecteurs (absent pour un seul passage).
 message Recurrence {
   // "week" ou "month".
   string period = 1;
   int32 visits_per_period = 2;
   int32 duration_months = 3;
+}
+
+// Plan de passages (ADR-052) : le moteur en tire la liste exacte des dates (AAAA-MM-JJ, jours civils
+// du fuseau du service, Africa/Porto-Novo par défaut) ; le nombre de passages, donc le prix, est
+// celui de cette liste. Erreurs : CLEANING_VALIDATION_FAILED, details.field "schedule.<champ>"
+// (ou "schedule" : aucun passage, ou plus que le maximum réglé, 400 par défaut) ;
+// CLEANING_LEAD_TIME_TOO_SHORT si le premier passage est trop proche.
+message InterventionSchedule {
+  // "dates" (liste explicite), "weekly" (jours de semaine) ou "monthly" (chaque mois).
+  string mode = 1;
+  // Mode "dates" seulement : 1 à N jours, sans ordre imposé (doublons ignorés).
+  repeated string dates = 2;
+  // Modes "weekly" et "monthly" : période, bornes incluses ; vides en mode "dates". La période
+  // couvre au plus 36 mois (réglable).
+  string start_date = 3;
+  string end_date = 4;
+  // "mon", "tue", "wed", "thu", "fri", "sat" ou "sun" : mode "weekly", ou "monthly" avec
+  // weeks_of_month.
+  repeated string weekdays = 5;
+  // Mode "weekly" : 0 ou 1 chaque semaine, 2 une semaine sur deux… (12 au plus), semaines comptées
+  // depuis celle de start_date (du lundi au dimanche).
+  int32 every_weeks = 6;
+  // Mode "monthly", première forme : jours du mois (1 à 31) ; un jour absent du mois devient son
+  // dernier jour, sans doublon.
+  repeated int32 month_days = 7;
+  // Mode "monthly", seconde forme (avec weekdays) : rangs dans le mois, "1" à "4" ou "last".
+  // Une seule des deux formes.
+  repeated string weeks_of_month = 8;
+  // Heure de début de chaque passage, HH:mm, heure locale (obligatoire).
+  string start_time = 9;
+  // Jours retirés (fériés, absences) et jours ajoutés ; un jour exclu le reste même s'il est ajouté.
+  repeated string excluded_dates = 10;
+  repeated string extra_dates = 11;
+}
+
+message ScheduleWarning {
+  // "moved_to_month_end" (jour ramené au dernier jour du mois), "excluded" (jour exclu),
+  // "excluded_not_planned" (jour exclu qui n'était pas prévu) ou "extra_already_planned".
+  string code = 1;
+  string date = 2;
+  string message = 3;
+}
+
+// Dates exactes d'un plan de passages (ADR-052).
+message SchedulePreview {
+  repeated string dates = 1;
+  int32 count = 2;
+  string first_date = 3;
+  string last_date = 4;
+  repeated ScheduleWarning warnings = 5;
 }
 
 message PriceLine {
@@ -373,6 +429,11 @@ message Quote {
   string sent_at = 11;
   int32 team_size = 12;
   int32 duration_minutes = 13;
+  // Plan de passages du devis (ADR-052) et ses dates exactes (intervention_count = leur nombre) ;
+  // absent et vide pour un devis sans plan (ancienne récurrence). Avec un plan, proposed_slots est
+  // le premier passage.
+  InterventionSchedule schedule = 14;
+  repeated string scheduled_dates = 15;
 }
 
 message QuoteRequest {
@@ -460,6 +521,9 @@ message QuoteRequest {
   // Mesures constatées, lisibles, résolues avec leur version de grille ; absent sans mesure et dans
   // l'espace client.
   AnswerSummary measured_summary = 43;
+  // Plan de passages demandé (ADR-052) et ses dates exactes ; absent et vide sans plan.
+  InterventionSchedule schedule = 44;
+  repeated string scheduled_dates = 45;
 }
 
 // Mesures constatées après la visite technique (ADR-037).
@@ -610,6 +674,10 @@ message Mission {
   // Groupe et type de lieu de la demande d'origine (ADR-034), vides sinon.
   string group_id = 26;
   string place_type = 27;
+  // Plan de passages du devis accepté (ADR-052) et ses dates exactes (planned_interventions = leur
+  // nombre), à planifier passage par passage ; absent et vide sans plan.
+  InterventionSchedule schedule = 28;
+  repeated string scheduled_dates = 29;
 }
 
 message Suspension {
@@ -873,6 +941,9 @@ message SimulateRequest {
   AnswerSet answers = 7;
   // Nouveau format : options choisies, avec leurs réponses.
   repeated OptionSelection option_selections = 8;
+  // Facultatif (ADR-052) : plan de passages ; la réponse donne ses dates et le montant estimé sur
+  // leur nombre exact.
+  InterventionSchedule schedule = 9;
 }
 
 message SimulateResponse {
@@ -896,6 +967,20 @@ message SimulateResponse {
   // Faux si la simulation est faite sans commune (ADR-034) : coefficient neutre, prix indicatif,
   // recalculé avec la vraie commune à la demande de devis.
   bool commune_applied = 13;
+  // Plan de passages envoyé (ADR-052) : ses dates ; absent sans plan.
+  SchedulePreview schedule = 14;
+  // Prix d'un passage × nombre de passages, et la fourchette de même ; absents sans plan ou si
+  // priced = false.
+  ksp.common.v1.Money schedule_total = 15;
+  PriceRange schedule_estimate = 16;
+}
+
+message PreviewScheduleRequest {
+  InterventionSchedule schedule = 1;
+}
+
+message PreviewScheduleResponse {
+  SchedulePreview preview = 1;
 }
 
 // Zone desservie vue du public.
@@ -999,9 +1084,13 @@ message RequestQuoteRequest {
   repeated string options = 5 [deprecated = true];
   string commune = 6;
   string address = 7;
+  // 1 à 3 créneaux souhaités ; 0 à 3 avec un plan de passages (le premier passage sinon, durée
+  // indicative de 2 heures).
   repeated TimeSlot preferred_slots = 8;
   string comment = 9;
-  Recurrence recurrence = 10;
+  // Déprécié (ADR-052) : remplacé par schedule ; traduit en plan quand c'est exact (un passage par
+  // semaine ou par mois, depuis le premier créneau), sinon gardé approximatif. Pas avec schedule.
+  Recurrence recurrence = 10 [deprecated = true];
   int32 requested_team_size = 11;
   // Entreprise : jours d'intervention par semaine, si connus (1 à 7) ; 0 si non précisés.
   int32 days_per_week = 12;
@@ -1012,6 +1101,9 @@ message RequestQuoteRequest {
   // Code de la fréquence (règles de SimulateRequest.frequency) ; vide si aucune. Indépendante de
   // recurrence, qui décrit le contrat (passages par période, durée).
   string frequency = 15;
+  // Plan de passages (ADR-052) : dates exactes, estimation sur leur nombre. Jours par semaine
+  // (days_per_week) déduits d'un plan "weekly" s'ils ne sont pas indiqués.
+  InterventionSchedule schedule = 16;
 }
 
 message RequestQuoteResponse {
@@ -1109,9 +1201,13 @@ message RequestQuoteGroupRequest {
   string commune = 5;
   // 1 à 10 prestations distinctes, toutes proposées par le type de lieu.
   repeated QuoteGroupItem items = 6;
+  // Mêmes règles que RequestQuoteRequest (0 à 3 avec un plan de passages).
   repeated TimeSlot preferred_slots = 7;
   string comment = 8;
-  Recurrence recurrence = 9;
+  // Déprécié (ADR-052) : remplacé par schedule (mêmes règles que RequestQuoteRequest).
+  Recurrence recurrence = 9 [deprecated = true];
+  // Plan de passages commun à toutes les prestations du lieu (ADR-052).
+  InterventionSchedule schedule = 10;
 }
 
 // Groupe de demandes créées ensemble pour un même lieu (ADR-034).
@@ -1339,13 +1435,19 @@ message SendQuoteRequest {
   // commande. Calcul sans prix : nouveau calcul avec la grille en vigueur et les réponses
   // enregistrées ; toujours sans prix : CLEANING_PRICE_NOT_SET.
   repeated PriceLine lines = 2;
+  // 1 à 3 créneaux ; ignorés pour un devis avec un plan de passages : le créneau proposé est alors le
+  // premier passage, avec duration_minutes.
   repeated TimeSlot proposed_slots = 3;
   // 0 : validité par défaut (réglages).
   int32 validity_days = 4;
-  Recurrence recurrence = 5;
+  // Déprécié (ADR-052) : remplacé par schedule ; traduit en plan quand c'est exact.
+  Recurrence recurrence = 5 [deprecated = true];
   // 0 : taille recommandée.
   int32 team_size = 6;
   int32 duration_minutes = 7;
+  // Plan de passages ajusté après la visite (ADR-052) ; absent : celui de la demande, recontrôlé
+  // (premier passage au-delà du délai minimum). Total = prix d'un passage × nombre de dates.
+  InterventionSchedule schedule = 8;
 }
 
 message SendQuoteResponse {
@@ -1399,20 +1501,24 @@ message RejectRequestGroupResponse {
 message GroupQuoteItem {
   string request_id = 1;
   repeated PriceLine lines = 2;
-  Recurrence recurrence = 3;
+  // Déprécié (ADR-052) : voir SendGroupQuotesRequest.schedule.
+  Recurrence recurrence = 3 [deprecated = true];
   int32 team_size = 4;
   int32 duration_minutes = 5;
 }
 
 message SendGroupQuotesRequest {
   string group_id = 1;
-  // Créneaux communs proposés pour tous les devis (1 à 3).
+  // Créneaux communs proposés pour tous les devis (1 à 3) ; ignorés pour un devis avec un plan de
+  // passages (son créneau proposé est son premier passage).
   repeated TimeSlot proposed_slots = 2;
   // 0 : validité par défaut (réglages).
   int32 validity_days = 3;
   // Une entrée par demande à chiffrer, chacune une seule fois.
   repeated GroupQuoteItem quotes = 4;
   string idempotency_key = 5;
+  // Plan de passages commun à tous les devis (ADR-052) ; absent : celui de chaque demande.
+  InterventionSchedule schedule = 6;
 }
 
 message SendGroupQuotesResponse {
@@ -1537,6 +1643,8 @@ message GetMissionDetailResponse {
 
 message ScheduleInterventionRequest {
   string mission_id = 1;
+  // Vide (ADR-052) : prochaine date du plan de passages encore sans passage, à l'heure du plan
+  // (CLEANING_VALIDATION_FAILED, field "scheduledStart", si la mission n'a plus de date à venir).
   string scheduled_start = 2;
   int32 duration_minutes = 3;
   repeated string agent_ids = 4;
