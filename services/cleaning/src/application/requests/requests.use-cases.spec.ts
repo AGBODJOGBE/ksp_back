@@ -331,6 +331,28 @@ describe('parcours demande → devis → acceptation (UC-CL-02 à 08)', () => {
     expect((await sendQuoteOnly(created.id)).quote).toMatchObject({ subtotal: 35_700 });
   });
 
+  it('devis à 0 FCFA refusé : une remise ne peut pas annuler le prix (ADR-049)', async () => {
+    const created = await request();
+    await completeVisit(created.id);
+    const send = (lines: { label: string; quantity: number; unitPrice: number; amount: number }[]) =>
+      asSupervisor(() =>
+        new SendQuoteUseCase(world).execute({
+          requestId: created.id,
+          lines,
+          proposedSlots: [SLOT],
+          validityDays: 0,
+          teamSize: 0,
+          durationMinutes: 180,
+        }),
+      );
+    const service = { label: 'Nettoyage', quantity: 1, unitPrice: 20_000, amount: 20_000 };
+    const discount = { label: 'Remise', quantity: 1, unitPrice: -20_000, amount: -20_000 };
+    expect(await code(send([service, discount]))).toBe('CLEANING_VALIDATION_FAILED');
+    expect((await send([service, { ...discount, unitPrice: -5_000, amount: -5_000 }])).quote).toMatchObject({
+      subtotal: 15_000,
+    });
+  });
+
   it('ancien format : demande enregistrée (réponses converties), devis à saisir par le superviseur', async () => {
     const legacy = { ...requestInput('legacy'), answers: undefined, optionSelections: [], ...LEGACY };
     const created = await asCustomer(() => new RequestQuoteUseCase(world).execute(legacy));
