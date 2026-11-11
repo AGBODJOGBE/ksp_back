@@ -1,4 +1,4 @@
-import { BACKOFFICE_MFA_SECONDS } from './cleaning-routes';
+import { BACKOFFICE_MFA_SECONDS, CRITICAL_MFA_SECONDS } from './cleaning-routes';
 import { type RouteDefinition } from './route-manifest';
 
 const ACCOUNT_ADMIN = 'ksp.identity.v1.AccountAdminService';
@@ -19,10 +19,12 @@ const admins = {
   anyRole: ACCOUNT_ADMINS,
   recentMfaSeconds: BACKOFFICE_MFA_SECONDS,
 } as const;
+/** Écritures (rôles, suspension, double authentification) : double authentification récente (ADR-050). */
+const adminWrites = { ...admins, recentMfaSeconds: CRITICAL_MFA_SECONDS } as const;
 const managers = {
   level: 'authenticated',
   anyRole: ACCOUNT_MANAGERS,
-  recentMfaSeconds: BACKOFFICE_MFA_SECONDS,
+  recentMfaSeconds: CRITICAL_MFA_SECONDS,
 } as const;
 
 /**
@@ -73,7 +75,7 @@ export const ACCOUNT_ROUTES = [
     method: 'POST',
     path: '/api/v1/admin/identity/accounts/{id}/roles',
     grpc: `${ACCOUNT_ADMIN}/GrantAccountRole`,
-    access: admins,
+    access: adminWrites,
     rateLimit: 'authenticated',
     requiresKnownClient: false,
   },
@@ -82,7 +84,7 @@ export const ACCOUNT_ROUTES = [
     method: 'POST',
     path: '/api/v1/admin/identity/accounts/{id}/roles/revoke',
     grpc: `${ACCOUNT_ADMIN}/RevokeAccountRole`,
-    access: admins,
+    access: adminWrites,
     rateLimit: 'authenticated',
     requiresKnownClient: false,
   },

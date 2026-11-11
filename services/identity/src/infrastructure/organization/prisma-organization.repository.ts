@@ -11,7 +11,10 @@ import {
   type OrganizationRepository,
   type OrganizationStatusChange,
 } from '../../application/organization/organization.ports';
-import { type OrganizationDirectory } from '../../application/directory/get-organizations.use-case';
+import {
+  type DirectoryOrganization,
+  type OrganizationDirectory,
+} from '../../application/directory/get-organizations.use-case';
 import { type Organization, type OrganizationStatus } from '../../domain/organization/organization';
 import { Prisma } from '../../../prisma/generated';
 import { PrismaService } from '../prisma/prisma.service';
@@ -173,15 +176,24 @@ export class PrismaOrganizationRepository implements OrganizationRepository, Org
     return row ? toOrganization(row) : null;
   }
 
-  async findByIds(organizationIds: readonly string[]): Promise<Organization[]> {
+  async findByIds(organizationIds: readonly string[]): Promise<DirectoryOrganization[]> {
     const rows = await this.prisma.organization.findMany({
       where: { id: { in: [...organizationIds] } },
-      select: { ...ORGANIZATION_SELECT, billingEmailVerifiedAt: true },
+      select: {
+        ...ORGANIZATION_SELECT,
+        billingEmailVerifiedAt: true,
+        members: {
+          where: { role: 'org_admin', removedAt: null },
+          select: { userId: true },
+          orderBy: { joinedAt: 'asc' },
+        },
+      },
     });
     // L'adresse n'est enregistrée qu'à sa confirmation : la date de vérification est un second verrou.
-    return rows.map(({ billingEmailVerifiedAt, ...row }) =>
-      toOrganization({ ...row, billingEmail: billingEmailVerifiedAt ? row.billingEmail : null }),
-    );
+    return rows.map(({ billingEmailVerifiedAt, members, ...row }) => ({
+      ...toOrganization({ ...row, billingEmail: billingEmailVerifiedAt ? row.billingEmail : null }),
+      adminUserIds: members.map((member) => member.userId),
+    }));
   }
 
   async membership(userId: string, organizationId: string): Promise<Membership | null> {

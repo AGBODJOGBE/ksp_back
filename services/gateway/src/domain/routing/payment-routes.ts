@@ -1,4 +1,4 @@
-import { BACKOFFICE_MFA_SECONDS } from './cleaning-routes';
+import { BACKOFFICE_MFA_SECONDS, CRITICAL_MFA_SECONDS } from './cleaning-routes';
 import { type RouteDefinition } from './route-manifest';
 
 const PAYMENT = 'ksp.payment.v1.PaymentService';
@@ -84,7 +84,7 @@ export const PAYMENT_ROUTES = [
     method: 'POST',
     path: '/api/v1/admin/payment/payments/{id}/resolve-mismatch',
     grpc: `${ADMIN}/ResolveAmountMismatch`,
-    access: { level: 'authenticated', anyRole: PAYMENT_STAFF, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
+    access: { level: 'authenticated', anyRole: PAYMENT_STAFF, recentMfaSeconds: CRITICAL_MFA_SECONDS },
     rateLimit: 'authenticated',
     requiresKnownClient: false,
     idempotencyKey: 'optional',
@@ -134,7 +134,7 @@ export const PAYMENT_ROUTES = [
     method: 'POST',
     path: '/api/v1/admin/payment/payouts/{id}/confirm',
     grpc: `${PAYOUT_ADMIN}/ConfirmPayout`,
-    access: { level: 'authenticated', anyRole: PAYOUT_STAFF, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
+    access: { level: 'authenticated', anyRole: PAYOUT_STAFF, recentMfaSeconds: CRITICAL_MFA_SECONDS },
     rateLimit: 'authenticated',
     requiresKnownClient: false,
     idempotencyKey: 'optional',
@@ -144,7 +144,7 @@ export const PAYMENT_ROUTES = [
     method: 'POST',
     path: '/api/v1/admin/payment/payouts/{id}/fail',
     grpc: `${PAYOUT_ADMIN}/FailPayout`,
-    access: { level: 'authenticated', anyRole: PAYOUT_STAFF, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
+    access: { level: 'authenticated', anyRole: PAYOUT_STAFF, recentMfaSeconds: CRITICAL_MFA_SECONDS },
     rateLimit: 'authenticated',
     requiresKnownClient: false,
     idempotencyKey: 'optional',

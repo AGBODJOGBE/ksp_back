@@ -1,4 +1,5 @@
 import { identityV1 } from '@ksp/contracts';
+import { type DirectoryOrganization } from '../../application/directory/get-organizations.use-case';
 import { type MembershipView } from '../../application/organization/organization.use-cases';
 import { type OrganizationMemberView } from '../../application/organization/organization.ports';
 import { type Account, type UserStatusName } from '../../application/session/session.ports';
@@ -93,8 +94,11 @@ export function toOrganizationMessage(organization: Organization): identityV1.Or
 }
 
 /** Fiche lue par un autre service (GetOrganizationsByIds) : ni membres ni décisions du back-office. */
-export function toOrganizationProfileMessage(organization: Organization): identityV1.OrganizationProfile {
+export function toOrganizationProfileMessage(
+  organization: DirectoryOrganization,
+): identityV1.OrganizationProfile {
   return {
+    adminUserIds: organization.adminUserIds,
     id: organization.id,
     legalName: organization.legalName,
     address: organization.address,

@@ -77,6 +77,8 @@ model User {
   deletionCheckedAt    DateTime?  @map("deletion_checked_at") @db.Timestamptz(3)
   /// Obligations trouvées au dernier contrôle de l'échéance : [{ service, kind, reference, description }].
   deletionPostponedBy  Json?      @map("deletion_postponed_by")
+  /// Double authentification réinitialisée (ADR-050) : reconfiguration ouverte jusqu'à cette date.
+  mfaEnrollmentDeadline DateTime? @map("mfa_enrollment_deadline") @db.Timestamptz(3)
   anonymizedAt         DateTime?  @map("anonymized_at") @db.Timestamptz(3)
   /// Adresse e-mail en minuscules, enregistrée seulement après confirmation par code ; unique entre comptes.
   email                String?    @unique

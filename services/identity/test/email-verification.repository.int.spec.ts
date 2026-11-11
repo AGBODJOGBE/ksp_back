@@ -116,7 +116,11 @@ describeWithDatabase('PrismaEmailVerificationRepository (PostgreSQL)', () => {
       sendFailedAt: at(5),
     });
     await expect(repository.findLatest(USER_2)).resolves.toBeNull();
-    expect(await repository.registerFailedAttempt(second)).toBe(1);
+    // Envoi manqué : aucun essai n'est pris ; la demande envoyée en prend jusqu'au plafond.
+    expect(await repository.takeAttempt(second, 2, at(6))).toBeNull();
+    expect(await repository.takeAttempt(first, 2, at(1))).toBe(1);
+    expect(await repository.takeAttempt(first, 2, at(1))).toBe(2);
+    expect(await repository.takeAttempt(first, 2, at(1))).toBeNull();
   });
 
   it('la confirmation enregistre l’adresse vérifiée et publie identity.user.verified, une seule fois', async () => {

@@ -11,6 +11,7 @@ const organization = (id: string, billingEmail: string): identityV1.Organization
   rccm: '',
   billingEmail,
   status: identityV1.OrganizationStatus.ORGANIZATION_STATUS_ACTIVE,
+  adminUserIds: ['u-admin'],
 });
 
 function directory(billingEmail = 'compta@benin-propre.bj') {
@@ -31,11 +32,21 @@ describe('IdentityOrganizationDirectory', () => {
   it('lit l’e-mail de facturation par GetOrganizationsByIds ; une chaîne vide vaut une valeur absente', async () => {
     const { directory: organizations, requests } = directory();
     await expect(organizations.findBillingContacts(['o-1'])).resolves.toEqual([
-      { organizationId: 'o-1', legalName: 'SARL Bénin Propre', billingEmail: 'compta@benin-propre.bj' },
+      {
+        organizationId: 'o-1',
+        legalName: 'SARL Bénin Propre',
+        billingEmail: 'compta@benin-propre.bj',
+        adminUserIds: ['u-admin'],
+      },
     ]);
     expect(requests).toEqual([{ organizationIds: ['o-1'] }]);
     await expect(directory('').directory.findBillingContacts(['o-1'])).resolves.toEqual([
-      { organizationId: 'o-1', legalName: 'SARL Bénin Propre', billingEmail: null },
+      {
+        organizationId: 'o-1',
+        legalName: 'SARL Bénin Propre',
+        billingEmail: null,
+        adminUserIds: ['u-admin'],
+      },
     ]);
   });
 

@@ -24,6 +24,11 @@ export interface IdentityEventPayloads {
   'identity.user.deletion_requested': { userId: string; requestedAt: string; scheduledFor: string };
   /** Suppression annulée pendant le délai : compte de nouveau actif (ADR-036). */
   'identity.user.deletion_cancelled': { userId: string };
+  /**
+   * Double authentification réinitialisée au back-office (ADR-050) : le titulaire est prévenu, et
+   * doit la reconfigurer avant `enrollBefore`.
+   */
+  'identity.user.mfa_reset': { userId: string; enrollBefore: string };
   /** Demande de création, en attente de validation par un admin KSP (ADR-027). */
   'identity.organization.created': { organizationId: string; createdBy: string; legalName?: string };
   'identity.organization.validated': {

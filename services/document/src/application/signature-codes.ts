@@ -20,6 +20,12 @@ const HOUR_MS = 3_600_000;
 export class SignatureCodes {
   constructor(private readonly deps: DocumentDeps) {}
 
+  /** Statut actuel d'une demande qui n'est plus en attente. */
+  async statusOf(requestId: string, now: Date): Promise<string> {
+    const current = await this.deps.documents.findRequestById(requestId);
+    return current ? effectiveStatus(current, now) : 'cancelled';
+  }
+
   /** Coordonnées à jour : celles d'un compte sont relues dans identity. */
   async contactOf(request: SignatureRequestRecord): Promise<Contact> {
     if (!request.signerUserId) {
@@ -46,32 +52,34 @@ export class SignatureCodes {
     }
     if (document.status !== 'pending_signature') throw DocumentErrors.invalidStatus(document.status);
 
-    const decision = decideSend(
-      await documents.codeSentDates(request.id, new Date(now.getTime() - HOUR_MS)),
-      now,
-      policy,
-    );
-    if (!decision.allowed) {
-      throw decision.reason === 'too_soon'
-        ? DocumentErrors.codeTooSoon(decision.retryAfterSeconds)
-        : DocumentErrors.codeLimitReached(decision.retryAfterSeconds);
-    }
     const to = contact ?? (await this.contactOf(request));
     if (!to.phoneE164 && !to.email) throw DocumentErrors.signerUnreachable();
 
     const id = ids.next();
     const code = secrets.newCode(policy.length);
     const expiresAt = new Date(now.getTime() + policy.ttlSeconds * 1000);
-    await documents.createCode({
-      id,
-      requestId: request.id,
-      codeHash: secrets.hashCode(id, code),
-      channel: to.phoneE164 ? 'whatsapp' : 'email',
-      createdAt: now,
-      expiresAt,
-      attempts: 0,
-      consumedAt: null,
-    });
+    // Limites d'envoi appliquées sous le verrou de la demande (ADR-050) : des envois simultanés
+    // passent l'un après l'autre, et le second voit le code du premier.
+    const decision = await documents.createCodeWithinLimits(
+      {
+        id,
+        requestId: request.id,
+        codeHash: secrets.hashCode(id, code),
+        channel: to.phoneE164 ? 'whatsapp' : 'email',
+        createdAt: now,
+        expiresAt,
+        attempts: 0,
+        consumedAt: null,
+      },
+      new Date(now.getTime() - HOUR_MS),
+      (sentAt) => decideSend(sentAt, now, policy),
+    );
+    if (!decision) throw DocumentErrors.signatureClosed(await this.statusOf(request.id, now));
+    if (!decision.allowed) {
+      throw decision.reason === 'too_soon'
+        ? DocumentErrors.codeTooSoon(decision.retryAfterSeconds)
+        : DocumentErrors.codeLimitReached(decision.retryAfterSeconds);
+    }
     try {
       const { channel } = await notifier.sendCode({
         codeId: id,

@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   CreateBucketCommand,
   DeleteObjectCommand,
   GetObjectCommand,
@@ -104,7 +105,11 @@ export class S3ObjectStorage implements ObjectStorage {
   async stat(key: string): Promise<ObjectStat | null> {
     try {
       const head = await this.client.send(new HeadObjectCommand({ Bucket: this.options.bucket, Key: key }));
-      return { sizeBytes: Number(head.ContentLength ?? 0), contentType: head.ContentType ?? null };
+      return {
+        sizeBytes: Number(head.ContentLength ?? 0),
+        contentType: head.ContentType ?? null,
+        etag: head.ETag ?? null,
+      };
     } catch (error) {
       if (notFound(error)) return null;
       throw FileErrors.storageUnavailable();
@@ -126,6 +131,28 @@ export class S3ObjectStorage implements ObjectStorage {
       await this.client.send(new DeleteObjectCommand({ Bucket: this.options.bucket, Key: key }));
     } catch (error) {
       if (!notFound(error)) throw FileErrors.storageUnavailable();
+    }
+  }
+
+  async copyIfUnchanged(from: string, to: string, etag: string | null): Promise<boolean> {
+    try {
+      // Copie côté stockage, conditionnée à la version vérifiée ; type et métadonnées gardés.
+      await this.client.send(
+        new CopyObjectCommand({
+          Bucket: this.options.bucket,
+          Key: to,
+          CopySource: `${this.options.bucket}/${from.split('/').map(encodeURIComponent).join('/')}`,
+          ...(etag ? { CopySourceIfMatch: etag } : {}),
+          MetadataDirective: 'COPY',
+        }),
+      );
+      return true;
+    } catch (error) {
+      const e = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+      if (notFound(error) || e?.name === 'PreconditionFailed' || e?.$metadata?.httpStatusCode === 412) {
+        return false;
+      }
+      throw FileErrors.storageUnavailable();
     }
   }
 

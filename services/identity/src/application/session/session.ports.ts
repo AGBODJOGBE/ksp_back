@@ -93,3 +93,11 @@ export interface LoginRepository {
 export interface RefreshTokenGenerator {
   generate(): { token: string; hash: string };
 }
+
+/**
+ * Successeur d'un jeton de renouvellement, dérivé avec une clé secrète : toujours le même pour un
+ * même jeton, si bien que deux onglets qui renouvellent avec le même jeton reçoivent le même (ADR-050).
+ */
+export interface RefreshTokenSuccessor {
+  successor(token: string): { token: string; hash: string };
+}

@@ -21,6 +21,9 @@ Le service démarre même sans OSRM : `Route`, `DistanceMatrix` et `Nearest` ré
 `GEO_ROUTING_UNAVAILABLE` (réessayable) et `ReverseGeocode` reste servi. Pour les itinéraires en
 local, préparer puis lancer OSRM (voir le README racine, « Itinéraires (OSRM) »).
 
+Une réponse « Ok » d'OSRM sans distance ou durée lisible, ou une matrice incomplète, est traitée
+comme une panne (`GEO_ROUTING_UNAVAILABLE`) : jamais rendue 0 m ou 0 s (ADR-050).
+
 ## Fonctionnement
 
 - **ReverseGeocode** : Nominatim auto-hébergé (`NOMINATIM_URL`) puis Google Maps Geocoding

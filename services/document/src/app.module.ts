@@ -46,6 +46,7 @@ export function settingsOf(config: ServiceConfig): DocumentSettings {
     portalBaseUrl: config.PORTAL_BASE_URL.replace(/\/+$/, ''),
     genericTemplateEnabled: genericTemplateEnabled(config),
     internalCallers: config.DOCUMENT_INTERNAL_CALLERS,
+    signedLinkDays: config.DOCUMENT_SIGNED_LINK_DAYS,
   };
 }
 

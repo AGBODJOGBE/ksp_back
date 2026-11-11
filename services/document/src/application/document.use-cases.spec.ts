@@ -350,6 +350,15 @@ describe('Signature par lien (signataire sans compte)', () => {
       as(publicClient, () => useCases.linkSignature.sign({ token, code: '482913', consent: true })),
     );
     expect(again).toMatchObject({ code: 'DOCUMENT_SIGNATURE_CLOSED', details: { status: 'signed' } });
+
+    // Lien lisible 7 jours après la signature, puis introuvable (ADR-050).
+    deps.clock.advance(7 * 86_400_000);
+    await expect(as(publicClient, () => useCases.linkSignature.session(token))).resolves.toMatchObject({
+      status: 'signed',
+    });
+    deps.clock.advance(1000);
+    const gone = await rejection(as(publicClient, () => useCases.linkSignature.session(token)));
+    expect(gone.code).toBe('DOCUMENT_SIGNATURE_NOT_FOUND');
   });
 
   it('refuse de signer un PDF dont l’empreinte a changé', async () => {
@@ -379,6 +388,30 @@ describe('Signature par lien (signataire sans compte)', () => {
     expect(exhausted.code).toBe('DOCUMENT_CODE_EXPIRED');
     const unknown = await rejection(as(publicClient, () => useCases.linkSignature.session('x'.repeat(43))));
     expect(unknown.code).toBe('DOCUMENT_SIGNATURE_NOT_FOUND');
+  });
+
+  it('plafond d’essais par demande : au-delà, la demande est close et le document expiré', async () => {
+    const { deps, useCases, requestDebtorSignature } = setup();
+    const { document, token } = await requestDebtorSignature();
+    const wrong = () =>
+      rejection(
+        as(publicClient, () => useCases.linkSignature.sign({ token, code: '999999', consent: true })),
+      );
+    // 15 essais en tout : trois codes de 5 essais ; le dernier essai faux clôt la demande.
+    for (let code = 0; code < 3; code += 1) {
+      await as(publicClient, () => useCases.linkSignature.sendCode(token));
+      for (let attempt = 0; attempt < 4; attempt += 1)
+        expect((await wrong()).code).toBe('DOCUMENT_CODE_INVALID');
+      if (code < 2) expect((await wrong()).code).toBe('DOCUMENT_CODE_INVALID');
+      deps.clock.advance(61_000);
+    }
+    expect(await wrong()).toMatchObject({
+      code: 'DOCUMENT_SIGNATURE_CLOSED',
+      details: { status: 'expired', reason: 'too_many_attempts' },
+    });
+    expect((await deps.documents.findById(document.id))!.status).toBe('expired');
+    const closed = await rejection(as(publicClient, () => useCases.linkSignature.sendCode(token)));
+    expect(closed).toMatchObject({ code: 'DOCUMENT_SIGNATURE_CLOSED', details: { status: 'expired' } });
   });
 
   it('demande expirée : plus d’aperçu ni de code, document expiré, nouvelle demande possible', async () => {

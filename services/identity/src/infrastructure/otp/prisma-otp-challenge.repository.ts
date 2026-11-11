@@ -5,6 +5,7 @@ import { type OtpChallenge, type OtpChannel } from '../../domain/otp/otp-challen
 import { type StoredOtpChallenge } from '../../domain/otp/otp-verification';
 import { type PhoneNumber } from '../../domain/user/phone-number';
 import { PrismaService } from '../prisma/prisma.service';
+import { takeCodeAttempt } from './take-code-attempt';
 
 @Injectable()
 export class PrismaOtpChallengeRepository implements OtpChallengeRepository {
@@ -64,13 +65,7 @@ export class PrismaOtpChallengeRepository implements OtpChallengeRepository {
     });
   }
 
-  async registerFailedAttempt(id: string): Promise<number> {
-    // Incrément fait par PostgreSQL : deux essais simultanés comptent bien pour deux.
-    const updated = await this.prisma.otpChallenge.update({
-      where: { id },
-      data: { attempts: { increment: 1 } },
-      select: { attempts: true },
-    });
-    return updated.attempts;
+  takeAttempt(id: string, maxAttempts: number, now: Date): Promise<number | null> {
+    return takeCodeAttempt(this.prisma, 'otp_challenges', { id, maxAttempts, now });
   }
 }

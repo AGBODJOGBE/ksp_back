@@ -20,6 +20,11 @@ export interface MfaStep {
   roles: AssignedRole[];
 }
 
+/** Étape dont un essai a été pris, avant de comparer le code saisi. */
+export interface MfaCodeStep extends MfaStep {
+  attempts: number;
+}
+
 export interface ClientDetails {
   ip: string | null;
   userAgent: string | null;
@@ -58,13 +63,24 @@ export class MfaStepGuard {
     return { challenge, account, roles };
   }
 
-  /** Code faux ou rejoué : compte l'essai, l'enregistre dans l'historique, puis lève l'erreur. */
+  /**
+   * Ouvre l'étape pour comparer un code : l'essai est pris d'abord, de façon atomique (ADR-050), si
+   * bien que des essais simultanés ne comparent jamais plus de codes que le plafond.
+   */
+  async openForCode(input: { mfaToken: string; clientKind: ClientKind }, now: Date): Promise<MfaCodeStep> {
+    const step = await this.open(input, now);
+    const attempts = await this.challenges.takeAttempt(step.challenge.id, this.policy.maxAttempts, now);
+    if (attempts === null) throw mfaErrors.tooManyAttempts();
+    return { ...step, attempts };
+  }
+
+  /** Code faux ou rejoué : l'enregistre dans l'historique, puis lève l'erreur. */
   async rejectCode(
-    step: MfaStep,
+    step: MfaCodeStep,
     failure: { kind: 'invalid' | 'reused'; method: LoginMethod },
     client: ClientDetails,
   ): Promise<never> {
-    const attempts = await this.challenges.registerFailedAttempt(step.challenge.id);
+    const { attempts } = step;
     await this.logins.recordFailedLogin({
       id: this.ids.next(),
       userId: step.account.id,

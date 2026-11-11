@@ -40,6 +40,7 @@ describe('configuration', () => {
       length: 6,
       ttlSeconds: 600,
       maxAttempts: 5,
+      maxAttemptsPerRequest: 15,
       resendDelaySeconds: 60,
       maxPerHour: 5,
     });
@@ -67,6 +68,15 @@ describe('configuration', () => {
       /HTTPS/,
     );
     expect(() => loadConfig(configSchema, production)).toThrow(/Jeton de service/);
+    // Secret de développement du .env.example refusé en production (ADR-050).
+    expect(() =>
+      loadConfig(configSchema, {
+        ...production,
+        IDENTITY_TOKEN_URL: 'http://identity:3101/oauth/token',
+        SERVICE_CLIENT_SECRET: 'secret',
+        DOCUMENT_CODE_HMAC_SECRET: 'dev-only-document-code-hmac-secret-0123456789',
+      }),
+    ).toThrow(/DOCUMENT_CODE_HMAC_SECRET/);
     const ok = loadConfig(configSchema, {
       ...production,
       IDENTITY_TOKEN_URL: 'http://identity:3101/oauth/token',

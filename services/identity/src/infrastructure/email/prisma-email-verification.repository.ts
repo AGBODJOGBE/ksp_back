@@ -13,6 +13,7 @@ import {
 import { type Account } from '../../application/session/session.ports';
 import { type EmailAddress } from '../../domain/user/email-address';
 import { Prisma } from '../../../prisma/generated';
+import { takeCodeAttempt } from '../otp/take-code-attempt';
 import { PrismaService } from '../prisma/prisma.service';
 import { ACCOUNT_SELECT, toAccount } from '../session/prisma-login.repository';
 
@@ -69,14 +70,8 @@ export class PrismaEmailVerificationRepository implements EmailVerificationRepos
     return this.latest({ organizationId });
   }
 
-  async registerFailedAttempt(id: string): Promise<number> {
-    // Incrément fait par PostgreSQL : deux essais simultanés comptent bien pour deux.
-    const updated = await this.prisma.emailVerification.update({
-      where: { id },
-      data: { attempts: { increment: 1 } },
-      select: { attempts: true },
-    });
-    return updated.attempts;
+  takeAttempt(id: string, maxAttempts: number, now: Date): Promise<number | null> {
+    return takeCodeAttempt(this.prisma, 'email_verifications', { id, maxAttempts, now });
   }
 
   async confirm(confirmation: EmailConfirmation): Promise<Account> {

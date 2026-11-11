@@ -51,13 +51,22 @@ export class PrismaMfaRepository implements MfaChallengeRepository, MfaFactorRep
     });
   }
 
-  async registerFailedAttempt(id: string): Promise<number> {
-    const updated = await this.prisma.mfaChallenge.update({
-      where: { id },
-      data: { attempts: { increment: 1 } },
-      select: { attempts: true },
+  async takeAttempt(id: string, maxAttempts: number, now: Date): Promise<number | null> {
+    // Essai pris avant la comparaison, en une instruction (ADR-050).
+    const rows = await this.prisma.$queryRaw<{ attempts: number }[]>`
+      UPDATE "mfa_challenges" SET "attempts" = "attempts" + 1
+      WHERE "id" = ${id}::uuid AND "attempts" < ${maxAttempts}
+        AND "consumed_at" IS NULL AND "expires_at" > ${now}
+      RETURNING "attempts"`;
+    return rows[0]?.attempts ?? null;
+  }
+
+  async enrollmentDeadline(userId: string): Promise<Date | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { mfaEnrollmentDeadline: true },
     });
-    return updated.attempts;
+    return user?.mfaEnrollmentDeadline ?? null;
   }
 
   async findTotp(userId: string): Promise<TotpFactor | null> {
@@ -167,6 +176,8 @@ async function applyProof(
     data: { enabledAt: now, lastUsedStep: proof.step, lastUsedAt: now },
   });
   if (enabled.count !== 1) throw new TotpAlreadyEnabledError();
+  // Application reconfigurée : l'échéance ouverte par une réinitialisation est levée (ADR-050).
+  await tx.user.update({ where: { id: userId }, data: { mfaEnrollmentDeadline: null } });
   // De nouveaux codes remplacent ceux qui n'ont pas servi ; les codes utilisés restent pour l'historique.
   await tx.mfaRecoveryCode.deleteMany({ where: { userId, usedAt: null } });
   await tx.mfaRecoveryCode.createMany({
