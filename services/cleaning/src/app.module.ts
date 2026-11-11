@@ -42,6 +42,7 @@ import {
   MissionPaymentDueGrpcController,
   ObligationGrpcController,
   QuoteGrpcController,
+  WalletDebitCheckGrpcController,
 } from './interfaces/grpc/customer.controllers';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
@@ -97,6 +98,7 @@ export class AppModule {
         CleaningAdminGrpcController,
         ObligationGrpcController,
         MissionPaymentDueGrpcController,
+        WalletDebitCheckGrpcController,
       ],
       providers: [
         PrismaService,

@@ -16,7 +16,7 @@ import { calculatePrice, type PriceCalculation } from '../../domain/simulator';
 import { isCovered } from '../../domain/zone';
 import { calculationNotice } from '../catalog/catalog.use-cases';
 import { type CleaningDeps } from '../deps';
-import { ADMINISTRATION, requireStaff } from '../shared/access';
+import { ADMINISTRATION, GATEWAY_CALLERS, requireCaller, requireStaff } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import { optionalText, requiredText } from '../shared/validation';
 import { activePlaceType, type PlaceItemInput, resolvePlaceItems } from './place-items';
@@ -31,6 +31,7 @@ export class GetPlaceCatalogUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
   async execute(): Promise<PlaceCatalog> {
+    requireCaller(GATEWAY_CALLERS);
     const [placeTypes, services] = await Promise.all([
       this.deps.catalog.listPlaceTypes(),
       this.deps.catalog.listServices(),
@@ -68,6 +69,7 @@ export class EstimateUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
   async execute(input: EstimateInput): Promise<EstimateResult> {
+    requireCaller(GATEWAY_CALLERS);
     const commune = optionalText('commune', input.commune ?? undefined, 100);
     const placeType = await activePlaceType(this.deps, input.placeType);
     const resolved = await resolvePlaceItems(this.deps, placeType, input.items);

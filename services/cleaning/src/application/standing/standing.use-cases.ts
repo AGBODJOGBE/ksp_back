@@ -1,4 +1,4 @@
-import { eventSubject } from '../shared/event-subject';
+import { eventSubject, upfrontNotice } from '../shared/event-subject';
 import { DEFAULT_CHECKLIST } from '../../domain/catalog';
 import {
   deriveMissionStatus,
@@ -239,6 +239,7 @@ export class MissionSuspension {
             scheduledStart: intervention.scheduledStart.toISOString(),
             durationMinutes: intervention.durationMinutes,
             agentIds: intervention.agentIds,
+            ...upfrontNotice(mission),
           },
         })),
       ];

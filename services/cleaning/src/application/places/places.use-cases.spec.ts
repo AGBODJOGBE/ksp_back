@@ -390,6 +390,7 @@ describe('parcours par lieu : groupe de demandes (ADR-034)', () => {
     const asBusiness = () =>
       as(CUSTOMER_ID, () => new RequestQuoteGroupUseCase(w).execute(groupInput()), {
         activeContext: ORGANIZATION_ID,
+        orgRole: 'org_member',
       });
     const view = await asBusiness();
     expect(view.requests.every((r) => r.organizationId === ORGANIZATION_ID)).toBe(true);
@@ -407,6 +408,7 @@ describe('parcours par lieu : groupe de demandes (ADR-034)', () => {
           () => new RequestQuoteGroupUseCase(w).execute(groupInput({ idempotencyKey: 'grp-9' })),
           {
             activeContext: ORGANIZATION_ID,
+            orgRole: 'org_member',
           },
         ),
       ),

@@ -1,6 +1,6 @@
 import { type ChecklistTemplateItem } from './catalog';
 import { type GeoLocation } from './location';
-import { type PaymentState } from './payment';
+import { paidAmount, type PaymentState } from './payment';
 import { type Recurrence } from './recurrence';
 import { type Slot } from './schedule';
 
@@ -139,12 +139,38 @@ export function deriveMissionStatus(
   return 'to_schedule';
 }
 
-/** Premier passage à venir (ou le créneau choisi s'il n'y en a pas encore) : base du délai d'annulation. */
-export function nextStart(mission: Pick<Mission, 'interventions' | 'chosenSlot'>): Date {
+/**
+ * Premier passage planifié : base du délai d'annulation. Null sans passage planifié : rien n'est
+ * engagé, l'annulation est sans frais même si le créneau choisi au devis est passé (ADR-049).
+ */
+export function nextStart(mission: Pick<Mission, 'interventions'>): Date | null {
   const planned = mission.interventions
     .filter((intervention) => intervention.status === 'planned')
     .map((intervention) => intervention.scheduledStart.getTime());
-  return planned.length ? new Date(Math.min(...planned)) : mission.chosenSlot.start;
+  return planned.length ? new Date(Math.min(...planned)) : null;
+}
+
+/**
+ * Arrêt de la suite d'une mission récurrente d'un particulier, après au moins un passage fait
+ * (décision du responsable, ADR-049) : les passages faits restent dus, les suivants sont annulés.
+ */
+export function isRecurringStop(
+  mission: Pick<Mission, 'organizationId' | 'recurrence' | 'interventions'>,
+): boolean {
+  return mission.organizationId === null && mission.recurrence !== null && completedCount(mission) > 0;
+}
+
+/**
+ * Règlement de cet arrêt : montant dû pour les passages faits (prix d'un passage = total / passages
+ * prévus, arrondi à l'entier XOF), et montant déjà payé au-delà, à créditer au portefeuille du client.
+ */
+export function stopSettlement(
+  mission: Pick<Mission, 'interventions' | 'plannedInterventions' | 'payment'>,
+): { dueTotal: number; credit: number } {
+  const dueTotal = Math.round(
+    (mission.payment.total * completedCount(mission)) / Math.max(1, mission.plannedInterventions),
+  );
+  return { dueTotal, credit: Math.max(0, paidAmount(mission.payment) - dueTotal) };
 }
 
 /** Le client ne peut annuler qu'une mission pas encore commencée. */

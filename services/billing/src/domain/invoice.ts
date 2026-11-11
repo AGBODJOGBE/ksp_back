@@ -1,4 +1,4 @@
-import { type BillingSource, type ContractPeriod } from './contract';
+import { beninDay, type BillingSource, type ContractPeriod } from './contract';
 
 /**
  * Facture (CDC Nettoyage, partie 10) : « en attente de paiement » jusqu'à l'échéance
@@ -95,6 +95,15 @@ export function dueDate(issuedAt: Date, paymentTermDays: number): Date {
 }
 
 /** Numéro lisible, continu par année : FAC-2026-000042. */
+/**
+ * Année du numéro de facture : celle de la période facturée, au Bénin (ADR-049). La facture de
+ * décembre, émise le 1er janvier, garde le numéro de l'année de décembre.
+ */
+export function invoiceYear(invoice: Pick<Invoice, 'periodStart'>): number {
+  // Jour civil du Bénin compté depuis 1970 : lu en UTC, il donne la date du Bénin.
+  return new Date(beninDay(invoice.periodStart) * 86_400_000).getUTCFullYear();
+}
+
 export function formatInvoiceNumber(year: number, sequence: number): string {
   return `FAC-${year}-${String(sequence).padStart(6, '0')}`;
 }

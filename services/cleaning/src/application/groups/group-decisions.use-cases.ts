@@ -102,7 +102,7 @@ export class CancelRequestGroupUseCase {
   async execute(input: { groupId: string; reason?: string; idempotencyKey: string }): Promise<GroupOutcome> {
     const customer = currentCustomer();
     const key = parseKey(input.idempotencyKey, true);
-    const view = await ownGroup(this.deps, customer.userId, input.groupId);
+    const view = await ownGroup(this.deps, customer, input.groupId);
     const replay = await previousOutcome(this.deps, customer.userId, 'group.cancelled', key, view.group.id);
     if (replay) return replay;
     return closeGroup(this.deps, {

@@ -72,10 +72,14 @@ function customer(
 }
 
 /**
- * Tous les événements du Nettoyage, sauf cleaning.mission.refunded (ADR-046) : le remboursement est
- * annoncé par wallet quand il est crédité (wallet.prepaid.credited).
+ * Tous les événements du Nettoyage, sauf cleaning.mission.refunded (ADR-046) et
+ * cleaning.mission.credited (ADR-049) : le remboursement ou le crédit est annoncé par wallet quand il
+ * est crédité (wallet.prepaid.credited).
  */
-type NotifiedCleaningEvent = Exclude<CleaningEventType, 'cleaning.mission.refunded'>;
+type NotifiedCleaningEvent = Exclude<
+  CleaningEventType,
+  'cleaning.mission.refunded' | 'cleaning.mission.credited'
+>;
 
 export const CLEANING_RULES: { readonly [T in NotifiedCleaningEvent]: EventRule<T> } = {
   'cleaning.quote.requested': (event, context) =>

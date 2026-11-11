@@ -24,7 +24,7 @@ export function respectsLeadTime(start: Date, now: Date, minimumLeadHours: numbe
   return start.getTime() - now.getTime() >= minimumLeadHours * HOUR_MS;
 }
 
-/** Annulation sans frais jusqu'à N heures avant le début (24 heures par défaut). */
+/** Annulation sans frais jusqu'à N heures avant le début (24 h par défaut) ; sans début : toujours. */
 export function isFreeCancellation(start: Date | null, now: Date, freeCancellationHours: number): boolean {
   return start === null || start.getTime() - now.getTime() >= freeCancellationHours * HOUR_MS;
 }
