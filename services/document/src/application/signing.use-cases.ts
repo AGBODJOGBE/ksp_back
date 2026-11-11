@@ -49,6 +49,12 @@ class SignatureFlow {
     return this.codes.send(await this.documentOf(request), request);
   }
 
+  /** Trop de codes faux pour la demande : elle est close, comme une expiration (ADR-050). */
+  private async closeExhausted(requestId: string, now: Date): Promise<never> {
+    await this.deps.documents.closeExhaustedRequest(requestId, now);
+    throw DocumentErrors.signatureLocked();
+  }
+
   async sign(
     request: SignatureRequestRecord,
     input: { code?: string; consent?: boolean },
@@ -68,11 +74,20 @@ class SignatureFlow {
     const document = await this.documentOf(request);
     if (document.status !== 'pending_signature') throw DocumentErrors.invalidStatus(document.status);
 
-    const active = await documents.activeCode(request.id, now, policy.maxAttempts);
-    if (!active) throw DocumentErrors.codeExpired();
+    // L'essai est pris avant la comparaison, sous le verrou de la demande (ADR-050).
+    const attempt = await documents.takeCodeAttempt(request.id, now, {
+      perCode: policy.maxAttempts,
+      perRequest: policy.maxAttemptsPerRequest,
+    });
+    if (attempt.kind === 'closed')
+      throw DocumentErrors.signatureClosed(await this.codes.statusOf(request.id, now));
+    if (attempt.kind === 'request_exhausted') return this.closeExhausted(request.id, now);
+    if (attempt.kind === 'no_code') throw DocumentErrors.codeExpired();
+    const active = attempt.code;
     if (!code || !secrets.codeMatches(active.id, code, active.codeHash)) {
-      const attempts = await documents.recordFailedAttempt(active.id);
-      throw DocumentErrors.codeInvalid(Math.max(policy.maxAttempts - attempts, 0));
+      if (attempt.requestAttempts >= policy.maxAttemptsPerRequest)
+        return this.closeExhausted(request.id, now);
+      throw DocumentErrors.codeInvalid(Math.max(policy.maxAttempts - active.attempts, 0));
     }
 
     // Le PDF stocké doit être exactement celui produit et présenté : sinon, aucune signature.
@@ -186,7 +201,13 @@ async function requestOfUser(
   return request;
 }
 
-/** Demande du lien de signature ; jeton inconnu ou mal formé : introuvable. */
+const DAY_MS = 86_400_000;
+
+/**
+ * Demande du lien de signature ; jeton inconnu ou mal formé : introuvable. Un lien signé depuis
+ * plus de `signedLinkDays` jours ne donne plus rien à lire (ADR-050) : le signataire a reçu sa copie,
+ * et un message transféré ou une ancienne capture ne doit pas ouvrir le document pour toujours.
+ */
 async function requestOfToken(
   deps: DocumentDeps,
   token: string | undefined,
@@ -194,6 +215,9 @@ async function requestOfToken(
   if (!token || !TOKEN.test(token)) throw DocumentErrors.signatureNotFound();
   const request = await deps.documents.findRequestByTokenHash(deps.secrets.hashToken(token));
   if (!request) throw DocumentErrors.signatureNotFound();
+  const readableUntil =
+    request.signedAt && request.signedAt.getTime() + deps.settings.signedLinkDays * DAY_MS;
+  if (readableUntil && deps.clock.now().getTime() > readableUntil) throw DocumentErrors.signatureNotFound();
   return request;
 }
 

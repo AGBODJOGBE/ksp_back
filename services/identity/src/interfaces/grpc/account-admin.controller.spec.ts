@@ -64,7 +64,7 @@ function controller() {
     new GrantAccountRoleUseCase(details, roles, ids, clock),
     new RevokeAccountRoleUseCase(details, accounts, roles, ids, clock),
     new ChangeAccountStatusUseCase(details, accounts, ids, clock),
-    new ResetAccountMfaUseCase(details, accounts, ids, clock),
+    new ResetAccountMfaUseCase(details, accounts, ids, clock, 3600),
   );
 }
 

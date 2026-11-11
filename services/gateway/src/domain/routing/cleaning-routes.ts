@@ -20,6 +20,13 @@ const ADMINISTRATION = ['cleaning_admin', 'super_admin'] as const;
 export const BACKOFFICE_MFA_SECONDS = 12 * 3600;
 
 /**
+ * Actions critiques (rôles, suspension, double authentification, argent) : double authentification
+ * de moins de 10 minutes (cahier des charges Identité, partie 4 ; ADR-050). Seul réglage, repris par
+ * `x-ksp-mfa-max-age` dans le contrat OpenAPI.
+ */
+export const CRITICAL_MFA_SECONDS = 600;
+
+/**
  * Routes du Nettoyage (lot 2) : simulateur public, espace client, back-office. Reprises des
  * extensions x-ksp-* du contrat OpenAPI ; le test de conformité vérifie qu'elles restent identiques.
  */

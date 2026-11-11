@@ -37,6 +37,13 @@ export const DocumentErrors = {
           : 'Cette demande de signature a été annulée.',
       { status },
     ),
+  /** Trop de codes faux : la demande est close (statut expired, ADR-050). */
+  signatureLocked: () =>
+    AppError.precondition(
+      'DOCUMENT_SIGNATURE_CLOSED',
+      'Trop de codes faux : cette demande de signature est close. Demandez-en une nouvelle à l’émetteur.',
+      { status: 'expired', reason: 'too_many_attempts' },
+    ),
   signerUnreachable: () =>
     AppError.precondition(
       'DOCUMENT_SIGNER_UNREACHABLE',

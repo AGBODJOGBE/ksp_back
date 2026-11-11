@@ -32,6 +32,11 @@ export const mfaErrors = {
       'IDENTITY_MFA_ALREADY_ENROLLED',
       "Votre application d'authentification est déjà configurée.",
     ),
+  enrollmentExpired: () =>
+    AppError.precondition(
+      'IDENTITY_MFA_ENROLLMENT_EXPIRED',
+      'Le délai pour reconfigurer la double authentification est passé : demandez une nouvelle réinitialisation.',
+    ),
   enrollmentNotStarted: () =>
     AppError.precondition(
       'IDENTITY_MFA_ENROLLMENT_NOT_STARTED',

@@ -2040,7 +2040,7 @@ paths:
         - cleaning_admin
         - recovery_admin
         - super_admin
-      x-ksp-mfa-max-age: 43200
+      x-ksp-mfa-max-age: 600
       security:
         - bearerAuth: []
       parameters:
@@ -2107,7 +2107,7 @@ paths:
         - cleaning_admin
         - recovery_admin
         - super_admin
-      x-ksp-mfa-max-age: 43200
+      x-ksp-mfa-max-age: 600
       security:
         - bearerAuth: []
       parameters:
@@ -2173,7 +2173,7 @@ paths:
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - super_admin
-      x-ksp-mfa-max-age: 43200
+      x-ksp-mfa-max-age: 600
       security:
         - bearerAuth: []
       parameters:
@@ -2234,7 +2234,7 @@ paths:
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - super_admin
-      x-ksp-mfa-max-age: 43200
+      x-ksp-mfa-max-age: 600
       security:
         - bearerAuth: []
       parameters:
@@ -2297,7 +2297,7 @@ paths:
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - super_admin
-      x-ksp-mfa-max-age: 43200
+      x-ksp-mfa-max-age: 600
       security:
         - bearerAuth: []
       parameters:
@@ -9328,7 +9328,7 @@ paths:
         - finance_officer
         - cleaning_admin
         - super_admin
-      x-ksp-mfa-max-age: 43200
+      x-ksp-mfa-max-age: 600
       security:
         - bearerAuth: []
       parameters:
@@ -9645,7 +9645,7 @@ paths:
       x-ksp-roles:
         - finance_officer
         - super_admin
-      x-ksp-mfa-max-age: 43200
+      x-ksp-mfa-max-age: 600
       security:
         - bearerAuth: []
       parameters:
@@ -9712,7 +9712,7 @@ paths:
       x-ksp-roles:
         - finance_officer
         - super_admin
-      x-ksp-mfa-max-age: 43200
+      x-ksp-mfa-max-age: 600
       security:
         - bearerAuth: []
       parameters:
@@ -10076,7 +10076,7 @@ paths:
       x-ksp-roles:
         - finance_officer
         - super_admin
-      x-ksp-mfa-max-age: 43200
+      x-ksp-mfa-max-age: 600
       security:
         - bearerAuth: []
       parameters:

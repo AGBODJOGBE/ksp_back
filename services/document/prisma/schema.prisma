@@ -107,6 +107,8 @@ model SignatureRequest {
   expiresAt         DateTime  @map("expires_at") @db.Timestamptz(3)
   signedAt          DateTime? @map("signed_at") @db.Timestamptz(3)
   closedAt          DateTime? @map("closed_at") @db.Timestamptz(3)
+  /// Essais de code pris pour la demande, tous codes confondus (plafond, ADR-050).
+  codeAttempts      Int       @default(0) @map("code_attempts")
 
   document Document           @relation(fields: [documentId], references: [id])
   codes    SignatureCode[]

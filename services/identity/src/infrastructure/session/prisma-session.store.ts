@@ -19,6 +19,7 @@ export class PrismaSessionStore implements SessionStore {
       select: {
         id: true,
         usedAt: true,
+        replacedById: true,
         session: {
           select: {
             id: true,
@@ -35,8 +36,20 @@ export class PrismaSessionStore implements SessionStore {
       },
     });
     if (!row) return null;
+    const successor = row.replacedById
+      ? await this.prisma.refreshToken.findUnique({
+          where: { id: row.replacedById },
+          select: { tokenHash: true, usedAt: true },
+        })
+      : null;
     const { user, ...session } = row.session;
-    return { id: row.id, usedAt: row.usedAt, session, account: toAccount(user) };
+    return {
+      id: row.id,
+      usedAt: row.usedAt,
+      successor: successor && { hash: successor.tokenHash, usedAt: successor.usedAt },
+      session,
+      account: toAccount(user),
+    };
   }
 
   async rotateRefreshToken(rotation: RefreshRotation): Promise<boolean> {

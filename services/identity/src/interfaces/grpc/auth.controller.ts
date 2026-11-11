@@ -1,5 +1,5 @@
 import { identityV1 } from '@ksp/contracts';
-import { AppError, currentContext, requireUser } from '@ksp/platform';
+import { AllowedCallers, AppError, currentContext, requireUser } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
 import { type BackofficeSession } from '../../application/mfa/backoffice-session-opener';
 import { ConfirmTotpUseCase } from '../../application/mfa/confirm-totp.use-case';
@@ -50,6 +50,7 @@ const MFA_METHOD_IN: Partial<Record<identityV1.MfaMethod, SecondFactorMethod>> =
  * Aucune règle métier ici : chaque méthode traduit l'appel et délègue à son cas d'usage.
  */
 @Controller()
+@AllowedCallers('gateway')
 @identityV1.AuthServiceControllerMethods()
 export class AuthGrpcController implements identityV1.AuthServiceController {
   constructor(

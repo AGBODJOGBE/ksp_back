@@ -83,9 +83,16 @@ export class VerifyOtpUseCase {
     if (state === 'expired') throw expired();
     if (state === 'exhausted') throw exhausted();
 
+    // L'essai est pris avant la comparaison (ADR-050) : des essais simultanés ne dépassent pas le plafond.
+    const attempts = await this.challenges.takeAttempt(challenge.id, this.otpPolicy.maxAttempts, now);
+    if (attempts === null) {
+      const latest = await this.challenges.findById(challenge.id);
+      const latestState = latest && challengeState(latest, now, this.otpPolicy.maxAttempts);
+      throw latestState === 'exhausted' ? exhausted() : expired();
+    }
+
     const account = await this.accounts.findByPhone(challenge.target);
     if (!this.hasher.matches(challenge.id, input.code, challenge.codeHash)) {
-      const attempts = await this.challenges.registerFailedAttempt(challenge.id);
       await this.recordFailure(account?.id ?? null, 'otp_invalid', input);
       if (attempts >= this.otpPolicy.maxAttempts) throw exhausted();
       throw AppError.invalid('IDENTITY_OTP_INVALID', 'Le code est incorrect.', {

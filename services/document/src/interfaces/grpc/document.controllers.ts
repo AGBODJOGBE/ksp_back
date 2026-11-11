@@ -1,3 +1,4 @@
+import { AllowedCallers } from '@ksp/platform';
 import { documentV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import { DOCUMENT_USE_CASES, type DocumentUseCases } from '../../application/use-cases';
@@ -72,6 +73,7 @@ export class DocumentInternalGrpcController implements documentV1.DocumentIntern
 
 /** Adaptateur gRPC de l'espace connecté (gateway) : propriétaire et signataire connecté. */
 @Controller()
+@AllowedCallers('gateway')
 @documentV1.DocumentServiceControllerMethods()
 export class DocumentGrpcController implements documentV1.DocumentServiceController {
   constructor(@Inject(DOCUMENT_USE_CASES) private readonly useCases: DocumentUseCases) {}
@@ -106,6 +108,7 @@ export class DocumentGrpcController implements documentV1.DocumentServiceControl
 
 /** Adaptateur gRPC du lien de signature (route publique de la gateway) ; le jeton n'est jamais journalisé. */
 @Controller()
+@AllowedCallers('gateway')
 @documentV1.DocumentSigningServiceControllerMethods()
 export class DocumentSigningGrpcController implements documentV1.DocumentSigningServiceController {
   constructor(@Inject(DOCUMENT_USE_CASES) private readonly useCases: DocumentUseCases) {}

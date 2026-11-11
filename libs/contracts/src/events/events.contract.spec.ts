@@ -43,6 +43,7 @@ const examples: { [K in IdentityEventType]: IdentityEventPayloads[K] } = {
     scheduledFor: '2026-12-05T10:00:00.000Z',
   },
   'identity.user.deletion_cancelled': { userId: uuid },
+  'identity.user.mfa_reset': { userId: uuid, enrollBefore: '2026-11-07T11:00:00.000Z' },
   'identity.organization.created': { organizationId: uuid, createdBy: uuid, legalName: 'SARL Bénin Propre' },
   'identity.organization.validated': {
     organizationId: uuid,

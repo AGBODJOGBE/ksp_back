@@ -107,5 +107,7 @@ export interface AccountAdminRepository {
     reason: string;
     auditId: string;
     now: Date;
+    /** Échéance de la reconfiguration ; publiée dans identity.user.mfa_reset (titulaire prévenu). */
+    enrollBefore: Date;
   }): Promise<boolean>;
 }
