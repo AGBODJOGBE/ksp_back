@@ -7427,7 +7427,7 @@ paths:
       operationId: unscheduleCleaningIntervention
       summary: Annuler un passage pour le replanifier
       description: |
-        ADR-053. Passage planifié seulement. Il est annulé (cause `unscheduled`) et la mission a de nouveau un passage à
+        ADR-053. Passage planifié seulement. Il est annulé (`cancellationCause: manual`, `toReschedule: true`) et la mission a de nouveau un passage à
         planifier : le nombre de passages prévus ne change pas, aucun effet sur l’argent. Client et agents prévenus
         (`cleaning.intervention.unscheduled`).
 
@@ -15205,14 +15205,18 @@ components:
           format: date-time
         cancellationCause:
           description: |
-            Passage annulé : `suspension` (reprogrammé automatiquement au déblocage), `manual`, ou `unscheduled`
-            (ADR-053 : annulé pour être replanifié, la mission a de nouveau un passage à planifier) ; null sinon.
+            Passage annulé : `suspension` (reprogrammé automatiquement au déblocage) ou `manual` ; null sinon. Un
+            passage annulé pour être replanifié (ADR-053) apparaît en `manual`, avec `toReschedule: true`.
           oneOf:
             - enum:
                 - suspension
                 - manual
-                - unscheduled
             - type: 'null'
+        toReschedule:
+          type: boolean
+          description: |
+            Présent (true) seulement pour un passage annulé pour être replanifié (ADR-053) : la mission a de nouveau
+            un passage à planifier, sans effet sur l’argent ; absent sinon.
         changeReason:
           type:
             - string

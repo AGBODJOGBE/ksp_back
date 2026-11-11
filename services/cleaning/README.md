@@ -177,7 +177,8 @@ positions des lieux du compte (ADR-035).
 - **Un passage seul** (supervision) : `POST …/interventions/{id}/reschedule` (nouveau début, agents
   gardés ou changés, motif ; mêmes contrôles que la planification, `cleaning.intervention.rescheduled`)
   et `POST …/interventions/{id}/unschedule` (motif ; passage annulé `unscheduled`, à replanifier, sans
-  effet sur l'argent, `cleaning.intervention.unscheduled`).
+  effet sur l'argent, `cleaning.intervention.unscheduled` ; en REST : `cancellationCause: manual` et
+  `toReschedule: true`).
 - **Agents et équipes** (administration) : `POST …/agents/{id}/deactivate` (refus 409 avec la liste des
   passages et visites à venir) et `…/reactivate` ; `DELETE …/agents/{id}/unavailabilities/{unavailability}` ;
   `POST …/teams/{id}/deactivate` et `…/reactivate` (équipe gardée, plus proposée). Une indisponibilité qui

@@ -1677,6 +1677,19 @@ describe('gateway → cleaning', () => {
       interventionId: IDS.intervention,
       reason: 'Pluie',
     });
+    // Contrat REST additif (ADR-053) : `unscheduled` est présenté en `manual` avec toReschedule.
+    const cancelled = {
+      ...protoMission.interventions[0]!,
+      status: 'cancelled',
+      cancellationCause: 'unscheduled',
+    };
+    cleaning.stub.on('unscheduleIntervention', async () => ({
+      mission: { ...protoMission, interventions: [cancelled, { ...cancelled, cancellationCause: 'manual' }] },
+    }));
+    const res = await backoffice(http().post(`${base}/unschedule`), staff).send({ reason: 'Pluie' });
+    expect(res.body.interventions[0]).toMatchObject({ cancellationCause: 'manual', toReschedule: true });
+    expect(res.body.interventions[1].cancellationCause).toBe('manual');
+    expect(res.body.interventions[1]).not.toHaveProperty('toReschedule');
   });
 
   it('agents et équipes : désactivation (409 avec la liste), indisponibilité forcée avec avertissement', async () => {

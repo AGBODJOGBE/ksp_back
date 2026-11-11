@@ -380,7 +380,9 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
       afterPhotoFileIds: i.afterPhotoFileIds,
       startedAt: orNull(i.startedAt),
       completedAt: orNull(i.completedAt),
-      cancellationCause: orNull(i.cancellationCause),
+      // Contrat REST additif (ADR-053) : l'annulation pour replanifier reste `manual`, signalée à part.
+      cancellationCause: i.cancellationCause === 'unscheduled' ? 'manual' : orNull(i.cancellationCause),
+      ...(i.cancellationCause === 'unscheduled' ? { toReschedule: true } : {}),
       changeReason: orNull(i.changeReason),
     })),
     payment: {

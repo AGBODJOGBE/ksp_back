@@ -44,7 +44,11 @@ pas touchées ici.
    - **annuler un passage pour le replanifier** : le passage est annulé avec la cause `unscheduled`, la
      mission retrouve un passage à planifier ; le nombre de passages prévus ne change pas, **aucun effet
      sur l'argent** ; `cleaning.intervention.unscheduled` (client, agents libérés). La suppression
-     définitive d'un passage avec remboursement est reportée en phase 2.
+     définitive d'un passage avec remboursement est reportée en phase 2. **Contrat REST additif** : la
+     gateway garde les valeurs déjà publiées de `cancellationCause` (`suspension`, `manual`) ; un tel
+     passage y apparaît en `manual` avec le champ facultatif `toReschedule: true` (présent seulement dans
+     ce cas). Le proto et le domaine gardent la cause `unscheduled` (ajout admis par buf ; une nouvelle
+     valeur d'énumération dans une réponse REST serait une rupture pour les fronts, refusée par oasdiff).
 4. **Agents et équipes** (cleaning_admin, super_admin) :
    - **désactiver un agent** : refusé tant qu'il a des passages actifs ou des visites planifiées à venir,
      avec leur liste (`CLEANING_AGENT_HAS_ASSIGNMENTS`, 409). Choix retenu : **refus, sans réaffectation
