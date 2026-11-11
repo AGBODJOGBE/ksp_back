@@ -73,7 +73,9 @@ const identityConfigSchema = baseServiceConfigSchema.safeExtend({
    */
   OBLIGATION_SERVICES: z
     .string()
-    .default('cleaning=localhost:50053,billing=localhost:50054,payment=localhost:50055'),
+    .default(
+      'cleaning=localhost:50053,billing=localhost:50054,payment=localhost:50055,wallet=localhost:50057',
+    ),
   /** Délai de réponse de chaque service interrogé : sous le délai de la gateway (3 secondes). */
   OBLIGATION_CHECK_DEADLINE_MS: z.coerce.number().int().positive().default(1500),
   /** Passage de la tâche d'anonymisation ; 0 : tâche désactivée. */

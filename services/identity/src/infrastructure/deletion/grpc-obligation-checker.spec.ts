@@ -1,6 +1,7 @@
 import { type commonV1 } from '@ksp/contracts';
 import { AppError, GrpcCaller } from '@ksp/platform';
 import { NEVER, of, throwError } from 'rxjs';
+import { configSchema } from '../../config';
 import {
   GrpcObligationChecker,
   type ObligationTarget,
@@ -122,5 +123,24 @@ describe('parseObligationServices', () => {
   it('refuse une entrée mal formée', () => {
     expect(() => parseObligationServices('cleaning')).toThrow(/OBLIGATION_SERVICES/);
     expect(() => parseObligationServices('Cleaning=x:1')).toThrow(/OBLIGATION_SERVICES/);
+  });
+});
+
+describe('services interrogés par défaut', () => {
+  it('le portefeuille aussi : un solde ou un reversement en cours bloque (ADR-048)', () => {
+    const config = configSchema.parse({
+      SERVICE_NAME: 'identity',
+      GRPC_PORT: '50051',
+      HTTP_PORT: '3101',
+      DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
+      RABBITMQ_URL: 'amqp://localhost',
+      OTP_HMAC_SECRET: 'x'.repeat(32),
+    });
+    expect(parseObligationServices(config.OBLIGATION_SERVICES).map(({ service }) => service)).toEqual([
+      'cleaning',
+      'billing',
+      'payment',
+      'wallet',
+    ]);
   });
 });
