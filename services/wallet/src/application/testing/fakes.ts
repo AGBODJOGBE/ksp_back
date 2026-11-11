@@ -28,6 +28,7 @@ import {
   type TopUpPayment,
   type TopUpPayments,
   type TopUpRecord,
+  type DebitRecordChecks,
   type ManualCreditRequest,
   type ManualCreditRequests,
   type ManualCreditStatus,
@@ -142,6 +143,22 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
   }
   async findReversalOf(id: string) {
     return [...this.transactions.values()].find((t) => t.reversesTransactionId === id) ?? null;
+  }
+  readonly debitChecks = new Map<string, 'recorded' | 'refunded'>();
+  async listUncheckedDebits(before: Date, limit: number) {
+    return [...this.transactions.values()]
+      .filter(
+        (t) =>
+          t.kind === 'service_payment' &&
+          t.createdAt < before &&
+          !this.debitChecks.has(t.id) &&
+          ![...this.transactions.values()].some((r) => r.reversesTransactionId === t.id),
+      )
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, limit);
+  }
+  async markDebitChecked(transactionId: string, outcome: 'recorded' | 'refunded') {
+    if (!this.debitChecks.has(transactionId)) this.debitChecks.set(transactionId, outcome);
   }
   async summary(holder: Holder): Promise<WalletSummary> {
     const of = (t: LedgerTransaction) => t.holder.type === holder.type && t.holder.id === holder.id;
@@ -336,6 +353,19 @@ export class InMemoryCreditRequests implements ManualCreditRequests {
   }
 }
 
+/** cleaning et billing simulés : débits enregistrés connus, panne simulable (ADR-048). */
+export class FakeDebitChecks implements DebitRecordChecks {
+  readonly recorded = new Set<string>();
+  readonly asked: Parameters<DebitRecordChecks['isRecorded']>[0][] = [];
+  recordedAll = false;
+  down = false;
+  async isRecorded(debit: Parameters<DebitRecordChecks['isRecorded']>[0]) {
+    if (this.down) throw AppError.unavailable('GRPC_UNAVAILABLE', 'service injoignable');
+    this.asked.push(debit);
+    return this.recordedAll || this.recorded.has(debit.transactionId);
+  }
+}
+
 export function makeDeps(overrides: Partial<WalletDeps> = {}) {
   const store = new InMemoryWallet();
   const topUps = new FakeTopUps();
@@ -359,7 +389,9 @@ export function makeDeps(overrides: Partial<WalletDeps> = {}) {
         topUpMax: 1_000_000,
         manualRefundMax: 100_000,
         creditApprovalThreshold: 50_000,
+        debitCheckDelayMinutes: 30,
       },
+      debitChecks: new FakeDebitChecks(),
       creditRequests,
       clock: new FixedClock(),
       ids: new SequenceIds(),

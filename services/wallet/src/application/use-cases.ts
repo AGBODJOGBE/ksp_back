@@ -12,6 +12,7 @@ import {
   DebitPrepaidUseCase,
   GetPrepaidBalanceUseCase,
   RefundDebitUseCase,
+  ReconcileDebitsUseCase,
   RefundFromEventUseCase,
 } from './prepaid.use-cases';
 import {
@@ -52,6 +53,7 @@ export function createUseCases(deps: WalletDeps) {
     refundDebit: new RefundDebitUseCase(deps),
     refundFromEvent: new RefundFromEventUseCase(deps),
     creditFromMission: new CreditFromMissionUseCase(deps),
+    reconcileDebits: new ReconcileDebitsUseCase(deps),
     getPrepaidBalance: new GetPrepaidBalanceUseCase(deps),
     createTopUp: new CreateTopUpUseCase(deps),
     creditTopUp: new CreditTopUpUseCase(deps),

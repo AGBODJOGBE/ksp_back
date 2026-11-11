@@ -89,7 +89,9 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
         topUpMax: 1_000_000,
         manualRefundMax: 100_000,
         creditApprovalThreshold: 50_000,
+        debitCheckDelayMinutes: 30,
       },
+      debitChecks: { isRecorded: async () => true },
       creditRequests: new PrismaCreditRequests(prisma),
       clock: new SystemClock(),
       ids: new UuidV7Generator(),
@@ -331,6 +333,26 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       ]);
       expect(results.filter((r) => r === 'recorded')).toHaveLength(1);
       expect((await asCleaning(() => useCases.getPrepaidBalance.execute(holder))).balance).toBe(30000);
+    });
+  });
+
+  describe('rapprochement des débits (ADR-048)', () => {
+    it('débits ni vérifiés ni remboursés, les plus anciens d’abord ; vérifié une fois, plus relu', async () => {
+      const later = new Date(Date.now() + 3_600_000);
+      const unchecked = await store.listUncheckedDebits(later, 50);
+      expect(unchecked.length).toBeGreaterThan(0);
+      expect(unchecked.every((t) => t.kind === 'service_payment' && t.entries.length === 2)).toBe(true);
+      for (const debit of unchecked) expect(await store.findReversalOf(debit.id)).toBeNull();
+      const [first] = unchecked;
+      await store.markDebitChecked(first!.id, 'recorded', new Date());
+      await store.markDebitChecked(first!.id, 'refunded', new Date());
+      const again = await store.listUncheckedDebits(later, 50);
+      expect(again.map((t) => t.id)).not.toContain(first!.id);
+      const { rows } = await pool.query('SELECT outcome FROM debit_checks WHERE transaction_id = $1', [
+        first!.id,
+      ]);
+      expect(rows).toEqual([{ outcome: 'recorded' }]);
+      expect(await store.listUncheckedDebits(new Date(0), 50)).toEqual([]);
     });
   });
 

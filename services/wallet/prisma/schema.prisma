@@ -136,6 +136,15 @@ model WalletPayout {
   @@map("wallet_payouts")
 }
 
+/// Débit du portefeuille rapproché avec le service qui l'a fait (ADR-048).
+model DebitCheck {
+  transactionId String   @id @map("transaction_id") @db.Uuid
+  outcome       String
+  checkedAt     DateTime @map("checked_at") @db.Timestamptz(3)
+
+  @@map("debit_checks")
+}
+
 /// Demande de crédit manuel au-delà du seuil de double validation (ADR-048).
 model ManualCreditRequest {
   id             String    @id @db.Uuid

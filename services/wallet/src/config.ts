@@ -45,6 +45,13 @@ export const configSchema = baseServiceConfigSchema
      * par le coffre, jamais journalisée ; celle de développement est refusée en production (ADR-048).
      */
     WALLET_PHONE_HASH_SECRET: z.preprocess(unset, z.string().min(32).default(DEV_PHONE_HASH_SECRET)),
+    /** Adresses gRPC de cleaning et billing (« débit enregistré ? », ADR-048). */
+    CLEANING_GRPC_URL: z.string().min(1).default('localhost:50053'),
+    BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
+    /** Âge (minutes) au-delà duquel un débit est rapproché avec le service qui l'a fait (ADR-048). */
+    WALLET_DEBIT_CHECK_DELAY_MINUTES: z.coerce.number().int().min(5).max(10_080).default(30),
+    /** Rapprochement planifié des débits (10 minutes) ; 0 : désactivé. */
+    WALLET_DEBIT_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
     /** Transmission planifiée des reversements en attente (1 minute) ; 0 : désactivée. */
     WALLET_PAYOUT_SUBMIT_INTERVAL_MS: z.coerce.number().int().min(0).default(60_000),
   })

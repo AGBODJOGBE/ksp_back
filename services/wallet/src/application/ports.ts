@@ -122,6 +122,13 @@ export interface LedgerStore {
     page: PageRequest,
   ): Promise<PageResult<StatementLine>>;
   overview(): Promise<LedgerOverview>;
+  /**
+   * Débits du portefeuille (paiement d'un service) créés avant `before`, ni vérifiés ni remboursés,
+   * les plus anciens d'abord (rapprochement, ADR-048).
+   */
+  listUncheckedDebits(before: Date, limit: number): Promise<LedgerTransaction[]>;
+  /** Note le débit vérifié (enregistré par le service, ou remboursé) : il n'est plus relu. */
+  markDebitChecked(transactionId: string, outcome: 'recorded' | 'refunded', at: Date): Promise<void>;
 }
 
 export interface PayoutFilter {
@@ -188,6 +195,20 @@ export interface TopUpPayments {
   get(paymentId: string): Promise<TopUpRecord | null>;
 }
 
+/**
+ * « Débit enregistré ? » chez le service qui l'a fait (WalletDebitCheckService de cleaning et de
+ * billing, ADR-048) : true si un paiement de l'objet cite le débit. null : service ou objet que ce
+ * contrôle ne couvre pas (le débit est laissé tel quel). Une panne lève l'erreur.
+ */
+export interface DebitRecordChecks {
+  isRecorded(debit: {
+    caller: string;
+    objectType: string;
+    objectId: string;
+    transactionId: string;
+  }): Promise<boolean | null>;
+}
+
 export type CreditKind = 'refund' | 'top_up';
 export type ManualCreditStatus = 'pending_approval' | 'approved';
 
@@ -240,6 +261,8 @@ export interface WalletSettings {
   manualRefundMax: number;
   /** Au-delà (XOF), un crédit manuel attend la validation d'un second membre de la finance. */
   creditApprovalThreshold: number;
+  /** Âge (minutes) au-delà duquel un débit est rapproché avec le service qui l'a fait (ADR-048). */
+  debitCheckDelayMinutes: number;
 }
 
 export interface WalletDeps {
@@ -249,6 +272,7 @@ export interface WalletDeps {
   topUps: TopUpPayments;
   fingerprints: PhoneFingerprints;
   creditRequests: ManualCreditRequests;
+  debitChecks: DebitRecordChecks;
   settings: WalletSettings;
   clock: Clock;
   ids: IdGenerator;

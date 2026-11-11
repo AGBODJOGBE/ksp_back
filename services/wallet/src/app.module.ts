@@ -1,4 +1,4 @@
-import { paymentV1 } from '@ksp/contracts';
+import { billingV1, cleaningV1, paymentV1 } from '@ksp/contracts';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -12,11 +12,16 @@ import { createUseCases, WALLET_USE_CASES } from './application/use-cases';
 import { HmacPhoneFingerprints } from './infrastructure/security/hmac-phone-fingerprints';
 import { type ServiceConfig } from './config';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
+import { GrpcDebitRecordChecks } from './infrastructure/debits/grpc-debit-record-checks';
 import { GrpcPayoutExecutor } from './infrastructure/payment/grpc-payout-executor';
 import { GrpcTopUpPayments } from './infrastructure/payment/grpc-top-up-payments';
 import { PrismaLedgerStore } from './infrastructure/persistence/prisma-ledger.store';
 import { PrismaCreditRequests } from './infrastructure/persistence/prisma-credit-requests';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
+import {
+  DEBIT_RECONCILE_INTERVAL_MS,
+  ReconcileDebitsService,
+} from './infrastructure/scheduling/reconcile-debits.service';
 import { SUBMIT_INTERVAL_MS, SubmitPayoutsService } from './infrastructure/scheduling/submit-payouts.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import {
@@ -29,6 +34,8 @@ import { PayoutEventsConsumer } from './interfaces/messaging/payout-events.consu
 import { PrepaidEventsConsumer } from './interfaces/messaging/prepaid-events.consumer';
 
 const PAYMENT_CLIENT = Symbol('PAYMENT_CLIENT');
+const CLEANING_CLIENT = Symbol('CLEANING_CLIENT');
+const BILLING_CLIENT = Symbol('BILLING_CLIENT');
 
 /** Racine de composition : relie les cas d'usage à leurs adaptateurs. */
 @Module({})
@@ -38,7 +45,11 @@ export class AppModule {
       module: AppModule,
       imports: [
         PlatformModule.forRoot(config),
-        ClientsModule.register([grpcClientOptions(PAYMENT_CLIENT, 'payment', config.PAYMENT_GRPC_URL)]),
+        ClientsModule.register([
+          grpcClientOptions(PAYMENT_CLIENT, 'payment', config.PAYMENT_GRPC_URL),
+          grpcClientOptions(CLEANING_CLIENT, 'cleaning', config.CLEANING_GRPC_URL),
+          grpcClientOptions(BILLING_CLIENT, 'billing', config.BILLING_GRPC_URL),
+        ]),
       ],
       controllers: [
         WalletGrpcController,
@@ -55,18 +66,24 @@ export class AppModule {
         PrepaidEventsConsumer,
         SubmitPayoutsService,
         { provide: SUBMIT_INTERVAL_MS, useValue: config.WALLET_PAYOUT_SUBMIT_INTERVAL_MS },
+        ReconcileDebitsService,
+        { provide: DEBIT_RECONCILE_INTERVAL_MS, useValue: config.WALLET_DEBIT_RECONCILE_INTERVAL_MS },
         {
           provide: WALLET_USE_CASES,
           inject: [
             PrismaLedgerStore,
             PrismaCreditRequests,
             PAYMENT_CLIENT,
+            CLEANING_CLIENT,
+            BILLING_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
           ],
           useFactory: (
             store: PrismaLedgerStore,
             creditRequests: PrismaCreditRequests,
             payment: ClientGrpc,
+            cleaning: ClientGrpc,
+            billing: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
           ) => {
             if (!serviceTokens) {
@@ -74,10 +91,9 @@ export class AppModule {
                 'Aucun jeton de service : appels vers payment non authentifiés (développement uniquement).',
               );
             }
-            const caller = new GrpcCaller({
-              target: 'payment',
-              ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
-            });
+            const callerOf = (target: string) =>
+              new GrpcCaller({ target, ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}) });
+            const caller = callerOf('payment');
             return createUseCases({
               ledger: store,
               payouts: store,
@@ -99,8 +115,23 @@ export class AppModule {
                 topUpMax: config.WALLET_TOP_UP_MAX,
                 manualRefundMax: config.WALLET_MANUAL_REFUND_MAX,
                 creditApprovalThreshold: config.WALLET_CREDIT_APPROVAL_THRESHOLD,
+                debitCheckDelayMinutes: config.WALLET_DEBIT_CHECK_DELAY_MINUTES,
               },
               creditRequests,
+              debitChecks: new GrpcDebitRecordChecks(
+                {
+                  client: cleaning.getService<cleaningV1.WalletDebitCheckServiceClient>(
+                    cleaningV1.WALLET_DEBIT_CHECK_SERVICE_NAME,
+                  ),
+                  caller: callerOf('cleaning'),
+                },
+                {
+                  client: billing.getService<billingV1.WalletDebitCheckServiceClient>(
+                    billingV1.WALLET_DEBIT_CHECK_SERVICE_NAME,
+                  ),
+                  caller: callerOf('billing'),
+                },
+              ),
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
             });

@@ -257,6 +257,53 @@ export class RefundFromEventUseCase {
   }
 }
 
+/** Motif d'un débit remboursé par le rapprochement. */
+export const UNRECORDED_DEBIT_REASON = 'paiement non enregistré par le service';
+
+/**
+ * Tâche planifiée (ADR-048) : débits du portefeuille plus anciens que le délai réglable, ni vérifiés
+ * ni remboursés, rapprochés avec le service qui les a faits (« débit enregistré ? »). Enregistré :
+ * noté vérifié. Non enregistré (panne entre le débit et l'enregistrement du paiement) : remboursé au
+ * portefeuille, une seule fois, avec une alerte. Service injoignable : laissé pour le prochain
+ * passage, jamais remboursé à l'aveugle. Une erreur sur un débit n'empêche pas l'examen des suivants.
+ */
+export class ReconcileDebitsUseCase {
+  constructor(private readonly deps: WalletDeps) {}
+
+  async execute(
+    limit = 50,
+  ): Promise<{ examined: number; recorded: number; refunded: number; errors: number }> {
+    const before = new Date(
+      this.deps.clock.now().getTime() - this.deps.settings.debitCheckDelayMinutes * 60_000,
+    );
+    const debits = await this.deps.ledger.listUncheckedDebits(before, limit);
+    const counts = { examined: debits.length, recorded: 0, refunded: 0, errors: 0 };
+    for (const debit of debits) {
+      try {
+        if (!debit.object) continue;
+        const recorded = await this.deps.debitChecks.isRecorded({
+          caller: debit.caller,
+          objectType: debit.object.type,
+          objectId: debit.object.id,
+          transactionId: debit.id,
+        });
+        if (recorded === null) continue;
+        if (recorded) {
+          await this.deps.ledger.markDebitChecked(debit.id, 'recorded', this.deps.clock.now());
+          counts.recorded += 1;
+          continue;
+        }
+        await refundDebit(this.deps, debit.caller, debit.id, UNRECORDED_DEBIT_REASON);
+        await this.deps.ledger.markDebitChecked(debit.id, 'refunded', this.deps.clock.now());
+        counts.refunded += 1;
+      } catch {
+        counts.errors += 1;
+      }
+    }
+    return counts;
+  }
+}
+
 /** Émetteur de cleaning.mission.credited. */
 const CLEANING = 'cleaning';
 

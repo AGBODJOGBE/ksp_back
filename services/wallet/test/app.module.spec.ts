@@ -66,6 +66,8 @@ describe('configuration de wallet', () => {
         IDENTITY_TOKEN_URL: 'https://identity/oauth/token',
         SERVICE_CLIENT_SECRET: 's'.repeat(32),
         PAYMENT_GRPC_URL: 'dns:///payment-headless:50055',
+        CLEANING_GRPC_URL: 'dns:///cleaning-headless:50053',
+        BILLING_GRPC_URL: 'dns:///billing-headless:50054',
         ...(secret ? { WALLET_PHONE_HASH_SECRET: secret } : {}),
       });
     expect(production()).toThrow(/WALLET_PHONE_HASH_SECRET/);
