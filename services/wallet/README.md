@@ -66,6 +66,22 @@ payés). Invariant : recharges reçues = Σ portefeuilles + services payés.
 - Appelants : `WALLET_DEBIT_CALLERS` (`cleaning,billing`). Jetons de service : `cleaning` et `billing`
   → audience `wallet`.
 
+## Contrôles de l'argent (ADR-048)
+
+- Espace du titulaire et back-office : `@AllowedCallers('gateway')`.
+- Recharge créditée seulement si payment la confirme (`GetTopUpPayment` : réussie, même titulaire, montant reçu).
+- Crédit manuel : recharge vérifiée auprès de payment (montant ≤ reçu) ; remboursement plafonné
+  (`WALLET_MANUAL_REFUND_MAX`) et justifié (15 caractères) ; au-delà de `WALLET_CREDIT_APPROVAL_THRESHOLD`,
+  demande validée par un **autre** membre de la finance (`ApproveManualCredit`) ; MFA de moins de 10 minutes.
+- Rapprochement des débits (`WALLET_DEBIT_RECONCILE_INTERVAL_MS`, après `WALLET_DEBIT_CHECK_DELAY_MINUTES`) :
+  `GetWalletDebitStatus` de cleaning et billing ; débit jamais enregistré → remboursé, alerte.
+- Grand livre verrouillé par la base (solde, `TRUNCATE`, transaction complète, nom effacé après transmission).
+  Au déploiement, retirer au rôle applicatif `UPDATE`, `DELETE`, `TRUNCATE` sur `ledger_transactions` et
+  `ledger_entries`, `DELETE`, `TRUNCATE` sur `ledger_accounts`.
+- Rejeu d'un reversement : empreinte HMAC du numéro (`WALLET_PHONE_HASH_SECRET`, coffre en production).
+- `HasPendingObligations` (identity) : solde prépayé, fonds dus ou reversement en cours bloquent la suppression.
+- `cleaning.mission.credited` : crédit au prorata d'une mission arrêtée, une fois par `creditId`.
+
 ## Reversements
 
 `RequestPayout` retient le montant et crée le reversement dans la même transaction, puis le transmet à

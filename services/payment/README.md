@@ -49,6 +49,19 @@ paiement du même objet, quel que soit le payeur ou la part, jusqu'à ce que la 
 obligatoire) : date, auteur et note sont enregistrés, le statut reste `amount_mismatch`, le blocage est
 levé. Écarts à traiter : `GET /api/v1/admin/payment/payments?underReview=true`.
 
+## Une page payable par objet (ADR-048)
+
+- Mission (toutes parts) ou facture (tous payeurs) : une seule page en attente (index uniques partiels) ;
+  la même demande la réutilise, une autre reçoit `PAYMENT_CHECKOUT_OPEN` (409) tant qu'elle peut être payée.
+- Prestataire qui ne sait pas annuler sa page (FedaPay) : paiement en attente jusqu'à
+  `PAYMENT_CHECKOUT_VALIDITY_MINUTES` (24 h, à valider) ; clôture sans annulation : alerte
+  `checkoutClosedUnconfirmed` ; `PAYMENT_LATE_SUCCESS_WINDOW_HOURS` doit couvrir cette validité.
+- Production : `FEDAPAY_ENVIRONMENT=live`, clé `sk_live_…`, `FEDAPAY_API_URL` vide ou `https://*.fedapay.com`.
+- Méthodes client, page publique, webhook et back-office : `@AllowedCallers('gateway')`.
+- Reversement refusé (4xx) : échec définitif `provider_rejected` (publié `provider_failed`), jamais relancé ;
+  un reversement soumis n'est plus jamais relancé.
+- `GetTopUpPayment` (wallet seulement) : recharge relue avec son montant reçu (`received_amount`).
+
 ## Recharge du portefeuille prépayé (ADR-046)
 
 `TopUpPaymentService.CreateTopUpPayment`, réservé à wallet : objet `wallet_top_up` (identifiant :
