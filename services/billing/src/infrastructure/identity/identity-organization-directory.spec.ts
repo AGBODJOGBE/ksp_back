@@ -11,6 +11,7 @@ const profile = (id: string): identityV1.OrganizationProfile => ({
   rccm: '',
   billingEmail: '',
   status: identityV1.OrganizationStatus.ORGANIZATION_STATUS_ACTIVE,
+  adminUserIds: [],
 });
 
 function directory(fail = false) {
