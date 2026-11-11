@@ -70,7 +70,7 @@ estimate }` (prix d'un passage et fourchette × nombre de passages) ;
      temps, jamais avec `schedule`. Elle est traduite en plan quand c'est exact — un passage par semaine
      (le jour de semaine du premier créneau) ou par mois (son jour du mois), depuis le premier créneau,
      pendant la durée — sinon gardée telle quelle avec l'ancien calcul approximatif ;
-   - données : migration `0012_intervention_schedules` (colonnes `schedule` JSONB et `scheduled_dates`
+   - données : migration `0015_intervention_schedules` (colonnes `schedule` JSONB et `scheduled_dates`
      sur `quote_requests`, `quotes`, `missions`). Conversion quand elle est exacte : devis et missions
      ponctuels dont le jour est connu sans ambiguïté (un seul créneau) deviennent un plan d'une date. Les
      récurrences existantes ne sont pas converties (jours de semaine inconnus, nombre de passages figé dans
@@ -90,7 +90,7 @@ estimate }` (prix d'un passage et fourchette × nombre de passages) ;
    - **Tout ou rien** par défaut : `CLEANING_TEAM_UNAVAILABLE` (409) avec `details.conflicts` (date et
      agents de chaque date en conflit), rien n'est écrit. `skipConflicts: true` : les autres dates sont
      planifiées, les dates sautées rendues dans `skipped`.
-   - Idempotence par (mission, clé), table `intervention_batches` (migration 0013) écrite dans la
+   - Idempotence par (mission, clé), table `intervention_batches` (migration 0016) écrite dans la
      transaction : un second envoi rend le premier résultat.
    - **Un seul événement** `cleaning.interventions.batch_scheduled` (nombre, premier et dernier passage,
      agents, dates sautées) au lieu d'un `cleaning.mission.scheduled` par passage : notification envoie un
@@ -106,7 +106,7 @@ estimate }` (prix d'un passage et fourchette × nombre de passages) ;
   de la mission moins les jours déjà couverts par un passage (`unscheduledDates`).
 - Billing peut, sans urgence, lire `schedulePeriod` plutôt que `recurrence.durationMonths` pour borner
   les mois facturés (à faire par l'équipe billing ; rien ne casse en attendant).
-- Le fuseau de la conversion SQL (migration 0012) est fixé à `Africa/Porto-Novo` (celui du Bénin), même
+- Le fuseau de la conversion SQL (migration 0015) est fixé à `Africa/Porto-Novo` (celui du Bénin), même
   si `CLEANING_TIME_ZONE` est réglé autrement (accepté le 2026-11-11) : un autre fuseau réglé plus tard
   ne recalcule pas les plans déjà convertis.
 - Décisions du 2026-11-11 : 36 mois gardés ; créneau souhaité indicatif de 2 heures gardé ; plusieurs
