@@ -60,6 +60,8 @@ model BillingContract {
   organizationId String?   @map("organization_id") @db.Uuid
   total          Int
   durationMonths Int       @map("duration_months")
+  /// Prestation ponctuelle (ADR-049) : facturée en une fois, sur le mois de son passage.
+  oneOff         Boolean   @default(false) @map("one_off")
   startsAt       DateTime  @map("starts_at") @db.Timestamptz(3)
   /// Fin anticipée (mission annulée) : plus aucun mois facturé au-delà.
   terminatedAt   DateTime? @map("terminated_at") @db.Timestamptz(3)

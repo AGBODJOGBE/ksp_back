@@ -141,6 +141,25 @@ positions des lieux du compte (ADR-035).
   `Africa/Porto-Novo`.
 - Guide d'intégration : `docs/integration/cleaning-schedule.md`.
 
+## Règles du Nettoyage et rapprochement des débits (ADR-049)
+
+- **Gateway seule** pour les méthodes du client, du back-office et du catalogue public
+  (`CLEANING_CALLER_FORBIDDEN` pour un autre service) ; méthodes internes : `HasPendingObligations`
+  (identity), `GetMissionAmountDue` (payment), `WalletDebitCheckService.GetWalletDebitStatus` (wallet :
+  un paiement par portefeuille de la mission cite-t-il ce débit ?).
+- **Organisation** : ses demandes, groupes et missions dans son contexte actif seulement (404 sinon) ;
+  agir en son nom exige `org_admin` ou `org_member`. Les listes du client suivent le contexte actif.
+- **Devis** : sous-total strictement positif (pas de devis à 0 FCFA).
+- **Annulation** : délai compté depuis le premier passage planifié ; sans passage planifié, gratuite.
+- **Paiement « avant »** : passage planifiable, mais pas démarré tant que l'acompte (ou la totalité) est
+  dû (`CLEANING_UPFRONT_PAYMENT_DUE`) ; montant annoncé dans `cleaning.mission.scheduled`
+  (`amountDueBeforeStart`).
+- **Arrêt de la suite d'une mission récurrente** par le client après des passages faits : le montant
+  devient celui des passages faits ; le payé au-delà, tout moyen confondu, est crédité au portefeuille
+  (`credit_id`, `credited_amount`, `credited_at` ; `cleaning.mission.credited` dans la même transaction).
+- **Paiement en ligne sur une mission annulée** : enregistré, tout le montant tracé en trop-perçu
+  (audit `excess`) et signalé par une alerte du journal.
+
 ## Règles (cahier des charges, parties 4 et 9)
 
 | Sujet      | Fonctionnement                                                                                                                                                                                                                                                                                                |

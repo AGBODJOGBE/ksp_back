@@ -306,8 +306,8 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       providerReference: 'trx_1',
       succeededAt: new Date().toISOString(),
     };
-    expect(await useCases.recordOnlinePayment.execute(online)).toBe('recorded');
-    expect(await useCases.recordOnlinePayment.execute(online)).toBe('duplicate');
+    expect(await useCases.recordOnlinePayment.execute(online)).toMatchObject({ outcome: 'recorded' });
+    expect(await useCases.recordOnlinePayment.execute(online)).toMatchObject({ outcome: 'duplicate' });
     expect(
       (await deps.missions.findById(missionId))!.payment.payments.map((payment) => payment.method),
     ).toEqual(['cash', 'mobile_money_online']);
@@ -486,6 +486,39 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     await expect(
       pool.query("UPDATE mission_payments SET refunded_at = now() WHERE method = 'cash'"),
     ).rejects.toThrow(/mission_payments_refund_check/);
+  });
+
+  it('arrêt d’une mission récurrente : montant des passages faits, crédit et événement ensemble (ADR-049)', async () => {
+    const row = await prisma.mission.findFirst({
+      where: { customerId: CUSTOMER_ID },
+      orderBy: { id: 'asc' },
+    });
+    const mission = (await deps.missions.findById(row!.id))!;
+    expect(mission.payment.credit).toBeNull();
+    const now = new Date();
+    const credit = { id: '0192f1c4-0000-7000-8000-0000000000c1', amount: 500, creditedAt: now };
+    const stopped = { ...mission, payment: { ...mission.payment, total: 1000, credit } };
+    const event = {
+      type: 'cleaning.mission.credited' as const,
+      payload: {
+        missionId: mission.id,
+        customerId: mission.customerId,
+        creditId: credit.id,
+        amount: { amount: 500, currency: 'XOF' as const },
+        reason: 'recurring_cancelled' as const,
+        creditedAt: now.toISOString(),
+      },
+    };
+    expect(await deps.missions.save(stopped, { events: [event], audit: [] })).toBe(true);
+    const after = (await deps.missions.findById(mission.id))!;
+    expect(after.payment).toMatchObject({ total: 1000, credit });
+    const { rows } = await pool.query(
+      "SELECT payload FROM outbox WHERE event_type = 'cleaning.mission.credited'",
+    );
+    expect(rows).toEqual([{ payload: expect.objectContaining({ payload: event.payload }) }]);
+    await expect(
+      pool.query('UPDATE missions SET credited_amount = 0 WHERE credit_id IS NOT NULL'),
+    ).rejects.toThrow(/missions_credit_check/);
   });
 
   it('agent déjà pris : aucun passage enregistré, aucun événement', async () => {

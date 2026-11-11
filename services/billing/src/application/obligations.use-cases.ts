@@ -1,6 +1,5 @@
-import { currentContext } from '@ksp/platform';
 import { type BillingDeps } from './ports';
-import { BillingErrors } from './shared/errors';
+import { requireCaller } from './shared/access';
 import { requireUuid } from './shared/validation';
 
 export interface PendingObligation {
@@ -15,7 +14,7 @@ function formatAmount(amount: number): string {
 }
 
 /** Seul identity interroge ce contrat, avant de supprimer un compte (UC-ID-11). */
-const ALLOWED_CALLERS = new Set(['identity']);
+const ALLOWED_CALLERS = ['identity'];
 
 /**
  * ksp.common.v1.ObligationService.HasPendingObligations (UC-ID-11, ADR-036) : une facture en
@@ -27,9 +26,7 @@ export class HasPendingObligationsUseCase {
   constructor(private readonly deps: BillingDeps) {}
 
   async execute(input: { userId: string }): Promise<PendingObligation[]> {
-    // Renseigné par le kit après vérification du jeton de service ; absent sans vérificateur (développement).
-    const caller = currentContext()?.callerService;
-    if (caller && !ALLOWED_CALLERS.has(caller)) throw BillingErrors.callerForbidden();
+    requireCaller(ALLOWED_CALLERS);
     const invoices = await this.deps.invoices.listUnpaidForCustomer(requireUuid('userId', input.userId));
     return invoices.map((invoice) => ({
       kind: 'unpaid_invoice',

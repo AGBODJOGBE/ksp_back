@@ -1,5 +1,6 @@
 import { type AppError } from '@ksp/platform';
 import { PreviewScheduleUseCase, SimulateUseCase } from '../catalog/catalog.use-cases';
+import { type Intervention, stopSettlement } from '../../domain/mission';
 import { ScheduleInterventionUseCase } from '../missions/admin-missions.use-cases';
 import { type ScheduleInput } from '../shared/schedules';
 import {
@@ -235,6 +236,13 @@ describe('plan de passages par dates (ADR-052)', () => {
       schedule: expect.objectContaining({ mode: 'dates', startTime: '09:30' }),
     });
     expect(mission.mission.payment).toMatchObject({ total: 142_800, depositAmount: 42_840 });
+    // Arrêt de la suite (ADR-049) : prix d'un passage = total / nombre exact de dates du plan.
+    const oneDone = {
+      ...mission.mission,
+      // Seul l'état compte pour le nombre de passages faits.
+      interventions: [{ status: 'completed' } as Intervention],
+    };
+    expect(stopSettlement(oneDone).dueTotal).toBe(35_700);
     const booking = world.recorder.events.find((event) => event.type === 'cleaning.booking.confirmed');
     expect(booking?.payload).toMatchObject({
       plannedInterventions: 4,

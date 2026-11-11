@@ -3,6 +3,7 @@ import { calculatePrice, type PriceCalculation } from '../../domain/simulator';
 import { isCovered, type Zone } from '../../domain/zone';
 import { type CleaningDeps } from '../deps';
 import { type ScheduleWarning } from '../../domain/intervention-schedule';
+import { GATEWAY_CALLERS, requireCaller } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import { parseSchedule, type PlannedSchedule, planSchedule, type ScheduleInput } from '../shared/schedules';
 import { optionalText } from '../shared/validation';
@@ -36,6 +37,7 @@ export class ListServicesUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
   async execute(): Promise<ServiceDefinition[]> {
+    requireCaller(GATEWAY_CALLERS);
     return (await this.deps.catalog.listServices()).filter((service) => service.active);
   }
 }
@@ -45,6 +47,7 @@ export class ListServedZonesUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
   async execute(): Promise<Zone[]> {
+    requireCaller(GATEWAY_CALLERS);
     return (await this.deps.catalog.listZones()).filter((zone) => zone.active);
   }
 }
@@ -95,6 +98,7 @@ export class SimulateUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
   async execute(input: SimulateInput): Promise<SimulationResult> {
+    requireCaller(GATEWAY_CALLERS);
     const commune = optionalText('commune', input.commune ?? undefined, 100);
     const service = await activeService(this.deps, input.serviceCode);
     const { value, incomplete } = resolveAnswers(service, input);

@@ -216,6 +216,7 @@ export class InMemoryMissions implements MissionRepository {
     const items = [...this.missions.values()].filter(
       (m) =>
         (!filter.customerId || m.customerId === filter.customerId) &&
+        (filter.organizationId === undefined || m.organizationId === filter.organizationId) &&
         (!filter.status || m.status === filter.status) &&
         (!filter.groupId || m.groupId === filter.groupId) &&
         (!filter.serviceCode || m.serviceCode === filter.serviceCode) &&
@@ -470,6 +471,7 @@ export class InMemoryRequests implements QuoteRequestRepository {
     const items = [...this.requests.values()].filter(
       (r) =>
         (!filter.customerId || r.customerId === filter.customerId) &&
+        (filter.organizationId === undefined || r.organizationId === filter.organizationId) &&
         (!filter.status || r.status === filter.status) &&
         (!filter.communeCode || zoneCode(r.commune) === filter.communeCode) &&
         (!filter.customerKind || r.customerKind === filter.customerKind) &&
@@ -735,9 +737,19 @@ export const OTHER_AGENT_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0003';
 export function as<T>(
   userId: string,
   fn: () => T,
-  options: { roles?: string[]; mfa?: boolean; activeContext?: string; nowSeconds?: number } = {},
+  options: {
+    roles?: string[];
+    mfa?: boolean;
+    activeContext?: string;
+    nowSeconds?: number;
+    /** Rôle dans l'organisation active (org_admin, org_member, org_viewer). */
+    orgRole?: string;
+  } = {},
 ): T {
   const roles: RoleClaim[] = (options.roles ?? ['customer']).map((role) => ({ role, scopeType: 'global' }));
+  if (options.orgRole && options.activeContext) {
+    roles.push({ role: options.orgRole, scopeType: 'org', scopeId: options.activeContext });
+  }
   return runWithContext(
     {
       correlationId: 'c-test',
@@ -755,6 +767,9 @@ export function as<T>(
 }
 
 export const asCustomer = <T>(fn: () => T, userId = CUSTOMER_ID) => as(userId, fn);
+/** Membre de l'organisation de test, dans son contexte (org_member par défaut). */
+export const asOrganizationMember = <T>(fn: () => T, orgRole = 'org_member') =>
+  as(CUSTOMER_ID, fn, { activeContext: ORGANIZATION_ID, orgRole });
 export const asSupervisor = <T>(fn: () => T) =>
   as(SUPERVISOR_ID, fn, { roles: ['cleaning_supervisor'], mfa: true });
 export const asAdmin = <T>(fn: () => T) => as(SUPERVISOR_ID, fn, { roles: ['cleaning_admin'], mfa: true });

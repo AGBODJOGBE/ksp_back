@@ -60,6 +60,7 @@ export const EVENT_CONSUMERS = {
     'wallet.prepaid.debited',
   ],
   wallet: [
+    'cleaning.mission.credited',
     'cleaning.mission.refunded',
     'payment.intent.succeeded',
     'payment.payout.completed',

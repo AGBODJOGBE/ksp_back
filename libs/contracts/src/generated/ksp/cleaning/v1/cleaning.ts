@@ -2167,6 +2167,21 @@ export interface GetMissionAmountDueResponse {
   onlinePaymentIds: string[];
 }
 
+export interface GetWalletDebitStatusRequest {
+  /** Mission payée (objet du débit). */
+  missionId: string;
+  /** Débit du portefeuille (identifiant de la transaction wallet), cité en référence du paiement. */
+  transactionId: string;
+}
+
+export interface GetWalletDebitStatusResponse {
+  /**
+   * true : un paiement de la mission (moyen "wallet") cite ce débit, remboursé ou non ; false : aucun
+   * (mission inconnue comprise).
+   */
+  recorded: boolean;
+}
+
 export interface PayMissionFromWalletRequest {
   missionId: string;
   /** "deposit" (acompte encore dû) ou "balance" (reste dû). */
@@ -3283,3 +3298,54 @@ export function MissionPaymentDueServiceControllerMethods() {
 }
 
 export const MISSION_PAYMENT_DUE_SERVICE_NAME = "MissionPaymentDueService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Débit du portefeuille enregistré ? — réservé au service wallet (ADR-048).
+ * ---------------------------------------------------------------------------
+ * wallet rapproche les débits du portefeuille prépayé faits pour une mission dont l'enregistrement a
+ * pu échouer (panne entre le débit et l'enregistrement du paiement) : un débit qu'aucun paiement de
+ * la mission ne cite est remboursé. Appel d'un autre service : CLEANING_CALLER_FORBIDDEN.
+ */
+
+export interface WalletDebitCheckServiceClient {
+  getWalletDebitStatus(
+    request: GetWalletDebitStatusRequest,
+    metadata?: Metadata,
+  ): Observable<GetWalletDebitStatusResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Débit du portefeuille enregistré ? — réservé au service wallet (ADR-048).
+ * ---------------------------------------------------------------------------
+ * wallet rapproche les débits du portefeuille prépayé faits pour une mission dont l'enregistrement a
+ * pu échouer (panne entre le débit et l'enregistrement du paiement) : un débit qu'aucun paiement de
+ * la mission ne cite est remboursé. Appel d'un autre service : CLEANING_CALLER_FORBIDDEN.
+ */
+
+export interface WalletDebitCheckServiceController {
+  getWalletDebitStatus(
+    request: GetWalletDebitStatusRequest,
+    metadata?: Metadata,
+  ): Promise<GetWalletDebitStatusResponse> | Observable<GetWalletDebitStatusResponse> | GetWalletDebitStatusResponse;
+}
+
+export function WalletDebitCheckServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["getWalletDebitStatus"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("WalletDebitCheckService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("WalletDebitCheckService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const WALLET_DEBIT_CHECK_SERVICE_NAME = "WalletDebitCheckService";

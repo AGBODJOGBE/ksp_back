@@ -48,6 +48,16 @@
       "description": "Dates sautées pour conflit d'agenda (skipConflicts), vide sinon",
       "items": { "type": "string", "format": "date" }
     },
+    "amountDueBeforeStart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "description": "Facultatif (ADR-049) : paiement « avant » encore dû, les passages ne démarrent pas sans lui",
+      "properties": {
+        "amount": { "type": "integer", "minimum": 1 },
+        "currency": { "const": "XOF" }
+      }
+    },
     "serviceCode": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$",

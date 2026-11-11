@@ -4,7 +4,14 @@ import { type QuoteRequest, type QuoteRequestGroup, VISIT_REQUIRED } from '../..
 import { calculatePrice } from '../../domain/simulator';
 import { type CleaningDeps, presentRequest } from '../deps';
 import { type AuditEntry, type OutboxMessage, type QuoteRequestGroupView } from '../ports';
-import { currentCustomer, requireStaff, SUPERVISION } from '../shared/access';
+import { groupOwner } from '../groups/group-support';
+import {
+  currentCustomer,
+  ownsCase,
+  requireOrganizationActor,
+  requireStaff,
+  SUPERVISION,
+} from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import { daysPerWeekOf, requestTiming, type ScheduleInput } from '../shared/schedules';
 import { optionalText, requiredText, requirePositiveInt, requireUuid } from '../shared/validation';
@@ -50,6 +57,7 @@ export class RequestQuoteGroupUseCase {
 
   async execute(input: RequestQuoteGroupInput): Promise<QuoteRequestGroupView> {
     const customer = currentCustomer();
+    requireOrganizationActor(customer);
     const key = requiredText('idempotencyKey', input.idempotencyKey, 100);
     const now = this.deps.clock.now();
     const replay = await this.deps.requests.findGroupByIdempotencyKey(customer.userId, key);
@@ -198,7 +206,7 @@ export class GetMyRequestGroupUseCase {
   async execute(groupId: string): Promise<QuoteRequestGroupView> {
     const customer = currentCustomer();
     const view = await this.deps.requests.findGroup(requireUuid('groupId', groupId));
-    if (!view || view.group.customerId !== customer.userId) throw CleaningErrors.requestGroupNotFound();
+    if (!view || !ownsCase(customer, groupOwner(view), 'read')) throw CleaningErrors.requestGroupNotFound();
     return presentGroup(view, this.deps.clock.now());
   }
 }

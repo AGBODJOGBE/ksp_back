@@ -191,6 +191,8 @@ export type CreateResult<T> = { created: true; value: T } | { created: false; va
 /** Filtres cumulables de la liste des demandes. */
 export interface QuoteRequestFilter {
   customerId?: string;
+  /** Contexte du client (ADR-049) : null pour ses dossiers personnels, sinon cette organisation. */
+  organizationId?: string | null;
   status?: RequestStatus;
   /** Code de zone : commune normalisée (zoneCode), comparée à celle enregistrée avec la demande. */
   communeCode?: string;
@@ -295,6 +297,8 @@ export interface QuoteRequestRepository {
 
 export interface MissionFilter {
   customerId?: string;
+  /** Contexte du client (ADR-049) : null pour ses dossiers personnels, sinon cette organisation. */
+  organizationId?: string | null;
   agentId?: string;
   status?: MissionStatus;
   /** Groupe de la demande d'origine et prestation (ADR-034). */

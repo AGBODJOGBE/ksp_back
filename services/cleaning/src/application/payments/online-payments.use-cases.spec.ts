@@ -140,7 +140,7 @@ describe('paiement en ligne d’une mission (ADR-031)', () => {
 
   describe('payment.intent.succeeded', () => {
     it('enregistre le paiement (mobile_money_online, système) : acompte reçu', async () => {
-      expect(await succeeded()).toBe('recorded');
+      expect(await succeeded()).toEqual({ outcome: 'recorded', excess: 0 });
       const payment = stored().payment;
       expect(payment.payments).toEqual([
         expect.objectContaining({
@@ -164,8 +164,10 @@ describe('paiement en ligne d’une mission (ADR-031)', () => {
 
     it('idempotent : même événement (inbox) ou même paiement (clé) → un seul enregistrement', async () => {
       await succeeded();
-      expect(await succeeded()).toBe('duplicate');
-      expect(await succeeded({ eventId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6002' })).toBe('duplicate');
+      expect(await succeeded()).toEqual({ outcome: 'duplicate', excess: 0 });
+      expect(await succeeded({ eventId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6002' })).toMatchObject({
+        outcome: 'duplicate',
+      });
       expect(stored().payment.payments).toHaveLength(1);
     });
 
@@ -180,8 +182,14 @@ describe('paiement en ligne d’une mission (ADR-031)', () => {
     });
 
     it('au-delà du reste dû : enregistré quand même, excédent tracé', async () => {
-      await succeeded({ amount: 60_000 });
+      expect(await succeeded({ amount: 60_000 })).toEqual({ outcome: 'recorded', excess: 10_000 });
       expect(world.recorder.audit[0]?.details).toMatchObject({ amount: 60_000, excess: 10_000 });
+    });
+
+    it('mission annulée : tout le paiement est un trop-perçu, tracé (ADR-049)', async () => {
+      world.missions.missions.set(MISSION_ID, mission({ status: 'cancelled' }));
+      expect(await succeeded()).toEqual({ outcome: 'recorded', excess: 15_000 });
+      expect(world.recorder.audit[0]?.details).toMatchObject({ amount: 15_000, excess: 15_000 });
     });
 
     it('mission suspendue : situation réévaluée (levée de la suspension pour impayé)', async () => {
@@ -200,10 +208,11 @@ describe('paiement en ligne d’une mission (ADR-031)', () => {
     });
 
     it('facture, mission inconnue ou d’entreprise : ignoré', async () => {
-      expect(await succeeded({ subjectType: 'billing_invoice' })).toBe('ignored');
-      expect(await succeeded({ missionId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9999' })).toBe('ignored');
+      const ignored = { outcome: 'ignored', excess: 0 };
+      expect(await succeeded({ subjectType: 'billing_invoice' })).toEqual(ignored);
+      expect(await succeeded({ missionId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9999' })).toEqual(ignored);
       world.missions.missions.set(MISSION_ID, mission({ organizationId: ORGANIZATION_ID }));
-      expect(await succeeded()).toBe('ignored');
+      expect(await succeeded()).toEqual(ignored);
       expect(stored().payment.payments).toHaveLength(0);
     });
   });

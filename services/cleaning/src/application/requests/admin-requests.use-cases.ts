@@ -376,7 +376,8 @@ export async function prepareQuote(
   const lines = input.lines.length ? input.lines : prefill(request, service);
   // Mesures constatées (ADR-037) : leur calcul donne aussi la taille d'équipe recommandée.
   const measuredTeamSize = request.measurement?.calculation.recommendedTeamSize;
-  if (!lines.every(isValidLine) || linesSubtotal(lines) < 0) throw CleaningErrors.invalid('lines');
+  // Un devis à 0 FCFA est refusé (ADR-049) : une remise ne peut pas annuler tout le prix.
+  if (!lines.every(isValidLine) || linesSubtotal(lines) <= 0) throw CleaningErrors.invalid('lines');
   const validityDays = input.validityDays
     ? requirePositiveInt('validityDays', input.validityDays, 90)
     : settings.quoteValidityDays;

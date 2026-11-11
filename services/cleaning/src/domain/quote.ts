@@ -49,7 +49,8 @@ export interface QuoteDraft {
 
 /**
  * Ligne cohérente : quantité et prix entiers, montant = quantité × prix unitaire. Un prix négatif
- * n'est admis que pour une ligne de remise (quantité 1) ; le total d'un passage reste positif.
+ * n'est admis que pour une ligne de remise (quantité 1) ; le total d'un passage reste strictement
+ * positif : un devis à 0 FCFA est refusé (ADR-049).
  */
 export function isValidLine(line: PriceLine): boolean {
   const price =

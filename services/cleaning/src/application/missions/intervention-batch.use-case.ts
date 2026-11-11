@@ -14,7 +14,7 @@ import { type CleaningDeps, missionView, type MissionView } from '../deps';
 import { type InterventionBatchOutcome, type InterventionBatchPlan } from '../ports';
 import { requireStaff, SUPERVISION } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
-import { eventSubject } from '../shared/event-subject';
+import { eventSubject, upfrontNotice } from '../shared/event-subject';
 import { requirePositiveInt, requireUuid } from '../shared/validation';
 import { parseKey } from '../groups/group-support';
 import { resolveAgents } from './admin-missions.use-cases';
@@ -149,6 +149,8 @@ export class ScheduleInterventionBatchUseCase {
                 durationMinutes,
                 agentIds,
                 skippedDates,
+                // Paiement « avant » encore dû (ADR-049) : les passages ne démarreront pas sans lui.
+                ...upfrontNotice(mission),
               },
             },
           ],

@@ -1,12 +1,14 @@
-import { currentContext } from '@ksp/platform';
 import { balance, type Invoice, type InvoicePayment, paidAmount, withOnlinePayment } from '../domain/invoice';
 import { invoiceReference } from './issuing.use-cases';
 import { type BillingDeps } from './ports';
+import { requireCaller } from './shared/access';
 import { BillingErrors } from './shared/errors';
 import { requireUuid } from './shared/validation';
 
 /** Seul payment lit le reste dû d'une facture (ADR-031). */
-const PAYMENT_CALLERS = new Set(['payment']);
+const PAYMENT_CALLERS = ['payment'];
+/** Seul wallet rapproche ses débits (ADR-048). */
+const WALLET_CALLERS = ['wallet'];
 /** Consommateur des événements de payment : file `billing.<événement>`. */
 export const PAYMENT_CONSUMER = 'billing';
 /** Auteur des paiements en ligne : le système, pas un membre de l'équipe. */
@@ -23,9 +25,7 @@ export class GetInvoiceAmountDueUseCase {
   async execute(
     invoiceId: string,
   ): Promise<{ invoice: Invoice; paid: number; balance: number; onlinePaymentIds: string[] }> {
-    // Renseigné par le kit après vérification du jeton de service ; absent sans vérificateur (développement).
-    const caller = currentContext()?.callerService;
-    if (caller && !PAYMENT_CALLERS.has(caller)) throw BillingErrors.callerForbidden();
+    requireCaller(PAYMENT_CALLERS);
     const invoice = await this.deps.invoices.findById(requireUuid('invoiceId', invoiceId));
     if (!invoice) throw BillingErrors.invoiceNotFound();
     return {
@@ -37,6 +37,27 @@ export class GetInvoiceAmountDueUseCase {
         .filter((payment) => payment.method === 'mobile_money_online')
         .map((payment) => payment.id),
     };
+  }
+}
+
+/**
+ * WalletDebitCheckService.GetWalletDebitStatus (ADR-048) : wallet rapproche un débit fait pour une
+ * facture dont l'enregistrement a pu échouer (panne entre le débit et l'enregistrement). true si un
+ * paiement par portefeuille de la facture cite ce débit ; false sinon, facture inconnue comprise :
+ * wallet rembourse alors le débit.
+ */
+export class GetWalletDebitStatusUseCase {
+  constructor(private readonly deps: BillingDeps) {}
+
+  async execute(input: { invoiceId: string; transactionId: string }): Promise<boolean> {
+    requireCaller(WALLET_CALLERS);
+    const transactionId = requireUuid('transactionId', input.transactionId);
+    const invoice = await this.deps.invoices.findById(requireUuid('invoiceId', input.invoiceId));
+    return (
+      invoice?.payments.some(
+        (payment) => payment.method === 'wallet' && payment.reference === transactionId,
+      ) ?? false
+    );
   }
 }
 

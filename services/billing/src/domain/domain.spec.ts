@@ -1,6 +1,7 @@
 import {
   addMonths,
   applyResumption,
+  naturalEnd,
   applySuspension,
   beninDay,
   beninMidnight,
@@ -14,6 +15,7 @@ import {
   dueDate,
   formatInvoiceNumber,
   type Invoice,
+  invoiceYear,
   isOverdue,
   paymentRefusal,
   withPayment,
@@ -67,9 +69,16 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
 describe('mois civils et prorata', () => {
   const amounts = (c: BillingContract) => contractPeriods(c).map((p) => p.amount);
 
-  it('ajoute des mois en UTC, en ramenant au dernier jour du mois', () => {
+  it('ajoute des mois en ramenant au dernier jour du mois', () => {
     expect(addMonths(at('2026-01-31T10:00:00Z'), 1)).toEqual(at('2026-02-28T10:00:00Z'));
     expect(addMonths(at('2026-11-05T08:00:00Z'), 2)).toEqual(at('2027-01-05T08:00:00Z'));
+  });
+
+  it('ajoute des mois en jours du Bénin, pas en jours UTC (ADR-049)', () => {
+    // 30 janvier 23:30 UTC = 31 janvier 00:30 au Bénin : un mois plus tard, le 28 février au Bénin.
+    expect(addMonths(at('2026-01-30T23:30:00Z'), 1)).toEqual(at('2026-02-27T23:30:00Z'));
+    const end = naturalEnd(contract({ startsAt: at('2026-01-30T23:30:00Z'), durationMonths: 1 }));
+    expect(beninDay(end)).toBe(beninDay(at('2026-02-28T12:00:00Z')));
   });
 
   it('jours à l’heure du Bénin (UTC+1) : 23:30 UTC est déjà le lendemain', () => {
@@ -183,6 +192,13 @@ describe('factures', () => {
 
   it('numéro continu par année sur 6 chiffres', () => {
     expect(formatInvoiceNumber(2026, 42)).toBe('FAC-2026-000042');
+  });
+
+  it('année du numéro : celle de la période facturée, au Bénin (ADR-049)', () => {
+    // Décembre 2026, émise en janvier 2027 : numérotée en 2026.
+    expect(invoiceYear({ periodStart: at('2026-11-30T23:00:00Z') })).toBe(2026);
+    // Janvier 2027 commence le 31 décembre à 23:00 UTC : déjà 2027 au Bénin.
+    expect(invoiceYear({ periodStart: at('2026-12-31T23:00:00Z') })).toBe(2027);
   });
 
   it('paiement manuel : partiel accepté, jamais au-delà du reste dû', () => {

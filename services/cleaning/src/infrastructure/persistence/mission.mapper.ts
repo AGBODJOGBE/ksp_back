@@ -83,6 +83,10 @@ export function toMission(row: MissionWithRelations): Mission {
         idempotencyKey: payment.idempotencyKey,
         refundedAt: payment.refundedAt,
       })),
+      credit:
+        row.creditId && row.creditedAmount !== null && row.creditedAt
+          ? { id: row.creditId, amount: row.creditedAmount, creditedAt: row.creditedAt }
+          : null,
     },
     cancellationReason: row.cancellationReason,
     daysPerWeek: row.daysPerWeek,
@@ -131,6 +135,7 @@ export function missionCreateColumns(mission: Mission, acceptanceKey: string) {
     paymentTotal: mission.payment.total,
     depositPercent: mission.payment.depositPercent,
     depositAmount: mission.payment.depositAmount,
+    ...creditColumns(mission),
     cancellationReason: mission.cancellationReason,
     daysPerWeek: mission.daysPerWeek,
     ...suspensionColumns(mission),
@@ -160,6 +165,16 @@ export function interventionColumns(missionId: string, intervention: Interventio
 }
 
 /** Colonnes de la suspension (plus ancienne cause et liste des causes) et du dernier avertissement. */
+/** Crédit au portefeuille à l'arrêt d'une mission récurrente (ADR-049). */
+export function creditColumns(mission: Pick<Mission, 'payment'>) {
+  const credit = mission.payment.credit ?? null;
+  return {
+    creditId: credit?.id ?? null,
+    creditedAmount: credit?.amount ?? null,
+    creditedAt: credit?.creditedAt ?? null,
+  };
+}
+
 export function suspensionColumns(mission: Pick<Mission, 'suspension' | 'warningLevel'>) {
   return {
     suspensionCause: mission.suspension?.causes[0] ?? null,

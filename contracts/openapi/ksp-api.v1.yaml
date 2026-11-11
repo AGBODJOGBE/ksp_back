@@ -6848,6 +6848,8 @@ paths:
       description: |
         UC-CL-10. Refusé avant le jour prévu du passage, à l’heure du Bénin (`CLEANING_INTERVENTION_TOO_EARLY`, 422, `details.scheduledDate`) ; le jour même, à toute heure, il est permis. Règle réglable par la configuration du service.
 
+        Paiement « avant » choisi par le client : refusé tant que l’acompte (ou la totalité) reste dû (`CLEANING_UPFRONT_PAYMENT_DUE`, 422, `details.amountDue`) ; le passage peut être planifié, et le client est prévenu à la planification (ADR-049).
+
         Rôles : `cleaning_supervisor`, `cleaning_agent`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/StartIntervention
       x-ksp-access: authenticated

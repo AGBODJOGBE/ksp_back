@@ -213,6 +213,21 @@ export interface GetInvoiceAmountDueResponse {
   onlinePaymentIds: string[];
 }
 
+export interface GetWalletDebitStatusRequest {
+  /** Facture payée (objet du débit). */
+  invoiceId: string;
+  /** Débit du portefeuille (identifiant de la transaction wallet), cité en référence du paiement. */
+  transactionId: string;
+}
+
+export interface GetWalletDebitStatusResponse {
+  /**
+   * true : un paiement de la facture (moyen "wallet") cite ce débit ; false : aucun (facture inconnue
+   * comprise).
+   */
+  recorded: boolean;
+}
+
 export interface PayMyInvoiceFromWalletRequest {
   invoiceId: string;
   /** En-tête Idempotency-Key (8 à 100 caractères : lettres, chiffres, "_" et "-"), obligatoire. */
@@ -433,3 +448,50 @@ export function InvoicePaymentDueServiceControllerMethods() {
 }
 
 export const INVOICE_PAYMENT_DUE_SERVICE_NAME = "InvoicePaymentDueService";
+
+/**
+ * Débit du portefeuille enregistré ? — réservé au service wallet (ADR-048) : wallet rapproche les
+ * débits du portefeuille prépayé faits pour une facture dont l'enregistrement a pu échouer (panne
+ * entre le débit et l'enregistrement du paiement) ; un débit qu'aucun paiement de la facture ne cite
+ * est remboursé. Appel d'un autre service : BILLING_CALLER_FORBIDDEN.
+ */
+
+export interface WalletDebitCheckServiceClient {
+  getWalletDebitStatus(
+    request: GetWalletDebitStatusRequest,
+    metadata?: Metadata,
+  ): Observable<GetWalletDebitStatusResponse>;
+}
+
+/**
+ * Débit du portefeuille enregistré ? — réservé au service wallet (ADR-048) : wallet rapproche les
+ * débits du portefeuille prépayé faits pour une facture dont l'enregistrement a pu échouer (panne
+ * entre le débit et l'enregistrement du paiement) ; un débit qu'aucun paiement de la facture ne cite
+ * est remboursé. Appel d'un autre service : BILLING_CALLER_FORBIDDEN.
+ */
+
+export interface WalletDebitCheckServiceController {
+  getWalletDebitStatus(
+    request: GetWalletDebitStatusRequest,
+    metadata?: Metadata,
+  ): Promise<GetWalletDebitStatusResponse> | Observable<GetWalletDebitStatusResponse> | GetWalletDebitStatusResponse;
+}
+
+export function WalletDebitCheckServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["getWalletDebitStatus"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("WalletDebitCheckService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("WalletDebitCheckService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const WALLET_DEBIT_CHECK_SERVICE_NAME = "WalletDebitCheckService";

@@ -1,5 +1,8 @@
 import { ScheduleInterventionBatchUseCase } from './missions/intervention-batch.use-case';
-import { PayMissionFromWalletUseCase } from './payments/wallet-payments.use-cases';
+import {
+  GetWalletDebitStatusUseCase,
+  PayMissionFromWalletUseCase,
+} from './payments/wallet-payments.use-cases';
 import { ResolveBackofficeNamesUseCase } from './backoffice/backoffice-names.use-case';
 import {
   GetCatalogUseCase,
@@ -142,6 +145,7 @@ export function createUseCases(deps: CleaningDeps) {
     completeIntervention: new CompleteInterventionUseCase(deps),
     recordPayment: new RecordPaymentUseCase(deps),
     payMissionFromWallet: new PayMissionFromWalletUseCase(deps),
+    getWalletDebitStatus: new GetWalletDebitStatusUseCase(deps),
     cancelMissionAsSupervisor: new CancelMissionAsSupervisorUseCase(deps),
     getCatalog: new GetCatalogUseCase(deps),
     saveService: new SaveServiceUseCase(deps),
