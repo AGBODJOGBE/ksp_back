@@ -12,6 +12,7 @@ const CRITICAL = [
   'reactivateAccount',
   'resetAccountMfa',
   'creditPrepaidWallet',
+  'approveManualCredit',
   'confirmPayout',
   'failPayout',
   'resolvePaymentMismatch',

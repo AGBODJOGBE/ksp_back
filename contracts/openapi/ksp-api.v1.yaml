@@ -9453,9 +9453,17 @@ paths:
 
         Idempotent : la même clé (ou, pour `top_up`, le même paiement) renvoie le même crédit (`created: false`).
 
-        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Contrôles (ADR-048) : une recharge est vérifiée auprès de payment (recharge du même titulaire, argent
+        reçu, montant au plus égal au montant reçu : sinon `WALLET_TOP_UP_NOT_VERIFIED`) ; un remboursement est
+        plafonné (`WALLET_MANUAL_REFUND_MAX` : sinon `WALLET_CREDIT_LIMIT_EXCEEDED`) et justifié (motif de 15
+        caractères au moins). Au-delà de `WALLET_CREDIT_APPROVAL_THRESHOLD`, rien n'est crédité : la demande
+        (`pendingRequest`) attend la validation d'un second membre de la finance
+        (`POST /api/v1/admin/wallet/credit-requests/{id}/approve`).
 
-        Erreurs : `WALLET_VALIDATION_FAILED` (400), `WALLET_IDEMPOTENCY_KEY_REUSED` (409).
+        Rôles : `finance_officer`, `super_admin` ; double authentification de moins de 10 minutes.
+
+        Erreurs : `WALLET_VALIDATION_FAILED` (400), `WALLET_IDEMPOTENCY_KEY_REUSED` (409),
+        `WALLET_TOP_UP_NOT_VERIFIED` et `WALLET_CREDIT_LIMIT_EXCEEDED` (422).
       x-ksp-grpc: ksp.wallet.v1.WalletAdminService/CreditPrepaidWallet
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -9483,14 +9491,18 @@ paths:
               reason: Passage du 3 novembre non effectué
       responses:
         '200':
-          description: Portefeuille crédité (ou déjà crédité avec cette clé)
+          description: |
+            Portefeuille crédité (ou déjà crédité avec cette clé) ; au-delà du seuil de double validation
+            (ADR-048), demande en attente d'un second membre de la finance (`pendingRequest`), rien n'est crédité.
           headers:
             X-Correlation-Id:
               $ref: '#/components/headers/X-Correlation-Id'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WalletCredit'
+                oneOf:
+                  - $ref: '#/components/schemas/WalletCredit'
+                  - $ref: '#/components/schemas/WalletCreditPending'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -9501,6 +9513,121 @@ paths:
           $ref: '#/components/responses/Conflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/credit-requests:
+    get:
+      tags:
+        - Portefeuille (back-office)
+      operationId: listManualCreditRequests
+      summary: Demandes de crédit manuel à valider
+      description: |
+        Crédits manuels au-delà du seuil de double validation (`WALLET_CREDIT_APPROVAL_THRESHOLD`, ADR-048), les
+        plus récents d'abord : `pending_approval` (en attente d'un second membre de la finance) ou `approved`.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/ListManualCreditRequests
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ManualCreditRequestStatus'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualCreditRequestList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/credit-requests/{id}/approve:
+    post:
+      tags:
+        - Portefeuille (back-office)
+      operationId: approveManualCredit
+      summary: Valider un crédit manuel (second membre de la finance)
+      description: |
+        Validation d'une demande de crédit manuel par un membre de la finance **autre que son auteur**
+        (ADR-048) : le portefeuille est crédité (auteur de l'écriture : celui de la demande ; validation gardée
+        sur la demande). Une recharge est revérifiée auprès de payment. Rejouable : une demande déjà validée
+        rend son crédit (`created: false`).
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification de moins de 10 minutes.
+
+        Erreurs : `WALLET_VALIDATION_FAILED` (400), `WALLET_APPROVAL_BY_REQUESTER` (403),
+        `WALLET_CREDIT_REQUEST_NOT_FOUND` (404), `WALLET_TOP_UP_NOT_VERIFIED` (422).
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/ApproveManualCredit
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 600
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la demande de crédit (UUID).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Portefeuille crédité (ou déjà crédité par cette demande)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualCreditApproval'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -16468,6 +16595,143 @@ components:
         created:
           type: boolean
           description: false si le crédit existait déjà (même clé, ou même paiement).
+    WalletCreditPending:
+      type: object
+      additionalProperties: false
+      description: Crédit au-delà du seuil de double validation, rien n'est encore crédité (ADR-048).
+      required:
+        - pendingRequest
+        - wallet
+        - created
+      properties:
+        pendingRequest:
+          $ref: '#/components/schemas/ManualCreditRequest'
+        wallet:
+          $ref: '#/components/schemas/PrepaidWallet'
+        created:
+          type: boolean
+          description: false si la demande existait déjà (même clé).
+    ManualCreditRequestStatus:
+      enum:
+        - pending_approval
+        - approved
+    ManualCreditRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - holder
+        - kind
+        - amount
+        - reason
+        - paymentId
+        - status
+        - requestedBy
+        - requestedAt
+        - approvedBy
+        - approvedAt
+        - transactionId
+      properties:
+        id:
+          type: string
+          format: uuid
+        holder:
+          type: object
+          additionalProperties: false
+          required:
+            - type
+            - id
+          properties:
+            type:
+              $ref: '#/components/schemas/WalletHolderType'
+            id:
+              type: string
+              format: uuid
+        kind:
+          enum:
+            - refund
+            - top_up
+        amount:
+          $ref: '#/components/schemas/Money'
+        reason:
+          type: string
+        paymentId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        status:
+          $ref: '#/components/schemas/ManualCreditRequestStatus'
+        requestedBy:
+          type: string
+          format: uuid
+        requestedAt:
+          type: string
+          format: date-time
+        approvedBy:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        approvedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        transactionId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+    ManualCreditRequestList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManualCreditRequest'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    ManualCreditApproval:
+      type: object
+      additionalProperties: false
+      required:
+        - transactionId
+        - kind
+        - amount
+        - description
+        - createdAt
+        - wallet
+        - request
+        - created
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        kind:
+          enum:
+            - refund
+            - top_up
+        amount:
+          $ref: '#/components/schemas/Money'
+        description:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        wallet:
+          $ref: '#/components/schemas/PrepaidWallet'
+        request:
+          $ref: '#/components/schemas/ManualCreditRequest'
+        created:
+          type: boolean
+          description: false si la demande était déjà validée.
     PaymentWebhookAck:
       type: object
       additionalProperties: false

@@ -22,6 +22,24 @@ const xof = (value: moneyV1.Money | undefined) => ({
 const page = (value: Page): walletV1.Page => ({ limit: value.limit ?? 0, cursor: value.cursor ?? '' });
 
 /** Portefeuille prépayé (ADR-046) : solde dépensable, jamais négatif. */
+/** Demande de crédit manuel soumise à double validation (ADR-048). */
+function presentCreditRequest(value: walletV1.ManualCreditRequest) {
+  return {
+    id: value.id,
+    holder: { type: value.holder?.type ?? '', id: value.holder?.id ?? '' },
+    kind: value.kind,
+    amount: xof(value.amount),
+    reason: value.reason,
+    paymentId: value.paymentId || null,
+    status: value.status,
+    requestedBy: value.requestedBy,
+    requestedAt: value.requestedAt,
+    approvedBy: value.approvedBy || null,
+    approvedAt: value.approvedAt || null,
+    transactionId: value.transactionId || null,
+  };
+}
+
 export function presentPrepaid(value: walletV1.PrepaidWallet | undefined) {
   if (!value?.holder) throw malformed('portefeuille prépayé');
   return {
@@ -194,6 +212,14 @@ export class WalletGrpcAdapter implements WalletApi {
         m,
       ),
     );
+    // Au-delà du seuil de double validation : demande en attente, rien n'est crédité (ADR-048).
+    if (res.pendingRequest) {
+      return {
+        pendingRequest: presentCreditRequest(res.pendingRequest),
+        wallet: presentPrepaid(res.wallet),
+        created: res.created,
+      };
+    }
     if (!res.transaction) throw malformed('crédit');
     return {
       transactionId: res.transaction.id,
@@ -202,6 +228,30 @@ export class WalletGrpcAdapter implements WalletApi {
       description: res.transaction.description,
       createdAt: res.transaction.createdAt,
       wallet: presentPrepaid(res.wallet),
+      created: res.created,
+    };
+  }
+
+  async listManualCreditRequests(value: Page, status: string | undefined): Promise<Json> {
+    const res = await this.read('listManualCreditRequests', (m) =>
+      this.clients.admin.listManualCreditRequests({ page: page(value), status: status ?? '' }, m),
+    );
+    return { items: res.requests.map(presentCreditRequest), nextCursor: res.nextCursor || null };
+  }
+
+  async approveManualCredit(requestId: string): Promise<Json> {
+    const res = await this.read('approveManualCredit', (m) =>
+      this.clients.admin.approveManualCredit({ requestId }, m),
+    );
+    if (!res.transaction || !res.request) throw malformed('validation de crédit');
+    return {
+      transactionId: res.transaction.id,
+      kind: res.transaction.kind,
+      amount: xof(res.transaction.amount),
+      description: res.transaction.description,
+      createdAt: res.transaction.createdAt,
+      wallet: presentPrepaid(res.wallet),
+      request: presentCreditRequest(res.request),
       created: res.created,
     };
   }
