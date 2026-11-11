@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { AppError, type RoleClaim, runWithContext } from '@ksp/platform';
 import {
   type AccountCode,
@@ -288,6 +289,9 @@ export function makeDeps(overrides: Partial<WalletDeps> = {}) {
       payouts: store,
       executor: new FakeExecutor(),
       topUps,
+      fingerprints: {
+        of: (phone: string) => createHmac('sha256', 'test-phone-hash-secret').update(phone).digest('hex'),
+      },
       settings: {
         ledgerCallers: ['recovery'] as readonly string[],
         debitCallers: ['cleaning', 'billing'] as readonly string[],

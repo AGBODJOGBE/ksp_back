@@ -46,4 +46,18 @@ describe('configuration de wallet', () => {
       }),
     ).toThrow(/SERVICE_CLIENT_SECRET/);
   });
+
+  it('production : clé propre de l’empreinte des numéros (ADR-048)', () => {
+    const production = (secret?: string) => () =>
+      loadConfig(configSchema, {
+        ...BASE,
+        NODE_ENV: 'production',
+        IDENTITY_JWKS_URL: 'https://identity/.well-known/jwks.json',
+        IDENTITY_TOKEN_URL: 'https://identity/oauth/token',
+        SERVICE_CLIENT_SECRET: 's'.repeat(32),
+        ...(secret ? { WALLET_PHONE_HASH_SECRET: secret } : {}),
+      });
+    expect(production()).toThrow(/WALLET_PHONE_HASH_SECRET/);
+    expect(production('p'.repeat(40))).not.toThrow();
+  });
 });

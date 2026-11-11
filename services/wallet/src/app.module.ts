@@ -9,6 +9,7 @@ import {
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { createUseCases, WALLET_USE_CASES } from './application/use-cases';
+import { HmacPhoneFingerprints } from './infrastructure/security/hmac-phone-fingerprints';
 import { type ServiceConfig } from './config';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { GrpcPayoutExecutor } from './infrastructure/payment/grpc-payout-executor';
@@ -76,6 +77,7 @@ export class AppModule {
                 ),
                 caller,
               ),
+              fingerprints: new HmacPhoneFingerprints(config.WALLET_PHONE_HASH_SECRET),
               settings: {
                 ledgerCallers: config.WALLET_LEDGER_CALLERS,
                 debitCallers: config.WALLET_DEBIT_CALLERS,

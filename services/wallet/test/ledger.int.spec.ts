@@ -6,6 +6,7 @@ import { createUseCases } from '../src/application/use-cases';
 import { type PayoutExecutor } from '../src/application/ports';
 import { PrismaLedgerStore } from '../src/infrastructure/persistence/prisma-ledger.store';
 import { PrismaService } from '../src/infrastructure/prisma/prisma.service';
+import { HmacPhoneFingerprints } from '../src/infrastructure/security/hmac-phone-fingerprints';
 import { SystemClock, UuidV7Generator } from '../src/infrastructure/system/system';
 import { runWithContext } from '@ksp/platform';
 
@@ -68,6 +69,7 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
           throw new Error('non utilisé');
         },
       },
+      fingerprints: new HmacPhoneFingerprints('test-phone-hash-secret-0123456789abcdef'),
       settings: {
         ledgerCallers: ['recovery'],
         debitCallers: ['cleaning', 'billing'],

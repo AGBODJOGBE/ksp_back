@@ -137,6 +137,17 @@ export class RecordCollectionUseCase {
   }
 }
 
+/**
+ * Même bénéficiaire qu'une demande enregistrée (rejeu) : par l'empreinte du numéro complet ; pour un
+ * reversement antérieur à l'empreinte, par le numéro complet tant qu'il est gardé, sinon par le
+ * numéro masqué (seul indice restant).
+ */
+function samePhone(existing: WalletPayout, phone: string, fingerprint: string): boolean {
+  if (existing.beneficiaryPhoneHash) return existing.beneficiaryPhoneHash === fingerprint;
+  if (existing.beneficiaryPhone) return existing.beneficiaryPhone === phone;
+  return existing.beneficiaryPhoneMasked === maskPhone(phone);
+}
+
 /** Transmet un reversement à payment ; une panne le laisse en attente (nouvel essai planifié). */
 async function submit(deps: WalletDeps, payout: WalletPayout): Promise<WalletPayout> {
   if (payout.status !== 'pending_submission' || !payout.beneficiaryPhone || !payout.beneficiaryName) {
@@ -197,13 +208,14 @@ export class RequestPayoutUseCase {
     const operator = oneOf<Operator>('beneficiary.operator', input.beneficiary?.operator ?? '', OPERATORS);
     const name = requireText('beneficiary.name', input.beneficiary?.name, 120);
 
+    const fingerprint = this.deps.fingerprints.of(phone);
     const replay = async (existing: WalletPayout) => {
       const same =
         existing.holder.type === holder.type &&
         existing.holder.id === holder.id &&
         existing.amount === amount &&
         existing.beneficiaryOperator === operator &&
-        existing.beneficiaryPhoneMasked === maskPhone(phone);
+        samePhone(existing, phone, fingerprint);
       if (!same) throw WalletErrors.keyReused();
       const payout = await trySubmit(this.deps, existing);
       return { payout, wallet: await this.deps.ledger.summary(holder), created: false };
@@ -233,6 +245,7 @@ export class RequestPayoutUseCase {
       beneficiaryPhone: phone,
       beneficiaryName: name,
       beneficiaryPhoneMasked: maskPhone(phone),
+      beneficiaryPhoneHash: fingerprint,
       beneficiaryOperator: operator,
       paymentPayoutId: null,
       holdTransactionId: hold.id,

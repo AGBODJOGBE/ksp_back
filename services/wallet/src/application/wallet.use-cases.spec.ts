@@ -8,6 +8,7 @@ import {
   ORGANIZATION_ID,
   USER_ID,
 } from './testing/fakes';
+import { maskPhone } from '../domain/wallet-payout';
 import { createUseCases } from './use-cases';
 
 const ORG = { type: 'organization', id: ORGANIZATION_ID };
@@ -167,6 +168,21 @@ describe('portefeuille (cas d’usage, ADR-042)', () => {
       // Rejeu de la clé : même reversement, rien de plus.
       expect((await requestPayout()).payout.id).toBe(payout.id);
       expect(executor().requests).toHaveLength(1);
+    });
+
+    it('rejeu jugé sur le numéro complet (empreinte), jamais sur le numéro masqué (ADR-048)', async () => {
+      const { payout } = await requestPayout();
+      // Même début et même fin, autre numéro : même masque, mais pas la même demande.
+      const other = { ...BENEFICIARY, phone: '+2290197990045' };
+      expect(maskPhone(other.phone)).toBe(payout.beneficiaryPhoneMasked);
+      expect((await rejection(requestPayout({ beneficiary: other }))).code).toBe(
+        'WALLET_IDEMPOTENCY_KEY_REUSED',
+      );
+      expect((await requestPayout()).payout.id).toBe(payout.id);
+      // L'empreinte ne contient pas le numéro.
+      const stored = store().payoutRows.get(payout.id)!;
+      expect(stored.beneficiaryPhoneHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(stored.beneficiaryPhoneHash).not.toContain('0197000045');
     });
 
     it('jamais au-delà du solde disponible', async () => {

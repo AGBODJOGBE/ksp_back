@@ -171,6 +171,14 @@ export interface TopUpPayments {
   create(input: { idempotencyKey: string; amount: number }): Promise<TopUpPayment>;
 }
 
+/**
+ * Empreinte d'un numéro de bénéficiaire (HMAC à clé secrète, ADR-048) : compare deux demandes sans
+ * garder le numéro complet après la transmission à payment.
+ */
+export interface PhoneFingerprints {
+  of(phone: string): string;
+}
+
 export interface WalletSettings {
   /** Services autorisés à écrire dans le grand livre et à lire les titulaires (recovery). */
   ledgerCallers: readonly string[];
@@ -186,6 +194,7 @@ export interface WalletDeps {
   payouts: WalletPayoutRepository;
   executor: PayoutExecutor;
   topUps: TopUpPayments;
+  fingerprints: PhoneFingerprints;
   settings: WalletSettings;
   clock: Clock;
   ids: IdGenerator;
