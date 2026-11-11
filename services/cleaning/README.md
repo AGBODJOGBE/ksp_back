@@ -132,7 +132,13 @@ positions des lieux du compte (ADR-035).
   passage (`ScheduleIntervention`, `scheduled_start` vide).
 - `recurrence` dépréciée en entrée (traduite en plan quand c'est exact), déduite du plan en sortie.
   Migration `0012_intervention_schedules` : devis et missions ponctuels convertis en plan d'une date.
-- Configuration : `CLEANING_SCHEDULE_MAX_MONTHS` (36), `CLEANING_SCHEDULE_MAX_VISITS` (400).
+- Planification en lot (`ScheduleInterventionBatch`, `POST …/missions/{id}/interventions/batch`) : un
+  passage par date restante (`dates`, `until` ou toutes), mêmes agents, contrôles date par date dans une
+  transaction ; tout ou rien (`details.conflicts`) ou `skipConflicts` ; idempotente par (mission, clé),
+  table `intervention_batches` ; un seul événement `cleaning.interventions.batch_scheduled`.
+- Configuration : `CLEANING_SCHEDULE_MAX_MONTHS` (36), `CLEANING_SCHEDULE_MAX_VISITS` (400),
+  `CLEANING_SCHEDULE_MAX_BATCH` (400). Fuseau de la conversion de la migration 0012 fixé à
+  `Africa/Porto-Novo`.
 - Guide d'intégration : `docs/integration/cleaning-schedule.md`.
 
 ## Règles (cahier des charges, parties 4 et 9)

@@ -34,7 +34,7 @@ date n'était connue avant la planification par la supervision.
    - Une période donnée en mois entiers (« de janvier à décembre ») est la même règle : le front envoie
      les dates de début et de fin. Pas de second format.
 2. **Bornes** : période de 36 mois au plus (`CLEANING_SCHEDULE_MAX_MONTHS`, la valeur de l'ancienne
-   récurrence ; 24 était proposé, **à valider**), au plus 400 passages (`CLEANING_SCHEDULE_MAX_VISITS`), au
+   récurrence, retenue le 2026-11-11), au plus 400 passages (`CLEANING_SCHEDULE_MAX_VISITS`), au
    moins un passage, premier passage au-delà du délai minimum des réglages (48 h). Avertissements rendus
    avec les dates : jour ramené à la fin du mois, jour exclu (prévu ou non), jour ajouté déjà prévu.
 3. **Prix exact** : nombre de passages = nombre de dates. Devis : total = prix d'un passage × nombre de
@@ -78,6 +78,23 @@ estimate }` (prix d'un passage et fourchette × nombre de passages) ;
      remplacerait les créneaux que la supervision propose au devis).
 7. **Événement** : `cleaning.booking.confirmed` gagne `schedulePeriod { firstDate, lastDate }`
    (facultatif, absent sans plan), pour qu'un lecteur n'ait plus à déduire la période de `durationMonths`.
+8. **Planification en lot** (décision du 2026-11-11) :
+   `POST /api/v1/admin/cleaning/missions/{id}/interventions/batch` (supervision, `Idempotency-Key`
+   obligatoire). Un passage par date restante du plan (sans passage actif ou fait, encore à venir), mêmes
+   agents (et/ou équipe), même heure (`startTime`, celle du plan par défaut), même durée. Dates : `dates`
+   (sous-ensemble des dates restantes) ou `until` (toutes jusqu'à cette date incluse) ; ni l'un ni
+   l'autre : toutes. Plafond par appel `CLEANING_SCHEDULE_MAX_BATCH` (400).
+   - Contrôles d'un passage seul, date par date, dans une transaction, agents verrouillés ; un passage
+     d'une mission du même groupe n'est pas un conflit, et les passages du lot ne se chevauchent pas
+     entre eux.
+   - **Tout ou rien** par défaut : `CLEANING_TEAM_UNAVAILABLE` (409) avec `details.conflicts` (date et
+     agents de chaque date en conflit), rien n'est écrit. `skipConflicts: true` : les autres dates sont
+     planifiées, les dates sautées rendues dans `skipped`.
+   - Idempotence par (mission, clé), table `intervention_batches` (migration 0013) écrite dans la
+     transaction : un second envoi rend le premier résultat.
+   - **Un seul événement** `cleaning.interventions.batch_scheduled` (nombre, premier et dernier passage,
+     agents, dates sautées) au lieu d'un `cleaning.mission.scheduled` par passage : notification envoie un
+     message récapitulatif au client et à chaque agent (abonnement déclaré dans `EVENT_CONSUMERS`).
 
 ## Conséquences
 
@@ -89,5 +106,8 @@ estimate }` (prix d'un passage et fourchette × nombre de passages) ;
   de la mission moins les jours déjà couverts par un passage (`unscheduledDates`).
 - Billing peut, sans urgence, lire `schedulePeriod` plutôt que `recurrence.durationMonths` pour borner
   les mois facturés (à faire par l'équipe billing ; rien ne casse en attendant).
-- Le fuseau de la conversion SQL est fixé à `Africa/Porto-Novo` (celui du Bénin), même si
-  `CLEANING_TIME_ZONE` est réglé autrement.
+- Le fuseau de la conversion SQL (migration 0012) est fixé à `Africa/Porto-Novo` (celui du Bénin), même
+  si `CLEANING_TIME_ZONE` est réglé autrement (accepté le 2026-11-11) : un autre fuseau réglé plus tard
+  ne recalcule pas les plans déjà convertis.
+- Décisions du 2026-11-11 : 36 mois gardés ; créneau souhaité indicatif de 2 heures gardé ; plusieurs
+  dates libres d'un particulier = contrat récurrent (suivi des impayés).

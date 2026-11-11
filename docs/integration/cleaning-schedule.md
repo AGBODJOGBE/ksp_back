@@ -121,3 +121,35 @@ reste présente, déduite du plan, pour les anciens écrans.
 - **Planifier un passage** `POST /api/v1/admin/cleaning/missions/{id}/interventions` : `scheduledStart`
   facultatif ; absent, la prochaine date du plan encore sans passage, à l'heure du plan. Les agents se
   choisissent comme avant.
+
+## 6. Planifier toutes les dates restantes d'un coup
+
+`POST /api/v1/admin/cleaning/missions/{id}/interventions/batch`, en-tête `Idempotency-Key` obligatoire
+(un second envoi avec la même clé rend le même résultat).
+
+```http
+POST /api/v1/admin/cleaning/missions/0192f1c4-…/interventions/batch
+Idempotency-Key: lot-2026-11-11-0001
+Content-Type: application/json
+
+{ "until": "2026-12-31", "startTime": "14:00", "durationMinutes": 120,
+  "agentIds": ["0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002"], "skipConflicts": true }
+```
+
+- Dates : `dates` (sous-ensemble des dates restantes), ou `until` (jusqu'à cette date incluse), ou rien
+  (toutes). `startTime` absent : heure du plan. 400 passages au plus par appel.
+- Agents : `agentIds` et/ou `teamId`, comme pour un passage seul.
+- Tout ou rien par défaut : un conflit répond 409 `CLEANING_TEAM_UNAVAILABLE` avec
+  `details.conflicts: [{ "date": "2026-11-16", "agentIds": ["…"] }]` et rien n'est planifié ; avec
+  `skipConflicts: true`, les autres dates sont planifiées.
+
+```json
+{
+  "mission": { "id": "…", "status": "scheduled", "interventions": ["…"], "scheduledDates": ["…"] },
+  "interventionIds": ["…", "…"],
+  "scheduledDates": ["2026-11-11", "2026-11-14", "…"],
+  "skipped": [{ "date": "2026-11-16", "agentIds": ["0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002"] }]
+}
+```
+
+Le client et les agents reçoivent un seul message qui résume (nombre de passages, premier et dernier).
