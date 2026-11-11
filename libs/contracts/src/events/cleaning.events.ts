@@ -122,6 +122,11 @@ export interface CleaningEventPayloads {
     scheduledStart: string;
     durationMinutes: number;
     agentIds: string[];
+    /**
+     * Facultatif (ADR-049) : paiement « avant » encore dû (acompte, ou totalité) ; le passage ne
+     * démarre pas sans lui. Absent sinon.
+     */
+    amountDueBeforeStart?: CleaningMoney;
     /** Facultatifs (ADR-034) : prestation, son nom et groupe de la demande. */
     serviceCode?: string;
     serviceName?: string;
@@ -204,6 +209,18 @@ export interface CleaningEventPayloads {
     refunds: { paymentRecordId: string; walletTransactionId: string; amount: CleaningMoney }[];
     reason: 'mission_cancelled';
     refundedAt: string;
+  };
+  /**
+   * Montant payé pour des passages non faits d'une mission récurrente arrêtée par le client, crédité
+   * au prorata dans son portefeuille prépayé (ADR-049) : wallet crédite une seule fois par creditId.
+   */
+  'cleaning.mission.credited': {
+    missionId: string;
+    customerId: string;
+    creditId: string;
+    amount: CleaningMoney;
+    reason: 'recurring_cancelled';
+    creditedAt: string;
   };
 }
 

@@ -33,7 +33,8 @@ function existing(
 /**
  * cleaning.booking.confirmed : un contrat d'entreprise (mission d'une organisation) devient
  * facturable chaque mois. Un particulier n'est pas facturé ici : il paie ses passages (cleaning).
- * Durée : celle du contrat récurrent, 1 mois pour une prestation ponctuelle.
+ * Durée : celle du contrat récurrent ; une prestation ponctuelle est facturée en une fois, sur le
+ * mois de son passage (ADR-049).
  */
 export class RegisterContractUseCase {
   constructor(private readonly deps: BillingDeps) {}
@@ -50,6 +51,7 @@ export class RegisterContractUseCase {
       organizationId: payload.organizationId,
       total: payload.total.amount,
       durationMonths: payload.recurrence?.durationMonths ?? 1,
+      oneOff: !payload.recurrence,
       startsAt: new Date(payload.startsAt ?? event.occurredAt),
       terminatedAt: null,
       suspendedSince: null,

@@ -20,7 +20,7 @@ export class PaymentEventsConsumer implements OnApplicationBootstrap {
     await this.consumer.subscribe('payment.intent.succeeded', async (envelope) => {
       const payload = envelope.payload;
       if (payload.subjectType !== 'cleaning_mission') return;
-      const outcome = await this.useCases.recordOnlinePayment.execute({
+      const { outcome, excess } = await this.useCases.recordOnlinePayment.execute({
         eventId: envelope.eventId,
         eventType: envelope.type,
         paymentId: payload.paymentId,
@@ -31,6 +31,13 @@ export class PaymentEventsConsumer implements OnApplicationBootstrap {
         succeededAt: payload.succeededAt,
       });
       this.logger.log(`Paiement en ligne ${payload.paymentId} (mission ${payload.subjectId}) : ${outcome}`);
+      if (excess > 0) {
+        // Identifiants et montants seulement : à rembourser (différé, ADR-031 ; mission annulée, ADR-049).
+        this.logger.warn(
+          `Excédent de paiement en ligne : mission ${payload.subjectId}, paiement ${payload.paymentId}, ` +
+            `${excess} XOF au-delà du reste dû`,
+        );
+      }
     });
   }
 }

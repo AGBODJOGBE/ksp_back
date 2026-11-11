@@ -1,4 +1,4 @@
-import { duePeriods } from '../domain/contract';
+import { type BillingContract, type ContractPeriod, duePeriods } from '../domain/contract';
 import { dueDate, type Invoice, type InvoiceOrganization, isOverdue, periodLines } from '../domain/invoice';
 import { type BillingDeps } from './ports';
 
@@ -25,6 +25,9 @@ export function invoiceReference(invoice: Invoice) {
  * identity au moment de l'émission. Elle n'est jamais émise sans : identity indisponible → erreur,
  * aucune facture n'est émise et le passage suivant réessaie ; organisation introuvable → le contrat
  * est reporté (`deferredContractIds`), les autres sont facturés.
+ *
+ * Le montant est recalculé sous le verrou du contrat (ADR-049) : une suspension, une reprise ou une
+ * annulation enregistrée entre la lecture des contrats et l'émission est prise en compte.
  */
 export class IssueDueInvoicesUseCase {
   constructor(private readonly deps: BillingDeps) {}
@@ -51,27 +54,13 @@ export class IssueDueInvoicesUseCase {
         deferredContractIds.push(contract.id);
         continue;
       }
-      for (const period of periods) {
-        const draft: Omit<Invoice, 'number'> = {
-          id: this.deps.ids.next(),
-          status: 'pending_payment',
-          contractId: contract.id,
-          customerId: contract.customerId,
-          organizationId: contract.organizationId,
-          source: contract.source,
-          periodIndex: period.index,
-          periodStart: period.start,
-          periodEnd: period.end,
-          lines: periodLines(period, contract.serviceName ?? null),
-          total: period.amount,
-          issuedAt: now,
-          dueAt: dueDate(now, paymentTermDays),
-          paidAt: null,
-          payments: [],
-          organization,
-          version: 0,
+      for (const { index } of periods) {
+        // Mois encore à facturer d'après le contrat relu sous verrou (l'existence est vérifiée à part).
+        const draft = (current: BillingContract) => {
+          const period = duePeriods(current, new Set(), now).find((due) => due.index === index);
+          return period ? this.draft(current, period, organization, now, paymentTermDays) : null;
         };
-        const invoice = await this.deps.invoices.issue(draft, (created) => [
+        const invoice = await this.deps.invoices.issue(contract.id, index, draft, (created) => [
           {
             type: 'billing.invoice.issued',
             payload: {
@@ -87,6 +76,34 @@ export class IssueDueInvoicesUseCase {
       }
     }
     return { issued, deferredContractIds };
+  }
+
+  private draft(
+    contract: BillingContract,
+    period: ContractPeriod,
+    organization: InvoiceOrganization | null,
+    now: Date,
+    paymentTermDays: number,
+  ): Omit<Invoice, 'number'> {
+    return {
+      id: this.deps.ids.next(),
+      status: 'pending_payment',
+      contractId: contract.id,
+      customerId: contract.customerId,
+      organizationId: contract.organizationId,
+      source: contract.source,
+      periodIndex: period.index,
+      periodStart: period.start,
+      periodEnd: period.end,
+      lines: periodLines(period, contract.serviceName ?? null),
+      total: period.amount,
+      issuedAt: now,
+      dueAt: dueDate(now, paymentTermDays),
+      paidAt: null,
+      payments: [],
+      organization,
+      version: 0,
+    };
   }
 
   /** En-têtes des organisations à facturer, lus dans identity, par identifiant en minuscules. */

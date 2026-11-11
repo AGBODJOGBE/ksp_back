@@ -204,6 +204,7 @@ export class PrismaQuoteRequestRepository implements QuoteRequestRepository {
     const rows = await this.prisma.quoteRequest.findMany({
       where: {
         ...(filter.customerId ? { customerId: filter.customerId } : {}),
+        ...(filter.organizationId !== undefined ? { organizationId: filter.organizationId } : {}),
         ...(filter.status ? { status: filter.status } : {}),
         ...(filter.communeCode ? { communeCode: filter.communeCode } : {}),
         ...(filter.customerKind ? { customerKind: filter.customerKind } : {}),

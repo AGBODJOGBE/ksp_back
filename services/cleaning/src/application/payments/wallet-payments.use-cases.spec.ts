@@ -1,4 +1,4 @@
-import { type AppError } from '@ksp/platform';
+import { type AppError, runWithContext } from '@ksp/platform';
 import { type Mission } from '../../domain/mission';
 import { newPaymentState, paidAmount, paymentStatus, remainingDue } from '../../domain/payment';
 import { CancelMissionAsSupervisorUseCase } from '../missions/admin-missions.use-cases';
@@ -12,7 +12,7 @@ import {
   testWorld,
   type TestWorld,
 } from '../testing/fakes';
-import { PayMissionFromWalletUseCase } from './wallet-payments.use-cases';
+import { GetWalletDebitStatusUseCase, PayMissionFromWalletUseCase } from './wallet-payments.use-cases';
 
 const MISSION_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000';
 const KEY = 'wallet-pay-0001';
@@ -115,7 +115,19 @@ describe('paiement d’une mission par le portefeuille (ADR-046)', () => {
     expect((await rejection(pay('deposit', KEY, OTHER_CUSTOMER_ID))).code).toBe('CLEANING_MISSION_NOT_FOUND');
     expect((await rejection(pay('all'))).code).toBe('CLEANING_VALIDATION_FAILED');
     world.missions.missions.set(MISSION_ID, mission({ organizationId: ORGANIZATION_ID }));
-    expect((await rejection(pay())).code).toBe('CLEANING_PAYMENT_VIA_INVOICE');
+    // Hors du contexte de l'organisation : introuvable (ADR-049) ; dans son contexte : par facture.
+    expect((await rejection(pay())).code).toBe('CLEANING_MISSION_NOT_FOUND');
+    const inOrganization = as(
+      CUSTOMER_ID,
+      () =>
+        new PayMissionFromWalletUseCase(world).execute({
+          missionId: MISSION_ID,
+          part: 'deposit',
+          idempotencyKey: KEY,
+        }),
+      { activeContext: ORGANIZATION_ID, orgRole: 'org_member' },
+    );
+    expect((await rejection(inOrganization)).code).toBe('CLEANING_PAYMENT_VIA_INVOICE');
     world.missions.missions.set(MISSION_ID, mission({ status: 'cancelled' }));
     expect((await rejection(pay())).code).toBe('CLEANING_INVALID_TRANSITION');
     expect(world.wallet.debits.size).toBe(0);
@@ -208,5 +220,31 @@ describe('paiement d’une mission par le portefeuille (ADR-046)', () => {
     );
     expect(stored().payment.payments[0]!.refundedAt).toBeNull();
     expect(world.recorder.events.some((e) => e.type === 'cleaning.mission.refunded')).toBe(false);
+  });
+
+  describe('débit du portefeuille enregistré ? (rapprochement de wallet, ADR-048)', () => {
+    const status = (transactionId: string, missionId = MISSION_ID, caller = 'wallet') =>
+      runWithContext({ correlationId: 'c-test', callerService: caller }, () =>
+        new GetWalletDebitStatusUseCase(world).execute({ missionId, transactionId }),
+      );
+
+    it('débit cité par un paiement de la mission : true, même remboursé ; sinon false', async () => {
+      await pay();
+      const debit = stored().payment.payments[0]!.reference!;
+      expect(await status(debit)).toBe(true);
+      await as(CUSTOMER_ID, () =>
+        new CancelMyMissionUseCase(world).execute({ missionId: MISSION_ID, reason: '' }),
+      );
+      expect(stored().payment.payments[0]!.refundedAt).not.toBeNull();
+      expect(await status(debit)).toBe(true);
+      expect(await status('0192f1c4-0000-7000-d000-000000000999')).toBe(false);
+      expect(await status(debit, '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9999')).toBe(false);
+    });
+
+    it('réservé à wallet', async () => {
+      expect(
+        (await rejection(status('0192f1c4-0000-7000-d000-000000000001', MISSION_ID, 'payment'))).code,
+      ).toBe('CLEANING_CALLER_FORBIDDEN');
+    });
   });
 });

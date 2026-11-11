@@ -299,3 +299,24 @@ export class MissionPaymentDueGrpcController implements cleaningV1.MissionPaymen
     };
   }
 }
+
+/**
+ * WalletDebitCheckService : débit du portefeuille enregistré sur une mission ?, réservé au service
+ * wallet (ADR-048). Le contrôle de l'appelant est fait par le cas d'usage.
+ */
+@Controller()
+@cleaningV1.WalletDebitCheckServiceControllerMethods()
+export class WalletDebitCheckGrpcController implements cleaningV1.WalletDebitCheckServiceController {
+  constructor(@Inject(CLEANING_USE_CASES) private readonly useCases: CleaningUseCases) {}
+
+  async getWalletDebitStatus(
+    request: cleaningV1.GetWalletDebitStatusRequest,
+  ): Promise<cleaningV1.GetWalletDebitStatusResponse> {
+    return {
+      recorded: await this.useCases.getWalletDebitStatus.execute({
+        missionId: request.missionId,
+        transactionId: request.transactionId,
+      }),
+    };
+  }
+}

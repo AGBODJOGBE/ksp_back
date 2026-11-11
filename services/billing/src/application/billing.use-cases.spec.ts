@@ -344,6 +344,96 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     ]);
   });
 
+  it('montant recalculé sous le verrou du contrat : un changement entre la lecture et l’émission compte (ADR-049)', async () => {
+    // La tâche lit le contrat avant la suspension ; la suspension est enregistrée avant l'émission.
+    const stale = await world.contracts.listOpen();
+    world.contracts.listOpen = async () => stale;
+    await useCases.suspendContract.execute({
+      eventId: event(30),
+      type: 'cleaning.contract.suspended',
+      occurredAt: '2026-11-16T00:00:00Z',
+      payload: {
+        missionId: MISSION_ID,
+        customerId: CUSTOMER_ID,
+        organizationId: ORGANIZATION_ID,
+        cause: 'unpaid_invoices',
+        unpaidCount: 2,
+        threshold: 2,
+        cancelledInterventionIds: [],
+        releasedAgentIds: [],
+        // 16 novembre à 00:00 au Bénin : 15 jours sur 30 suspendus.
+        suspendedAt: '2026-11-15T23:00:00Z',
+      },
+    });
+    world.clock.current = new Date('2026-12-01T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    expect([...world.invoices.invoices.values()].map((i) => i.total)).toEqual([50_000]);
+  });
+
+  it('numéro de facture : année de la période au Bénin, même émise l’année suivante (ADR-049)', async () => {
+    world.clock.current = new Date('2027-01-02T09:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    expect([...world.invoices.invoices.values()].map((i) => [i.periodIndex, i.number])).toEqual([
+      [1, 'FAC-2026-000001'],
+      [2, 'FAC-2026-000002'],
+    ]);
+  });
+
+  it('prestation ponctuelle : facturée en une fois, sur la facture du mois du passage (ADR-049)', async () => {
+    const ONE_OFF_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001';
+    const oneOff = booking(ORGANIZATION_ID, event(20));
+    await useCases.registerContract.execute({
+      ...oneOff,
+      payload: {
+        ...oneOff.payload,
+        missionId: ONE_OFF_ID,
+        total: { amount: 90_000, currency: 'XOF' },
+        plannedInterventions: 1,
+        recurrence: null,
+        // 20 novembre, 09:00 heure du Bénin : un mois de durée aurait coupé la prestation en deux.
+        startsAt: '2026-11-20T08:00:00.000Z',
+      },
+    });
+    world.clock.current = new Date('2027-01-05T00:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    const invoices = [...world.invoices.invoices.values()].filter((i) => i.contractId === ONE_OFF_ID);
+    expect(invoices.map((i) => [i.periodIndex, i.total, i.periodStart.toISOString()])).toEqual([
+      [1, 90_000, '2026-11-19T23:00:00.000Z'],
+    ]);
+    expect(invoices[0]!.issuedAt).toEqual(new Date('2027-01-05T00:00:00Z'));
+    expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 0, deferredContractIds: [] });
+  });
+
+  it('prestation ponctuelle annulée avant son jour : rien n’est facturé', async () => {
+    const ONE_OFF_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1002';
+    const oneOff = booking(ORGANIZATION_ID, event(21));
+    await useCases.registerContract.execute({
+      ...oneOff,
+      payload: {
+        ...oneOff.payload,
+        missionId: ONE_OFF_ID,
+        recurrence: null,
+        startsAt: '2026-11-20T08:00:00.000Z',
+      },
+    });
+    await useCases.terminateContract.execute({
+      eventId: event(22),
+      type: 'cleaning.request.cancelled',
+      occurredAt: '2026-11-18T10:00:00Z',
+      payload: {
+        requestId: event(52),
+        missionId: ONE_OFF_ID,
+        customerId: CUSTOMER_ID,
+        organizationId: ORGANIZATION_ID,
+        cancelledBy: 'customer',
+        outcome: 'cancelled',
+      },
+    });
+    world.clock.current = new Date('2027-01-05T00:00:00Z');
+    await useCases.issueDueInvoices.execute();
+    expect([...world.invoices.invoices.values()].filter((i) => i.contractId === ONE_OFF_ID)).toEqual([]);
+  });
+
   it('client : factures de son organisation active seulement ; autre client : 404', async () => {
     world.clock.current = new Date('2026-12-06T00:00:00Z');
     await useCases.issueDueInvoices.execute();
@@ -367,6 +457,17 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
         ),
       ),
     ).toBe('BILLING_VALIDATION_FAILED');
+  });
+
+  it('client et back-office : appelés par la gateway seulement (ADR-049)', async () => {
+    const mine = () => useCases.listMyInvoices.execute({ page: { limit: 20, cursor: null }, status: '' });
+    const staff = () => useCases.getSettings.execute();
+    const from = (callerService: string, fn: () => Promise<unknown>, roles = ['customer']) =>
+      as(CUSTOMER_ID, fn, { callerService, roles, mfa: true, activeContext: ORGANIZATION_ID });
+    expect(await code(from('payment', mine))).toBe('BILLING_CALLER_FORBIDDEN');
+    expect(await code(from('wallet', staff, ['finance_officer']))).toBe('BILLING_CALLER_FORBIDDEN');
+    expect(await code(from('gateway', mine))).toBe('ok');
+    expect(await code(from('gateway', staff, ['finance_officer']))).toBe('ok');
   });
 
   it('back-office : rôles et double authentification exigés ; réglages réservés', async () => {
@@ -664,5 +765,19 @@ describe('facture payée par le portefeuille prépayé (ADR-046)', () => {
     };
     expect(await code(pay())).toBe('BILLING_INVALID_TRANSITION');
     expect(world.wallet.refunds).toHaveLength(1);
+  });
+
+  it('débit du portefeuille enregistré ? true si un paiement de la facture le cite ; wallet seul (ADR-048)', async () => {
+    const status = (transactionId: string, invoiceId = invoice().id, caller = 'wallet') =>
+      runWithContext({ correlationId: 'c-test', callerService: caller }, () =>
+        useCases.getWalletDebitStatus.execute({ invoiceId, transactionId }),
+      );
+    const unknown = '0192f1c4-0000-7000-d000-000000000999';
+    expect(await status(unknown)).toBe(false);
+    await pay();
+    const debit = invoice().payments[0]!.reference!;
+    expect(await status(debit)).toBe(true);
+    expect(await status(debit, MISSION_ID)).toBe(false);
+    expect(await code(status(debit, invoice().id, 'payment'))).toBe('BILLING_CALLER_FORBIDDEN');
   });
 });

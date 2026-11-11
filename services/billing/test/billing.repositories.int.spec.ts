@@ -116,7 +116,8 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
     const numbers = (await pool.query('SELECT number FROM invoices ORDER BY number')).rows.map(
       (r) => r.number,
     );
-    expect(numbers).toEqual(['FAC-2027-000001', 'FAC-2027-000002']);
+    // Novembre et décembre 2026, émises en janvier 2027 : année de la période (ADR-049).
+    expect(numbers).toEqual(['FAC-2026-000001', 'FAC-2026-000002']);
     const headers = await pool.query(
       'SELECT DISTINCT organization_legal_name, organization_address, organization_ifu, organization_rccm FROM invoices',
     );
@@ -249,8 +250,10 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
       },
     });
     await useCases.terminateContract.execute(cancellation);
-    expect((await deps.contracts.findById(missionId))?.terminatedAt).toEqual(
-      new Date('2026-11-20T08:00:00Z'),
-    );
+    const contract = await deps.contracts.findById(missionId);
+    expect(contract?.terminatedAt).toEqual(new Date('2026-11-20T08:00:00Z'));
+    // Prestation ponctuelle (ADR-049) : enregistrée comme telle, facturée en une fois.
+    expect(contract?.oneOff).toBe(true);
+    expect((await deps.contracts.findById(MISSION_ID))?.oneOff).toBe(false);
   });
 });
