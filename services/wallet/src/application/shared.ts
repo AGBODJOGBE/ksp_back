@@ -79,7 +79,19 @@ export function formatXof(amount: number): string {
 export const WALLET_STAFF = ['finance_officer', 'super_admin'] as const;
 export const BACKOFFICE_MFA_MAX_AGE_SECONDS = 12 * 3600;
 
+/**
+ * Méthodes « utilisateur » (espace du titulaire) et back-office : appelées par la gateway seulement
+ * (ADR-048). Un autre service ne peut pas s'en servir en transmettant un utilisateur dans ses
+ * métadonnées. Sans vérificateur de jetons (développement), l'appelant n'est pas connu et l'appel passe.
+ */
+export function requireGateway(): void {
+  const caller = currentContext()?.callerService;
+  if (caller && caller !== 'gateway') throw WalletErrors.callerForbidden();
+}
+
+/** Membre de la finance connecté, par la gateway, avec double authentification récente. */
 export function requireStaff(): { userId: string } {
+  requireGateway();
   const user = requireUser();
   if (!WALLET_STAFF.some((role) => hasRole(user, role))) {
     throw AppError.forbidden('AUTH_FORBIDDEN', "Vous n'avez pas les droits nécessaires pour cette action.");
@@ -104,8 +116,9 @@ export function requireCaller(allowed: readonly string[]): string {
   return fallback;
 }
 
-/** Titulaire du connecté : son organisation active, sinon lui-même. */
+/** Titulaire du connecté (appel de la gateway) : son organisation active, sinon lui-même. */
 export function currentHolder(): Holder {
+  requireGateway();
   const user = requireUser();
   return user.activeContext && user.activeContext !== 'personal'
     ? { type: 'organization', id: user.activeContext }
