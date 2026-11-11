@@ -16,6 +16,9 @@ const serviceList = (fallback: string) =>
     )
     .pipe(z.array(z.string().regex(/^[a-z][a-z0-9-]*$/)).min(1));
 
+/** Clé de développement de l'empreinte des numéros : refusée en production. */
+export const DEV_PHONE_HASH_SECRET = 'ksp-dev-wallet-phone-hash-secret-not-for-production';
+
 /**
  * Configuration du service : variables communes, plus celles propres à wallet (ADR-042, ADR-046).
  */
@@ -30,6 +33,25 @@ export const configSchema = baseServiceConfigSchema
     WALLET_TOP_UP_MAX: z.coerce.number().int().min(1).max(1_000_000_000).default(1_000_000),
     /** Adresse gRPC de payment (reversements, recharges). */
     PAYMENT_GRPC_URL: z.string().min(1).default('localhost:50055'),
+    /** Plafond d'un remboursement manuel de la finance, en XOF (ADR-048). */
+    WALLET_MANUAL_REFUND_MAX: z.coerce.number().int().min(1).max(1_000_000_000).default(100_000),
+    /**
+     * Seuil (XOF) au-delà duquel un crédit manuel attend la validation d'un second membre de la
+     * finance (ADR-048).
+     */
+    WALLET_CREDIT_APPROVAL_THRESHOLD: z.coerce.number().int().min(0).max(1_000_000_000).default(50_000),
+    /**
+     * Clé de l'empreinte des numéros de bénéficiaire (HMAC-SHA256, 32 caractères au moins), fournie
+     * par le coffre, jamais journalisée ; celle de développement est refusée en production (ADR-048).
+     */
+    WALLET_PHONE_HASH_SECRET: z.preprocess(unset, z.string().min(32).default(DEV_PHONE_HASH_SECRET)),
+    /** Adresses gRPC de cleaning et billing (« débit enregistré ? », ADR-048). */
+    CLEANING_GRPC_URL: z.string().min(1).default('localhost:50053'),
+    BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
+    /** Âge (minutes) au-delà duquel un débit est rapproché avec le service qui l'a fait (ADR-048). */
+    WALLET_DEBIT_CHECK_DELAY_MINUTES: z.coerce.number().int().min(5).max(10_080).default(30),
+    /** Rapprochement planifié des débits (10 minutes) ; 0 : désactivé. */
+    WALLET_DEBIT_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
     /** Transmission planifiée des reversements en attente (1 minute) ; 0 : désactivée. */
     WALLET_PAYOUT_SUBMIT_INTERVAL_MS: z.coerce.number().int().min(0).default(60_000),
   })
@@ -42,6 +64,13 @@ export const configSchema = baseServiceConfigSchema
       });
     }
     if (cfg.NODE_ENV !== 'production') return;
+    if (cfg.WALLET_PHONE_HASH_SECRET === DEV_PHONE_HASH_SECRET) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['WALLET_PHONE_HASH_SECRET'],
+        message: 'Clé propre à la production obligatoire (coffre).',
+      });
+    }
     if (!cfg.IDENTITY_TOKEN_URL || !cfg.SERVICE_CLIENT_SECRET) {
       ctx.addIssue({
         code: 'custom',

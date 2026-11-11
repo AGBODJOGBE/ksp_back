@@ -135,6 +135,7 @@ describeWithDatabase('dépôts des liens et reversements (PostgreSQL)', () => {
       completedAt: null,
       lastCheckedAt: null,
       mismatchResolution: null,
+      receivedAmount: null,
       version: 0,
       ...overrides,
     });

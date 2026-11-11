@@ -29,6 +29,9 @@ export interface WalletApi {
       idempotencyKey: string;
     },
   ): Promise<Json>;
+  /** `status` : `pending_approval` ou `approved`, absent pour toutes (ADR-048). */
+  listManualCreditRequests(page: Page, status: string | undefined): Promise<Json>;
+  approveManualCredit(requestId: string): Promise<Json>;
   listWalletPayouts(
     page: Page,
     filters: { status?: string | undefined; holder?: WalletHolder | undefined },

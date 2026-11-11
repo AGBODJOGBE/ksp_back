@@ -9,7 +9,13 @@ import {
   USER_ID,
 } from './support/harness';
 import { LINK_TOKEN, PAYOUT_ID, type PaymentServer, startPaymentStub } from './support/payment-stub';
-import { HOLDER_ID, startWalletStub, type WalletServer } from './support/wallet-stub';
+import {
+  CREDIT_REQUEST_ID,
+  HOLDER_ID,
+  protoCreditRequest,
+  startWalletStub,
+  type WalletServer,
+} from './support/wallet-stub';
 
 /**
  * Lien de paiement public (ADR-040), reversements de la finance (ADR-041) et portefeuille (ADR-042) :
@@ -245,6 +251,59 @@ describe('gateway → liens de paiement, reversements, portefeuille', () => {
         reason: 'Passage manqué',
         paymentId: '',
       });
+    });
+
+    it('crédit au-delà du seuil : demande en attente, validée par un second membre de la finance (ADR-048)', async () => {
+      wallet.stub.on('creditPrepaidWallet', async () => ({
+        wallet: {
+          holder: { type: 'organization', id: HOLDER_ID },
+          balance: { amount: 10000, currency: 'XOF' },
+        },
+        created: true,
+        pendingRequest: protoCreditRequest,
+      }));
+      const body = {
+        kind: 'refund',
+        amount: { amount: 60000, currency: 'XOF' },
+        reason: 'Prestation annulée',
+      };
+      const credit = await backoffice(
+        http().post(`/api/v1/admin/wallet/holders/organization/${HOLDER_ID}/credits`),
+        finance,
+      )
+        .set('Idempotency-Key', 'credit-0002')
+        .send(body);
+      expect(credit.status).toBe(200);
+      expect(credit.body).toMatchObject({
+        created: true,
+        pendingRequest: { id: CREDIT_REQUEST_ID, status: 'pending_approval', approvedBy: null },
+      });
+      expect(credit.body.transactionId).toBeUndefined();
+
+      const list = await backoffice(
+        http().get('/api/v1/admin/wallet/credit-requests?status=pending_approval'),
+        finance,
+      );
+      expect(list.status).toBe(200);
+      expect(list.body).toMatchObject({ items: [{ id: CREDIT_REQUEST_ID }], nextCursor: null });
+      expect(wallet.stub.last('listManualCreditRequests')!.request).toMatchObject({
+        status: 'pending_approval',
+      });
+
+      const url = `/api/v1/admin/wallet/credit-requests/${CREDIT_REQUEST_ID}/approve`;
+      expect((await backoffice(http().post(url), cleaningAdmin)).status).toBe(403);
+      expect(
+        (await backoffice(http().post('/api/v1/admin/wallet/credit-requests/x/approve'), finance)).status,
+      ).toBe(400);
+      const approved = await backoffice(http().post(url), finance);
+      expect(approved.status).toBe(200);
+      expect(approved.body).toMatchObject({
+        kind: 'refund',
+        amount: { amount: 60000 },
+        request: { status: 'approved' },
+        created: true,
+      });
+      expect(wallet.stub.last('approveManualCredit')!.request).toEqual({ requestId: CREDIT_REQUEST_ID });
     });
   });
 });

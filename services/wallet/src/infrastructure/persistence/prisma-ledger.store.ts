@@ -55,6 +55,7 @@ function payoutToDomain(row: PayoutRow): WalletPayout {
     beneficiaryPhone: row.beneficiaryPhone,
     beneficiaryName: row.beneficiaryName,
     beneficiaryPhoneMasked: row.beneficiaryPhoneMasked,
+    beneficiaryPhoneHash: row.beneficiaryPhoneHash,
     beneficiaryOperator: row.beneficiaryOperator as Operator,
     paymentPayoutId: row.paymentPayoutId,
     holdTransactionId: row.holdTransactionId,
@@ -156,7 +157,7 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
         // Compte du titulaire créé au besoin, puis verrouillé : le solde contrôlé ne bouge plus.
         await db.$executeRawUnsafe(
           'INSERT INTO ledger_accounts (code, kind, holder_type, holder_id, normal_side) ' +
-            "VALUES ($1, $2, $3, $4::uuid, 'credit') ON CONFLICT (code) DO NOTHING",
+            "VALUES ($1, $2, $3, $4::uuid, 'credit') ON CONFLICT DO NOTHING",
           holderCode,
           holderAccountKind(tx.kind),
           tx.holder.type,
@@ -216,6 +217,7 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
               holderId: payout.holder.id,
               amount: BigInt(payout.amount),
               beneficiaryPhoneMasked: payout.beneficiaryPhoneMasked,
+              beneficiaryPhoneHash: payout.beneficiaryPhoneHash,
               beneficiaryOperator: payout.beneficiaryOperator,
               holdTransactionId: payout.holdTransactionId,
               createdAt: payout.createdAt,
@@ -357,6 +359,34 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
       };
     });
     return { items, nextCursor: entries.length > page.limit ? items.at(-1)!.entryId : null };
+  }
+
+  async listUncheckedDebits(before: Date, limit: number): Promise<LedgerTransaction[]> {
+    const rows = await this.prisma.$queryRawUnsafe<TransactionRow[]>(
+      'SELECT t.id FROM ledger_transactions t ' +
+        "WHERE t.kind = 'service_payment' AND t.created_at < $1 " +
+        'AND NOT EXISTS (SELECT 1 FROM debit_checks c WHERE c.transaction_id = t.id) ' +
+        'AND NOT EXISTS (SELECT 1 FROM ledger_transactions r WHERE r.reverses_transaction_id = t.id) ' +
+        'ORDER BY t.created_at LIMIT $2',
+      before,
+      limit,
+    );
+    if (rows.length === 0) return [];
+    const full = await this.prisma.ledgerTransaction.findMany({
+      where: { id: { in: rows.map((row) => row.id) } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return withEntries(this.prisma, full);
+  }
+
+  async markDebitChecked(transactionId: string, outcome: 'recorded' | 'refunded', at: Date): Promise<void> {
+    await this.prisma.$executeRawUnsafe(
+      'INSERT INTO debit_checks (transaction_id, outcome, checked_at) VALUES ($1::uuid, $2, $3) ' +
+        'ON CONFLICT DO NOTHING',
+      transactionId,
+      outcome,
+      at,
+    );
   }
 
   async overview(): Promise<LedgerOverview> {

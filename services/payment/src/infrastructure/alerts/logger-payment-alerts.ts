@@ -8,6 +8,18 @@ import { type PaymentAlerts } from '../../application/ports';
 export class LoggerPaymentAlerts implements PaymentAlerts {
   private readonly logger = new Logger('PaymentAlert');
 
+  checkoutClosedUnconfirmed(input: {
+    paymentId: string;
+    transactionId: string;
+    reason: 'expired' | 'superseded';
+  }): void {
+    this.logger.warn(
+      `Page de paiement close sans annulation chez le prestataire : paiement ${input.paymentId}, ` +
+        `transaction ${input.transactionId} (${input.reason}) ; une réussite tardive reste relue ` +
+        '(fenêtre de réussite tardive), puis enregistrée en trop-perçu si l’objet est déjà réglé',
+    );
+  }
+
   amountMismatch(input: {
     paymentId: string;
     transactionId: string;
@@ -67,6 +79,27 @@ export class LoggerPaymentAlerts implements PaymentAlerts {
       `ALERTE reversement : ${input.payoutId} (prestataire ${input.providerPayoutId}) relu pour ` +
         `${input.reportedAmount} ${input.currency} au lieu de ${input.expectedAmount} XOF ; statut non appliqué, ` +
         'à vérifier par la finance',
+    );
+  }
+
+  payoutRejected(input: {
+    payoutId: string;
+    providerPayoutId: string | null;
+    stage: 'create' | 'start';
+    httpStatus: number;
+  }): void {
+    this.logger.error(
+      `ALERTE reversement : ${input.payoutId} refusé par le prestataire à la ` +
+        `${input.stage === 'create' ? 'création' : 'mise en paiement'} (HTTP ${input.httpStatus}` +
+        `${input.providerPayoutId ? `, prestataire ${input.providerPayoutId}` : ''}) ; échec définitif ` +
+        'provider_rejected, montant rendu au titulaire, à vérifier par la finance',
+    );
+  }
+
+  payoutStartUncertain(input: { payoutId: string; providerPayoutId: string }): void {
+    this.logger.error(
+      `ALERTE reversement : lancement de ${input.payoutId} (prestataire ${input.providerPayoutId}) sans ` +
+        'réponse ; jamais relancé automatiquement, la relecture chez le prestataire tranchera',
     );
   }
 }

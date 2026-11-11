@@ -1,6 +1,8 @@
-import { walletV1 } from '@ksp/contracts';
+import { AllowedCallers } from '@ksp/platform';
+import { commonV1, walletV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import {
+  type ManualCreditRequest,
   type PageResult,
   type PrepaidSummary,
   type StatementLine,
@@ -42,6 +44,24 @@ function presentObject(transaction: LedgerTransaction): walletV1.ObjectReference
   return object
     ? { service: transaction.caller, objectType: object.type, objectId: object.id, part: object.part ?? '' }
     : undefined;
+}
+
+/** Demande de crédit manuel soumise à double validation (ADR-048). */
+export function presentCreditRequest(request: ManualCreditRequest): walletV1.ManualCreditRequest {
+  return {
+    id: request.id,
+    holder: { ...request.holder },
+    kind: request.kind,
+    amount: { amount: request.amount, currency: 'XOF' },
+    reason: request.reason,
+    paymentId: request.paymentId ?? '',
+    status: request.status,
+    requestedBy: request.requestedBy,
+    requestedAt: request.requestedAt.toISOString(),
+    approvedBy: request.approvedBy ?? '',
+    approvedAt: request.approvedAt?.toISOString() ?? '',
+    transactionId: request.transactionId ?? '',
+  };
 }
 
 export function presentTransaction(transaction: LedgerTransaction): walletV1.LedgerTransaction {
@@ -115,6 +135,23 @@ const payoutPage = (page: PageResult<WalletPayout>) => ({
 });
 
 /** Opérations des services métier (recovery). Droits vérifiés par les cas d'usage. */
+/**
+ * ksp.common.v1.ObligationService, interrogé par identity avant la suppression d'un compte
+ * (UC-ID-11, ADR-036, ADR-048). Le contrôle de l'appelant est fait par le cas d'usage.
+ */
+@Controller()
+@commonV1.ObligationServiceControllerMethods()
+export class ObligationGrpcController implements commonV1.ObligationServiceController {
+  constructor(@Inject(WALLET_USE_CASES) private readonly useCases: WalletUseCases) {}
+
+  async hasPendingObligations(
+    request: commonV1.HasPendingObligationsRequest,
+  ): Promise<commonV1.HasPendingObligationsResponse> {
+    const obligations = await this.useCases.hasPendingObligations.execute({ userId: request.userId });
+    return { hasPending: obligations.length > 0, obligations };
+  }
+}
+
 @Controller()
 @walletV1.WalletServiceControllerMethods()
 export class WalletGrpcController implements walletV1.WalletServiceController {
@@ -211,6 +248,7 @@ export class WalletGrpcController implements walletV1.WalletServiceController {
 
 /** Espace du titulaire connecté (gateway). */
 @Controller()
+@AllowedCallers('gateway')
 @walletV1.WalletAccountServiceControllerMethods()
 export class WalletAccountGrpcController implements walletV1.WalletAccountServiceController {
   constructor(@Inject(WALLET_USE_CASES) private readonly useCases: WalletUseCases) {}
@@ -258,6 +296,7 @@ export class WalletAccountGrpcController implements walletV1.WalletAccountServic
 
 /** Back-office (finance). */
 @Controller()
+@AllowedCallers('gateway')
 @walletV1.WalletAdminServiceControllerMethods()
 export class WalletAdminGrpcController implements walletV1.WalletAdminServiceController {
   constructor(@Inject(WALLET_USE_CASES) private readonly useCases: WalletUseCases) {}
@@ -315,8 +354,31 @@ export class WalletAdminGrpcController implements walletV1.WalletAdminServiceCon
       paymentId: request.paymentId,
     });
     return {
+      ...(result.transaction ? { transaction: presentTransaction(result.transaction) } : {}),
+      wallet: presentPrepaid(result.wallet),
+      created: result.created,
+      ...(result.pendingRequest ? { pendingRequest: presentCreditRequest(result.pendingRequest) } : {}),
+    };
+  }
+
+  async listManualCreditRequests(
+    request: walletV1.ListManualCreditRequestsRequest,
+  ): Promise<walletV1.ListManualCreditRequestsResponse> {
+    const page = await this.useCases.listManualCreditRequests.execute({
+      page: parsePage(request.page),
+      status: request.status,
+    });
+    return { requests: page.items.map(presentCreditRequest), nextCursor: page.nextCursor ?? '' };
+  }
+
+  async approveManualCredit(
+    request: walletV1.ApproveManualCreditRequest,
+  ): Promise<walletV1.ApproveManualCreditResponse> {
+    const result = await this.useCases.approveManualCredit.execute(request.requestId);
+    return {
       transaction: presentTransaction(result.transaction),
       wallet: presentPrepaid(result.wallet),
+      request: presentCreditRequest(result.request),
       created: result.created,
     };
   }

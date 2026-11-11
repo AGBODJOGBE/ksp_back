@@ -2,6 +2,7 @@ import { appendToOutbox, createEnvelope, type SqlExecutor } from '@ksp/platform'
 import { Injectable } from '@nestjs/common';
 import { Prisma, type PaymentIntent as PaymentRow } from '../../../prisma/generated';
 import {
+  type CreatedIntent,
   type NotificationOutcome,
   type OutboxMessage,
   type PageRequest,
@@ -56,6 +57,7 @@ function toDomain(row: PaymentRow): PaymentIntent {
             idempotencyKey: row.mismatchResolutionKey,
           }
         : null,
+    receivedAmount: row.receivedAmount,
     version: row.version,
   };
 }
@@ -81,6 +83,7 @@ function mutableColumns(intent: PaymentIntent) {
     mismatchResolvedBy: intent.mismatchResolution?.resolvedBy ?? null,
     mismatchResolutionNote: intent.mismatchResolution?.note ?? null,
     mismatchResolutionKey: intent.mismatchResolution?.idempotencyKey ?? null,
+    receivedAmount: intent.receivedAmount,
   };
 }
 
@@ -98,7 +101,7 @@ function isUniqueViolation(error: unknown): boolean {
 export class PrismaPaymentRepository implements PaymentRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(intent: PaymentIntent): Promise<{ created: boolean; intent: PaymentIntent }> {
+  async create(intent: PaymentIntent): Promise<CreatedIntent> {
     try {
       const row = await this.prisma.paymentIntent.create({
         data: {
@@ -129,9 +132,28 @@ export class PrismaPaymentRepository implements PaymentRepository {
         : intent.customerId
           ? await this.findByIdempotencyKey(intent.customerId, intent.idempotencyKey)
           : null;
-      if (!existing) throw error;
-      return { created: false, intent: existing };
+      if (existing) return { created: false, intent: existing, conflict: 'idempotency_key' };
+      // Une page en attente existe déjà pour l'objet ou le lien (index partiels, ADR-048).
+      const open = await this.prisma.paymentIntent.findFirst({
+        where: intent.paymentLinkId
+          ? { paymentLinkId: intent.paymentLinkId, status: 'pending' }
+          : { subjectType: intent.subject.type, subjectId: intent.subject.id, status: 'pending' },
+        orderBy: { id: 'desc' },
+      });
+      if (!open) throw error;
+      return { created: false, intent: toDomain(open), conflict: 'open_checkout' };
     }
+  }
+
+  async findPendingForSubject(input: {
+    subjectType: string;
+    subjectId: string;
+  }): Promise<PaymentIntent | null> {
+    const row = await this.prisma.paymentIntent.findFirst({
+      where: { subjectType: input.subjectType, subjectId: input.subjectId, status: 'pending' },
+      orderBy: { id: 'desc' },
+    });
+    return row ? toDomain(row) : null;
   }
 
   async findById(id: string): Promise<PaymentIntent | null> {

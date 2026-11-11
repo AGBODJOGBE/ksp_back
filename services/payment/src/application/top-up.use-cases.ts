@@ -3,12 +3,27 @@ import { type PaymentIntent, type PaymentSubject, sameSubject } from '../domain/
 import { type PaymentDeps } from './ports';
 import { currentPayer, requireCaller } from './shared/access';
 import { PaymentErrors } from './shared/errors';
-import { IDEMPOTENCY_KEY, requireXof } from './shared/validation';
+import { IDEMPOTENCY_KEY, requireUuid, requireXof } from './shared/validation';
 import { PaymentSync } from './sync';
 
-const MINUTE_MS = 60_000;
 /** Seul wallet demande une recharge : il en contrôle les limites (ADR-046). */
 const TOP_UP_CALLERS = ['wallet'];
+
+/**
+ * Paiement de recharge relu par wallet avant tout crédit (ADR-048) : statut, titulaire (objet
+ * `wallet_top_up`), montant demandé et montant reçu confirmé par le prestataire en XOF. Un paiement
+ * inconnu ou d'un autre objet reste introuvable.
+ */
+export class GetTopUpPaymentUseCase {
+  constructor(private readonly deps: PaymentDeps) {}
+
+  async execute(paymentId: string): Promise<{ payment: PaymentIntent; receivedAmount: number | null }> {
+    requireCaller(TOP_UP_CALLERS);
+    const payment = await this.deps.payments.findById(requireUuid('paymentId', paymentId));
+    if (!payment || payment.subject.type !== 'wallet_top_up') throw PaymentErrors.notFound();
+    return { payment, receivedAmount: payment.receivedAmount };
+  }
+}
 
 /**
  * Recharge du portefeuille prépayé (ADR-046), demandée par wallet pour l'utilisateur de la requête
@@ -79,10 +94,11 @@ export class CreateTopUpPaymentUseCase {
       failureReason: null,
       createdAt: now,
       updatedAt: now,
-      expiresAt: new Date(now.getTime() + this.deps.settings.intentTtlMinutes * MINUTE_MS),
+      expiresAt: this.sync.expiry(now),
       completedAt: null,
       lastCheckedAt: null,
       mismatchResolution: null,
+      receivedAmount: null,
       version: 0,
     });
     if (!stored.created && !same(stored.intent)) throw PaymentErrors.keyReused();

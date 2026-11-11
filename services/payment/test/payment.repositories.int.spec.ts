@@ -76,6 +76,7 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
       completedAt: null,
       lastCheckedAt: null,
       mismatchResolution: null,
+      receivedAmount: null,
       version: 0,
       ...overrides,
     };
@@ -175,9 +176,68 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
     );
   });
 
+  it('une seule page en attente par objet dû et par lien, même sous envois simultanés (ADR-048)', async () => {
+    const subjectId = ids.next();
+    const subject = (part: 'deposit' | 'balance') => ({
+      type: 'cleaning_mission' as const,
+      id: subjectId,
+      part,
+      reference: null,
+    });
+    const [a, b] = await Promise.all([
+      payments.create(draft('key-one-1', { subject: subject('deposit') })),
+      payments.create(draft('key-one-2', { subject: subject('balance'), customerId: ids.next() })),
+    ]);
+    const created = [a, b].filter((r) => r.created);
+    const refused = [a, b].find((r) => !r.created);
+    expect(created).toHaveLength(1);
+    expect(refused).toMatchObject({ conflict: 'open_checkout', intent: { id: created[0]!.intent.id } });
+    expect((await payments.findPendingForSubject({ subjectType: 'cleaning_mission', subjectId }))?.id).toBe(
+      created[0]!.intent.id,
+    );
+    // Close, elle libère l'objet.
+    const closed = { ...created[0]!.intent, status: 'cancelled' as const, completedAt: new Date() };
+    expect(await payments.save(closed, [])).toBe(true);
+    expect((await payments.create(draft('key-one-3', { subject: subject('balance') }))).created).toBe(true);
+
+    // Recharges : nouvel argent, plusieurs pages possibles pour un même titulaire.
+    const holder = ids.next();
+    const topUp = (key: string) =>
+      payments.create(
+        draft(key, { subject: { type: 'wallet_top_up', id: holder, part: null, reference: null } }),
+      );
+    expect((await topUp('key-top-1')).created).toBe(true);
+    expect((await topUp('key-top-2')).created).toBe(true);
+
+    // Lien de paiement : un seul essai en attente.
+    const linkId = ids.next();
+    await pool.query(
+      `INSERT INTO payment_links (id, token_hash, issuer, idempotency_key, subject_type, subject_id, reference,
+         beneficiary_name, description, amount, expires_at, created_at, updated_at)
+       VALUES ($1, $2, 'recovery', $3, 'recovery_installment', $4, 'REC-1', 'SARL', 'Échéance', 25000,
+         now() + interval '7 days', now(), now())`,
+      [linkId, `hash-${linkId}`, `link-${linkId}`, ids.next()],
+    );
+    const attempt = (key: string) =>
+      payments.create(
+        draft(key, {
+          subject: { type: 'recovery_installment', id: ids.next(), part: null, reference: 'REC-1' },
+          customerId: null,
+          paymentLinkId: linkId,
+        }),
+      );
+    const [x, y] = await Promise.all([attempt('key-link-1'), attempt('key-link-2')]);
+    expect([x, y].filter((r) => r.created)).toHaveLength(1);
+    expect([x, y].find((r) => !r.created)).toMatchObject({ conflict: 'open_checkout' });
+  });
+
   it('plus de 50 paiements clos à relire : le paiement en attente est toujours sélectionné, jamais relus d’abord', async () => {
     for (let n = 0; n < 55; n += 1) {
-      const { intent: closed } = await payments.create(draft(`key-closed-${n}`));
+      const { intent: closed } = await payments.create(
+        draft(`key-closed-${n}`, {
+          subject: { type: 'cleaning_mission', id: ids.next(), part: 'deposit', reference: null },
+        }),
+      );
       expect(
         await payments.save(
           {
@@ -194,7 +254,10 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
       ).toBe(true);
     }
     const { intent: waiting } = await payments.create(
-      draft('key-waiting', { createdAt: new Date(Date.now() - 5 * 60_000) }),
+      draft('key-waiting', {
+        subject: { type: 'cleaning_mission', id: ids.next(), part: 'deposit', reference: null },
+        createdAt: new Date(Date.now() - 5 * 60_000),
+      }),
     );
     const pending = await payments.listPendingToReconcile({
       checkedBefore: new Date(),
@@ -224,14 +287,17 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
       part,
       reference: null,
     });
-    const ok = await payments.create(draft('key-succ-1', { subject: subject('deposit') }));
-    const other = await payments.create(
-      draft('key-succ-2', { subject: subject('balance'), customerId: ids.next() }),
-    );
+    // Une page en attente à la fois par objet (ADR-048) : chacune réglée avant la suivante.
+    const succeed = async (key: string, part: 'deposit' | 'balance', customerId = CUSTOMER) => {
+      const created = await payments.create(draft(key, { subject: subject(part), customerId }));
+      expect(created.created).toBe(true);
+      const intent = { ...created.intent, status: 'succeeded' as const, completedAt: new Date() };
+      expect(await payments.save(intent, [])).toBe(true);
+      return created;
+    };
+    const ok = await succeed('key-succ-1', 'deposit');
+    const other = await succeed('key-succ-2', 'balance', ids.next());
     await payments.create(draft('key-succ-3', { subject: subject('deposit') }));
-    for (const { intent } of [ok, other]) {
-      expect(await payments.save({ ...intent, status: 'succeeded', completedAt: new Date() }, [])).toBe(true);
-    }
     const succeeded = await payments.listSucceeded({ subjectType: 'cleaning_mission', subjectId });
     expect(succeeded.map((payment) => payment.id).sort()).toEqual([ok.intent.id, other.intent.id].sort());
     expect(succeeded.every((payment) => payment.succeededAt instanceof Date)).toBe(true);
@@ -246,16 +312,17 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
       part,
       reference: null,
     });
-    const first = await payments.create(draft('key-mis-1', { subject: subject('deposit') }));
-    const other = await payments.create(
-      draft('key-mis-2', { subject: subject('balance'), customerId: ids.next() }),
-    );
+    // Une page en attente à la fois par objet (ADR-048) : chacune close avant la suivante.
+    const mismatch = async (key: string, part: 'deposit' | 'balance', customerId = CUSTOMER) => {
+      const created = await payments.create(draft(key, { subject: subject(part), customerId }));
+      expect(created.created).toBe(true);
+      const intent = { ...created.intent, status: 'amount_mismatch' as const, completedAt: new Date() };
+      expect(await payments.save(intent, [])).toBe(true);
+      return created;
+    };
+    const first = await mismatch('key-mis-1', 'deposit');
+    const other = await mismatch('key-mis-2', 'balance', ids.next());
     await payments.create(draft('key-mis-3', { subject: subject('deposit') }));
-    for (const { intent } of [first, other]) {
-      expect(await payments.save({ ...intent, status: 'amount_mismatch', completedAt: new Date() }, [])).toBe(
-        true,
-      );
-    }
     const unresolved = await payments.listUnresolvedMismatches({
       subjectType: 'cleaning_mission',
       subjectId,

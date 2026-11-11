@@ -1,12 +1,22 @@
-import { loadConfig } from '@ksp/platform';
+import { allowedCallersOf, loadConfig } from '@ksp/platform';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { configSchema } from '../src/config';
 import {
+  ObligationGrpcController,
   WalletAccountGrpcController,
   WalletAdminGrpcController,
   WalletGrpcController,
 } from '../src/interfaces/grpc/wallet.controllers';
+
+describe('appelants des contrôleurs gRPC (ADR-048)', () => {
+  it('espace du titulaire et back-office : gateway seulement ; méthodes internes vérifiées par le cas d’usage', () => {
+    expect(allowedCallersOf(WalletAccountGrpcController)).toEqual(['gateway']);
+    expect(allowedCallersOf(WalletAdminGrpcController)).toEqual(['gateway']);
+    expect(allowedCallersOf(WalletGrpcController)).toBeUndefined();
+    expect(allowedCallersOf(ObligationGrpcController)).toBeUndefined();
+  });
+});
 
 const BASE = {
   SERVICE_NAME: 'wallet',
@@ -45,5 +55,22 @@ describe('configuration de wallet', () => {
         IDENTITY_JWKS_URL: 'http://identity:3101/.well-known/jwks.json',
       }),
     ).toThrow(/SERVICE_CLIENT_SECRET/);
+  });
+
+  it('production : clé propre de l’empreinte des numéros (ADR-048)', () => {
+    const production = (secret?: string) => () =>
+      loadConfig(configSchema, {
+        ...BASE,
+        NODE_ENV: 'production',
+        IDENTITY_JWKS_URL: 'https://identity/.well-known/jwks.json',
+        IDENTITY_TOKEN_URL: 'https://identity/oauth/token',
+        SERVICE_CLIENT_SECRET: 's'.repeat(32),
+        PAYMENT_GRPC_URL: 'dns:///payment-headless:50055',
+        CLEANING_GRPC_URL: 'dns:///cleaning-headless:50053',
+        BILLING_GRPC_URL: 'dns:///billing-headless:50054',
+        ...(secret ? { WALLET_PHONE_HASH_SECRET: secret } : {}),
+      });
+    expect(production()).toThrow(/WALLET_PHONE_HASH_SECRET/);
+    expect(production('p'.repeat(40))).not.toThrow();
   });
 });

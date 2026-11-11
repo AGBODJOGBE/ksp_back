@@ -4,6 +4,8 @@ import { type PaymentLink } from '../../domain/payment-link';
 import { type Payout, type PayoutBeneficiary, type ProviderPayoutStatus } from '../../domain/payout';
 import { type InvoiceDue, type MissionDue } from '../../domain/amount-due';
 import {
+  DUE_SUBJECT_TYPES,
+  type DueSubjectType,
   isUnderReview,
   LATE_SUCCESS_STATUSES,
   type PaymentIntent,
@@ -11,6 +13,7 @@ import {
 } from '../../domain/payment-intent';
 import {
   type AmountDueDirectory,
+  type CreatedIntent,
   type Checkout,
   type CheckoutRequest,
   type Clock,
@@ -67,13 +70,33 @@ export class InMemoryPayments implements PaymentRepository {
   readonly rows = new Map<string, PaymentIntent>();
   readonly outbox: OutboxMessage[] = [];
 
-  async create(intent: PaymentIntent) {
+  async create(intent: PaymentIntent): Promise<CreatedIntent> {
     const existing = intent.paymentLinkId
       ? await this.findByLinkKey(intent.paymentLinkId, intent.idempotencyKey)
       : await this.findByIdempotencyKey(intent.customerId ?? '', intent.idempotencyKey);
-    if (existing) return { created: false, intent: existing };
+    if (existing) return { created: false, intent: existing, conflict: 'idempotency_key' };
+    // Index uniques partiels de la base (ADR-048) : une page en attente par objet dû et par lien.
+    const open = [...this.rows.values()].find(
+      (r) =>
+        r.status === 'pending' &&
+        (intent.paymentLinkId
+          ? r.paymentLinkId === intent.paymentLinkId
+          : DUE_SUBJECT_TYPES.includes(intent.subject.type as DueSubjectType) &&
+            r.subject.type === intent.subject.type &&
+            r.subject.id === intent.subject.id),
+    );
+    if (open) return { created: false, intent: { ...open }, conflict: 'open_checkout' };
     this.rows.set(intent.id, { ...intent });
     return { created: true, intent: { ...intent } };
+  }
+  async findPendingForSubject(input: { subjectType: string; subjectId: string }) {
+    const row = [...this.rows.values()]
+      .reverse()
+      .find(
+        (r) =>
+          r.subject.type === input.subjectType && r.subject.id === input.subjectId && r.status === 'pending',
+      );
+    return row ? { ...row } : null;
   }
   async findById(id: string) {
     const row = this.rows.get(id);
@@ -319,6 +342,18 @@ export class RecordingAlerts implements PaymentAlerts {
     this.underReview.push(input);
   }
   readonly payoutMismatches: Parameters<PaymentAlerts['payoutMismatch']>[0][] = [];
+  readonly payoutRejections: Parameters<PaymentAlerts['payoutRejected']>[0][] = [];
+  readonly checkoutsClosedUnconfirmed: Parameters<PaymentAlerts['checkoutClosedUnconfirmed']>[0][] = [];
+  checkoutClosedUnconfirmed(input: Parameters<PaymentAlerts['checkoutClosedUnconfirmed']>[0]): void {
+    this.checkoutsClosedUnconfirmed.push(input);
+  }
+  readonly payoutStartsUncertain: Parameters<PaymentAlerts['payoutStartUncertain']>[0][] = [];
+  payoutRejected(input: Parameters<PaymentAlerts['payoutRejected']>[0]): void {
+    this.payoutRejections.push(input);
+  }
+  payoutStartUncertain(input: Parameters<PaymentAlerts['payoutStartUncertain']>[0]): void {
+    this.payoutStartsUncertain.push(input);
+  }
   payoutMismatch(input: Parameters<PaymentAlerts['payoutMismatch']>[0]): void {
     this.payoutMismatches.push(input);
   }
@@ -436,9 +471,13 @@ export class FakePayoutProvider {
   down = false;
   /** Lancement qui atteint le prestataire mais dont la réponse se perd. */
   loseStartResponse = false;
+  /** Refus définitif (HTTP 4xx) à la création ou au lancement. */
+  rejectCreate = false;
+  rejectStart = false;
   private n = 0;
   async createPayout(request: { payoutId: string; amount: number; beneficiary: PayoutBeneficiary }) {
     if (this.down) throw PaymentErrors.providerUnavailable();
+    if (this.rejectCreate) throw PaymentErrors.providerRejected(422);
     this.n += 1;
     const providerPayoutId = String(9000 + this.n);
     this.created.push({ payoutId: request.payoutId, beneficiary: request.beneficiary });
@@ -453,6 +492,7 @@ export class FakePayoutProvider {
   }
   async startPayout(providerPayoutId: string) {
     if (this.down) throw PaymentErrors.providerUnavailable();
+    if (this.rejectStart) throw PaymentErrors.providerRejected(400);
     this.started.push(providerPayoutId);
     this.set(providerPayoutId, { status: 'processing' });
     if (this.loseStartResponse) throw PaymentErrors.providerUnavailable();
@@ -482,6 +522,7 @@ export function makeDeps(overrides: Partial<PaymentDeps> = {}) {
     alerts: new RecordingAlerts(),
     settings: {
       intentTtlMinutes: 30,
+      checkoutValidityMinutes: 1440,
       returnUrl: 'https://ksp.bj/mon-espace/paiements',
       recheckAfterSeconds: 10,
       simulationEnabled: false,

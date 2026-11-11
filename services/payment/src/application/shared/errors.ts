@@ -103,6 +103,14 @@ export const PaymentErrors = {
       'Trop de tentatives de paiement sur ce lien. Réessayez dans une heure.',
     ),
 
+  /** Une page de paiement est déjà ouverte pour l'objet (une seule à la fois, ADR-048). */
+  checkoutOpen: (expiresAt: Date) =>
+    AppError.conflict(
+      'PAYMENT_CHECKOUT_OPEN',
+      'Un paiement est déjà en cours pour cet objet. Terminez-le, ou réessayez après son expiration.',
+      { expiresAt: expiresAt.toISOString() },
+    ),
+
   // --- Reversements (ADR-041) --------------------------------------------------------------------
   payoutNotFound: () => AppError.notFound('PAYMENT_PAYOUT_NOT_FOUND', 'Ce reversement est introuvable.'),
   payoutNotManual: () =>
@@ -112,4 +120,19 @@ export const PaymentErrors = {
     ),
   payoutAlreadySettled: () =>
     AppError.conflict('PAYMENT_PAYOUT_ALREADY_SETTLED', 'Ce reversement est déjà terminé.'),
+  /**
+   * Refus définitif du prestataire (HTTP 4xx hors 408 et 429, ADR-048) : jamais une panne passagère,
+   * l'opération n'est pas réessayée. Usage interne (reversements).
+   */
+  providerRejected: (httpStatus: number) =>
+    AppError.precondition('PAYMENT_PROVIDER_REJECTED', 'Le prestataire de paiement a refusé l’opération.', {
+      httpStatus,
+    }),
 };
+
+/** Refus définitif du prestataire : son statut HTTP, sinon null (panne ou autre erreur). */
+export function rejectedStatus(error: unknown): number | null {
+  if (!(error instanceof AppError) || error.code !== 'PAYMENT_PROVIDER_REJECTED') return null;
+  const status = error.details['httpStatus'];
+  return typeof status === 'number' ? status : 0;
+}

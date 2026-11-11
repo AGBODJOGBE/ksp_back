@@ -25,6 +25,7 @@ import {
 import { PaymentErrors } from './shared/errors';
 
 const MAX_ATTEMPTS = 3;
+const MINUTE_MS = 60_000;
 
 /**
  * Événements d'un changement d'état : réussite ou échec, identifiants et montants seulement. Un
@@ -131,9 +132,11 @@ export class PaymentSync {
       const transition = wrongAmount
         ? flagAmountMismatch(current, now)
         : applyProviderStatus(current, transaction.status, now);
+      const received = transaction.status === 'approved' && transaction.currency.toUpperCase() === CURRENCY;
       const next: PaymentIntent = {
         ...(transition ? transition.intent : current),
         providerReference: current.providerReference ?? transaction.reference,
+        receivedAmount: received ? transaction.amount : current.receivedAmount,
         lastCheckedAt: now,
       };
       const events = transition ? transitionEvents({ ...transition, intent: next }) : [];
@@ -169,21 +172,55 @@ export class PaymentSync {
   }
 
   /**
-   * Paiement en attente au-delà de son délai : sa transaction est annulée chez le prestataire si son
-   * API le permet, puis il est expiré (payment.intent.failed). Une réussite qui arriverait malgré
-   * tout est rattrapée par le rapprochement (réussite tardive).
+   * Échéance d'une nouvelle page (ADR-048) : le délai court si le prestataire sait l'annuler, sinon sa
+   * validité chez lui. Tant qu'elle peut être payée, le paiement reste en attente et la page est
+   * réutilisée : jamais une seconde page payable pour le même objet.
+   */
+  expiry(now: Date): Date {
+    const { intentTtlMinutes, checkoutValidityMinutes } = this.deps.settings;
+    const minutes = this.deps.provider.cancelTransaction
+      ? intentTtlMinutes
+      : Math.max(intentTtlMinutes, checkoutValidityMinutes);
+    return new Date(now.getTime() + minutes * MINUTE_MS);
+  }
+
+  /**
+   * Paiement en attente au-delà de son délai : sa page est annulée chez le prestataire, puis il est
+   * expiré (payment.intent.failed). Annulation impossible (non prévue par le prestataire, refusée ou
+   * en panne) : il reste en attente tant que la page peut être payée (validité), puis il est clos avec
+   * une alerte ; une réussite qui arriverait malgré tout est rattrapée (réussite tardive).
    */
   async expire(intent: PaymentIntent): Promise<PaymentIntent> {
     if (!expire(intent, this.deps.clock.now())) return intent;
-    await this.cancelAtProvider(intent);
+    if (!(await this.closeAtProvider(intent, 'expired'))) return intent;
     return this.close(intent, expire(intent, this.deps.clock.now()));
   }
 
-  /** Paiement en attente remplacé par un nouveau pour le même objet : page annulée, paiement annulé. */
+  /**
+   * Paiement en attente remplacé (montant dû changé, page jamais obtenue) : page annulée chez le
+   * prestataire, paiement annulé. Page impossible à annuler et encore valide : rien ne change, le
+   * paiement reste en attente (l'appelant refuse d'en ouvrir un autre, ADR-048).
+   */
   async supersede(intent: PaymentIntent): Promise<PaymentIntent> {
     if (intent.status !== 'pending') return intent;
-    await this.cancelAtProvider(intent);
+    if (!(await this.closeAtProvider(intent, 'superseded'))) return intent;
     return this.close(intent, supersede(intent, this.deps.clock.now()));
+  }
+
+  /**
+   * Paiement en attente relu chez le prestataire (au mieux), puis expiré au-delà de son délai :
+   * son état réel avant de décider d'ouvrir une autre page pour l'objet.
+   */
+  async current(intent: PaymentIntent): Promise<PaymentIntent> {
+    let current = intent;
+    try {
+      if (current.status === 'pending' && current.providerTransactionId) {
+        current = (await this.refresh(current)).intent;
+      }
+    } catch {
+      // Prestataire injoignable : dernier état connu.
+    }
+    return current.status === 'pending' ? this.expire(current) : current;
   }
 
   private async close(intent: PaymentIntent, transition: Transition): Promise<PaymentIntent> {
@@ -192,14 +229,26 @@ export class PaymentSync {
     return saved ? { ...transition.intent, version: transition.intent.version + 1 } : intent;
   }
 
-  /** Annulation au mieux chez le prestataire : une panne n'empêche pas la clôture locale. */
-  private async cancelAtProvider(intent: PaymentIntent): Promise<void> {
-    if (!intent.providerTransactionId || !this.deps.provider.cancelTransaction) return;
-    try {
-      await this.deps.provider.cancelTransaction(intent.providerTransactionId);
-    } catch {
-      // La réussite tardive éventuelle reste rattrapée par le rapprochement.
+  /**
+   * La page peut-elle être close ? Oui sans transaction (aucune page), si le prestataire confirme
+   * son annulation, ou au-delà de sa validité (avec une alerte : elle n'a pas été annulée). Non
+   * sinon : elle peut encore être payée.
+   */
+  private async closeAtProvider(intent: PaymentIntent, reason: 'expired' | 'superseded'): Promise<boolean> {
+    const transactionId = intent.providerTransactionId;
+    if (!transactionId) return true;
+    const cancel = this.deps.provider.cancelTransaction?.bind(this.deps.provider);
+    if (cancel) {
+      try {
+        if (await cancel(transactionId)) return true;
+      } catch {
+        // Panne : la validité tranche.
+      }
     }
+    const validUntil = intent.createdAt.getTime() + this.deps.settings.checkoutValidityMinutes * MINUTE_MS;
+    if (this.deps.clock.now().getTime() < validUntil) return false;
+    this.deps.alerts.checkoutClosedUnconfirmed({ paymentId: intent.id, transactionId, reason });
+    return true;
   }
 
   /**

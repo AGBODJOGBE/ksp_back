@@ -5,7 +5,9 @@ import { Client, Pool } from 'pg';
 import { createUseCases } from '../src/application/use-cases';
 import { type PayoutExecutor } from '../src/application/ports';
 import { PrismaLedgerStore } from '../src/infrastructure/persistence/prisma-ledger.store';
+import { PrismaCreditRequests } from '../src/infrastructure/persistence/prisma-credit-requests';
 import { PrismaService } from '../src/infrastructure/prisma/prisma.service';
+import { HmacPhoneFingerprints } from '../src/infrastructure/security/hmac-phone-fingerprints';
 import { SystemClock, UuidV7Generator } from '../src/infrastructure/system/system';
 import { runWithContext } from '@ksp/platform';
 
@@ -25,6 +27,7 @@ const BENEFICIARY = { phone: '+2290197000045', operator: 'mtn', name: 'SARL Bén
 const USER = { type: 'user', id: '0192f1c4-0000-7000-8000-00000000c001' };
 const MISSION_ID = '0192f1c4-0000-7000-8000-00000000e001';
 const xof = (amount: number) => ({ amount, currency: 'XOF' });
+const TOP_UP_AMOUNT = 20000;
 
 describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
   const schema = `wallet_test_${Date.now()}`;
@@ -67,13 +70,29 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
         create: async () => {
           throw new Error('non utilisé');
         },
+        // payment confirme chaque recharge de ces tests (relecture avant crédit, ADR-048).
+        get: async (paymentId) => ({
+          paymentId,
+          status: 'succeeded',
+          holderId: USER.id,
+          customerId: USER.id,
+          organizationId: null,
+          amount: TOP_UP_AMOUNT,
+          receivedAmount: TOP_UP_AMOUNT,
+        }),
       },
+      fingerprints: new HmacPhoneFingerprints('test-phone-hash-secret-0123456789abcdef'),
       settings: {
         ledgerCallers: ['recovery'],
         debitCallers: ['cleaning', 'billing'],
         topUpMin: 500,
         topUpMax: 1_000_000,
+        manualRefundMax: 100_000,
+        creditApprovalThreshold: 50_000,
+        debitCheckDelayMinutes: 30,
       },
+      debitChecks: { isRecorded: async () => true },
+      creditRequests: new PrismaCreditRequests(prisma),
       clock: new SystemClock(),
       ids: new UuidV7Generator(),
     });
@@ -295,6 +314,128 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       const balance = (code: string) => overview.internal.find((a) => a.account === code)!.balance;
       expect(balance('ksp:prepaid_funds')).toBe(overview.owedToCustomers + balance('ksp:service_revenue'));
       expect(overview).toMatchObject({ owedToCustomers: 12000, customersCount: 1 });
+    });
+
+    it('crédit au prorata d’une mission arrêtée : une seule fois par creditId (ADR-049)', async () => {
+      const holder = { type: 'user' as const, id: '0192f1c4-0000-7000-8000-00000000c0aa' };
+      const event = {
+        eventId: '0192f1c4-0000-7000-b000-00000000e0a1',
+        eventType: 'cleaning.mission.credited',
+        producer: 'cleaning',
+        missionId: MISSION_ID,
+        customerId: holder.id,
+        creditId: '0192f1c4-0000-7000-b000-00000000e0c1',
+        amount: 30000,
+      };
+      const results = await Promise.all([
+        useCases.creditFromMission.execute(event),
+        useCases.creditFromMission.execute({ ...event, eventId: '0192f1c4-0000-7000-b000-00000000e0a2' }),
+      ]);
+      expect(results.filter((r) => r === 'recorded')).toHaveLength(1);
+      expect((await asCleaning(() => useCases.getPrepaidBalance.execute(holder))).balance).toBe(30000);
+    });
+  });
+
+  describe('rapprochement des débits (ADR-048)', () => {
+    it('débits ni vérifiés ni remboursés, les plus anciens d’abord ; vérifié une fois, plus relu', async () => {
+      const later = new Date(Date.now() + 3_600_000);
+      const unchecked = await store.listUncheckedDebits(later, 50);
+      expect(unchecked.length).toBeGreaterThan(0);
+      expect(unchecked.every((t) => t.kind === 'service_payment' && t.entries.length === 2)).toBe(true);
+      for (const debit of unchecked) expect(await store.findReversalOf(debit.id)).toBeNull();
+      const [first] = unchecked;
+      await store.markDebitChecked(first!.id, 'recorded', new Date());
+      await store.markDebitChecked(first!.id, 'refunded', new Date());
+      const again = await store.listUncheckedDebits(later, 50);
+      expect(again.map((t) => t.id)).not.toContain(first!.id);
+      const { rows } = await pool.query('SELECT outcome FROM debit_checks WHERE transaction_id = $1', [
+        first!.id,
+      ]);
+      expect(rows).toEqual([{ outcome: 'recorded' }]);
+      expect(await store.listUncheckedDebits(new Date(0), 50)).toEqual([]);
+    });
+  });
+
+  describe('grand livre verrouillé par la base (ADR-048)', () => {
+    const fails = async (sql: string, params: unknown[] = []) => {
+      const error = await pool.query(sql, params).then(
+        () => null,
+        (caught: Error) => caught,
+      );
+      expect(error).not.toBeNull();
+      return error!.message;
+    };
+    /** Écriture faite à la main dans une transaction : refusée à la validation si incomplète. */
+    const commitFails = async (statements: [string, unknown[]][]) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const [sql, params] of statements) await client.query(sql, params);
+        const error = await client.query('COMMIT').then(
+          () => null,
+          (caught: Error) => caught,
+        );
+        expect(error).not.toBeNull();
+        return error!.message;
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    const insertTransaction = (id: string, amount: number) =>
+      [
+        `INSERT INTO ledger_transactions (id, kind, caller, reference, holder_type, holder_id, amount,
+           description, created_at) VALUES ($1, 'top_up', 'wallet', $2, 'user', $3, $4, 'test', now())`,
+        [id, `lock:${id}`, USER.id, amount],
+      ] as [string, unknown[]];
+    const insertEntry = (transactionId: string, account: string, direction: string, amount: number) =>
+      [
+        `INSERT INTO ledger_entries (id, transaction_id, account_code, direction, amount, created_at)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, now())`,
+        [transactionId, account, direction, amount],
+      ] as [string, unknown[]];
+
+    it('solde jamais saisi : seule une écriture le change ; compte ni modifié ni supprimé', async () => {
+      expect(
+        await fails("UPDATE ledger_accounts SET balance = balance + 1 WHERE code = 'ksp:collections'"),
+      ).toMatch(/seulement par une écriture/);
+      expect(
+        await fails("UPDATE ledger_accounts SET normal_side = 'credit' WHERE code = 'ksp:collections'"),
+      ).toMatch(/immuable/);
+      expect(await fails("DELETE FROM ledger_accounts WHERE code = 'ksp:commission'")).toMatch(/immuable/);
+    });
+
+    it('TRUNCATE refusé sur les comptes, les transactions et les lignes', async () => {
+      for (const table of ['ledger_entries', 'ledger_transactions', 'ledger_accounts']) {
+        expect(await fails(`TRUNCATE ${table} CASCADE`)).toMatch(/TRUNCATE interdit/);
+      }
+    });
+
+    it('transaction sans lignes, ou montant incohérent avec ses lignes : refusée à la validation', async () => {
+      const empty = '0192f1c4-0000-7000-8000-0000000f0001';
+      expect(await commitFails([insertTransaction(empty, 100)])).toMatch(/sans lignes/);
+      const wrong = '0192f1c4-0000-7000-8000-0000000f0002';
+      expect(
+        await commitFails([
+          insertTransaction(wrong, 100),
+          insertEntry(wrong, 'ksp:prepaid_funds', 'debit', 50),
+          insertEntry(wrong, 'ksp:service_revenue', 'credit', 50),
+        ]),
+      ).toMatch(/incohérent/);
+      const rows = await pool.query('SELECT 1 FROM ledger_transactions WHERE id IN ($1, $2)', [empty, wrong]);
+      expect(rows.rowCount).toBe(0);
+    });
+
+    it('nom du bénéficiaire effacé après la transmission, comme son numéro', async () => {
+      const { rows } = await pool.query(
+        "SELECT id FROM wallet_payouts WHERE status <> 'pending_submission' LIMIT 1",
+      );
+      expect(rows).toHaveLength(1);
+      expect(
+        await fails("UPDATE wallet_payouts SET beneficiary_name = 'SARL Bénin Immo' WHERE id = $1", [
+          rows[0].id,
+        ]),
+      ).toMatch(/wallet_payouts_name_check/);
     });
   });
 });

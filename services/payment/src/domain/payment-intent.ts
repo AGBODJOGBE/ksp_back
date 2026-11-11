@@ -104,6 +104,12 @@ export interface PaymentIntent {
   lastCheckedAt: Date | null;
   /** Écart de montant traité par la finance ; null sinon (et pour tout autre statut). */
   mismatchResolution: MismatchResolution | null;
+  /**
+   * Montant approuvé par le prestataire en XOF (réussite, ou écart de montant dans la devise XOF) ;
+   * null tant que rien n'est reçu, ou si la devise n'est pas le XOF (ADR-048). Lu par wallet avant de
+   * créditer une recharge.
+   */
+  receivedAmount: number | null;
   version: number;
 }
 

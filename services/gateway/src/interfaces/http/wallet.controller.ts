@@ -16,6 +16,9 @@ export const walletParams = {
   payoutStatus: z.enum(['pending_submission', 'submitted', 'completed', 'failed']).optional(),
   /** Compte du relevé (ADR-046) : fonds dus ou portefeuille prépayé ; absent : les deux. */
   statementAccount: z.enum(['collections', 'prepaid']).optional(),
+  /** Statut d'une demande de crédit manuel (ADR-048) ; absent : toutes. */
+  creditRequestStatus: z.enum(['pending_approval', 'approved']).optional(),
+  creditRequestId: z.guid(),
 };
 
 const holderFrom = (type: unknown, id: unknown, prefix = ''): WalletHolder => ({
@@ -86,6 +89,17 @@ export class WalletHttpController {
       paymentId: input.paymentId,
       idempotencyKey,
     });
+  }
+
+  @Route('listManualCreditRequests')
+  creditRequests(@Query() query: Query) {
+    const status = parseParam(walletParams.creditRequestStatus, query['status'], 'status');
+    return this.wallet.listManualCreditRequests(pageFrom(query), status);
+  }
+
+  @Route('approveManualCredit')
+  approveCredit(@Param('id') id: unknown) {
+    return this.wallet.approveManualCredit(parseParam(walletParams.creditRequestId, id, 'id'));
   }
 
   @Route('listWalletPayouts')

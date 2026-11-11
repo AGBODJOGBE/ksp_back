@@ -464,6 +464,22 @@ export interface FailPayoutResponse {
   payout?: Payout | undefined;
 }
 
+export interface GetTopUpPaymentRequest {
+  paymentId: string;
+}
+
+export interface GetTopUpPaymentResponse {
+  payment?:
+    | Payment
+    | undefined;
+  /**
+   * Montant reçu confirmé par le prestataire, en XOF : celui du paiement s'il a réussi, le montant
+   * approuvé d'un écart de montant ("amount_mismatch") en XOF ; absent sinon (rien reçu, ou devise
+   * différente).
+   */
+  receivedAmount?: Money | undefined;
+}
+
 export interface CreateTopUpPaymentRequest {
   /** Clé d'idempotence du client (8 à 100 caractères), propre au payeur. */
   idempotencyKey: string;
@@ -911,6 +927,14 @@ export const PAYOUT_ADMIN_SERVICE_NAME = "PayoutAdminService";
 
 export interface TopUpPaymentServiceClient {
   createTopUpPayment(request: CreateTopUpPaymentRequest, metadata?: Metadata): Observable<CreateTopUpPaymentResponse>;
+
+  /**
+   * Paiement de recharge relu par wallet avant tout crédit (ADR-048) : crédit automatique sur
+   * payment.intent.succeeded, ou crédit manuel d'une recharge par la finance. Paiement inconnu, ou
+   * d'un autre objet que "wallet_top_up" : PAYMENT_NOT_FOUND.
+   */
+
+  getTopUpPayment(request: GetTopUpPaymentRequest, metadata?: Metadata): Observable<GetTopUpPaymentResponse>;
 }
 
 /**
@@ -929,11 +953,22 @@ export interface TopUpPaymentServiceController {
     request: CreateTopUpPaymentRequest,
     metadata?: Metadata,
   ): Promise<CreateTopUpPaymentResponse> | Observable<CreateTopUpPaymentResponse> | CreateTopUpPaymentResponse;
+
+  /**
+   * Paiement de recharge relu par wallet avant tout crédit (ADR-048) : crédit automatique sur
+   * payment.intent.succeeded, ou crédit manuel d'une recharge par la finance. Paiement inconnu, ou
+   * d'un autre objet que "wallet_top_up" : PAYMENT_NOT_FOUND.
+   */
+
+  getTopUpPayment(
+    request: GetTopUpPaymentRequest,
+    metadata?: Metadata,
+  ): Promise<GetTopUpPaymentResponse> | Observable<GetTopUpPaymentResponse> | GetTopUpPaymentResponse;
 }
 
 export function TopUpPaymentServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["createTopUpPayment"];
+    const grpcMethods: string[] = ["createTopUpPayment", "getTopUpPayment"];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("TopUpPaymentService", method)(constructor.prototype[method], method, descriptor);

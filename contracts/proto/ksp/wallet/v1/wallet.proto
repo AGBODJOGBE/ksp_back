@@ -51,7 +51,14 @@ import "ksp/common/v1/money.proto";
 //   WALLET_TRANSACTION_NOT_REVERSIBLE    FAILED_PRECONDITION seul un encaissement s'annule par cette méthode
 //   WALLET_IDEMPOTENCY_KEY_REUSED        ALREADY_EXISTS      référence ou clé déjà utilisée pour une autre opération
 //   WALLET_TRANSACTION_ALREADY_REVERSED  ALREADY_EXISTS      encaissement déjà annulé (par une autre demande)
-//   WALLET_CALLER_FORBIDDEN              PERMISSION_DENIED   méthode réservée à un autre service
+//   WALLET_TOP_UP_NOT_VERIFIED           FAILED_PRECONDITION crédit manuel d'une recharge non confirmé par payment
+//                                                            (paiement inconnu, autre titulaire, pas reçu,
+//                                                            montant au-delà du reçu) ; details.reason (ADR-048)
+//   WALLET_CREDIT_LIMIT_EXCEEDED         FAILED_PRECONDITION remboursement manuel au-delà du plafond ; details.maximum
+//   WALLET_CREDIT_REQUEST_NOT_FOUND      NOT_FOUND           demande de crédit manuel inconnue
+//   WALLET_APPROVAL_BY_REQUESTER         PERMISSION_DENIED   validation d'un crédit par l'auteur de sa demande
+//   WALLET_CALLER_FORBIDDEN              PERMISSION_DENIED   méthode réservée à un autre service (méthodes du
+//                                                            titulaire et du back-office : gateway seulement)
 //   AUTH_REQUIRED                        UNAUTHENTICATED
 //   AUTH_FORBIDDEN                       PERMISSION_DENIED   rôle du back-office manquant ; membre lecteur (org_viewer)
 //   AUTH_MFA_REQUIRED                    PERMISSION_DENIED   double authentification absente
@@ -93,7 +100,17 @@ service WalletAdminService {
   rpc GetLedgerOverview(GetLedgerOverviewRequest) returns (GetLedgerOverviewResponse);
   // Crédit manuel d'un portefeuille prépayé avec motif (ADR-046) : remboursement, ou recharge reçue
   // mais non créditée (écart de montant traité par la finance). Auteur gardé dans le grand livre.
+  // Contrôles (ADR-048) : une recharge est vérifiée auprès de payment (paiement "wallet_top_up" du
+  // même titulaire, réussi ou en écart de montant, montant au plus égal au montant reçu) ; un
+  // remboursement est plafonné (WALLET_MANUAL_REFUND_MAX) et justifié (motif de 15 caractères au
+  // moins). Au-delà de WALLET_CREDIT_APPROVAL_THRESHOLD, le crédit attend la validation d'un second
+  // membre de la finance : rien n'est écrit, la demande est rendue dans pending_request.
   rpc CreditPrepaidWallet(CreditPrepaidWalletRequest) returns (CreditPrepaidWalletResponse);
+  // Demandes de crédit manuel en attente de validation (ou validées), les plus récentes d'abord.
+  rpc ListManualCreditRequests(ListManualCreditRequestsRequest) returns (ListManualCreditRequestsResponse);
+  // Validation par un second membre de la finance (jamais l'auteur de la demande) : le crédit est
+  // écrit. Rejouable : une demande déjà validée rend son crédit.
+  rpc ApproveManualCredit(ApproveManualCreditRequest) returns (ApproveManualCreditResponse);
 }
 
 message Page {
@@ -487,8 +504,55 @@ message CreditPrepaidWalletRequest {
 }
 
 message CreditPrepaidWalletResponse {
+  // Absent tant que le crédit attend sa validation (pending_request).
   LedgerTransaction transaction = 1;
   PrepaidWallet wallet = 2;
-  // false : crédit déjà enregistré avec cette clé (ou ce paiement).
+  // false : crédit déjà enregistré avec cette clé (ou ce paiement), ou demande déjà enregistrée.
   bool created = 3;
+  // Crédit au-delà du seuil de double validation (ADR-048) : demande en attente d'un second membre de
+  // la finance ; absente sinon.
+  ManualCreditRequest pending_request = 4;
+}
+
+// Demande de crédit manuel soumise à double validation (ADR-048).
+message ManualCreditRequest {
+  string id = 1;
+  Holder holder = 2;
+  // "refund" ou "top_up".
+  string kind = 3;
+  ksp.common.v1.Money amount = 4;
+  string reason = 5;
+  // Recharge : paiement crédité ; vide sinon.
+  string payment_id = 6;
+  // "pending_approval" ou "approved".
+  string status = 7;
+  string requested_by = 8;
+  string requested_at = 9;
+  // Vides tant qu'elle n'est pas validée.
+  string approved_by = 10;
+  string approved_at = 11;
+  string transaction_id = 12;
+}
+
+message ListManualCreditRequestsRequest {
+  Page page = 1;
+  // "pending_approval" ou "approved" ; vide : toutes.
+  string status = 2;
+}
+
+message ListManualCreditRequestsResponse {
+  repeated ManualCreditRequest requests = 1;
+  string next_cursor = 2;
+}
+
+message ApproveManualCreditRequest {
+  string request_id = 1;
+}
+
+message ApproveManualCreditResponse {
+  LedgerTransaction transaction = 1;
+  PrepaidWallet wallet = 2;
+  ManualCreditRequest request = 3;
+  // false : demande déjà validée (le même crédit est rendu).
+  bool created = 4;
 }
