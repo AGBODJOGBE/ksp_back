@@ -9,7 +9,7 @@ import {
   settleManually,
 } from '../domain/payout';
 import { type PageRequest, type PageResult, type PaymentDeps } from './ports';
-import { GATEWAY, PAYOUT_STAFF, requireCaller, requireIssuer, requireStaff } from './shared/access';
+import { PAYOUT_STAFF, requireIssuer, requireStaff } from './shared/access';
 import { PaymentErrors } from './shared/errors';
 import {
   IDEMPOTENCY_KEY,
@@ -126,7 +126,6 @@ export class ListPayoutsUseCase {
   constructor(private readonly deps: PaymentDeps) {}
 
   async execute(input: { page: PageRequest; status: string; issuer: string }): Promise<PageResult<Payout>> {
-    requireCaller(GATEWAY);
     requireStaff(PAYOUT_STAFF);
     const status = optionalOneOf('status', input.status, PAYOUT_STATUSES);
     if (input.issuer && !ISSUER.test(input.issuer)) throw PaymentErrors.invalid('issuer');
@@ -153,7 +152,6 @@ export class SettlePayoutUseCase {
   }
 
   async execute(input: { payoutId: string; text: string; idempotencyKey: string }): Promise<Payout> {
-    requireCaller(GATEWAY);
     const staff = requireStaff(PAYOUT_STAFF);
     const payoutId = requireUuid('payoutId', input.payoutId);
     const text =

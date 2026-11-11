@@ -1,12 +1,22 @@
-import { loadConfig } from '@ksp/platform';
+import { allowedCallersOf, loadConfig } from '@ksp/platform';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { configSchema } from '../src/config';
 import {
+  ObligationGrpcController,
   WalletAccountGrpcController,
   WalletAdminGrpcController,
   WalletGrpcController,
 } from '../src/interfaces/grpc/wallet.controllers';
+
+describe('appelants des contrôleurs gRPC (ADR-048)', () => {
+  it('espace du titulaire et back-office : gateway seulement ; méthodes internes vérifiées par le cas d’usage', () => {
+    expect(allowedCallersOf(WalletAccountGrpcController)).toEqual(['gateway']);
+    expect(allowedCallersOf(WalletAdminGrpcController)).toEqual(['gateway']);
+    expect(allowedCallersOf(WalletGrpcController)).toBeUndefined();
+    expect(allowedCallersOf(ObligationGrpcController)).toBeUndefined();
+  });
+});
 
 const BASE = {
   SERVICE_NAME: 'wallet',

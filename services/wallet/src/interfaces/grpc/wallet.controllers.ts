@@ -1,3 +1,4 @@
+import { AllowedCallers } from '@ksp/platform';
 import { commonV1, walletV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import {
@@ -247,6 +248,7 @@ export class WalletGrpcController implements walletV1.WalletServiceController {
 
 /** Espace du titulaire connecté (gateway). */
 @Controller()
+@AllowedCallers('gateway')
 @walletV1.WalletAccountServiceControllerMethods()
 export class WalletAccountGrpcController implements walletV1.WalletAccountServiceController {
   constructor(@Inject(WALLET_USE_CASES) private readonly useCases: WalletUseCases) {}
@@ -294,6 +296,7 @@ export class WalletAccountGrpcController implements walletV1.WalletAccountServic
 
 /** Back-office (finance). */
 @Controller()
+@AllowedCallers('gateway')
 @walletV1.WalletAdminServiceControllerMethods()
 export class WalletAdminGrpcController implements walletV1.WalletAdminServiceController {
   constructor(@Inject(WALLET_USE_CASES) private readonly useCases: WalletUseCases) {}

@@ -1,11 +1,19 @@
-import { loadConfig } from '@ksp/platform';
+import { allowedCallersOf, loadConfig } from '@ksp/platform';
 import { Test } from '@nestjs/testing';
 import { AppModule, createPayoutProvider, createProvider } from '../src/app.module';
 import { configSchema } from '../src/config';
 import {
+  PaymentLinkGrpcController,
+  PaymentLinkPublicGrpcController,
+  PayoutAdminGrpcController,
+  PayoutGrpcController,
+} from '../src/interfaces/grpc/link-payout.controllers';
+import {
+  ObligationGrpcController,
   PaymentAdminGrpcController,
   PaymentGrpcController,
   PaymentWebhookGrpcController,
+  TopUpPaymentGrpcController,
 } from '../src/interfaces/grpc/payment.controllers';
 
 const BASE = {
@@ -25,6 +33,31 @@ describe('AppModule', () => {
     expect(moduleRef.get(PaymentWebhookGrpcController)).toBeDefined();
     expect(moduleRef.get(PaymentAdminGrpcController)).toBeDefined();
     await moduleRef.close();
+  });
+});
+
+describe('appelants des contrôleurs gRPC (ADR-048)', () => {
+  it('méthodes client, page publique, notifications et back-office : gateway seulement', () => {
+    for (const controller of [
+      PaymentGrpcController,
+      PaymentWebhookGrpcController,
+      PaymentAdminGrpcController,
+      PaymentLinkPublicGrpcController,
+      PayoutAdminGrpcController,
+    ]) {
+      expect(allowedCallersOf(controller)).toEqual(['gateway']);
+    }
+  });
+
+  it('méthodes internes : leurs appelants vérifiés par le cas d’usage (émetteurs, wallet, identity)', () => {
+    for (const controller of [
+      PaymentLinkGrpcController,
+      PayoutGrpcController,
+      TopUpPaymentGrpcController,
+      ObligationGrpcController,
+    ]) {
+      expect(allowedCallersOf(controller)).toBeUndefined();
+    }
   });
 });
 

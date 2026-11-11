@@ -1,3 +1,4 @@
+import { AllowedCallers } from '@ksp/platform';
 import { paymentV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import { type LinkView } from '../../application/links.use-cases';
@@ -130,6 +131,7 @@ export class PaymentLinkGrpcController implements paymentV1.PaymentLinkServiceCo
 
 /** Page publique d'un lien, appelée par la gateway. Aucune donnée personnelle dans les réponses. */
 @Controller()
+@AllowedCallers('gateway')
 @paymentV1.PaymentLinkPublicServiceControllerMethods()
 export class PaymentLinkPublicGrpcController implements paymentV1.PaymentLinkPublicServiceController {
   constructor(@Inject(PAYMENT_USE_CASES) private readonly useCases: PaymentUseCases) {}
@@ -182,6 +184,7 @@ export class PayoutGrpcController implements paymentV1.PayoutServiceController {
 
 /** Back-office des reversements (finance). */
 @Controller()
+@AllowedCallers('gateway')
 @paymentV1.PayoutAdminServiceControllerMethods()
 export class PayoutAdminGrpcController implements paymentV1.PayoutAdminServiceController {
   constructor(@Inject(PAYMENT_USE_CASES) private readonly useCases: PaymentUseCases) {}

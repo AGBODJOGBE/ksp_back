@@ -15,7 +15,7 @@ import {
 } from '../domain/payment-link';
 import { type PaymentIntent } from '../domain/payment-intent';
 import { type PaymentDeps } from './ports';
-import { GATEWAY, requireCaller, requireIssuer } from './shared/access';
+import { requireIssuer } from './shared/access';
 import { PaymentErrors } from './shared/errors';
 import {
   IDEMPOTENCY_KEY,
@@ -261,7 +261,6 @@ export class GetPublicPaymentLinkUseCase {
   }
 
   async execute(token: string): Promise<LinkView> {
-    requireCaller(GATEWAY);
     const link = await this.links.byToken(token);
     let attempts = await this.deps.payments.listForLink(link.id);
     const last = lastAttempt(attempts);
@@ -302,7 +301,6 @@ export class PayPaymentLinkUseCase {
     token: string;
     idempotencyKey: string;
   }): Promise<{ payment: PaymentIntent; created: boolean }> {
-    requireCaller(GATEWAY);
     const link = await this.links.byToken(input.token);
     if (!IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
       throw PaymentErrors.invalid('idempotencyKey', 'Clé d’idempotence invalide (8 à 100 caractères).');
@@ -378,7 +376,6 @@ export class SimulatePaymentLinkPaymentUseCase {
   }
 
   async execute(input: { token: string; outcome: string }): Promise<PaymentIntent> {
-    requireCaller(GATEWAY);
     const settle = this.deps.provider.settle?.bind(this.deps.provider);
     if (!this.deps.settings.simulationEnabled || !settle) throw PaymentErrors.simulationDisabled();
     const outcome = oneOf<'succeeded' | 'failed'>('outcome', input.outcome, ['succeeded', 'failed']);

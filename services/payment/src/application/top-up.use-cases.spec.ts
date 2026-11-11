@@ -168,21 +168,18 @@ describe('recharge du portefeuille prépayé (ADR-046)', () => {
         'cleaning',
       );
     expect((await rejection(run())).code).toBe('PAYMENT_CALLER_FORBIDDEN');
-    const direct = (from: typeof fromWallet) =>
-      rejection(
-        from(() =>
-          useCases.createPayment.execute({
-            subjectType: 'wallet_top_up',
-            subjectId: CUSTOMER_ID,
-            part: '',
-            idempotencyKey: 'topup-key-0006',
-          }),
-        ),
-      );
-    // wallet n'appelle jamais une méthode du client (réservée à la gateway, ADR-048).
-    expect((await direct(fromWallet)).code).toBe('PAYMENT_CALLER_FORBIDDEN');
-    // Par la gateway : objet réservé, refusé à la validation.
-    const viaGateway: typeof fromWallet = (fn) => fromWallet(fn, undefined, 'gateway');
-    expect((await direct(viaGateway)).code).toBe('PAYMENT_VALIDATION_FAILED');
+    // Objet réservé : refusé à la validation de la création d'un paiement client (la gateway seule
+    // appelle cette méthode, contrôlé par le contrôleur, ADR-048).
+    const direct = await rejection(
+      fromWallet(() =>
+        useCases.createPayment.execute({
+          subjectType: 'wallet_top_up',
+          subjectId: CUSTOMER_ID,
+          part: '',
+          idempotencyKey: 'topup-key-0006',
+        }),
+      ),
+    );
+    expect(direct.code).toBe('PAYMENT_VALIDATION_FAILED');
   });
 });

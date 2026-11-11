@@ -19,14 +19,7 @@ import {
   type PageResult,
   type PaymentDeps,
 } from './ports';
-import {
-  currentPayer,
-  GATEWAY,
-  isVisibleTo,
-  PAYMENT_STAFF,
-  requireCaller,
-  requireStaff,
-} from './shared/access';
+import { currentPayer, isVisibleTo, PAYMENT_STAFF, requireCaller, requireStaff } from './shared/access';
 import { PaymentErrors } from './shared/errors';
 import {
   IDEMPOTENCY_KEY,
@@ -90,7 +83,6 @@ export class CreatePaymentUseCase {
     part: string;
     idempotencyKey: string;
   }): Promise<{ payment: PaymentIntent; created: boolean }> {
-    requireCaller(GATEWAY);
     const payer = currentPayer();
     if (!IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
       throw PaymentErrors.invalid('idempotencyKey', 'Clé d’idempotence invalide (8 à 100 caractères).');
@@ -247,7 +239,6 @@ export class GetMyPaymentUseCase {
   }
 
   async execute(paymentId: string): Promise<PaymentIntent> {
-    requireCaller(GATEWAY);
     const intent = await visiblePayment(this.deps, paymentId);
     if (intent.status !== 'pending' || !intent.providerTransactionId) return intent;
     const now = this.deps.clock.now().getTime();
@@ -266,7 +257,6 @@ export class ListMyPaymentsUseCase {
   constructor(private readonly deps: PaymentDeps) {}
 
   async execute(input: { page: PageRequest; status: string }): Promise<PageResult<PaymentIntent>> {
-    requireCaller(GATEWAY);
     const payer = currentPayer();
     const status = optionalOneOf('status', input.status, PAYMENT_STATUSES);
     return this.deps.payments.list(
@@ -312,7 +302,6 @@ export class ListPaymentsUseCase {
     /** Absent : pas de filtre. */
     underReview?: boolean | undefined;
   }): Promise<PageResult<PaymentIntent> & { names: NameBook }> {
-    requireCaller(GATEWAY);
     requireStaff(PAYMENT_STAFF);
     const status = optionalOneOf('status', input.status, PAYMENT_STATUSES);
     // Types du paiement par compte, ou type choisi par l'émetteur d'un lien (ADR-040).
@@ -363,7 +352,6 @@ export class ResolveAmountMismatchUseCase {
   constructor(private readonly deps: PaymentDeps) {}
 
   async execute(input: { paymentId: string; note: string; idempotencyKey: string }): Promise<PaymentIntent> {
-    requireCaller(GATEWAY);
     const staff = requireStaff(PAYMENT_STAFF);
     const paymentId = requireUuid('paymentId', input.paymentId);
     const note = requireText('note', input.note, MISMATCH_NOTE_MAX);
@@ -412,7 +400,7 @@ export class ReceiveProviderNotificationUseCase {
     payload: Uint8Array;
     signature: string;
   }): Promise<NotificationOutcome> {
-    requireCaller(GATEWAY);
+    requireCaller(['gateway']);
     const provider = this.deps.provider;
     if (input.provider !== provider.name) {
       throw PaymentErrors.invalid('provider', 'Ce prestataire de paiement n’est pas configuré.');
@@ -467,7 +455,6 @@ export class SimulatePaymentUseCase {
   }
 
   async execute(input: { paymentId: string; outcome: string }): Promise<PaymentIntent> {
-    requireCaller(GATEWAY);
     const settle = this.deps.provider.settle?.bind(this.deps.provider);
     if (!this.deps.settings.simulationEnabled || !settle) throw PaymentErrors.simulationDisabled();
     const outcome = oneOf<'succeeded' | 'failed'>('outcome', input.outcome, ['succeeded', 'failed']);
