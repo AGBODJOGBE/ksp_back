@@ -1,4 +1,4 @@
-import { baseServiceConfigSchema } from '@ksp/platform';
+import { baseServiceConfigSchema, requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 
 /** Variable vide (ligne « NOM= » d'un fichier .env) : considérée comme absente. */
@@ -50,6 +50,8 @@ export const configSchema = baseServiceConfigSchema
           'IDENTITY_TOKEN_URL et SERVICE_CLIENT_SECRET sont obligatoires en production : wallet transmet les reversements à payment (ADR-022).',
       });
     }
-  });
+  })
+  // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
+  .superRefine(requireGrpcAddressesInProduction);
 
 export type ServiceConfig = z.infer<typeof configSchema>;

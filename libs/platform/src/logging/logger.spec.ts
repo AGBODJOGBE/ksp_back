@@ -51,4 +51,20 @@ describe('journaux : adresses secrètes', () => {
     const request = serializeRequest({ url: `/api/v1/document/sign/${token}/sign`, params: { token } });
     expect(JSON.stringify(request)).not.toContain(token);
   });
+
+  it('le jeton d’un lien de paiement est masqué dans l’adresse et les paramètres (ADR-040)', () => {
+    const token = 'Pq4vQ0b4H1m0w2nY5p7r9t1v3x5z7B9D1F3H5J7L9Nq';
+    expect(maskSecretPaths(`/api/v1/payment/links/${token}`)).toBe('/api/v1/payment/links/[masqué]');
+    expect(maskSecretPaths(`/api/v1/payment/links/${token}/pay`)).toBe('/api/v1/payment/links/[masqué]/pay');
+    expect(maskSecretPaths('/api/v1/payment/payments/0192f1c4')).toBe('/api/v1/payment/payments/0192f1c4');
+    const request = serializeRequest({ url: `/api/v1/payment/links/${token}/pay?x=1`, params: { token } });
+    expect(JSON.stringify(request)).not.toContain(token);
+  });
+
+  it('adresse complète (attribut url.full des traces) : le jeton est masqué aussi', () => {
+    const token = 'Zk3vQ0b4H1m0w2nY5p7r9t1v3x5z7B9D1F3H5J7L9Nq';
+    expect(maskSecretPaths(`https://api.ksp.bj/api/v1/document/sign/${token}`)).toBe(
+      'https://api.ksp.bj/api/v1/document/sign/[masqué]',
+    );
+  });
 });

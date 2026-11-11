@@ -1,4 +1,4 @@
-import { baseServiceConfigSchema } from '@ksp/platform';
+import { baseServiceConfigSchema, requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 
 /** Une variable vide (`X=` dans un fichier .env) vaut une variable absente. */
@@ -141,7 +141,9 @@ export const configSchema = baseServiceConfigSchema
     message:
       'PORTAL_BASE_URL doit être une adresse HTTPS publique en production : elle figure dans les liens des messages envoyés aux clients.',
     path: ['PORTAL_BASE_URL'],
-  });
+  })
+  // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
+  .superRefine(requireGrpcAddressesInProduction);
 
 /** Noms réservés au poste local : un lien vers eux ne mènerait nulle part chez le client. */
 const LOCAL_HOST = /^(localhost|.+\.localhost|127(\.\d{1,3}){3}|0\.0\.0\.0|\[::1?\])$/i;

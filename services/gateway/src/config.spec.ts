@@ -5,12 +5,18 @@ import { configSchema, rateLimitsFrom, trustProxyFrom } from './config';
 
 const PRODUCTION = {
   NODE_ENV: 'production',
+  REDIS_URL: 'redis://redis:6379',
   IDENTITY_JWKS_URL: 'http://identity:3101/.well-known/jwks.json',
   IDENTITY_TOKEN_URL: 'http://identity:3101/oauth/token',
   SERVICE_CLIENT_SECRET: 'secret',
   TRUST_PROXY: '10.42.0.0/16',
   CORS_WEB_ORIGINS: 'https://ksp.bj, https://shop.ksp.bj,https://print.ksp.bj',
   CORS_BACKOFFICE_ORIGINS: 'https://admin.ksp.bj',
+  ...Object.fromEntries(
+    ['IDENTITY', 'CLEANING', 'BILLING', 'PAYMENT', 'NOTIFICATION', 'FILE', 'WALLET', 'DOCUMENT'].map(
+      (service) => [`${service}_GRPC_URL`, `dns:///${service.toLowerCase()}-headless:50051`],
+    ),
+  ),
 };
 
 describe('configuration de la gateway', () => {
@@ -51,6 +57,8 @@ describe('configuration de la gateway', () => {
     ['avec un cookie non sécurisé', { REFRESH_COOKIE_INSECURE: 'true' }, 'REFRESH_COOKIE_INSECURE'],
     ['sans origines', { CORS_BACKOFFICE_ORIGINS: '' }, 'CORS_WEB_ORIGINS'],
     ['avec une origine HTTP', { CORS_WEB_ORIGINS: 'http://ksp.bj' }, 'Origine non HTTPS'],
+    ['sans Redis pour les limites', { REDIS_URL: undefined }, 'REDIS_URL'],
+    ['sans adresse gRPC (localhost par défaut)', { WALLET_GRPC_URL: undefined }, 'WALLET_GRPC_URL'],
   ])('refuse de démarrer en production %s', (_label, change, message) => {
     expect(() => loadConfig(configSchema, { ...PRODUCTION, ...change })).toThrow(ConfigError);
     expect(() => loadConfig(configSchema, { ...PRODUCTION, ...change })).toThrow(message);
