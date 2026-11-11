@@ -1,4 +1,4 @@
-import { eventSubject } from '../shared/event-subject';
+import { eventSubject, upfrontNotice } from '../shared/event-subject';
 import { DEFAULT_CHECKLIST, isCode } from '../../domain/catalog';
 import {
   canTransitionIntervention,
@@ -18,6 +18,7 @@ import {
   type PaymentRecord,
   paymentWithKey,
   remainingDue,
+  upfrontDue,
 } from '../../domain/payment';
 import { conflictingAgents, isBeforeScheduledDay, slotFrom } from '../../domain/schedule';
 import { type CleaningDeps, missionView, type MissionView } from '../deps';
@@ -230,6 +231,7 @@ export async function scheduledChanges(
           scheduledStart,
           durationMinutes: intervention.durationMinutes,
           agentIds: intervention.agentIds,
+          ...upfrontNotice(mission),
         },
       },
     ],
@@ -260,6 +262,7 @@ abstract class InterventionAction {
     to: InterventionStatus | null,
     change: (intervention: Intervention, now: Date) => Intervention,
     action: string,
+    check: (mission: Mission) => void = () => undefined,
   ): Promise<MissionView> {
     const staff = requireStaff(FIELD_WORK);
     const mission = await this.deps.missions.findByInterventionId(
@@ -275,6 +278,7 @@ abstract class InterventionAction {
       throw CleaningErrors.invalidTransition(current.status, to);
     if (!to && current.status !== 'in_progress')
       throw CleaningErrors.invalidTransition(current.status, current.status);
+    check(mission);
 
     const now = this.deps.clock.now();
     const next = { ...change(current, now), ...(to ? { status: to } : {}) };
@@ -317,7 +321,8 @@ abstract class InterventionAction {
 /**
  * UC-CL-10 : démarrer un passage. Refusé avant le jour prévu, dans le fuseau du service
  * (CLEANING_INTERVENTION_TOO_EARLY) ; le jour même, à toute heure, il est permis. Règle
- * désactivable par configuration (à valider).
+ * désactivable par configuration (à valider). Paiement « avant » encore dû (acompte, ou totalité) :
+ * refusé (CLEANING_UPFRONT_PAYMENT_DUE, ADR-049) ; une mission d'entreprise se règle par facture.
  */
 export class StartInterventionUseCase extends InterventionAction {
   execute(interventionId: string): Promise<MissionView> {
@@ -332,6 +337,10 @@ export class StartInterventionUseCase extends InterventionAction {
         return { ...i, startedAt: i.startedAt ?? now };
       },
       'intervention.started',
+      (mission) => {
+        const due = isBusinessContract(mission) ? 0 : upfrontDue(mission.payment);
+        if (due > 0) throw CleaningErrors.upfrontPaymentDue(due);
+      },
     );
   }
 }

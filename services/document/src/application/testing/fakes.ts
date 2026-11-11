@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DEFAULT_CODE_POLICY } from '../../domain/code-policy';
+import { DEFAULT_CODE_POLICY, type SendDecision } from '../../domain/code-policy';
 import { type DocumentContent } from '../../domain/content';
 import { type DocumentRecord, type DocumentStatus } from '../../domain/document';
 import { type CodeChannel, type SignatureCode, type SignatureRequestRecord } from '../../domain/signature';
@@ -7,6 +7,7 @@ import { DocumentErrors } from '../errors';
 import {
   type AccountErasure,
   type Clock,
+  type CodeAttempt,
   type Contact,
   type DocumentDeps,
   type DocumentRepository,
@@ -46,6 +47,8 @@ export class InMemoryDocuments implements DocumentRepository {
   completions: SignatureCompletion[] = [];
   counters = new Map<string, number>();
   processed = new Set<string>();
+  /** Essais pris par demande, tous codes confondus. */
+  requestAttempts = new Map<string, number>();
 
   async nextNumber(prefix: string, year: number): Promise<number> {
     const key = `${prefix}:${year}`;
@@ -136,13 +139,19 @@ export class InMemoryDocuments implements DocumentRepository {
     for (const request of due) await this.expireRequest(request.id, now);
     return due.length;
   }
-  async codeSentDates(requestId: string, since: Date) {
-    return [...this.codes.values()]
-      .filter((c) => c.requestId === requestId && c.createdAt >= since)
-      .map((c) => c.createdAt);
-  }
-  async createCode(code: SignatureCode) {
-    this.codes.set(code.id, { ...code });
+  async createCodeWithinLimits(
+    code: SignatureCode,
+    since: Date,
+    decide: (sentAt: Date[]) => SendDecision,
+  ): Promise<SendDecision | null> {
+    if (this.requests.get(code.requestId)?.status !== 'pending') return null;
+    const decision = decide(
+      [...this.codes.values()]
+        .filter((c) => c.requestId === code.requestId && c.createdAt >= since)
+        .map((c) => c.createdAt),
+    );
+    if (decision.allowed) this.codes.set(code.id, { ...code });
+    return decision;
   }
   async setCodeChannel(codeId: string, channel: CodeChannel) {
     const code = this.codes.get(codeId);
@@ -159,10 +168,29 @@ export class InMemoryDocuments implements DocumentRepository {
       return null;
     return { ...latest };
   }
-  async recordFailedAttempt(codeId: string) {
-    const code = this.codes.get(codeId)!;
+  async takeCodeAttempt(
+    requestId: string,
+    now: Date,
+    limits: { perCode: number; perRequest: number },
+  ): Promise<CodeAttempt> {
+    const request = this.requests.get(requestId);
+    if (request?.status !== 'pending') return { kind: 'closed' };
+    const used = this.requestAttempts.get(requestId) ?? 0;
+    if (used >= limits.perRequest) return { kind: 'request_exhausted' };
+    const active = await this.activeCode(requestId, now, limits.perCode);
+    if (!active) return { kind: 'no_code' };
+    const code = this.codes.get(active.id)!;
     code.attempts += 1;
-    return code.attempts;
+    this.requestAttempts.set(requestId, used + 1);
+    return { kind: 'taken', code: { ...code }, requestAttempts: used + 1 };
+  }
+  async closeExhaustedRequest(requestId: string, now: Date) {
+    const request = this.requests.get(requestId);
+    if (request?.status !== 'pending') return false;
+    this.close(request, 'expired', now);
+    const document = this.documents.get(request.documentId);
+    if (document?.status === 'pending_signature') document.status = 'expired';
+    return true;
   }
   async completeSignature(completion: SignatureCompletion) {
     const code = this.codes.get(completion.codeId);
@@ -326,6 +354,7 @@ export const TEST_SETTINGS: DocumentSettings = {
   portalBaseUrl: 'https://ksp.bj',
   genericTemplateEnabled: true,
   internalCallers: ['recovery', 'cleaning', 'billing'],
+  signedLinkDays: 7,
 };
 
 export function fakeDeps() {

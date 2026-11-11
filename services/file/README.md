@@ -21,6 +21,7 @@ pnpm --filter @ksp/file-service dev
 1. `POST /api/v1/file/uploads` `{ purpose, fileName, contentType, sizeBytes }` → `{ file, upload: { url, method: "PUT", headers, expiresAt } }`.
 2. Le front envoie le contenu : `PUT upload.url` avec exactement `upload.headers` (`Content-Type`) et la taille déclarée (type et taille sont signés : le stockage refuse autre chose).
 3. `POST /api/v1/file/files/{id}/complete` → `available` ; sinon `FILE_UPLOAD_REJECTED` (taille, type ou signature binaire différents) ou `FILE_NOT_UPLOADED` (contenu pas encore reçu : renvoyer puis reconfirmer).
+   L'adresse présignée vise une clé de dépôt `incoming/<id>` : le contenu y est vérifié, puis copié côté stockage sous la clé du fichier à la condition qu'il n'ait pas changé (ETag), et le dépôt est effacé (ADR-050). Un nouvel envoi à l'adresse présignée, encore valable quelques minutes, ne remplace jamais un contenu vérifié ; remplacé pendant la vérification, il n'est pas publié (`FILE_NOT_UPLOADED`). Exploitation : une règle de cycle de vie du bucket (expiration à 1 jour sur `incoming/`) efface les dépôts orphelins.
 4. Le front transmet l'identifiant au service métier concerné, qui le rattache à son objet (`FileInternalService.AttachFile`). Un fichier jamais rattaché est purgé après 24 heures.
 
 Lecture : le propriétaire par `GET /api/v1/file/files/{id}` et `GET /api/v1/file/files/{id}/download-url` (5 minutes) ; toute autre personne par le service responsable de l'objet (`ListFiles`, `CreateDownloadUrl`), seul juge de ses droits.

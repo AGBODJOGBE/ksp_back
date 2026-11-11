@@ -193,12 +193,16 @@ export class InMemoryFileRepository implements FileRepository {
 
 /** Stockage en mémoire : les adresses présignées sont factices mais déterministes. */
 export class FakeObjectStorage implements ObjectStorage {
-  readonly objects = new Map<string, { bytes: Uint8Array; contentType: string | null }>();
+  readonly objects = new Map<string, { bytes: Uint8Array; contentType: string | null; etag: string }>();
   readonly removed: string[] = [];
   down = false;
+  /** Simule un nouvel envoi à l'adresse présignée entre la vérification et la copie. */
+  replaceBeforeCopy: Uint8Array | null = null;
+  private versions = 0;
 
   put(key: string, bytes: Uint8Array, contentType: string | null): void {
-    this.objects.set(key, { bytes, contentType });
+    this.versions += 1;
+    this.objects.set(key, { bytes, contentType, etag: `v${this.versions}` });
   }
 
   async presignUpload(
@@ -221,7 +225,21 @@ export class FakeObjectStorage implements ObjectStorage {
   async stat(key: string): Promise<ObjectStat | null> {
     this.failIfDown();
     const object = this.objects.get(key);
-    return object ? { sizeBytes: object.bytes.length, contentType: object.contentType } : null;
+    return object
+      ? { sizeBytes: object.bytes.length, contentType: object.contentType, etag: object.etag }
+      : null;
+  }
+
+  async copyIfUnchanged(from: string, to: string, etag: string | null): Promise<boolean> {
+    this.failIfDown();
+    if (this.replaceBeforeCopy) {
+      this.put(from, this.replaceBeforeCopy, this.objects.get(from)?.contentType ?? null);
+      this.replaceBeforeCopy = null;
+    }
+    const source = this.objects.get(from);
+    if (!source || source.etag !== etag) return false;
+    this.objects.set(to, { ...source });
+    return true;
   }
 
   async readHead(key: string, bytes: number): Promise<Uint8Array> {

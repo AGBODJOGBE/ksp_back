@@ -1,4 +1,4 @@
-import { AppError, requireUser } from '@ksp/platform';
+import { AppError, requireRecentMfa, requireUser } from '@ksp/platform';
 import { normalizeReason } from '../../domain/organization/organization';
 import { defaultAssignmentScope, type RoleDefinition } from '../../domain/role/role';
 import {
@@ -9,6 +9,7 @@ import {
   canManageAccounts,
   canManageRole,
   isAssignableScope,
+  isInPerimeter,
   parseAccountQuery,
   perimeterOf,
   seesFullPhone,
@@ -51,12 +52,25 @@ export interface AccountAdminActor {
 const forbidden = () =>
   AppError.forbidden('AUTH_FORBIDDEN', "Vous n'avez pas les droits nécessaires pour cette action.");
 
+/**
+ * Écritures (rôles, suspension, double authentification) : double authentification de moins de
+ * 10 minutes, et non celle de l'ouverture de la session (ADR-050 ; même durée à la gateway).
+ */
+export const CRITICAL_MFA_MAX_AGE_SECONDS = 600;
+
 /** Administrateur des comptes (super_admin ou administrateur de métier), avec son périmètre. */
 export function requireAccountAdmin(): AccountAdminActor {
   const actorId = requireStaff(ACCOUNT_ADMIN_ROLES);
   const perimeter = perimeterOf(requireUser().roles.map((claim) => claim.role));
   if (!perimeter) throw forbidden();
   return { actorId, perimeter };
+}
+
+/** Administrateur des comptes qui écrit : double authentification récente exigée. */
+function requireAccountWriter(): AccountAdminActor {
+  const actor = requireAccountAdmin();
+  requireRecentMfa(CRITICAL_MFA_MAX_AGE_SECONDS);
+  return actor;
 }
 
 /** Compte présenté à l'appelant : numéro complet pour super_admin, masqué pour tous. */
@@ -106,7 +120,12 @@ export class AccountDetails {
     return account;
   }
 
-  async load(userId: string, actor: AccountAdminActor): Promise<AccountDetailView> {
+  /**
+   * Fiche du compte. Un administrateur de métier ne lit que son équipe (ADR-043, ADR-050) : un
+   * autre compte est introuvable. `afterChange` : fiche rendue après sa propre écriture (un rôle
+   * qu'il vient de retirer peut avoir fait sortir le compte de son équipe).
+   */
+  async load(userId: string, actor: AccountAdminActor, afterChange = false): Promise<AccountDetailView> {
     const account = await this.account(userId);
     const [assignments, history, mfa, catalog] = await Promise.all([
       this.accounts.assignments(account.id),
@@ -114,6 +133,8 @@ export class AccountDetails {
       this.accounts.mfaStatus(account.id),
       this.accounts.catalog(),
     ]);
+    const activeRoles = assignments.filter((item) => item.revokedAt === null).map((item) => item.role);
+    if (!afterChange && !isInPerimeter(actor.perimeter, activeRoles)) throw accountAdminErrors.notFound();
     const manages = canManageAccounts(actor.perimeter);
     const self = account.id === actor.actorId;
     return {
@@ -203,7 +224,7 @@ export class GrantAccountRoleUseCase {
   ) {}
 
   async execute(input: { userId: string; roleCode: string; reason?: string }): Promise<AccountDetailView> {
-    const actor = requireAccountAdmin();
+    const actor = requireAccountWriter();
     const reason = reasonOf(input.reason);
     const account = await this.details.account(input.userId);
     const role = await this.roles.findDefinition(input.roleCode);
@@ -241,7 +262,7 @@ export class RevokeAccountRoleUseCase {
     assignmentId: string;
     reason?: string;
   }): Promise<AccountDetailView> {
-    const actor = requireAccountAdmin();
+    const actor = requireAccountWriter();
     const reason = reasonOf(input.reason);
     const account = await this.details.account(input.userId);
     const assignment = isUuid(input.assignmentId)
@@ -266,13 +287,13 @@ export class RevokeAccountRoleUseCase {
       if (error instanceof LastSuperAdminError) throw accountAdminErrors.lastSuperAdmin();
       throw error;
     }
-    return this.details.load(account.id, actor);
+    return this.details.load(account.id, actor, true);
   }
 }
 
 /** Réservé à super_admin : suspension, réactivation, réinitialisation de la double authentification. */
 function requireAccountManager(): AccountAdminActor {
-  const actor = requireAccountAdmin();
+  const actor = requireAccountWriter();
   if (!canManageAccounts(actor.perimeter)) throw forbidden();
   return actor;
 }
@@ -325,7 +346,9 @@ export class ChangeAccountStatusUseCase {
 
 /**
  * Téléphone perdu (UC-ID-18, ADR-023) : efface l'application d'authentification et les codes de
- * récupération ; la prochaine connexion au back-office impose une nouvelle configuration.
+ * récupération ; la prochaine connexion au back-office impose une nouvelle configuration. Le
+ * titulaire est prévenu, et la reconfiguration n'est ouverte que `enrollmentWindowSeconds`
+ * (1 heure par défaut) : au-delà, une nouvelle réinitialisation est nécessaire (ADR-050).
  */
 export class ResetAccountMfaUseCase {
   constructor(
@@ -333,6 +356,7 @@ export class ResetAccountMfaUseCase {
     private readonly accounts: AccountAdminRepository,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
+    private readonly enrollmentWindowSeconds: number,
   ) {}
 
   async execute(input: { userId: string; reason?: string }): Promise<AccountDetailView> {
@@ -340,12 +364,14 @@ export class ResetAccountMfaUseCase {
     const reason = reasonOf(input.reason);
     const account = await this.details.account(input.userId);
     if (account.id === actor.actorId) throw accountAdminErrors.selfAction();
+    const now = this.clock.now();
     const reset = await this.accounts.resetMfa({
       userId: account.id,
       actorId: actor.actorId,
       reason,
       auditId: this.ids.next(),
-      now: this.clock.now(),
+      now,
+      enrollBefore: new Date(now.getTime() + this.enrollmentWindowSeconds * 1000),
     });
     if (!reset) throw accountAdminErrors.mfaNotEnrolled();
     return this.details.load(account.id, actor);

@@ -18,6 +18,7 @@ import { WALLET_RULES } from './wallet.rules';
  * Comptes entreprise (identity) : nouvelle demande (équipe KSP), validation, refus, suspension et
  * réactivation (demandeur).
  * Suppression du compte (identity, ADR-036) : demande enregistrée et annulation (titulaire).
+ * Double authentification réinitialisée (identity, ADR-050) : alerte au titulaire.
  * Paiement en ligne (ADR-031) : reçu au payeur (payment.intent.succeeded), recharge du portefeuille
  * comprise (ADR-046).
  * Portefeuille prépayé (ADR-046) : paiement effectué depuis le portefeuille, portefeuille crédité.

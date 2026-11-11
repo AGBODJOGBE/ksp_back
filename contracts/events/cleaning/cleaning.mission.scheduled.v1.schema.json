@@ -33,6 +33,16 @@
       "type": "string",
       "format": "uuid",
       "description": "Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu"
+    },
+    "amountDueBeforeStart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "description": "Facultatif (ADR-049) : paiement « avant » encore dû (acompte, ou totalité) ; le passage ne démarre pas sans lui",
+      "properties": {
+        "amount": { "type": "integer", "minimum": 1 },
+        "currency": { "const": "XOF" }
+      }
     }
   }
 }

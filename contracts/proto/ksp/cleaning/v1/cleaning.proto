@@ -67,6 +67,8 @@ import "ksp/common/v1/money.proto";
 //                                                           au-delà du reste dû : details.remainingDue (Money)
 //   CLEANING_INTERVENTION_TOO_EARLY     FAILED_PRECONDITION passage démarré avant le jour prévu (details.scheduledDate,
 //                                                           details.timeZone) ; règle réglable par configuration
+//   CLEANING_UPFRONT_PAYMENT_DUE        FAILED_PRECONDITION passage démarré alors que le paiement « avant » (acompte ou
+//                                                           totalité) reste dû (details.amountDue, Money ; ADR-049)
 //   CLEANING_VISIT_TOO_EARLY            FAILED_PRECONDITION compte rendu de visite avant l'heure prévue
 //                                                           (details.scheduledAt) ; règle réglable par configuration
 //   CLEANING_GROUP_NO_ELIGIBLE_REQUEST  FAILED_PRECONDITION opération de groupe (ADR-035) sans aucune demande ou mission

@@ -48,13 +48,28 @@ export interface PaymentRecord {
   refundedAt: Date | null;
 }
 
+/**
+ * Montant payé pour des passages non faits d'une mission récurrente arrêtée par le client, crédité
+ * dans son portefeuille prépayé (cleaning.mission.credited, ADR-049) : il ne compte plus dans le
+ * montant payé.
+ */
+export interface MissionCredit {
+  /** Identifiant du crédit : wallet ne crédite qu'une fois par identifiant. */
+  id: string;
+  amount: number;
+  creditedAt: Date;
+}
+
 export interface PaymentState {
   plan: PaymentPlan;
+  /** Montant de la mission ; à l'arrêt d'une mission récurrente, celui des passages faits (ADR-049). */
   total: number;
   depositPercent: number;
   /** Montant attendu avant d'être « acompte reçu » : l'acompte, ou la totalité. */
   depositAmount: number;
   payments: PaymentRecord[];
+  /** Crédit au portefeuille à l'arrêt d'une mission récurrente (ADR-049) ; absent ou null sinon. */
+  credit?: MissionCredit | null;
 }
 
 export function isValidPlan(plan: PaymentPlan): boolean {
@@ -67,14 +82,25 @@ export function isValidPlan(plan: PaymentPlan): boolean {
 
 export function newPaymentState(plan: PaymentPlan, total: number, depositPercent: number): PaymentState {
   const percent = plan.option === 'full' ? 100 : depositPercent;
-  return { plan, total, depositPercent: percent, depositAmount: percentOf(total, percent), payments: [] };
+  return {
+    plan,
+    total,
+    depositPercent: percent,
+    depositAmount: percentOf(total, percent),
+    payments: [],
+    credit: null,
+  };
 }
 
-/** Montant payé : paiements enregistrés, sauf ceux remboursés dans le portefeuille. */
-export function paidAmount(state: Pick<PaymentState, 'payments'>): number {
-  return state.payments
+/**
+ * Montant payé : paiements enregistrés, sauf ceux remboursés dans le portefeuille, moins un crédit
+ * au portefeuille (arrêt d'une mission récurrente, ADR-049).
+ */
+export function paidAmount(state: Pick<PaymentState, 'payments' | 'credit'>): number {
+  const received = state.payments
     .filter((payment) => payment.refundedAt === null)
     .reduce((sum, payment) => sum + payment.amount, 0);
+  return received - (state.credit?.amount ?? 0);
 }
 
 export function paymentStatus(state: PaymentState): PaymentStatus {
@@ -87,7 +113,7 @@ export function paymentStatus(state: PaymentState): PaymentStatus {
 }
 
 /** Reste dû : total moins les paiements enregistrés, jamais négatif. */
-export function remainingDue(state: Pick<PaymentState, 'total' | 'payments'>): number {
+export function remainingDue(state: Pick<PaymentState, 'total' | 'payments' | 'credit'>): number {
   return Math.max(0, state.total - paidAmount(state));
 }
 
@@ -97,6 +123,16 @@ export function remainingDue(state: Pick<PaymentState, 'total' | 'payments'>): n
  */
 export function depositDue(state: PaymentState): number {
   if (state.plan.option !== 'deposit') return 0;
+  return Math.max(0, Math.min(state.depositAmount, state.total) - paidAmount(state));
+}
+
+/**
+ * Paiement « avant » (ADR-049) : montant encore dû avant le premier passage — l'acompte attendu, ou
+ * la totalité pour un plan « totalité ». Le passage peut être planifié, mais pas démarré tant qu'il
+ * reste dû. 0 pour un paiement « après ».
+ */
+export function upfrontDue(state: PaymentState): number {
+  if (state.plan.timing !== 'before') return 0;
   return Math.max(0, Math.min(state.depositAmount, state.total) - paidAmount(state));
 }
 

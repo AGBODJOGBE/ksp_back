@@ -207,6 +207,23 @@ describeWithDatabase('PrismaOrganizationRepository (PostgreSQL)', () => {
     ]);
   });
 
+  it('fiches lues par les autres services : administrateurs actuels seulement (ADR-050)', async () => {
+    const { organization } = await create();
+    const formerAdmin = uuid();
+    const member = uuid();
+    await pool.query(
+      `INSERT INTO users (id, status, updated_at) VALUES ($1, 'active', now()), ($2, 'active', now())`,
+      [formerAdmin, member],
+    );
+    await pool.query(
+      `INSERT INTO organization_members (id, organization_id, user_id, role, joined_at, removed_at)
+       VALUES ($1, $3, $4, 'org_admin', now(), now()), ($2, $3, $5, 'org_member', now(), null)`,
+      [uuid(), uuid(), organization.id, formerAdmin, member],
+    );
+    const [found] = await organizations.findByIds([organization.id]);
+    expect(found?.adminUserIds).toEqual([CLIENT]);
+  });
+
   it('suspension et réactivation : le demandeur figure dans l’événement', async () => {
     const { organization } = await create();
     const decide = (

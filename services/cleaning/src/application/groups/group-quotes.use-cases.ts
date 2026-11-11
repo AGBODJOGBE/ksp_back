@@ -173,7 +173,7 @@ export class AcceptGroupQuotesUseCase {
   }): Promise<GroupOutcome> {
     const customer = currentCustomer();
     const key = parseKey(input.idempotencyKey, true);
-    const view = await ownGroup(this.deps, customer.userId, input.groupId);
+    const view = await ownGroup(this.deps, customer, input.groupId);
     const replay = await previousOutcome(this.deps, customer.userId, 'quotes.accepted', key, view.group.id);
     if (replay) return replay;
     const now = this.deps.clock.now();

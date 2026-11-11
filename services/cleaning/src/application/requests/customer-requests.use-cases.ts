@@ -17,7 +17,13 @@ import { activeService } from '../catalog/catalog.use-cases';
 import { type PricingInput, resolveAnswers } from '../catalog/pricing-input';
 import { type CleaningDeps, missionView, type MissionView, presentRequest } from '../deps';
 import { type Changes } from '../ports';
-import { currentCustomer, type Customer } from '../shared/access';
+import {
+  type CaseAccess,
+  currentCustomer,
+  type Customer,
+  ownsCase,
+  requireOrganizationActor,
+} from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import {
   optionalText,
@@ -30,14 +36,18 @@ import {
   requirePositiveInt,
 } from '../shared/validation';
 
-/** Demande du client, sinon introuvable : jamais révéler l'existence du dossier d'un autre (404). */
+/**
+ * Demande du client, sinon introuvable : jamais révéler l'existence du dossier d'un autre (404).
+ * Demande d'organisation : dans son contexte actif seulement ; agir exige org_admin ou org_member.
+ */
 export async function ownRequest(
   deps: CleaningDeps,
   customer: Customer,
   requestId: string,
+  access: CaseAccess = 'read',
 ): Promise<QuoteRequest> {
   const request = await deps.requests.findById(requestId);
-  if (!request || request.customerId !== customer.userId) throw CleaningErrors.requestNotFound();
+  if (!request || !ownsCase(customer, request, access)) throw CleaningErrors.requestNotFound();
   return request;
 }
 
@@ -86,6 +96,7 @@ export class RequestQuoteUseCase {
 
   async execute(input: RequestQuoteInput): Promise<QuoteRequest> {
     const customer = currentCustomer();
+    requireOrganizationActor(customer);
     const key = requiredText('idempotencyKey', input.idempotencyKey, 100);
     const now = this.deps.clock.now();
     const replay = await this.deps.requests.findByIdempotencyKey(customer.userId, key);
@@ -199,7 +210,11 @@ export class ListMyRequestsUseCase {
   async execute(page: PageRequest): Promise<PageResult<QuoteRequest>> {
     const customer = currentCustomer();
     const now = this.deps.clock.now();
-    const result = await this.deps.requests.list({ customerId: customer.userId }, page);
+    // Dossiers du contexte actif seulement (ADR-049) : personnels, ou ceux de l'organisation active.
+    const result = await this.deps.requests.list(
+      { customerId: customer.userId, organizationId: customer.organizationId },
+      page,
+    );
     return { ...result, items: result.items.map((request) => presentRequest(request, now)) };
   }
 }
@@ -334,7 +349,7 @@ export class AcceptQuoteUseCase {
   async execute(input: AcceptQuoteInput): Promise<{ request: QuoteRequest; mission: MissionView }> {
     const customer = currentCustomer();
     const key = requiredText('idempotencyKey', input.idempotencyKey, 100);
-    const request = await ownRequest(this.deps, customer, input.requestId);
+    const request = await ownRequest(this.deps, customer, input.requestId, 'act');
     const now = this.deps.clock.now();
 
     const replayed = await this.deps.requests.findAcceptance(request.id, key);
@@ -361,8 +376,7 @@ export class AcceptQuoteUseCase {
       await bookingChanges(this.deps, customer.userId, request, quote, mission, now),
     );
     if (outcome.status === 'conflict') throw CleaningErrors.concurrentUpdate();
-    // L'acceptation se fait au nom du titulaire, quel que soit son contexte actif : c'est la
-    // demande qui porte l'organisation (ADR-030).
+    // C'est la demande qui porte l'organisation (ADR-030), acceptée dans son contexte (ADR-049).
     if (outcome.status === 'organization_suspended') throw CleaningErrors.organizationSuspended();
     return this.result(request.id, outcome.status === 'replayed' ? outcome.missionId : mission.id);
   }
@@ -445,7 +459,7 @@ async function closeByCustomer(
   to: 'declined' | 'cancelled',
 ): Promise<QuoteRequest> {
   const customer = currentCustomer();
-  const request = await ownRequest(deps, customer, input.requestId);
+  const request = await ownRequest(deps, customer, input.requestId, 'act');
   const now = deps.clock.now();
   assertRequestTransition(request, to, now);
   const reason = optionalText('reason', input.reason, 500);

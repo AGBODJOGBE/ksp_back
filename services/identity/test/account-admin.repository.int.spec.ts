@@ -248,9 +248,26 @@ describeWithDatabase('PrismaAccountAdminRepository (PostgreSQL)', () => {
       recoveryCodesRemaining: 1,
       resettable: true,
     });
+    const enrollBefore = new Date(now.getTime() + 3600_000);
     const reset = () =>
-      accounts.resetMfa({ userId: AGENT, actorId: DIRECTOR, reason: 'Perte', auditId: uuid(), now });
+      accounts.resetMfa({
+        userId: AGENT,
+        actorId: DIRECTOR,
+        reason: 'Perte',
+        auditId: uuid(),
+        now,
+        enrollBefore,
+      });
     await expect(reset()).resolves.toBe(true);
+    // Titulaire prévenu (événement) et reconfiguration ouverte jusqu'à l'échéance (ADR-050).
+    const deadline = await pool.query('SELECT mfa_enrollment_deadline FROM users WHERE id = $1', [AGENT]);
+    expect(deadline.rows).toEqual([{ mfa_enrollment_deadline: enrollBefore }]);
+    const outbox = await pool.query(
+      "SELECT payload FROM outbox WHERE event_type = 'identity.user.mfa_reset'",
+    );
+    expect(outbox.rows.map((row) => row.payload.payload)).toEqual([
+      { userId: AGENT, enrollBefore: enrollBefore.toISOString() },
+    ]);
     await expect(reset()).resolves.toBe(false);
     await expect(accounts.mfaStatus(AGENT)).resolves.toEqual({
       configuredAt: null,

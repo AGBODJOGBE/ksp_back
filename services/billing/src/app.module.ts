@@ -29,6 +29,7 @@ import {
   BillingGrpcController,
   InvoicePaymentDueGrpcController,
   ObligationGrpcController,
+  WalletDebitCheckGrpcController,
 } from './interfaces/grpc/billing.controller';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
@@ -61,6 +62,7 @@ export class AppModule {
         BillingAdminGrpcController,
         InvoicePaymentDueGrpcController,
         ObligationGrpcController,
+        WalletDebitCheckGrpcController,
       ],
       providers: [
         PrismaService,

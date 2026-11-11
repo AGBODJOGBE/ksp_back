@@ -6,13 +6,15 @@ import {
   type PageRequest,
   type PageResult,
 } from '../../application/ports';
-import { formatInvoiceNumber, type Invoice, type InvoicePayment } from '../../domain/invoice';
+import { type BillingContract } from '../../domain/contract';
+import { formatInvoiceNumber, type Invoice, type InvoicePayment, invoiceYear } from '../../domain/invoice';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   INVOICE_INCLUDE,
   invoiceOrganizationColumns,
   json,
   pageArgs,
+  toContract,
   toInvoice,
   toPage,
   type Tx,
@@ -27,22 +29,27 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   issue(
-    draft: Omit<Invoice, 'number'>,
+    contractId: string,
+    periodIndex: number,
+    build: (contract: BillingContract) => Omit<Invoice, 'number'> | null,
     events: (invoice: Invoice) => OutboxMessage[],
   ): Promise<Invoice | null> {
     return this.prisma.$transaction(async (tx) => {
-      // Verrou du contrat : deux émissions simultanées du même mois sont sérialisées.
-      await tx.$queryRawUnsafe(
-        'SELECT id FROM billing_contracts WHERE id = $1::uuid FOR UPDATE',
-        draft.contractId,
-      );
+      // Verrou du contrat : deux émissions simultanées du même mois sont sérialisées, et aucun
+      // événement ne change le contrat pendant l'émission.
+      await tx.$queryRawUnsafe('SELECT id FROM billing_contracts WHERE id = $1::uuid FOR UPDATE', contractId);
       const existing = await tx.invoice.findUnique({
-        where: { contractId_periodIndex: { contractId: draft.contractId, periodIndex: draft.periodIndex } },
+        where: { contractId_periodIndex: { contractId, periodIndex } },
         select: { id: true },
       });
       if (existing) return null;
-      // Numéro tiré dans la même transaction : un échec ne laisse pas de trou.
-      const year = draft.issuedAt.getUTCFullYear();
+      // Montant recalculé depuis le contrat relu sous le verrou (ADR-049).
+      const row = await tx.billingContract.findUnique({ where: { id: contractId } });
+      const draft = row ? build(toContract(row)) : null;
+      if (!draft) return null;
+      // Numéro tiré dans la même transaction (un échec ne laisse pas de trou), dans l'année de la
+      // période facturée, au Bénin (ADR-049).
+      const year = invoiceYear(draft);
       const [counter] = await tx.$queryRawUnsafe<{ last_number: number }[]>(
         'INSERT INTO invoice_counters (year, last_number) VALUES ($1, 1) ' +
           'ON CONFLICT (year) DO UPDATE SET last_number = invoice_counters.last_number + 1 ' +

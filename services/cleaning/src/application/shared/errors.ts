@@ -25,6 +25,9 @@ export const CleaningErrors = {
   serviceNotFound: () => AppError.notFound('CLEANING_SERVICE_NOT_FOUND', 'Cette prestation est introuvable.'),
   requestNotFound: () => AppError.notFound('CLEANING_REQUEST_NOT_FOUND', 'Cette demande est introuvable.'),
   missionNotFound: () => AppError.notFound('CLEANING_MISSION_NOT_FOUND', 'Cette mission est introuvable.'),
+  /** Méthode réservée à un autre service (en-tête de cleaning.proto). */
+  callerForbidden: () =>
+    AppError.forbidden('CLEANING_CALLER_FORBIDDEN', "Ce service n'est pas autorisé à appeler cette méthode."),
   visitNotFound: () => AppError.notFound('CLEANING_VISIT_NOT_FOUND', 'Cette visite est introuvable.'),
   interventionNotFound: () =>
     AppError.notFound('CLEANING_INTERVENTION_NOT_FOUND', 'Ce passage est introuvable.'),
@@ -170,6 +173,14 @@ export const CleaningErrors = {
         ? `Ce paiement dépasse le reste dû : ${formatXof(remainingDue)}.`
         : 'Cette mission est déjà entièrement payée : aucun paiement de plus ne peut être enregistré.',
       { reason: 'exceeds_balance', remainingDue: { amount: remainingDue, currency: CURRENCY } },
+    ),
+  /** Paiement « avant » encore dû : le passage ne peut pas démarrer (ADR-049). */
+  upfrontPaymentDue: (amountDue: number) =>
+    AppError.precondition(
+      'CLEANING_UPFRONT_PAYMENT_DUE',
+      `Le client a choisi de payer avant la prestation : ${formatXof(amountDue)} restent à régler ` +
+        'avant de démarrer ce passage.',
+      { amountDue: { amount: amountDue, currency: CURRENCY } },
     ),
   interventionTooEarly: (scheduledStart: Date, timeZone: string) =>
     AppError.precondition(

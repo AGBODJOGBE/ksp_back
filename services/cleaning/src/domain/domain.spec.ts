@@ -233,7 +233,8 @@ describe('mission et passages', () => {
     const m = mission([intervention('completed'), intervention('cancelled'), intervention('planned')], 4);
     expect(remainingToSchedule(m)).toBe(2);
     expect(nextStart(m)).toEqual(at('2026-10-30T08:00:00Z'));
-    expect(nextStart(mission([]))).toEqual(at('2026-11-02T08:00:00Z'));
+    // Aucun passage planifié : pas de début connu, l'annulation est sans frais (ADR-049).
+    expect(nextStart(mission([]))).toBeNull();
   });
 
   it('le client annule seulement avant le début', () => {

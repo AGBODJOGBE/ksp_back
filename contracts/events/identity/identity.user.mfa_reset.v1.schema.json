@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.user.mfa_reset.v1.schema.json",
+  "title": "identity.user.mfa_reset",
+  "description": "La double authentification d'un compte a été réinitialisée au back-office (UC-ID-18, ADR-050) : le titulaire est prévenu, et doit reconfigurer son application avant enrollBefore.",
+  "x-event-type": "identity.user.mfa_reset",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["userId", "enrollBefore"],
+  "properties": {
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "enrollBefore": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

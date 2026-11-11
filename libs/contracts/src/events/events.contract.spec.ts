@@ -43,6 +43,7 @@ const examples: { [K in IdentityEventType]: IdentityEventPayloads[K] } = {
     scheduledFor: '2026-12-05T10:00:00.000Z',
   },
   'identity.user.deletion_cancelled': { userId: uuid },
+  'identity.user.mfa_reset': { userId: uuid, enrollBefore: '2026-11-07T11:00:00.000Z' },
   'identity.organization.created': { organizationId: uuid, createdBy: uuid, legalName: 'SARL Bénin Propre' },
   'identity.organization.validated': {
     organizationId: uuid,
@@ -351,6 +352,14 @@ describe('Contrats des événements cleaning', () => {
     expect(validate({ ...base, groupId: 'groupe-1' })).toBe(false);
     expect(validate({ ...base, serviceName: '' })).toBe(false);
     expect(validate({ ...base, landmark: 'Portail vert' })).toBe(false);
+  });
+
+  it('cleaning.mission.scheduled : paiement « avant » encore dû, facultatif (ADR-049)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.mission.scheduled')!);
+    const base = cleaningExamples['cleaning.mission.scheduled'];
+    expect(validate({ ...base, amountDueBeforeStart: { amount: 15_000, currency: 'XOF' } })).toBe(true);
+    expect(validate({ ...base, amountDueBeforeStart: { amount: 0, currency: 'XOF' } })).toBe(false);
+    expect(validate({ ...base, amountDueBeforeStart: 15_000 })).toBe(false);
   });
 
   it('cleaning.visit.scheduled : visite commune d’un groupe, demandes listées (ADR-035)', () => {

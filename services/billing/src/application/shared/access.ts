@@ -1,4 +1,5 @@
-import { AppError, hasRole, requireRecentMfa, requireUser } from '@ksp/platform';
+import { AppError, currentContext, hasRole, requireRecentMfa, requireUser } from '@ksp/platform';
+import { BillingErrors } from './errors';
 
 /**
  * Contrôles d'accès de billing. La gateway filtre déjà selon son manifeste ; le service
@@ -15,6 +16,23 @@ export const BILLING_SETTINGS_ADMINS = ['cleaning_admin', 'finance_officer', 'su
 /** Double authentification faite pendant la session back-office en cours (12 heures au plus). */
 export const BACKOFFICE_MFA_MAX_AGE_SECONDS = 12 * 3600;
 
+/**
+ * Méthode réservée à certains services : l'appelant est authentifié par son jeton de service,
+ * vérifié par le kit. Sans vérificateur (développement local), il n'est pas connu et l'appel passe ;
+ * en production, le jeton de service est obligatoire.
+ */
+export function requireCaller(allowed: readonly string[]): void {
+  const caller = currentContext()?.callerService;
+  if (caller && !allowed.includes(caller)) throw BillingErrors.callerForbidden();
+}
+
+/**
+ * Méthodes du client et du back-office (ADR-049) : seule la gateway les appelle. Le contexte
+ * utilisateur qu'elle transmet n'est cru que d'elle ; un autre service est refusé
+ * (BILLING_CALLER_FORBIDDEN). Les méthodes internes gardent leurs appelants (identity, payment, wallet).
+ */
+export const GATEWAY_CALLERS = ['gateway'] as const;
+
 /** Périmètre du client : son organisation active, sinon ses factures personnelles. */
 export interface CustomerScope {
   userId: string;
@@ -22,6 +40,7 @@ export interface CustomerScope {
 }
 
 export function currentCustomer(): CustomerScope {
+  requireCaller(GATEWAY_CALLERS);
   const user = requireUser();
   const organizationId = user.activeContext && user.activeContext !== 'personal' ? user.activeContext : null;
   return { userId: user.userId, organizationId };
@@ -51,6 +70,7 @@ export function currentPayer(): CustomerScope {
 }
 
 export function requireStaff(allowed: readonly string[], nowMs?: number): { userId: string } {
+  requireCaller(GATEWAY_CALLERS);
   const user = requireUser();
   if (!allowed.some((role) => hasRole(user, role))) {
     throw AppError.forbidden('AUTH_FORBIDDEN', "Vous n'avez pas les droits nécessaires pour cette action.");

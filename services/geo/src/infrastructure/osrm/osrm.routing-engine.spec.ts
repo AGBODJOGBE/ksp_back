@@ -140,5 +140,37 @@ describe('OSRM : itinéraire, matrice, point le plus proche', () => {
       expect(logs[0]).toMatch(/^nearest : échec \((TimeoutError|AbortError)\)$/);
       expect(logs.join(' ')).not.toMatch(/6\.36|2\.39|6\.44|2\.35/);
     });
+
+    it('réponse « Ok » incomplète : jamais 0 m ni 0 s, routage indisponible (ADR-050)', async () => {
+      await expect(
+        fakeOsrm(json({ code: 'Ok', routes: [{ distance: 14_211.6 }] })).engine.route(
+          [CADJEHOUN, CALAVI],
+          'car',
+        ),
+      ).rejects.toMatchObject(unavailable);
+      await expect(
+        fakeOsrm(json({ code: 'Ok', routes: [{ distance: 'loin', duration: 12 }] })).engine.route(
+          [CADJEHOUN, CALAVI],
+          'car',
+        ),
+      ).rejects.toMatchObject(unavailable);
+      // Matrice sans durées, ou sans la ligne d'une origine : pas des cellules « inaccessibles ».
+      await expect(
+        fakeOsrm(json({ code: 'Ok', distances: [[10]] })).engine.matrix([CADJEHOUN], [CALAVI], 'car'),
+      ).rejects.toMatchObject(unavailable);
+      await expect(
+        fakeOsrm(json({ code: 'Ok', distances: [[10]], durations: [[5]] })).engine.matrix(
+          [CADJEHOUN, CALAVI],
+          [PORTO_NOVO],
+          'car',
+        ),
+      ).rejects.toMatchObject(unavailable);
+      await expect(
+        fakeOsrm(json({ code: 'Ok', waypoints: [{ location: [2.39, 6.36] }] })).engine.nearest(
+          CADJEHOUN,
+          'car',
+        ),
+      ).rejects.toMatchObject(unavailable);
+    });
   });
 });

@@ -1,12 +1,15 @@
 /**
  * Règles des codes de signature (ADR-044), proches de celles des codes de connexion d'identity :
  * 6 chiffres, 10 minutes, 5 essais par code, un nouveau code au plus toutes les 60 secondes et
- * 5 par heure pour une même demande. Valeurs lues dans la configuration.
+ * 5 par heure pour une même demande, 15 essais en tout par demande (ADR-050). Valeurs lues dans la
+ * configuration.
  */
 export interface CodePolicy {
   length: number;
   ttlSeconds: number;
   maxAttempts: number;
+  /** Essais en tout pour une demande, tous codes confondus ; au-delà, la demande est close. */
+  maxAttemptsPerRequest: number;
   resendDelaySeconds: number;
   maxPerHour: number;
 }
@@ -15,6 +18,7 @@ export const DEFAULT_CODE_POLICY: CodePolicy = {
   length: 6,
   ttlSeconds: 600,
   maxAttempts: 5,
+  maxAttemptsPerRequest: 15,
   resendDelaySeconds: 60,
   maxPerHour: 5,
 };

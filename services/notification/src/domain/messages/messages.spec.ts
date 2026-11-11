@@ -255,7 +255,9 @@ describe('Suppression du compte (ADR-036)', () => {
   it('modèles au catalogue, par WhatsApp et e-mail, messages courts, sans date ni lien invalide', () => {
     for (const template of ACCOUNT_TEMPLATES) {
       expect(findTemplate(template.code)).toBe(template);
-      expect(template).toMatchObject({ channels: ['whatsapp', 'email'], kind: 'short', secret: false });
+      // Alerte de réinitialisation de la double authentification : message important (ADR-050).
+      const kind = template.code === 'identity.mfa_reset.staff' ? 'important' : 'short';
+      expect(template).toMatchObject({ channels: ['whatsapp', 'email'], kind, secret: false });
     }
     const requested = findTemplate('identity.account_deletion_requested.customer')!;
     const variables = {

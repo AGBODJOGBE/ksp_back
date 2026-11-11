@@ -20,8 +20,11 @@ export interface OtpChallengeRepository {
   /** Envoi impossible : la demande devient inutilisable et ne compte pas dans les limites. */
   markSendFailed(id: string, failedAt: Date): Promise<void>;
   findById(id: string): Promise<StoredOtpChallenge | null>;
-  /** Compte un essai faux et renvoie le nombre d'essais, de façon atomique. */
-  registerFailedAttempt(id: string): Promise<number>;
+  /**
+   * Prend un essai avant la comparaison, de façon atomique : renvoie le nombre d'essais, ou null si
+   * la demande n'est plus utilisable (envoi manqué, consommée, expirée ou essais épuisés).
+   */
+  takeAttempt(id: string, maxAttempts: number, now: Date): Promise<number | null>;
 }
 
 /** Envoi du code au destinataire (appel gRPC direct à notification, ADR-014). */

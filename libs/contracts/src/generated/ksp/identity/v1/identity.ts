@@ -185,6 +185,12 @@ export interface OrganizationProfile {
    */
   billingEmail: string;
   status: OrganizationStatus;
+  /**
+   * Comptes administrateurs actuels (membres org_admin non retirés), destinataires des messages
+   * adressés à l'organisation (factures, ADR-050) ; vide pour un appelant qui n'a pas droit aux
+   * coordonnées.
+   */
+  adminUserIds: string[];
 }
 
 export interface GetOrganizationsByIdsRequest {
@@ -951,7 +957,8 @@ export interface IdentityServiceClient {
    * Fiches d'organisations (comptes entreprise, ADR-027) lues par un autre service, sans les
    * membres ni les décisions du back-office. Appelants autorisés : billing (en-tête des factures,
    * copié à l'émission), cleaning (raison sociale affichée au back-office, ADR-029) et
-   * notification, seul à recevoir l'e-mail de facturation (factures envoyées à l'entreprise).
+   * notification, seul à recevoir l'e-mail de facturation et les administrateurs actuels
+   * (factures envoyées à l'entreprise, ADR-050).
    * L'e-mail transmis est toujours vérifié par code ; vide sinon.
    * Tous les états sont rendus (status) ; les identifiants introuvables sont omis (100 au plus).
    * Erreurs :
@@ -1012,7 +1019,8 @@ export interface IdentityServiceController {
    * Fiches d'organisations (comptes entreprise, ADR-027) lues par un autre service, sans les
    * membres ni les décisions du back-office. Appelants autorisés : billing (en-tête des factures,
    * copié à l'émission), cleaning (raison sociale affichée au back-office, ADR-029) et
-   * notification, seul à recevoir l'e-mail de facturation (factures envoyées à l'entreprise).
+   * notification, seul à recevoir l'e-mail de facturation et les administrateurs actuels
+   * (factures envoyées à l'entreprise, ADR-050).
    * L'e-mail transmis est toujours vérifié par code ; vide sinon.
    * Tous les états sont rendus (status) ; les identifiants introuvables sont omis (100 au plus).
    * Erreurs :

@@ -5,6 +5,7 @@ import {
   contentProblem,
   declarationProblem,
   type FileSubject,
+  incomingKeyFor,
   isOwnedBy,
   type RejectionReason,
   storageKeyFor,
@@ -83,7 +84,8 @@ async function openUpload(
   };
   await deps.files.create(file);
   const ttl = deps.settings.uploadUrlTtlSeconds;
-  const presigned = await deps.storage.presignUpload(file.storageKey, {
+  // Dépôt sous une clé à part, copié après vérification (ADR-050).
+  const presigned = await deps.storage.presignUpload(incomingKeyFor(file.id), {
     contentType: file.contentType,
     sizeBytes: file.sizeBytes,
     expiresInSeconds: ttl,
@@ -152,10 +154,12 @@ export class CreateServiceUploadUseCase {
 }
 
 /**
- * Confirmation de l'envoi : le contenu est relu dans le stockage (présence, taille réelle, type
- * enregistré, signature binaire), puis soumis à l'antivirus. Conforme : `available`. Sinon
- * `rejected`, contenu effacé du stockage, et FILE_UPLOAD_REJECTED. Contenu absent : le fichier
- * reste en attente (FILE_NOT_UPLOADED) jusqu'à sa purge. Idempotente.
+ * Confirmation de l'envoi : le contenu déposé sous la clé de dépôt est relu (présence, taille
+ * réelle, type enregistré, signature binaire), puis soumis à l'antivirus. Conforme : copié sous la
+ * clé du fichier, à la condition qu'il n'ait pas changé depuis la vérification (ETag), dépôt effacé,
+ * `available` (ADR-050). Sinon `rejected`, contenu effacé du stockage, et FILE_UPLOAD_REJECTED.
+ * Contenu absent, ou remplacé pendant la vérification : le fichier reste en attente
+ * (FILE_NOT_UPLOADED) jusqu'à sa purge. Idempotente.
  */
 export class CompleteUploadUseCase {
   constructor(private readonly deps: FileDeps) {}
@@ -184,12 +188,18 @@ export class CompleteUploadUseCase {
     if (file.status === 'deleted') throw FileErrors.notFound();
 
     const { storage, scanner, files, clock, settings } = this.deps;
-    const stat = await storage.stat(file.storageKey);
+    const incoming = incomingKeyFor(file.id);
+    const stat = await storage.stat(incoming);
     if (!stat) throw FileErrors.notUploaded();
-    const head =
-      stat.sizeBytes > 0 ? await storage.readHead(file.storageKey, SIGNATURE_BYTES) : new Uint8Array();
+    const head = stat.sizeBytes > 0 ? await storage.readHead(incoming, SIGNATURE_BYTES) : new Uint8Array();
     let problem: RejectionReason | null = contentProblem(file, { ...stat, head });
-    if (!problem && (await scanner.scan(file)) === 'infected') problem = 'malware';
+    if (!problem && (await scanner.scan({ ...file, storageKey: incoming })) === 'infected') {
+      problem = 'malware';
+    }
+    // Contenu publié tel qu'il a été vérifié : remplacé entre-temps, il n'est pas copié.
+    if (!problem && !(await storage.copyIfUnchanged(incoming, file.storageKey, stat.etag))) {
+      throw FileErrors.notUploaded();
+    }
 
     const now = clock.now();
     const saved = problem
@@ -207,11 +217,9 @@ export class CompleteUploadUseCase {
       if (!reloaded || attempt > 0) throw FileErrors.notFound();
       return this.complete(reloaded, attempt + 1);
     }
-    if (problem) {
-      // Un contenu refusé n'est jamais lisible : effacé tout de suite (au mieux, la purge repasse).
-      await storage.remove(file.storageKey).catch(() => undefined);
-      throw FileErrors.uploadRejected(problem);
-    }
+    // Dépôt effacé (au mieux : la purge repasse) ; un contenu refusé n'est jamais lisible.
+    await storage.remove(incoming).catch(() => undefined);
+    if (problem) throw FileErrors.uploadRejected(problem);
     return { ...file, status: 'available', completedAt: now };
   }
 }
