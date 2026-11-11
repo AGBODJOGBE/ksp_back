@@ -1,4 +1,4 @@
-import { walletV1 } from '@ksp/contracts';
+import { commonV1, walletV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import {
   type PageResult,
@@ -115,6 +115,23 @@ const payoutPage = (page: PageResult<WalletPayout>) => ({
 });
 
 /** Opérations des services métier (recovery). Droits vérifiés par les cas d'usage. */
+/**
+ * ksp.common.v1.ObligationService, interrogé par identity avant la suppression d'un compte
+ * (UC-ID-11, ADR-036, ADR-048). Le contrôle de l'appelant est fait par le cas d'usage.
+ */
+@Controller()
+@commonV1.ObligationServiceControllerMethods()
+export class ObligationGrpcController implements commonV1.ObligationServiceController {
+  constructor(@Inject(WALLET_USE_CASES) private readonly useCases: WalletUseCases) {}
+
+  async hasPendingObligations(
+    request: commonV1.HasPendingObligationsRequest,
+  ): Promise<commonV1.HasPendingObligationsResponse> {
+    const obligations = await this.useCases.hasPendingObligations.execute({ userId: request.userId });
+    return { hasPending: obligations.length > 0, obligations };
+  }
+}
+
 @Controller()
 @walletV1.WalletServiceControllerMethods()
 export class WalletGrpcController implements walletV1.WalletServiceController {

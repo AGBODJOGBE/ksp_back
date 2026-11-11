@@ -55,6 +55,7 @@ describe('configuration de wallet', () => {
         IDENTITY_JWKS_URL: 'https://identity/.well-known/jwks.json',
         IDENTITY_TOKEN_URL: 'https://identity/oauth/token',
         SERVICE_CLIENT_SECRET: 's'.repeat(32),
+        PAYMENT_GRPC_URL: 'dns:///payment-headless:50055',
         ...(secret ? { WALLET_PHONE_HASH_SECRET: secret } : {}),
       });
     expect(production()).toThrow(/WALLET_PHONE_HASH_SECRET/);

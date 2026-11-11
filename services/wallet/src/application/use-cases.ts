@@ -1,3 +1,4 @@
+import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import { type WalletDeps } from './ports';
 import {
   CreateTopUpUseCase,
@@ -49,6 +50,7 @@ export function createUseCases(deps: WalletDeps) {
     createTopUp: new CreateTopUpUseCase(deps),
     creditTopUp: new CreditTopUpUseCase(deps),
     creditPrepaidWallet: new CreditPrepaidWalletUseCase(deps),
+    hasPendingObligations: new HasPendingObligationsUseCase(deps),
   };
 }
 

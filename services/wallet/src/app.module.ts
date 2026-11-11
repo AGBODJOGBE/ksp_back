@@ -20,6 +20,7 @@ import { SUBMIT_INTERVAL_MS, SubmitPayoutsService } from './infrastructure/sched
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import {
   WalletAccountGrpcController,
+  ObligationGrpcController,
   WalletAdminGrpcController,
   WalletGrpcController,
 } from './interfaces/grpc/wallet.controllers';
@@ -38,7 +39,12 @@ export class AppModule {
         PlatformModule.forRoot(config),
         ClientsModule.register([grpcClientOptions(PAYMENT_CLIENT, 'payment', config.PAYMENT_GRPC_URL)]),
       ],
-      controllers: [WalletGrpcController, WalletAccountGrpcController, WalletAdminGrpcController],
+      controllers: [
+        WalletGrpcController,
+        WalletAccountGrpcController,
+        WalletAdminGrpcController,
+        ObligationGrpcController,
+      ],
       providers: [
         PrismaService,
         OutboxRelayService,
