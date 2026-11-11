@@ -1,4 +1,3 @@
-import { AppError, currentContext } from '@ksp/platform';
 import { type Mission } from '../../domain/mission';
 import {
   depositDue,
@@ -11,12 +10,13 @@ import {
 } from '../../domain/payment';
 import { isBusinessContract } from '../../domain/standing';
 import { type CleaningDeps } from '../deps';
+import { requireCaller } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import { requireUuid } from '../shared/validation';
 import { type EvaluateStandingUseCase, SYSTEM_ACTOR } from '../standing/standing.use-cases';
 
 /** Seul payment lit le montant dû d'une mission (ADR-031). */
-const PAYMENT_CALLERS = new Set(['payment']);
+const PAYMENT_CALLERS = ['payment'];
 /** Consommateur des événements de payment : file `cleaning.<événement>`. */
 export const PAYMENT_CONSUMER = 'cleaning';
 const MAX_ATTEMPTS = 3;
@@ -39,14 +39,7 @@ export class GetMissionAmountDueUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
   async execute(missionId: string): Promise<MissionAmountDue> {
-    // Renseigné par le kit après vérification du jeton de service ; absent sans vérificateur (développement).
-    const caller = currentContext()?.callerService;
-    if (caller && !PAYMENT_CALLERS.has(caller)) {
-      throw AppError.forbidden(
-        'CLEANING_CALLER_FORBIDDEN',
-        "Ce service n'est pas autorisé à appeler cette méthode.",
-      );
-    }
+    requireCaller(PAYMENT_CALLERS);
     const mission = await this.deps.missions.findById(requireUuid('missionId', missionId));
     if (!mission) throw CleaningErrors.missionNotFound();
     return {
@@ -61,6 +54,12 @@ export class GetMissionAmountDueUseCase {
 
 export type OnlinePaymentOutcome = 'recorded' | 'duplicate' | 'ignored';
 
+/** Issue, et trop-perçu éventuel (à rembourser : différé, ADR-031), comme pour une facture. */
+export interface OnlinePaymentResult {
+  outcome: OnlinePaymentOutcome;
+  excess: number;
+}
+
 /**
  * payment.intent.succeeded : paiement en ligne confirmé par le prestataire, enregistré sur la
  * mission (moyen `mobile_money_online`, auteur `system`), avec l'inbox dans la même transaction :
@@ -70,7 +69,8 @@ export type OnlinePaymentOutcome = 'recorded' | 'duplicate' | 'ignored';
  * après l'inbox, la nouvelle tentative la termine.
  *
  * L'argent reçu est toujours enregistré, même au-delà du reste dû (paiement tardif d'une page déjà
- * ouverte) : l'excédent est tracé pour un remboursement, différé (ADR-031).
+ * ouverte) : l'excédent est tracé pour un remboursement, différé (ADR-031). Sur une mission annulée,
+ * tout le paiement est en trop (ADR-049) : payment n'ouvre plus de page pour elle.
  */
 export class RecordOnlinePaymentUseCase {
   constructor(
@@ -87,15 +87,17 @@ export class RecordOnlinePaymentUseCase {
     amount: number;
     providerReference: string | null;
     succeededAt: string;
-  }): Promise<OnlinePaymentOutcome> {
-    if (input.subjectType !== 'cleaning_mission') return 'ignored';
+  }): Promise<OnlinePaymentResult> {
+    const ignored = { outcome: 'ignored' as const, excess: 0 };
+    if (input.subjectType !== 'cleaning_mission') return ignored;
     const key = onlinePaymentKey(input.paymentId);
     let outcome: OnlinePaymentOutcome | null = null;
+    let excess = 0;
     let suspended = false;
     for (let attempt = 0; attempt < MAX_ATTEMPTS && !outcome; attempt += 1) {
       const mission = await this.deps.missions.findById(input.missionId);
       // Mission inconnue ou d'entreprise (réglée par sa facture) : payment ne l'aurait pas acceptée.
-      if (!mission || isBusinessContract(mission)) return 'ignored';
+      if (!mission || isBusinessContract(mission)) return ignored;
       suspended = Boolean(mission.suspension);
       if (paymentWithKey(mission.payment, key)) {
         outcome = 'duplicate';
@@ -113,7 +115,10 @@ export class RecordOnlinePaymentUseCase {
         idempotencyKey: key,
         refundedAt: null,
       };
-      const excess = Math.max(0, paidAmount(mission.payment) + input.amount - mission.payment.total);
+      const received =
+        mission.status === 'cancelled'
+          ? input.amount
+          : Math.max(0, paidAmount(mission.payment) + input.amount - mission.payment.total);
       const result = await this.deps.missions.saveFromEvent(
         {
           ...mission,
@@ -134,18 +139,20 @@ export class RecordOnlinePaymentUseCase {
                 recordId: record.id,
                 amount: input.amount,
                 method: record.method,
-                ...(excess ? { excess } : {}),
+                ...(received ? { excess: received } : {}),
               },
             },
           ],
         },
         { eventId: input.eventId, consumer: `${PAYMENT_CONSUMER}.${input.eventType}` },
       );
-      if (result === 'saved') outcome = 'recorded';
-      else if (result === 'duplicate') outcome = 'duplicate';
+      if (result === 'saved') {
+        outcome = 'recorded';
+        excess = received;
+      } else if (result === 'duplicate') outcome = 'duplicate';
     }
     if (!outcome) throw CleaningErrors.concurrentUpdate();
     if (suspended) await this.evaluate.execute(input.missionId);
-    return outcome;
+    return { outcome, excess };
   }
 }

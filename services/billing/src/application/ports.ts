@@ -66,11 +66,16 @@ export interface InvoiceFilter {
 
 export interface InvoiceRepository {
   /**
-   * Émet la facture d'un mois si elle n'existe pas encore : contrat verrouillé, numéro tiré du
-   * compteur de l'année, outbox. Renvoie null si le mois est déjà facturé (idempotent).
+   * Émet la facture d'un mois du contrat si elle n'existe pas encore : contrat verrouillé puis relu,
+   * `draft` calcule la facture depuis ce contrat à jour (ADR-049 : un événement arrivé depuis la
+   * lecture compte ; null : plus rien à facturer pour ce mois), numéro tiré du compteur de l'année
+   * de la période (invoiceYear), outbox. Renvoie null si le mois est déjà facturé (idempotent) ou si
+   * `draft` ne facture rien.
    */
   issue(
-    draft: Omit<Invoice, 'number'>,
+    contractId: string,
+    periodIndex: number,
+    draft: (contract: BillingContract) => Omit<Invoice, 'number'> | null,
     events: (invoice: Invoice) => OutboxMessage[],
   ): Promise<Invoice | null>;
   findById(id: string): Promise<Invoice | null>;

@@ -27,7 +27,9 @@ import "ksp/common/v1/money.proto";
 //                                                     exceeds_balance
 //   BILLING_INVALID_TRANSITION    FAILED_PRECONDITION facture déjà payée ou annulée
 //   BILLING_CONCURRENT_UPDATE     ALREADY_EXISTS      facture modifiée en même temps par un autre appel
-//   BILLING_CALLER_FORBIDDEN      PERMISSION_DENIED   GetInvoiceAmountDue appelé par un autre service que payment
+//   BILLING_CALLER_FORBIDDEN      PERMISSION_DENIED   méthode réservée à un autre service (GetInvoiceAmountDue :
+//                                                     payment ; GetWalletDebitStatus : wallet ;
+//                                                     HasPendingObligations : identity ; les autres : gateway)
 //   WALLET_INSUFFICIENT_FUNDS     FAILED_PRECONDITION portefeuille insuffisant ; details.missing (ADR-046)
 //   AUTH_REQUIRED                 UNAUTHENTICATED
 //   AUTH_FORBIDDEN                PERMISSION_DENIED   rôle du back-office manquant ; membre lecteur (org_viewer)
@@ -63,6 +65,14 @@ service BillingAdminService {
 // payment.intent.succeeded (inbox) : la facture passe « payée » au total (billing.invoice.paid).
 service InvoicePaymentDueService {
   rpc GetInvoiceAmountDue(GetInvoiceAmountDueRequest) returns (GetInvoiceAmountDueResponse);
+}
+
+// Débit du portefeuille enregistré ? — réservé au service wallet (ADR-048) : wallet rapproche les
+// débits du portefeuille prépayé faits pour une facture dont l'enregistrement a pu échouer (panne
+// entre le débit et l'enregistrement du paiement) ; un débit qu'aucun paiement de la facture ne cite
+// est remboursé. Appel d'un autre service : BILLING_CALLER_FORBIDDEN.
+service WalletDebitCheckService {
+  rpc GetWalletDebitStatus(GetWalletDebitStatusRequest) returns (GetWalletDebitStatusResponse);
 }
 
 message Page {
@@ -241,6 +251,19 @@ message GetInvoiceAmountDueResponse {
   // Paiements en ligne déjà enregistrés sur la facture (identifiants du service payment) : payment
   // refuse un nouveau paiement tant qu'un paiement réussi n'y figure pas encore (ADR-032).
   repeated string online_payment_ids = 9;
+}
+
+message GetWalletDebitStatusRequest {
+  // Facture payée (objet du débit).
+  string invoice_id = 1;
+  // Débit du portefeuille (identifiant de la transaction wallet), cité en référence du paiement.
+  string transaction_id = 2;
+}
+
+message GetWalletDebitStatusResponse {
+  // true : un paiement de la facture (moyen "wallet") cite ce débit ; false : aucun (facture inconnue
+  // comprise).
+  bool recorded = 1;
 }
 
 message PayMyInvoiceFromWalletRequest {

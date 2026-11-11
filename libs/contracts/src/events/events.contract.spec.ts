@@ -291,6 +291,14 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     reason: 'mission_cancelled',
     refundedAt: '2026-11-09T10:00:00Z',
   },
+  'cleaning.mission.credited': {
+    missionId: uuid,
+    customerId: uuid,
+    creditId: uuid,
+    amount: xof(30000),
+    reason: 'recurring_cancelled',
+    creditedAt: '2026-11-10T10:00:00Z',
+  },
   'cleaning.quote.expired': {
     customerId: uuid,
     organizationId: null,
@@ -404,6 +412,14 @@ describe('Contrats des événements cleaning', () => {
     expect(validate({ ...base, groupId: 'groupe-1' })).toBe(false);
     expect(validate({ ...base, serviceName: '' })).toBe(false);
     expect(validate({ ...base, landmark: 'Portail vert' })).toBe(false);
+  });
+
+  it('cleaning.mission.scheduled : paiement « avant » encore dû, facultatif (ADR-049)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.mission.scheduled')!);
+    const base = cleaningExamples['cleaning.mission.scheduled'];
+    expect(validate({ ...base, amountDueBeforeStart: { amount: 15_000, currency: 'XOF' } })).toBe(true);
+    expect(validate({ ...base, amountDueBeforeStart: { amount: 0, currency: 'XOF' } })).toBe(false);
+    expect(validate({ ...base, amountDueBeforeStart: 15_000 })).toBe(false);
   });
 
   it('cleaning.visit.scheduled : visite commune d’un groupe, demandes listées (ADR-035)', () => {

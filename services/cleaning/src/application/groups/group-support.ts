@@ -8,7 +8,7 @@ import {
   type GroupOutcome,
   type QuoteRequestGroupView,
 } from '../ports';
-import { seesEverything, type Staff } from '../shared/access';
+import { type CaseAccess, type Customer, ownsCase, seesEverything, type Staff } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
 import { requireUuid } from '../shared/validation';
 
@@ -41,12 +41,21 @@ export async function anyGroup(deps: CleaningDeps, groupId: string): Promise<Quo
 /** Groupe du client, sinon introuvable : jamais révéler le groupe d'un autre (404). */
 export async function ownGroup(
   deps: CleaningDeps,
-  customerId: string,
+  customer: Customer,
   groupId: string,
+  access: CaseAccess = 'act',
 ): Promise<QuoteRequestGroupView> {
   const view = await deps.requests.findGroup(requireUuid('groupId', groupId));
-  if (!view || view.group.customerId !== customerId) throw CleaningErrors.requestGroupNotFound();
+  if (!view || !ownsCase(customer, groupOwner(view), access)) throw CleaningErrors.requestGroupNotFound();
   return view;
+}
+
+/** Titulaire d'un groupe : son client, et l'organisation de ses demandes (la même pour toutes). */
+export function groupOwner(view: QuoteRequestGroupView): {
+  customerId: string;
+  organizationId: string | null;
+} {
+  return { customerId: view.group.customerId, organizationId: view.requests[0]?.organizationId ?? null };
 }
 
 export function emptyOutcome(groupId: string): GroupOutcome {

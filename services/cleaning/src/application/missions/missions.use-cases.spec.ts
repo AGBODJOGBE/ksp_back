@@ -1,6 +1,6 @@
 import { type AppError, runWithContext } from '@ksp/platform';
 import { type Mission } from '../../domain/mission';
-import { newPaymentState } from '../../domain/payment';
+import { newPaymentState, paidAmount, remainingDue } from '../../domain/payment';
 import { gardenService } from '../../domain/testing';
 import {
   GetCatalogUseCase,
@@ -10,6 +10,7 @@ import {
   type ServiceDefinitionInput,
   UpdateSettingsUseCase,
 } from '../catalog/admin-catalog.use-cases';
+import { ListServicesUseCase } from '../catalog/catalog.use-cases';
 import { HasPendingObligationsUseCase } from '../obligations/has-pending-obligations.use-case';
 import {
   CreateTeamUseCase,
@@ -21,6 +22,7 @@ import {
   asAdmin,
   asAgent,
   asCustomer,
+  asOrganizationMember,
   asSupervisor,
   asSuperAdmin,
   CUSTOMER_ID,
@@ -28,6 +30,7 @@ import {
   homeCleaning,
   OTHER_AGENT_ID,
   OTHER_CUSTOMER_ID,
+  ORGANIZATION_ID,
   testWorld,
   type TestWorld,
 } from '../testing/fakes';
@@ -43,7 +46,11 @@ import {
   StartInterventionUseCase,
   UpdateChecklistUseCase,
 } from './admin-missions.use-cases';
-import { CancelMyMissionUseCase, GetMyMissionUseCase } from './customer-missions.use-cases';
+import {
+  CancelMyMissionUseCase,
+  GetMyMissionUseCase,
+  ListMyMissionsUseCase,
+} from './customer-missions.use-cases';
 
 const code = (promise: Promise<unknown>) =>
   promise.then(
@@ -73,7 +80,7 @@ function mission(overrides: Partial<Mission> = {}): Mission {
     recurrence: null,
     plannedInterventions: 1,
     interventions: [],
-    payment: newPaymentState({ option: 'deposit', timing: 'before', method: 'cash' }, 50_000, 30),
+    payment: newPaymentState({ option: 'deposit', timing: 'after', method: 'cash' }, 50_000, 30),
     cancellationReason: null,
     daysPerWeek: null,
     suspension: null,
@@ -122,6 +129,36 @@ describe('missions et passages (UC-CL-09, 10)', () => {
         payload: expect.objectContaining({ agentIds: [AGENT_ID] }),
       }),
     ]);
+  });
+
+  it('paiement « avant » : client prévenu à la planification ; démarrage refusé tant que l’acompte est dû', async () => {
+    const before = newPaymentState({ option: 'deposit', timing: 'before', method: 'cash' }, 50_000, 30);
+    world.missions.missions.set(MISSION_ID, mission({ payment: before }));
+    await schedule('2026-10-30T08:00:00Z', [AGENT_ID]);
+    expect(world.recorder.events.at(-1)).toMatchObject({
+      type: 'cleaning.mission.scheduled',
+      payload: { amountDueBeforeStart: { amount: 15_000, currency: 'XOF' } },
+    });
+    world.clock.current = new Date('2026-10-30T07:30:00Z');
+    const start = () => asAgent(() => new StartInterventionUseCase(world).execute(interventionOf()));
+    expect(await start().catch((error: AppError) => error)).toMatchObject({
+      code: 'CLEANING_UPFRONT_PAYMENT_DUE',
+      details: { amountDue: { amount: 15_000, currency: 'XOF' } },
+    });
+    await asSupervisor(() =>
+      new RecordPaymentUseCase(world).execute({
+        missionId: MISSION_ID,
+        amount: 15_000,
+        method: 'cash',
+        reference: 'R1',
+      }),
+    );
+    expect((await start()).mission.status).toBe('in_progress');
+  });
+
+  it('paiement « après » : aucun montant dû avant le passage annoncé', async () => {
+    await schedule('2026-10-30T08:00:00Z', [AGENT_ID]);
+    expect(world.recorder.events.at(-1)!.payload).not.toHaveProperty('amountDueBeforeStart');
   });
 
   it('refuse un agent déjà pris ou indisponible (CLEANING_TEAM_UNAVAILABLE)', async () => {
@@ -369,6 +406,7 @@ describe('missions et passages (UC-CL-09, 10)', () => {
     expect(
       await code(asCustomer(() => new GetMyMissionUseCase(world).execute(MISSION_ID), OTHER_CUSTOMER_ID)),
     ).toBe('CLEANING_MISSION_NOT_FOUND');
+    await schedule('2026-10-30T08:00:00Z', [AGENT_ID]);
     world.clock.current = new Date('2026-10-29T09:00:00Z');
     expect(
       await code(
@@ -387,6 +425,108 @@ describe('missions et passages (UC-CL-09, 10)', () => {
     });
   });
 
+  it('mission d’organisation : son contexte actif exigé ; l’annuler exige org_admin ou org_member', async () => {
+    world.missions.missions.set(MISSION_ID, mission({ organizationId: ORGANIZATION_ID }));
+    const list = () => new ListMyMissionsUseCase(world).execute({ limit: 20, cursor: null });
+    expect((await asCustomer(list)).items).toEqual([]);
+    expect((await asOrganizationMember(list, 'org_viewer')).items).toHaveLength(1);
+    const get = () => new GetMyMissionUseCase(world).execute(MISSION_ID);
+    const cancel = () => new CancelMyMissionUseCase(world).execute({ missionId: MISSION_ID, reason: '' });
+    expect(await code(asCustomer(get))).toBe('CLEANING_MISSION_NOT_FOUND');
+    expect(await code(asCustomer(cancel))).toBe('CLEANING_MISSION_NOT_FOUND');
+    expect(await code(asOrganizationMember(get, 'org_viewer'))).toBe('ok');
+    expect(await code(asOrganizationMember(cancel, 'org_viewer'))).toBe('AUTH_FORBIDDEN');
+    expect((await asOrganizationMember(cancel, 'org_admin')).mission.status).toBe('cancelled');
+  });
+
+  describe('arrêt de la suite d’une mission récurrente par le client (ADR-049)', () => {
+    const passage = (n: number, status: 'completed' | 'planned', day: string) => ({
+      id: `0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d4${String(n).padStart(3, '0')}`,
+      status,
+      scheduledStart: new Date(`${day}T08:00:00Z`),
+      durationMinutes: 180,
+      agentIds: [AGENT_ID],
+      checklist: [],
+      incidentNote: null,
+      beforePhotoFileIds: [],
+      afterPhotoFileIds: [],
+      startedAt: status === 'completed' ? new Date(`${day}T08:00:00Z`) : null,
+      completedAt: status === 'completed' ? new Date(`${day}T11:00:00Z`) : null,
+      cancellationCause: null,
+      cancelledAt: null,
+    });
+    const paid = (amount: number, method: 'cash' | 'wallet') => ({
+      id: `0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7${String(amount).slice(0, 3)}`,
+      amount,
+      method,
+      reference: method === 'wallet' ? '0192f1c4-0000-7000-d000-000000000001' : null,
+      recordedBy: CUSTOMER_ID,
+      recordedAt: new Date('2026-10-24T09:00:00Z'),
+      idempotencyKey: null,
+      refundedAt: null,
+    });
+    /** 4 passages à 10 000 FCFA : 1 fait, 1 planifié, 2 à planifier. */
+    const recurring = (payments: ReturnType<typeof paid>[]) =>
+      mission({
+        status: 'scheduled',
+        recurrence: { period: 'week', visitsPerPeriod: 1, durationMonths: 1 },
+        plannedInterventions: 4,
+        interventions: [passage(1, 'completed', '2026-10-30'), passage(2, 'planned', '2026-11-06')],
+        payment: {
+          ...newPaymentState({ option: 'full', timing: 'before', method: 'cash' }, 40_000, 30),
+          payments,
+        },
+      });
+    const stop = () =>
+      asCustomer(() =>
+        new CancelMyMissionUseCase(world).execute({ missionId: MISSION_ID, reason: 'Déménagement' }),
+      );
+
+    beforeEach(() => {
+      world.clock.current = new Date('2026-11-02T08:00:00Z');
+    });
+
+    it('payé d’avance : passages faits dus, le reste crédité au portefeuille, quel que soit le moyen', async () => {
+      world.missions.missions.set(MISSION_ID, recurring([paid(30_000, 'cash'), paid(10_000, 'wallet')]));
+      const view = await stop();
+      expect(view.mission.status).toBe('cancelled');
+      expect(view.mission.interventions.map((i) => i.status)).toEqual(['completed', 'cancelled']);
+      const stored = world.missions.missions.get(MISSION_ID)!;
+      expect(stored.payment).toMatchObject({ total: 10_000, credit: { amount: 30_000 } });
+      expect(paidAmount(stored.payment)).toBe(10_000);
+      expect(remainingDue(stored.payment)).toBe(0);
+      // Aucun remboursement débit par débit : le crédit couvre tout ce qui a été payé en trop.
+      expect(stored.payment.payments.every((p) => p.refundedAt === null)).toBe(true);
+      const credited = world.recorder.events.find((e) => e.type === 'cleaning.mission.credited');
+      expect(credited?.payload).toEqual({
+        missionId: MISSION_ID,
+        customerId: CUSTOMER_ID,
+        creditId: stored.payment.credit!.id,
+        amount: { amount: 30_000, currency: 'XOF' },
+        reason: 'recurring_cancelled',
+        creditedAt: '2026-11-02T08:00:00.000Z',
+      });
+      expect(world.recorder.events.some((e) => e.type === 'cleaning.mission.refunded')).toBe(false);
+    });
+
+    it('payé moins que les passages faits : rien à créditer, le reste dû demeure', async () => {
+      world.missions.missions.set(MISSION_ID, recurring([paid(4_000, 'cash')]));
+      await stop();
+      const stored = world.missions.missions.get(MISSION_ID)!;
+      expect(stored.payment).toMatchObject({ total: 10_000, credit: null });
+      expect(remainingDue(stored.payment)).toBe(6_000);
+      expect(world.recorder.events.some((e) => e.type === 'cleaning.mission.credited')).toBe(false);
+    });
+  });
+
+  it('aucun passage planifié : annulation sans frais, même créneau choisi passé (ADR-049)', async () => {
+    world.clock.current = new Date('2026-11-02T09:00:00Z');
+    const view = await asCustomer(() =>
+      new CancelMyMissionUseCase(world).execute({ missionId: MISSION_ID, reason: 'Plus besoin' }),
+    );
+    expect(view.mission.status).toBe('cancelled');
+  });
+
   it('annulation par la supervision, motif obligatoire', async () => {
     const cancel = (reason: string) =>
       asSupervisor(() =>
@@ -394,6 +534,34 @@ describe('missions et passages (UC-CL-09, 10)', () => {
       );
     expect(await code(cancel(''))).toBe('CLEANING_VALIDATION_FAILED');
     expect((await cancel('Client injoignable')).mission.status).toBe('cancelled');
+  });
+
+  it('client, back-office et catalogue : appelés par la gateway seulement (ADR-049)', async () => {
+    const from = <T>(callerService: string, roles: string[], fn: () => Promise<T>) =>
+      runWithContext(
+        {
+          correlationId: 'c-test',
+          callerService,
+          user: {
+            userId: CUSTOMER_ID,
+            sessionId: 's-test',
+            activeContext: 'personal',
+            roles: roles.map((role) => ({ role, scopeType: 'global' as const })),
+            mfa: true,
+            authTime: Math.floor(Date.now() / 1000),
+          },
+        },
+        fn,
+      );
+    const mine = () => new GetMyMissionUseCase(world).execute(MISSION_ID);
+    const staff = () => new GetMissionDetailUseCase(world).execute(MISSION_ID);
+    const catalog = () => new ListServicesUseCase(world).execute();
+    expect(await code(from('payment', ['customer'], mine))).toBe('CLEANING_CALLER_FORBIDDEN');
+    expect(await code(from('wallet', ['cleaning_supervisor'], staff))).toBe('CLEANING_CALLER_FORBIDDEN');
+    expect(await code(from('identity', [], catalog))).toBe('CLEANING_CALLER_FORBIDDEN');
+    expect(await code(from('gateway', ['customer'], mine))).toBe('ok');
+    expect(await code(from('gateway', ['cleaning_supervisor'], staff))).toBe('ok');
+    expect(await code(from('gateway', [], catalog))).toBe('ok');
   });
 
   it('obligations : une mission non terminée bloque la suppression du compte', async () => {

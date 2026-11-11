@@ -127,3 +127,24 @@ export class InvoicePaymentDueGrpcController implements billingV1.InvoicePayment
     };
   }
 }
+
+/**
+ * WalletDebitCheckService : débit du portefeuille enregistré sur une facture ?, réservé au service
+ * wallet (ADR-048). Le contrôle de l'appelant est fait par le cas d'usage.
+ */
+@Controller()
+@billingV1.WalletDebitCheckServiceControllerMethods()
+export class WalletDebitCheckGrpcController implements billingV1.WalletDebitCheckServiceController {
+  constructor(@Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases) {}
+
+  async getWalletDebitStatus(
+    request: billingV1.GetWalletDebitStatusRequest,
+  ): Promise<billingV1.GetWalletDebitStatusResponse> {
+    return {
+      recorded: await this.useCases.getWalletDebitStatus.execute({
+        invoiceId: request.invoiceId,
+        transactionId: request.transactionId,
+      }),
+    };
+  }
+}

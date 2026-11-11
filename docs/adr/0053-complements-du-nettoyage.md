@@ -118,9 +118,9 @@ les écoute (modèles WhatsApp à faire approuver, liste dans son README).
 
 ## Conséquences
 
-- Migration `0014_cleaning_complements` (colonnes de réglages, rappel du devis, motif du passage, équipe
-  active, index des visites) ; numéro choisi pour passer après les lots parallèles (à renuméroter si
-  besoin à la fusion).
+- Migration `0017_cleaning_complements` (colonnes de réglages, rappel du devis, motif du passage, équipe
+  active, index des visites) : après `0012_mission_credit` (ADR-049) et les migrations des passages par
+  dates (`0015`, `0016`), dans l'ordre de fusion.
 - cleaning appelle `file` (jeton de service) : déployer file avant d'ouvrir les routes de photos.
 - Un passage annulé pour être replanifié garde son historique (date, agents, motif).
 

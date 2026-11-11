@@ -67,6 +67,8 @@ import "ksp/common/v1/money.proto";
 //                                                           au-delà du reste dû : details.remainingDue (Money)
 //   CLEANING_INTERVENTION_TOO_EARLY     FAILED_PRECONDITION passage démarré avant le jour prévu (details.scheduledDate,
 //                                                           details.timeZone) ; règle réglable par configuration
+//   CLEANING_UPFRONT_PAYMENT_DUE        FAILED_PRECONDITION passage démarré alors que le paiement « avant » (acompte ou
+//                                                           totalité) reste dû (details.amountDue, Money ; ADR-049)
 //   CLEANING_VISIT_TOO_EARLY            FAILED_PRECONDITION compte rendu de visite avant l'heure prévue
 //                                                           (details.scheduledAt) ; règle réglable par configuration
 //   CLEANING_GROUP_NO_ELIGIBLE_REQUEST  FAILED_PRECONDITION opération de groupe (ADR-035) sans aucune demande ou mission
@@ -77,7 +79,9 @@ import "ksp/common/v1/money.proto";
 //                                                           details.activeMissions ; ADR-035)
 //   CLEANING_MEASUREMENTS_LOCKED        FAILED_PRECONDITION mesures constatées refusées : devis déjà envoyé ou demande
 //                                                           close (details.status ; ADR-037)
-//   CLEANING_CALLER_FORBIDDEN           PERMISSION_DENIED   HasPendingObligations appelé par un autre service qu'identity
+//   CLEANING_CALLER_FORBIDDEN           PERMISSION_DENIED   méthode réservée à un autre service (HasPendingObligations :
+//                                                           identity ; GetMissionAmountDue : payment ;
+//                                                           GetWalletDebitStatus : wallet ; les autres : gateway)
 //   CLEANING_INTERVENTION_CLOSED        FAILED_PRECONDITION photos d'un passage terminé ou annulé (ADR-053)
 //   CLEANING_PHOTO_LIMIT_REACHED        FAILED_PRECONDITION nombre maximal de photos atteint pour ce type
 //                                                           (details.kind, details.maximum ; ADR-053)
@@ -305,6 +309,16 @@ service CleaningAdminService {
 // CLEANING_CALLER_FORBIDDEN. Mission inconnue : CLEANING_MISSION_NOT_FOUND.
 service MissionPaymentDueService {
   rpc GetMissionAmountDue(GetMissionAmountDueRequest) returns (GetMissionAmountDueResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Débit du portefeuille enregistré ? — réservé au service wallet (ADR-048).
+// ---------------------------------------------------------------------------
+// wallet rapproche les débits du portefeuille prépayé faits pour une mission dont l'enregistrement a
+// pu échouer (panne entre le débit et l'enregistrement du paiement) : un débit qu'aucun paiement de
+// la mission ne cite est remboursé. Appel d'un autre service : CLEANING_CALLER_FORBIDDEN.
+service WalletDebitCheckService {
+  rpc GetWalletDebitStatus(GetWalletDebitStatusRequest) returns (GetWalletDebitStatusResponse);
 }
 
 // ===========================================================================
@@ -2055,6 +2069,19 @@ message GetMissionAmountDueResponse {
   // Paiements en ligne déjà enregistrés sur la mission (identifiants du service payment) : payment
   // refuse un nouveau paiement tant qu'un paiement réussi n'y figure pas encore (ADR-032).
   repeated string online_payment_ids = 10;
+}
+
+message GetWalletDebitStatusRequest {
+  // Mission payée (objet du débit).
+  string mission_id = 1;
+  // Débit du portefeuille (identifiant de la transaction wallet), cité en référence du paiement.
+  string transaction_id = 2;
+}
+
+message GetWalletDebitStatusResponse {
+  // true : un paiement de la mission (moyen "wallet") cite ce débit, remboursé ou non ; false : aucun
+  // (mission inconnue comprise).
+  bool recorded = 1;
 }
 
 message PayMissionFromWalletRequest {

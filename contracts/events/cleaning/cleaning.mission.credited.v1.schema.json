@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.mission.credited.v1.schema.json",
+  "title": "cleaning.mission.credited",
+  "description": "Montant déjà payé pour des passages non faits d'une mission récurrente arrêtée par le client, crédité au prorata dans le portefeuille prépayé du client (ADR-049), quel que soit le moyen de paiement d'origine. Publié dans la transaction de l'arrêt. Écouté par wallet, qui crédite une seule fois par creditId. Identifiants et montants seulement.",
+  "x-event-type": "cleaning.mission.credited",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["missionId", "customerId", "creditId", "amount", "reason", "creditedAt"],
+  "properties": {
+    "missionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Client (particulier) dont le portefeuille est crédité"
+    },
+    "creditId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identifiant unique du crédit : wallet ne crédite qu'une fois par identifiant"
+    },
+    "amount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "reason": {
+      "enum": ["recurring_cancelled"]
+    },
+    "creditedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

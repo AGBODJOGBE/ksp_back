@@ -11,7 +11,14 @@ import { type Intervention, type Mission } from '../../domain/mission';
 import { type CleaningDeps, missionView, type MissionView } from '../deps';
 import { missionForStaff } from '../groups/group-support';
 import { type StoredPhoto } from '../ports';
-import { currentCustomer, FIELD_WORK, requireStaff, seesEverything, type Staff } from '../shared/access';
+import {
+  currentCustomer,
+  FIELD_WORK,
+  ownsCase,
+  requireStaff,
+  seesEverything,
+  type Staff,
+} from '../shared/access';
 import { ComplementErrors } from '../shared/complement-errors';
 import { CleaningErrors } from '../shared/errors';
 import { oneOf, requireUuid } from '../shared/validation';
@@ -151,7 +158,10 @@ export class ListInterventionPhotosUseCase {
   }
 }
 
-/** Photos d'un passage d'une mission du client connecté (sinon introuvable). */
+/**
+ * Photos d'un passage d'une mission du client connecté (sinon introuvable) ; celle d'une organisation,
+ * seulement dans le contexte actif de cette organisation (ADR-049), en lecture (org_viewer compris).
+ */
 export class ListMyInterventionPhotosUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
@@ -160,7 +170,7 @@ export class ListMyInterventionPhotosUseCase {
     const interventionId = requireUuid('interventionId', interventionIdInput);
     const mission = await this.deps.missions.findByInterventionId(interventionId);
     const intervention = mission?.interventions.find((item) => item.id === interventionId);
-    if (!mission || !intervention || mission.customerId !== customer.userId) {
+    if (!mission || !intervention || !ownsCase(customer, mission, 'read')) {
       throw CleaningErrors.interventionNotFound();
     }
     return photosOf(this.deps, intervention);

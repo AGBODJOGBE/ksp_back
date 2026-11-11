@@ -297,6 +297,11 @@ model Mission {
   paymentTotal         Int              @map("payment_total")
   depositPercent       Int              @map("deposit_percent")
   depositAmount        Int              @map("deposit_amount")
+  /// Arrêt d'une mission récurrente (ADR-049) : montant payé pour des passages non faits, crédité
+  /// dans le portefeuille du client (cleaning.mission.credited) ; null sans crédit.
+  creditId             String?          @map("credit_id") @db.Uuid
+  creditedAmount       Int?             @map("credited_amount")
+  creditedAt           DateTime?        @map("credited_at") @db.Timestamptz(3)
   cancellationReason   String?          @map("cancellation_reason")
   daysPerWeek          Int?             @map("days_per_week")
   /// Suspension en cours : plus ancienne cause active (unpaid_invoices, unpaid_interventions ou

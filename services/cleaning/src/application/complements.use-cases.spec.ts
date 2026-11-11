@@ -26,6 +26,7 @@ import {
 } from './teams/agent-status.use-cases';
 import {
   AGENT_ID,
+  as,
   asAdmin,
   asAgent,
   asCustomer,
@@ -33,6 +34,7 @@ import {
   CUSTOMER_ID,
   homeCleaning,
   OTHER_AGENT_ID,
+  ORGANIZATION_ID,
   OTHER_CUSTOMER_ID,
   testWorld,
   type TestWorld,
@@ -290,6 +292,16 @@ describe('compléments du Nettoyage (ADR-053)', () => {
           ),
         ),
       ).toBe('CLEANING_INTERVENTION_NOT_FOUND');
+    });
+
+    it('mission d’une organisation : photos lues dans son contexte seulement (ADR-049)', async () => {
+      world.missions.missions.set(MISSION_ID, mission({ organizationId: ORGANIZATION_ID }));
+      const list = (options: Parameters<typeof as>[2]) =>
+        code(
+          as(CUSTOMER_ID, () => new ListMyInterventionPhotosUseCase(world).execute(INTERVENTION_ID), options),
+        );
+      expect(await list({})).toBe('CLEANING_INTERVENTION_NOT_FOUND');
+      expect(await list({ activeContext: ORGANIZATION_ID, orgRole: 'org_viewer' })).toBe('ok');
     });
   });
 
