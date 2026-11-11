@@ -333,4 +333,87 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       expect((await asCleaning(() => useCases.getPrepaidBalance.execute(holder))).balance).toBe(30000);
     });
   });
+
+  describe('grand livre verrouillé par la base (ADR-048)', () => {
+    const fails = async (sql: string, params: unknown[] = []) => {
+      const error = await pool.query(sql, params).then(
+        () => null,
+        (caught: Error) => caught,
+      );
+      expect(error).not.toBeNull();
+      return error!.message;
+    };
+    /** Écriture faite à la main dans une transaction : refusée à la validation si incomplète. */
+    const commitFails = async (statements: [string, unknown[]][]) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const [sql, params] of statements) await client.query(sql, params);
+        const error = await client.query('COMMIT').then(
+          () => null,
+          (caught: Error) => caught,
+        );
+        expect(error).not.toBeNull();
+        return error!.message;
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    const insertTransaction = (id: string, amount: number) =>
+      [
+        `INSERT INTO ledger_transactions (id, kind, caller, reference, holder_type, holder_id, amount,
+           description, created_at) VALUES ($1, 'top_up', 'wallet', $2, 'user', $3, $4, 'test', now())`,
+        [id, `lock:${id}`, USER.id, amount],
+      ] as [string, unknown[]];
+    const insertEntry = (transactionId: string, account: string, direction: string, amount: number) =>
+      [
+        `INSERT INTO ledger_entries (id, transaction_id, account_code, direction, amount, created_at)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, now())`,
+        [transactionId, account, direction, amount],
+      ] as [string, unknown[]];
+
+    it('solde jamais saisi : seule une écriture le change ; compte ni modifié ni supprimé', async () => {
+      expect(
+        await fails("UPDATE ledger_accounts SET balance = balance + 1 WHERE code = 'ksp:collections'"),
+      ).toMatch(/seulement par une écriture/);
+      expect(
+        await fails("UPDATE ledger_accounts SET normal_side = 'credit' WHERE code = 'ksp:collections'"),
+      ).toMatch(/immuable/);
+      expect(await fails("DELETE FROM ledger_accounts WHERE code = 'ksp:commission'")).toMatch(/immuable/);
+    });
+
+    it('TRUNCATE refusé sur les comptes, les transactions et les lignes', async () => {
+      for (const table of ['ledger_entries', 'ledger_transactions', 'ledger_accounts']) {
+        expect(await fails(`TRUNCATE ${table} CASCADE`)).toMatch(/TRUNCATE interdit/);
+      }
+    });
+
+    it('transaction sans lignes, ou montant incohérent avec ses lignes : refusée à la validation', async () => {
+      const empty = '0192f1c4-0000-7000-8000-0000000f0001';
+      expect(await commitFails([insertTransaction(empty, 100)])).toMatch(/sans lignes/);
+      const wrong = '0192f1c4-0000-7000-8000-0000000f0002';
+      expect(
+        await commitFails([
+          insertTransaction(wrong, 100),
+          insertEntry(wrong, 'ksp:prepaid_funds', 'debit', 50),
+          insertEntry(wrong, 'ksp:service_revenue', 'credit', 50),
+        ]),
+      ).toMatch(/incohérent/);
+      const rows = await pool.query('SELECT 1 FROM ledger_transactions WHERE id IN ($1, $2)', [empty, wrong]);
+      expect(rows.rowCount).toBe(0);
+    });
+
+    it('nom du bénéficiaire effacé après la transmission, comme son numéro', async () => {
+      const { rows } = await pool.query(
+        "SELECT id FROM wallet_payouts WHERE status <> 'pending_submission' LIMIT 1",
+      );
+      expect(rows).toHaveLength(1);
+      expect(
+        await fails("UPDATE wallet_payouts SET beneficiary_name = 'SARL Bénin Immo' WHERE id = $1", [
+          rows[0].id,
+        ]),
+      ).toMatch(/wallet_payouts_name_check/);
+    });
+  });
 });
