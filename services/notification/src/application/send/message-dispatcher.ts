@@ -55,6 +55,8 @@ export class MessageDispatcher {
     const { notification } = request;
     const claim = await this.notifications.claim(notification);
     if (!claim.created) return { kind: 'replayed', existing: claim.existing };
+    // Notification nouvelle, ou reprise d'une réservation abandonnée (son identifiant d'origine).
+    const id = claim.id;
 
     const attempts: ChannelAttempt[] = [];
     let ttlExpired = false;
@@ -69,22 +71,22 @@ export class MessageDispatcher {
         attempts.push({ channel, outcome: 'skipped' });
         continue;
       }
-      const result = await send(provider, { ...request.message, notificationId: notification.id, channel });
+      const result = await send(provider, { ...request.message, notificationId: id, channel });
       if (result.accepted) {
-        await this.notifications.markAccepted(notification.id, {
+        await this.notifications.markAccepted(id, {
           channelUsed: channel,
           channelsTried: [...attempts.map((attempt) => attempt.channel), channel],
           providerMessageId: result.providerMessageId,
           at: this.clock.now(),
         });
-        return { kind: 'accepted', notificationId: notification.id, channelUsed: channel };
+        return { kind: 'accepted', notificationId: id, channelUsed: channel };
       }
       attempts.push({ channel, outcome: 'failed', reason: result.reason });
     }
 
     const failure = summarizeFailure(attempts, ttlExpired);
     await this.notifications.markFailed(
-      notification.id,
+      id,
       {
         channelsTried: failure.channelsTried,
         reason: failure.reason,
@@ -92,7 +94,7 @@ export class MessageDispatcher {
         at: this.clock.now(),
       },
       {
-        notificationId: notification.id,
+        notificationId: id,
         templateCode: notification.templateCode,
         channelsTried: failure.channelsTried,
         reason: failure.reason,
@@ -100,7 +102,7 @@ export class MessageDispatcher {
         targetMasked: notification.targetMasked,
       },
     );
-    return { kind: 'failed', notificationId: notification.id, failure };
+    return { kind: 'failed', notificationId: id, failure };
   }
 }
 

@@ -1,4 +1,4 @@
-import { baseServiceConfigSchema } from '@ksp/platform';
+import { baseServiceConfigSchema, requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 import { type MfaPolicy } from './domain/mfa/mfa-challenge';
 import { type OtpPolicy } from './domain/otp/otp-policy';
@@ -9,7 +9,7 @@ import { type DeletionPolicy } from './domain/user/account-deletion';
  * Configuration du service : variables communes, plus celles propres à identity.
  * Les règles des codes reprennent les valeurs du cahier des charges Identité (partie 4).
  */
-export const configSchema = baseServiceConfigSchema.safeExtend({
+const identityConfigSchema = baseServiceConfigSchema.safeExtend({
   /** Clé secrète du HMAC des codes : sans elle, une fuite de la base ne révèle aucun code. */
   OTP_HMAC_SECRET: z.string().min(32, 'OTP_HMAC_SECRET doit faire au moins 32 caractères.'),
   OTP_CODE_LENGTH: z.coerce.number().int().min(4).max(8).default(6),
@@ -87,6 +87,9 @@ export const configSchema = baseServiceConfigSchema.safeExtend({
   /** Comptes traités au plus par passage. */
   ACCOUNT_DELETION_BATCH_SIZE: z.coerce.number().int().positive().max(500).default(50),
 });
+
+// Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
+export const configSchema = identityConfigSchema.superRefine(requireGrpcAddressesInProduction);
 
 export type ServiceConfig = z.infer<typeof configSchema>;
 

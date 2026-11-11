@@ -1,5 +1,12 @@
 import { Logger } from '@nestjs/common';
-import { type EventPublisher, type OutboxFailure, type OutboxRecord, type OutboxStore } from './ports';
+import { outboxPublishFailures, trackOutbox } from './metrics';
+import {
+  type EventPublisher,
+  type MessageRetention,
+  type OutboxFailure,
+  type OutboxRecord,
+  type OutboxStore,
+} from './ports';
 
 export interface OutboxRelayOptions {
   batchSize?: number;
@@ -24,6 +31,10 @@ export interface OutboxRelayOptions {
    * transaction du store (30 s pour `SqlOutboxStore`).
    */
   passBudgetMs?: number;
+  /** Purge des messages anciens, lancée par le relais à intervalle régulier (ADR-047). */
+  retention?: MessageRetention;
+  /** Intervalle entre deux purges (1 h par défaut). */
+  retentionIntervalMs?: number;
   /** Horloge, en millisecondes (tests). */
   now?: () => number;
 }
@@ -80,6 +91,8 @@ export class OutboxRelay {
   private running = false;
   private loop?: Promise<void>;
   private wake?: () => void;
+  private untrack?: () => void;
+  private lastPurgeAt = 0;
 
   constructor(
     private readonly store: OutboxStore,
@@ -95,6 +108,8 @@ export class OutboxRelay {
   start(): void {
     if (this.running) return;
     this.running = true;
+    const { store } = this;
+    if (store.stats) this.untrack = trackOutbox(() => store.stats!());
     this.loop = this.run();
   }
 
@@ -102,6 +117,8 @@ export class OutboxRelay {
     this.running = false;
     this.wake?.();
     await this.loop;
+    this.untrack?.();
+    this.untrack = undefined;
   }
 
   private now(): number {
@@ -131,6 +148,7 @@ export class OutboxRelay {
             done.push(record.id);
             previousFailed = false;
           } catch (error) {
+            outboxPublishFailures().inc();
             const message = errorMessage(error).slice(0, ERROR_MAX_LENGTH);
             if (previousFailed) {
               // Deux échecs de suite : le broker est probablement indisponible. Ce second échec n'est
@@ -215,6 +233,7 @@ export class OutboxRelay {
         delay = backoff;
         this.logger.error(`Relais outbox en échec : ${errorMessage(error)}`);
       }
+      await this.purgeIfDue();
       if (delay > 0 && this.running) {
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, delay);
@@ -224,6 +243,21 @@ export class OutboxRelay {
           };
         });
       }
+    }
+  }
+
+  /** Purge si l'intervalle est écoulé ; un échec est journalisé, sans arrêter le relais. */
+  private async purgeIfDue(): Promise<void> {
+    const { retention } = this.options;
+    const now = this.now();
+    if (!retention || now - this.lastPurgeAt < (this.options.retentionIntervalMs ?? 3_600_000)) return;
+    this.lastPurgeAt = now;
+    try {
+      const purged = await retention.purge();
+      if (purged > 0)
+        this.logger.log(`Purge de la messagerie : ${purged} ligne(s) ancienne(s) supprimée(s).`);
+    } catch (error) {
+      this.logger.warn(`Purge de la messagerie en échec : ${errorMessage(error)}`);
     }
   }
 

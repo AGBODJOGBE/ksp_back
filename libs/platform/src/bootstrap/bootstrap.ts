@@ -9,6 +9,8 @@ import { type BaseServiceConfig } from '../config/config';
 import { GrpcExceptionFilter } from '../errors/grpc-exception.filter';
 import { GrpcContextInterceptor } from '../grpc/grpc-context.interceptor';
 import { grpcHealth, grpcServerOptions } from '../grpc/grpc-options';
+import { ShutdownState } from '../health/shutdown';
+import { enableGracefulShutdown } from './graceful-shutdown';
 
 export interface BootstrapOptions {
   module: Type<unknown>;
@@ -19,7 +21,8 @@ export interface BootstrapOptions {
 
 /**
  * Démarre un service : serveur gRPC (trafic métier) et serveur HTTP interne (santé, métriques).
- * Gère l'arrêt propre : le service se déclare indisponible avant de fermer ses connexions.
+ * Gère l'arrêt en deux temps (ADR-051) : au SIGTERM, le service se déclare indisponible (sonde
+ * « prêt », santé gRPC) et sert encore pendant SHUTDOWN_DELAY_MS, puis ferme ses serveurs et connexions.
  */
 export async function bootstrapService(options: BootstrapOptions): Promise<INestApplication> {
   const { module, config, grpcPackages } = options;
@@ -29,18 +32,19 @@ export async function bootstrapService(options: BootstrapOptions): Promise<INest
   app.useLogger(app.get(Logger));
   app.useGlobalFilters(new GrpcExceptionFilter());
   app.useGlobalInterceptors(app.get(GrpcContextInterceptor));
-  app.enableShutdownHooks();
+  const logger = app.get(Logger);
+  enableGracefulShutdown(app, app.get(ShutdownState), {
+    delayMs: config.SHUTDOWN_DELAY_MS,
+    onDrain: () => grpcHealth.setStatus('', 'NOT_SERVING'),
+    logger,
+  });
 
   app.connectMicroservice<MicroserviceOptions>(grpcServerOptions(grpcPackages, config.GRPC_PORT), {
     inheritAppConfig: true,
   });
 
-  process.once('SIGTERM', () => grpcHealth.setStatus('', 'NOT_SERVING'));
-
   await app.startAllMicroservices();
   await app.listen(config.HTTP_PORT, '0.0.0.0');
-  app
-    .get(Logger)
-    .log(`${config.SERVICE_NAME} démarré : gRPC :${config.GRPC_PORT}, HTTP :${config.HTTP_PORT}`);
+  logger.log(`${config.SERVICE_NAME} démarré : gRPC :${config.GRPC_PORT}, HTTP :${config.HTTP_PORT}`);
   return app;
 }

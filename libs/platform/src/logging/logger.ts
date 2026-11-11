@@ -1,5 +1,8 @@
 import { LoggerModule } from 'nestjs-pino';
 import { currentContext } from '../context/request-context';
+import { maskSecretPaths } from './secret-paths';
+
+export { maskSecretPaths };
 
 /**
  * Champs jamais écrits en clair dans les journaux : jetons, mots de passe, codes, secrets
@@ -32,18 +35,6 @@ export const REDACTED_PATHS = [
   '*.geocodedAddress',
   '*.displayAddress',
 ];
-
-/**
- * Segments d'adresse qui sont des secrets (jeton d'un lien de signature, ADR-044) : remplacés par
- * « [masqué] » dans l'adresse et les paramètres de route journalisés par chaque requête HTTP.
- */
-const SECRET_PATHS: readonly RegExp[] = [/^(\/api\/v1\/document\/sign\/)[^/?#]+/];
-
-export function maskSecretPaths(url: string | undefined): string | undefined {
-  return url === undefined
-    ? url
-    : SECRET_PATHS.reduce((acc, pattern) => acc.replace(pattern, '$1[masqué]'), url);
-}
 
 /** Requête journalisée (forme de pino-std-serializers) : adresse et jeton de route masqués. */
 export function serializeRequest<T extends { url?: string; params?: Record<string, unknown> }>(

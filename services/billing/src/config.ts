@@ -1,4 +1,4 @@
-import { baseServiceConfigSchema } from '@ksp/platform';
+import { baseServiceConfigSchema, requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 
 /** Configuration du service : variables communes, plus celles propres à billing. */
@@ -20,6 +20,8 @@ export const configSchema = baseServiceConfigSchema
         "IDENTITY_TOKEN_URL et SERVICE_CLIENT_SECRET sont obligatoires en production : billing lit l'en-tête des factures dans identity (ADR-022).",
       path: ['SERVICE_CLIENT_SECRET'],
     },
-  );
+  )
+  // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
+  .superRefine(requireGrpcAddressesInProduction);
 
 export type ServiceConfig = z.infer<typeof configSchema>;

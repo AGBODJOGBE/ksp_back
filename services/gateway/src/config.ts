@@ -1,6 +1,11 @@
+import { requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 import { type ClientOrigins } from './domain/client/client-kind';
-import { DEFAULT_RATE_LIMITS, type RateLimitTable } from './domain/rate-limit/rate-limits';
+import {
+  DEFAULT_AUTHENTICATED_IP_LIMIT,
+  DEFAULT_RATE_LIMITS,
+  type RateLimitTable,
+} from './domain/rate-limit/rate-limits';
 
 /** Liste d'origines séparées par des virgules, chacune de la forme https://hôte[:port], sans chemin. */
 const origins = z
@@ -38,6 +43,10 @@ export const configSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     HTTP_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+    /** Port interne, jamais exposé : sondes de santé et métriques (ADR-051). */
+    INTERNAL_HTTP_PORT: z.coerce.number().int().min(1).max(65535).default(3100),
+    /** Délai entre SIGTERM et la fermeture, pendant lequel la sonde « prêt » répond 503 (ADR-051). */
+    SHUTDOWN_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(5000),
     OTEL_EXPORTER_OTLP_ENDPOINT: optionalText,
 
     /** Adresse gRPC d'identity. */
@@ -87,8 +96,21 @@ export const configSchema = z
      */
     REFRESH_COOKIE_INSECURE: z.stringbool().default(false),
 
+    /**
+     * Redis des compteurs de limites, partagés par les répliques (ADR-051). Absent : compteurs en
+     * mémoire, valables pour une seule instance (développement). Obligatoire en production.
+     */
+    REDIS_URL: z.preprocess(
+      unset,
+      z
+        .string()
+        .regex(/^rediss?:\/\//, 'Adresse redis:// ou rediss://')
+        .optional(),
+    ),
     RATE_LIMIT_PUBLIC_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.public.limit),
     RATE_LIMIT_AUTHENTICATED_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.authenticated.limit),
+    /** Routes connectées, par adresse IP, avant la vérification du jeton (ADR-051). */
+    RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE: perMinute(DEFAULT_AUTHENTICATED_IP_LIMIT.limit),
     RATE_LIMIT_OTP_REQUEST_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.otp_request.limit),
     RATE_LIMIT_OTP_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.otp_verify.limit),
     RATE_LIMIT_MFA_VERIFY_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.mfa_verify.limit),
@@ -117,6 +139,12 @@ export const configSchema = z
     if (cfg.NODE_ENV !== 'production') return;
     const fail = (path: keyof typeof cfg, message: string) =>
       ctx.addIssue({ code: 'custom', path: [path], message });
+    if (!cfg.REDIS_URL) {
+      fail('REDIS_URL', 'Obligatoire en production : limites d’appels communes aux répliques de la gateway.');
+    }
+    if (cfg.INTERNAL_HTTP_PORT === cfg.HTTP_PORT) {
+      fail('INTERNAL_HTTP_PORT', 'Doit différer de HTTP_PORT : santé et métriques ne sont jamais publiques.');
+    }
     if (!cfg.IDENTITY_JWKS_URL) {
       fail('IDENTITY_JWKS_URL', 'Obligatoire en production : vérification des jetons d’accès.');
     }
@@ -142,7 +170,9 @@ export const configSchema = z
       if (!origin.startsWith('https://'))
         fail('CORS_WEB_ORIGINS', `Origine non HTTPS en production : ${origin}`);
     }
-  });
+  })
+  // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
+  .superRefine(requireGrpcAddressesInProduction);
 
 export type GatewayConfig = z.infer<typeof configSchema>;
 
@@ -222,6 +252,10 @@ export function rateLimitsFrom(config: GatewayConfig): RateLimitTable {
       limit: config.RATE_LIMIT_DOCUMENT_LINK_CODE_VERIFY_PER_MINUTE,
     },
   };
+}
+
+export function authenticatedIpLimitFrom(config: GatewayConfig): { limit: number; windowSeconds: number } {
+  return { ...DEFAULT_AUTHENTICATED_IP_LIMIT, limit: config.RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE };
 }
 
 /** Valeur du réglage « trust proxy » d'Express : un nombre de sauts, ou une liste. */

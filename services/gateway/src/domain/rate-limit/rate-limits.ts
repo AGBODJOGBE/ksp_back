@@ -77,3 +77,14 @@ export function rateLimitKey(
   if (rule.key === 'user') return subject.userId ? `${category}:user:${subject.userId}` : null;
   return `${category}:ip:${subject.ip}`;
 }
+
+/**
+ * Limite par adresse IP de toute route connectée, appliquée avant la vérification du jeton
+ * (ADR-051) : une rafale de jetons forgés ne coûte pas une vérification de signature chacun.
+ * Large, car beaucoup de clients partagent une adresse (réseaux mobiles), et réglable.
+ */
+export const DEFAULT_AUTHENTICATED_IP_LIMIT = { limit: 1200, windowSeconds: 60 } as const;
+
+export function authenticatedIpKey(ip: string): string {
+  return `authenticated_ip:ip:${ip}`;
+}
