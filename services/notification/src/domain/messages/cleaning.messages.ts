@@ -65,6 +65,22 @@ function passages(count: string): string {
   return count === '1' ? '1 passage' : `${count} passages`;
 }
 
+function capitalized(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** « le 5 novembre 2026 à 09:00 », ou « du … au … » pour plusieurs passages (ADR-052). */
+function period(variables: Readonly<Record<string, string>>): string {
+  return variables['first_date'] === variables['last_date']
+    ? `le ${variables['first_date']}`
+    : `du ${variables['first_date']} au ${variables['last_date']}`;
+}
+
+/** « est planifié le … » ou « sont planifiés du … au … ». */
+function planned(variables: Readonly<Record<string, string>>): string {
+  return `${variables['count'] === '1' ? 'est planifié' : 'sont planifiés'} ${period(variables)}`;
+}
+
 const CANCELLATION_SUBJECTS: Readonly<Record<string, string>> = {
   cancelled_by_customer: 'Annulation enregistrée',
   cancelled_by_supervisor: 'Prestation de nettoyage annulée',
@@ -361,6 +377,35 @@ export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
         greeting(v),
         `Une intervention ${forService(v, 'de nettoyage')} vous est confiée le ${v['date']} ` +
           `(durée prévue : ${v['duration']}). Retrouvez les détails dans votre espace KSP.`,
+      ),
+    }),
+    WITH_SERVICE,
+  ),
+  template(
+    'cleaning.interventions_batch_scheduled.customer',
+    'short',
+    { first_name: FIRST_NAME, count: COUNT, first_date: TEXT, last_date: TEXT, duration: TEXT, link: LINK },
+    (v) => ({
+      subject: titled('Interventions de nettoyage planifiées', v),
+      text: lines(
+        greeting(v),
+        `${capitalized(passages(v['count']))} ${forService(v, 'de nettoyage')} ${planned(v)} ` +
+          `(durée prévue : ${v['duration']} chacun). Toutes les dates sont dans votre espace : ${v['link']}`,
+      ),
+    }),
+    WITH_SERVICE,
+  ),
+  template(
+    'cleaning.interventions_batch_scheduled.agent',
+    'short',
+    { first_name: FIRST_NAME, count: COUNT, first_date: TEXT, last_date: TEXT, duration: TEXT },
+    (v) => ({
+      subject: titled('Nouvelles interventions de nettoyage', v),
+      text: lines(
+        greeting(v),
+        `${capitalized(passages(v['count']))} ${forService(v, 'de nettoyage')} vous ${
+          v['count'] === '1' ? 'est confié' : 'sont confiés'
+        }, ${period(v)} (durée prévue : ${v['duration']} chacun). Retrouvez les dates dans votre espace KSP.`,
       ),
     }),
     WITH_SERVICE,

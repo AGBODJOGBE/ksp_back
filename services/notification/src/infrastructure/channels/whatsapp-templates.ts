@@ -70,6 +70,20 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
     'link',
   ]),
   'cleaning.mission_scheduled.agent': withService('ksp_cleaning_mission_assigned', ['date', 'duration']),
+  // Planification en lot (ADR-052) : un message qui résume les passages.
+  'cleaning.interventions_batch_scheduled.customer': withService('ksp_cleaning_interventions_scheduled', [
+    'count',
+    'first_date',
+    'last_date',
+    'duration',
+    'link',
+  ]),
+  'cleaning.interventions_batch_scheduled.agent': withService('ksp_cleaning_interventions_assigned', [
+    'count',
+    'first_date',
+    'last_date',
+    'duration',
+  ]),
   // Messages regroupés (ADR-035 point 14) : envoi groupé, visite commune, devis envoyés ensemble.
   'cleaning.quote_group_requested.customer': spec(
     (v) =>

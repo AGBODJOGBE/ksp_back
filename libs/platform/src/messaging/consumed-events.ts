@@ -37,6 +37,7 @@ export const EVENT_CONSUMERS = {
     'cleaning.contract.suspended',
     'cleaning.contract.suspension_updated',
     'cleaning.contract.suspension_warning',
+    'cleaning.interventions.batch_scheduled',
     'cleaning.mission.completed',
     'cleaning.mission.scheduled',
     'cleaning.quote.requested',
