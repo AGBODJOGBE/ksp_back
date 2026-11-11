@@ -201,7 +201,8 @@ describe('reversements (cas d’usage, ADR-041)', () => {
       expect(payouts().outbox).toEqual([
         expect.objectContaining({
           type: 'payment.payout.failed',
-          payload: expect.objectContaining({ failureCode: 'provider_rejected' }),
+          // Schéma v1 de l'événement : provider_failed ; le détail reste dans payment.
+          payload: expect.objectContaining({ failureCode: 'provider_failed' }),
         }),
       ]);
       expect((deps.alerts as RecordingAlerts).payoutRejections).toEqual([

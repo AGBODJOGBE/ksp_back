@@ -68,7 +68,7 @@ export interface PaymentEventPayloads {
   };
   /** Reversement en échec : aucun argent n'est parti (ADR-041). */
   'payment.payout.failed': PayoutRef & {
-    failureCode: 'provider_failed' | 'provider_rejected' | 'rejected_by_finance';
+    failureCode: 'provider_failed' | 'rejected_by_finance';
     failedAt: string;
   };
 }

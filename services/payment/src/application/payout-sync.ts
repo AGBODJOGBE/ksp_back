@@ -41,7 +41,10 @@ export function payoutEvents(transition: NonNullable<PayoutTransition>): OutboxM
         type: 'payment.payout.failed',
         payload: {
           ...ref,
-          failureCode: payout.failureCode ?? 'provider_failed',
+          // Code publié (schéma v1) : un refus définitif du prestataire reste `provider_failed` ;
+          // `provider_rejected` est gardé dans payment (back-office, ADR-048).
+          failureCode:
+            payout.failureCode === 'rejected_by_finance' ? 'rejected_by_finance' : 'provider_failed',
           failedAt: (payout.failedAt ?? payout.updatedAt).toISOString(),
         },
       },
