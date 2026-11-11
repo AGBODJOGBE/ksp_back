@@ -5,6 +5,7 @@ import {
   type SiteVisit as VisitRow,
 } from '../../../prisma/generated';
 import { type Answers, type OptionSelection, type PremisesType } from '../../domain/answers';
+import { type InterventionSchedule } from '../../domain/intervention-schedule';
 import { type GeocodingProvider, type GeoLocation } from '../../domain/location';
 import { type Quote } from '../../domain/quote';
 import { zoneCode } from '../../domain/zone';
@@ -30,6 +31,22 @@ export const slotsFromJson = (value: Prisma.JsonValue): Slot[] =>
 export const recurrenceFromJson = (value: Prisma.JsonValue | null): Recurrence | null =>
   value ? (value as unknown as Recurrence) : null;
 export const recurrenceToJson = (value: Recurrence | null) => (value ? json(value) : undefined);
+
+/** Plan de passages (ADR-052) et ses dates. */
+export const scheduleFromColumns = (row: {
+  schedule: Prisma.JsonValue | null;
+  scheduledDates: string[];
+}) => ({
+  schedule: row.schedule ? (row.schedule as unknown as InterventionSchedule) : null,
+  scheduledDates: row.scheduledDates,
+});
+export const scheduleColumns = (value: {
+  schedule?: InterventionSchedule | null;
+  scheduledDates?: string[];
+}) => ({
+  schedule: value.schedule ? json(value.schedule) : Prisma.DbNull,
+  scheduledDates: value.scheduledDates ?? [],
+});
 
 /** Position enregistrée (colonnes latitude, longitude, précision), null si incomplète. */
 export function locationFromColumns(row: {
@@ -63,6 +80,7 @@ function toQuote(row: QuoteRow): Quote {
     depositPercent: row.depositPercent,
     depositAmount: row.depositAmount,
     recurrence: recurrenceFromJson(row.recurrence),
+    ...scheduleFromColumns(row),
     teamSize: row.teamSize,
     durationMinutes: row.durationMinutes,
     sentAt: row.sentAt,
@@ -130,6 +148,7 @@ export function toRequest(row: RequestWithRelations): QuoteRequest {
     preferredSlots: slotsFromJson(row.preferredSlots),
     comment: row.comment,
     recurrence: recurrenceFromJson(row.recurrence),
+    ...scheduleFromColumns(row),
     requestedTeamSize: row.requestedTeamSize,
     daysPerWeek: row.daysPerWeek,
     recommendedTeamSize: row.recommendedTeamSize,
@@ -186,6 +205,7 @@ export function requestColumns(request: QuoteRequest) {
     preferredSlots: slotsToJson(request.preferredSlots),
     comment: request.comment,
     recurrence: recurrenceToJson(request.recurrence),
+    ...scheduleColumns(request),
     requestedTeamSize: request.requestedTeamSize,
     daysPerWeek: request.daysPerWeek,
     recommendedTeamSize: request.recommendedTeamSize,
@@ -211,6 +231,7 @@ export function quoteColumns(requestId: string, quote: Quote) {
     depositPercent: quote.depositPercent,
     depositAmount: quote.depositAmount,
     recurrence: recurrenceToJson(quote.recurrence),
+    ...scheduleColumns(quote),
     teamSize: quote.teamSize,
     durationMinutes: quote.durationMinutes,
     sentAt: quote.sentAt,

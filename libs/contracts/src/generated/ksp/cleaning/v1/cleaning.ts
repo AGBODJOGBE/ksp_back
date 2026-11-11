@@ -19,12 +19,78 @@ export interface TimeSlot {
 /**
  * Contrat récurrent (client entreprise, ou particulier qui le demande) : nombre de passages
  * par période, pendant une durée en mois. La facture mensuelle viendra avec billing.
+ * Ancien format (ADR-023), déprécié en entrée depuis l'ADR-052 : remplacé par InterventionSchedule.
+ * En sortie, déduit du plan de passages pour les anciens lecteurs (absent pour un seul passage).
  */
 export interface Recurrence {
   /** "week" ou "month". */
   period: string;
   visitsPerPeriod: number;
   durationMonths: number;
+}
+
+/**
+ * Plan de passages (ADR-052) : le moteur en tire la liste exacte des dates (AAAA-MM-JJ, jours civils
+ * du fuseau du service, Africa/Porto-Novo par défaut) ; le nombre de passages, donc le prix, est
+ * celui de cette liste. Erreurs : CLEANING_VALIDATION_FAILED, details.field "schedule.<champ>"
+ * (ou "schedule" : aucun passage, ou plus que le maximum réglé, 400 par défaut) ;
+ * CLEANING_LEAD_TIME_TOO_SHORT si le premier passage est trop proche.
+ */
+export interface InterventionSchedule {
+  /** "dates" (liste explicite), "weekly" (jours de semaine) ou "monthly" (chaque mois). */
+  mode: string;
+  /** Mode "dates" seulement : 1 à N jours, sans ordre imposé (doublons ignorés). */
+  dates: string[];
+  /**
+   * Modes "weekly" et "monthly" : période, bornes incluses ; vides en mode "dates". La période
+   * couvre au plus 36 mois (réglable).
+   */
+  startDate: string;
+  endDate: string;
+  /**
+   * "mon", "tue", "wed", "thu", "fri", "sat" ou "sun" : mode "weekly", ou "monthly" avec
+   * weeks_of_month.
+   */
+  weekdays: string[];
+  /**
+   * Mode "weekly" : 0 ou 1 chaque semaine, 2 une semaine sur deux… (12 au plus), semaines comptées
+   * depuis celle de start_date (du lundi au dimanche).
+   */
+  everyWeeks: number;
+  /**
+   * Mode "monthly", première forme : jours du mois (1 à 31) ; un jour absent du mois devient son
+   * dernier jour, sans doublon.
+   */
+  monthDays: number[];
+  /**
+   * Mode "monthly", seconde forme (avec weekdays) : rangs dans le mois, "1" à "4" ou "last".
+   * Une seule des deux formes.
+   */
+  weeksOfMonth: string[];
+  /** Heure de début de chaque passage, HH:mm, heure locale (obligatoire). */
+  startTime: string;
+  /** Jours retirés (fériés, absences) et jours ajoutés ; un jour exclu le reste même s'il est ajouté. */
+  excludedDates: string[];
+  extraDates: string[];
+}
+
+export interface ScheduleWarning {
+  /**
+   * "moved_to_month_end" (jour ramené au dernier jour du mois), "excluded" (jour exclu),
+   * "excluded_not_planned" (jour exclu qui n'était pas prévu) ou "extra_already_planned".
+   */
+  code: string;
+  date: string;
+  message: string;
+}
+
+/** Dates exactes d'un plan de passages (ADR-052). */
+export interface SchedulePreview {
+  dates: string[];
+  count: number;
+  firstDate: string;
+  lastDate: string;
+  warnings: ScheduleWarning[];
 }
 
 export interface PriceLine {
@@ -134,6 +200,13 @@ export interface Quote {
   sentAt: string;
   teamSize: number;
   durationMinutes: number;
+  /**
+   * Plan de passages du devis (ADR-052) et ses dates exactes (intervention_count = leur nombre) ;
+   * absent et vide pour un devis sans plan (ancienne récurrence). Avec un plan, proposed_slots est
+   * le premier passage.
+   */
+  schedule?: InterventionSchedule | undefined;
+  scheduledDates: string[];
 }
 
 export interface QuoteRequest {
@@ -258,7 +331,12 @@ export interface QuoteRequest {
    * Mesures constatées, lisibles, résolues avec leur version de grille ; absent sans mesure et dans
    * l'espace client.
    */
-  measuredSummary?: AnswerSummary | undefined;
+  measuredSummary?:
+    | AnswerSummary
+    | undefined;
+  /** Plan de passages demandé (ADR-052) et ses dates exactes ; absent et vide sans plan. */
+  schedule?: InterventionSchedule | undefined;
+  scheduledDates: string[];
 }
 
 /** Mesures constatées après la visite technique (ADR-037). */
@@ -425,6 +503,12 @@ export interface Mission {
   /** Groupe et type de lieu de la demande d'origine (ADR-034), vides sinon. */
   groupId: string;
   placeType: string;
+  /**
+   * Plan de passages du devis accepté (ADR-052) et ses dates exactes (planned_interventions = leur
+   * nombre), à planifier passage par passage ; absent et vide sans plan.
+   */
+  schedule?: InterventionSchedule | undefined;
+  scheduledDates: string[];
 }
 
 export interface Suspension {
@@ -748,6 +832,11 @@ export interface SimulateRequest {
     | undefined;
   /** Nouveau format : options choisies, avec leurs réponses. */
   optionSelections: OptionSelection[];
+  /**
+   * Facultatif (ADR-052) : plan de passages ; la réponse donne ses dates et le montant estimé sur
+   * leur nombre exact.
+   */
+  schedule?: InterventionSchedule | undefined;
 }
 
 export interface SimulateResponse {
@@ -775,6 +864,24 @@ export interface SimulateResponse {
    * recalculé avec la vraie commune à la demande de devis.
    */
   communeApplied: boolean;
+  /** Plan de passages envoyé (ADR-052) : ses dates ; absent sans plan. */
+  schedule?:
+    | SchedulePreview
+    | undefined;
+  /**
+   * Prix d'un passage × nombre de passages, et la fourchette de même ; absents sans plan ou si
+   * priced = false.
+   */
+  scheduleTotal?: Money | undefined;
+  scheduleEstimate?: PriceRange | undefined;
+}
+
+export interface PreviewScheduleRequest {
+  schedule?: InterventionSchedule | undefined;
+}
+
+export interface PreviewScheduleResponse {
+  preview?: SchedulePreview | undefined;
 }
 
 /** Zone desservie vue du public. */
@@ -888,8 +995,18 @@ export interface RequestQuoteRequest {
   options: string[];
   commune: string;
   address: string;
+  /**
+   * 1 à 3 créneaux souhaités ; 0 à 3 avec un plan de passages (le premier passage sinon, durée
+   * indicative de 2 heures).
+   */
   preferredSlots: TimeSlot[];
   comment: string;
+  /**
+   * Déprécié (ADR-052) : remplacé par schedule ; traduit en plan quand c'est exact (un passage par
+   * semaine ou par mois, depuis le premier créneau), sinon gardé approximatif. Pas avec schedule.
+   *
+   * @deprecated
+   */
   recurrence?: Recurrence | undefined;
   requestedTeamSize: number;
   /** Entreprise : jours d'intervention par semaine, si connus (1 à 7) ; 0 si non précisés. */
@@ -905,6 +1022,11 @@ export interface RequestQuoteRequest {
    * recurrence, qui décrit le contrat (passages par période, durée).
    */
   frequency: string;
+  /**
+   * Plan de passages (ADR-052) : dates exactes, estimation sur leur nombre. Jours par semaine
+   * (days_per_week) déduits d'un plan "weekly" s'ils ne sont pas indiqués.
+   */
+  schedule?: InterventionSchedule | undefined;
 }
 
 export interface RequestQuoteResponse {
@@ -1008,9 +1130,19 @@ export interface RequestQuoteGroupRequest {
   commune: string;
   /** 1 à 10 prestations distinctes, toutes proposées par le type de lieu. */
   items: QuoteGroupItem[];
+  /** Mêmes règles que RequestQuoteRequest (0 à 3 avec un plan de passages). */
   preferredSlots: TimeSlot[];
   comment: string;
-  recurrence?: Recurrence | undefined;
+  /**
+   * Déprécié (ADR-052) : remplacé par schedule (mêmes règles que RequestQuoteRequest).
+   *
+   * @deprecated
+   */
+  recurrence?:
+    | Recurrence
+    | undefined;
+  /** Plan de passages commun à toutes les prestations du lieu (ADR-052). */
+  schedule?: InterventionSchedule | undefined;
 }
 
 /** Groupe de demandes créées ensemble pour un même lieu (ADR-034). */
@@ -1248,15 +1380,29 @@ export interface SendQuoteRequest {
    * enregistrées ; toujours sans prix : CLEANING_PRICE_NOT_SET.
    */
   lines: PriceLine[];
+  /**
+   * 1 à 3 créneaux ; ignorés pour un devis avec un plan de passages : le créneau proposé est alors le
+   * premier passage, avec duration_minutes.
+   */
   proposedSlots: TimeSlot[];
   /** 0 : validité par défaut (réglages). */
   validityDays: number;
+  /**
+   * Déprécié (ADR-052) : remplacé par schedule ; traduit en plan quand c'est exact.
+   *
+   * @deprecated
+   */
   recurrence?:
     | Recurrence
     | undefined;
   /** 0 : taille recommandée. */
   teamSize: number;
   durationMinutes: number;
+  /**
+   * Plan de passages ajusté après la visite (ADR-052) ; absent : celui de la demande, recontrôlé
+   * (premier passage au-delà du délai minimum). Total = prix d'un passage × nombre de dates.
+   */
+  schedule?: InterventionSchedule | undefined;
 }
 
 export interface SendQuoteResponse {
@@ -1308,6 +1454,11 @@ export interface RejectRequestGroupResponse {
 export interface GroupQuoteItem {
   requestId: string;
   lines: PriceLine[];
+  /**
+   * Déprécié (ADR-052) : voir SendGroupQuotesRequest.schedule.
+   *
+   * @deprecated
+   */
   recurrence?: Recurrence | undefined;
   teamSize: number;
   durationMinutes: number;
@@ -1315,13 +1466,18 @@ export interface GroupQuoteItem {
 
 export interface SendGroupQuotesRequest {
   groupId: string;
-  /** Créneaux communs proposés pour tous les devis (1 à 3). */
+  /**
+   * Créneaux communs proposés pour tous les devis (1 à 3) ; ignorés pour un devis avec un plan de
+   * passages (son créneau proposé est son premier passage).
+   */
   proposedSlots: TimeSlot[];
   /** 0 : validité par défaut (réglages). */
   validityDays: number;
   /** Une entrée par demande à chiffrer, chacune une seule fois. */
   quotes: GroupQuoteItem[];
   idempotencyKey: string;
+  /** Plan de passages commun à tous les devis (ADR-052) ; absent : celui de chaque demande. */
+  schedule?: InterventionSchedule | undefined;
 }
 
 export interface SendGroupQuotesResponse {
@@ -1458,11 +1614,45 @@ export interface GetMissionDetailResponse {
 
 export interface ScheduleInterventionRequest {
   missionId: string;
+  /**
+   * Vide (ADR-052) : prochaine date du plan de passages encore sans passage, à l'heure du plan
+   * (CLEANING_VALIDATION_FAILED, field "scheduledStart", si la mission n'a plus de date à venir).
+   */
   scheduledStart: string;
   durationMinutes: number;
   agentIds: string[];
   /** Facultatif : les membres de l'équipe s'ajoutent à agent_ids. */
   teamId: string;
+}
+
+export interface ScheduleInterventionBatchRequest {
+  missionId: string;
+  /** Sous-ensemble des dates restantes du plan (AAAA-MM-JJ) ; vide : selon until. */
+  dates: string[];
+  /** Toutes les dates restantes jusqu'à cette date incluse ; vide (avec dates vide) : toutes. */
+  until: string;
+  /** HH:mm, heure locale ; vide : heure de début du plan. */
+  startTime: string;
+  durationMinutes: number;
+  agentIds: string[];
+  /** Facultatif : les membres de l'équipe s'ajoutent à agent_ids. */
+  teamId: string;
+  /** Vrai : planifier les dates libres et sauter les dates en conflit ; faux : tout ou rien. */
+  skipConflicts: boolean;
+  idempotencyKey: string;
+}
+
+/** Date sautée (ou en conflit) d'une planification en lot, avec ses agents déjà pris. */
+export interface BatchConflict {
+  date: string;
+  agentIds: string[];
+}
+
+export interface ScheduleInterventionBatchResponse {
+  mission?: Mission | undefined;
+  interventionIds: string[];
+  scheduledDates: string[];
+  skipped: BatchConflict[];
 }
 
 export interface ScheduleInterventionResponse {
@@ -2045,6 +2235,14 @@ export interface CatalogServiceClient {
    */
 
   estimate(request: EstimateRequest, metadata?: Metadata): Observable<EstimateResponse>;
+
+  /**
+   * Aperçu d'un plan de passages (ADR-052) : liste exacte des dates, nombre, premier et dernier
+   * passage, avertissements ; mêmes contrôles qu'à la demande de devis (plan bien formé, au plus le
+   * nombre de passages réglé, premier passage au-delà du délai minimum). Rien n'est enregistré.
+   */
+
+  previewSchedule(request: PreviewScheduleRequest, metadata?: Metadata): Observable<PreviewScheduleResponse>;
 }
 
 /**
@@ -2103,11 +2301,29 @@ export interface CatalogServiceController {
     request: EstimateRequest,
     metadata?: Metadata,
   ): Promise<EstimateResponse> | Observable<EstimateResponse> | EstimateResponse;
+
+  /**
+   * Aperçu d'un plan de passages (ADR-052) : liste exacte des dates, nombre, premier et dernier
+   * passage, avertissements ; mêmes contrôles qu'à la demande de devis (plan bien formé, au plus le
+   * nombre de passages réglé, premier passage au-delà du délai minimum). Rien n'est enregistré.
+   */
+
+  previewSchedule(
+    request: PreviewScheduleRequest,
+    metadata?: Metadata,
+  ): Promise<PreviewScheduleResponse> | Observable<PreviewScheduleResponse> | PreviewScheduleResponse;
 }
 
 export function CatalogServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["listServices", "simulate", "listServedZones", "getPlaceCatalog", "estimate"];
+    const grpcMethods: string[] = [
+      "listServices",
+      "simulate",
+      "listServedZones",
+      "getPlaceCatalog",
+      "estimate",
+      "previewSchedule",
+    ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("CatalogService", method)(constructor.prototype[method], method, descriptor);
@@ -2538,6 +2754,20 @@ export interface CleaningAdminServiceClient {
     metadata?: Metadata,
   ): Observable<ScheduleGroupInterventionsResponse>;
 
+  /**
+   * Planification en lot des dates restantes du plan de passages (ADR-052) : un passage par date,
+   * mêmes agents, même heure, même durée, contrôlés date par date dans une transaction (agents
+   * verrouillés). Tout ou rien par défaut : CLEANING_TEAM_UNAVAILABLE avec details.conflicts (date et
+   * agents de chaque date en conflit) ; skip_conflicts planifie le reste et rend les dates sautées.
+   * Un seul événement cleaning.interventions.batch_scheduled. Idempotent par idempotency_key
+   * (obligatoire) et par mission. Plafond par appel réglable (400 par défaut).
+   */
+
+  scheduleInterventionBatch(
+    request: ScheduleInterventionBatchRequest,
+    metadata?: Metadata,
+  ): Observable<ScheduleInterventionBatchResponse>;
+
   startIntervention(request: StartInterventionRequest, metadata?: Metadata): Observable<StartInterventionResponse>;
 
   updateChecklist(request: UpdateChecklistRequest, metadata?: Metadata): Observable<UpdateChecklistResponse>;
@@ -2795,6 +3025,23 @@ export interface CleaningAdminServiceController {
     | Observable<ScheduleGroupInterventionsResponse>
     | ScheduleGroupInterventionsResponse;
 
+  /**
+   * Planification en lot des dates restantes du plan de passages (ADR-052) : un passage par date,
+   * mêmes agents, même heure, même durée, contrôlés date par date dans une transaction (agents
+   * verrouillés). Tout ou rien par défaut : CLEANING_TEAM_UNAVAILABLE avec details.conflicts (date et
+   * agents de chaque date en conflit) ; skip_conflicts planifie le reste et rend les dates sautées.
+   * Un seul événement cleaning.interventions.batch_scheduled. Idempotent par idempotency_key
+   * (obligatoire) et par mission. Plafond par appel réglable (400 par défaut).
+   */
+
+  scheduleInterventionBatch(
+    request: ScheduleInterventionBatchRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ScheduleInterventionBatchResponse>
+    | Observable<ScheduleInterventionBatchResponse>
+    | ScheduleInterventionBatchResponse;
+
   startIntervention(
     request: StartInterventionRequest,
     metadata?: Metadata,
@@ -2961,6 +3208,7 @@ export function CleaningAdminServiceControllerMethods() {
       "getMissionDetail",
       "scheduleIntervention",
       "scheduleGroupInterventions",
+      "scheduleInterventionBatch",
       "startIntervention",
       "updateChecklist",
       "reportIncident",

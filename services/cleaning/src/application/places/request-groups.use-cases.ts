@@ -1,11 +1,9 @@
 import { legacyPremisesType, legacyQuantity } from '../../domain/answers';
 
 import { type QuoteRequest, type QuoteRequestGroup, VISIT_REQUIRED } from '../../domain/quote-request';
-import { respectsLeadTime } from '../../domain/schedule';
 import { calculatePrice } from '../../domain/simulator';
 import { type CleaningDeps, presentRequest } from '../deps';
 import { type AuditEntry, type OutboxMessage, type QuoteRequestGroupView } from '../ports';
-import { MAX_PREFERRED_SLOTS } from '../requests/customer-requests.use-cases';
 import { groupOwner } from '../groups/group-support';
 import {
   currentCustomer,
@@ -15,14 +13,8 @@ import {
   SUPERVISION,
 } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
-import {
-  optionalText,
-  parseRecurrence,
-  parseSlot,
-  requiredText,
-  requirePositiveInt,
-  requireUuid,
-} from '../shared/validation';
+import { daysPerWeekOf, requestTiming, type ScheduleInput } from '../shared/schedules';
+import { optionalText, requiredText, requirePositiveInt, requireUuid } from '../shared/validation';
 import { chooseCommune, parseLocation } from './location.use-cases';
 import { activePlaceType, type PlaceItemInput, resolvePlaceItems } from './place-items';
 
@@ -46,7 +38,10 @@ export interface RequestQuoteGroupInput {
   items: QuoteGroupItemInput[];
   preferredSlots: { start: string; end: string }[];
   comment?: string | null | undefined;
+  /** Dépréciée (ADR-052) : traduite en plan quand c'est exact. */
   recurrence?: { period: string; visitsPerPeriod: number; durationMonths: number } | undefined;
+  /** Plan de passages commun à toutes les prestations du lieu (ADR-052). */
+  schedule?: ScheduleInput | null | undefined;
 }
 
 /** Groupe tel qu'il s'affiche : un devis dont la validité est dépassée apparaît expiré. */
@@ -77,7 +72,6 @@ export class RequestQuoteGroupUseCase {
     const landmark = requiredText('landmark', input.landmark, 500);
     const fallbackCommune = optionalText('commune', input.commune ?? undefined, 100);
     const comment = optionalText('comment', input.comment ?? undefined, 2000);
-    const recurrence = parseRecurrence(input.recurrence);
     const items = await resolvePlaceItems(this.deps, placeType, input.items);
     const teamSizes = input.items.map((item, index) =>
       item.requestedTeamSize
@@ -86,15 +80,7 @@ export class RequestQuoteGroupUseCase {
     );
 
     const settings = await this.deps.catalog.getSettings();
-    if (input.preferredSlots.length < 1 || input.preferredSlots.length > MAX_PREFERRED_SLOTS) {
-      throw CleaningErrors.slotInvalid(`Proposez de 1 à ${MAX_PREFERRED_SLOTS} créneaux.`);
-    }
-    const preferredSlots = input.preferredSlots.map((slot, index) =>
-      parseSlot(`preferredSlots[${index}]`, slot),
-    );
-    if (preferredSlots.some((slot) => !respectsLeadTime(slot.start, now, settings.minimumLeadHours))) {
-      throw CleaningErrors.leadTimeTooShort(settings.minimumLeadHours);
-    }
+    const timing = requestTiming(this.deps, input, settings, now);
     const { commune, provider, displayAddress } = await chooseCommune(this.deps, location, fallbackCommune);
     // Le groupe compte pour 1 dans le plafond, comme une demande seule (ADR-035).
     if ((await this.deps.requests.countOpen(customer.userId, now)) >= settings.maxOpenRequests) {
@@ -138,11 +124,10 @@ export class RequestQuoteGroupUseCase {
         landmark,
         geocodingProvider: provider,
         geocodedAddress: displayAddress,
-        preferredSlots,
+        ...timing,
         comment,
-        recurrence,
         requestedTeamSize,
-        daysPerWeek: null,
+        daysPerWeek: daysPerWeekOf(null, timing.schedule),
         recommendedTeamSize: calculation.recommendedTeamSize,
         estimate: calculation.estimate,
         visit: null,

@@ -8,6 +8,7 @@ import {
   protoRequest,
   protoVisit,
   startCleaningStub,
+  stubDefault,
 } from './support/cleaning-stub';
 import {
   type IdentityServer,
@@ -37,7 +38,14 @@ describe('gateway → cleaning', () => {
     keys = await TestKeys.create();
     identity = await startIdentityStub(keys);
     cleaning = await startCleaningStub(keys);
-    app = await startGateway({ identityUrl: identity.url, cleaningUrl: cleaning.url, keys });
+    app = await startGateway({
+      identityUrl: identity.url,
+      cleaningUrl: cleaning.url,
+      keys,
+      // Simulations et aperçus de plans partagent la limite publique (20 par minute) : relevée ici,
+      // la limite elle-même est testée ailleurs.
+      env: { RATE_LIMIT_CLEANING_SIMULATION_PER_MINUTE: '1000' },
+    });
     customer = await keys.accessToken();
     staff = await keys.accessToken({
       claims: {
@@ -1154,6 +1162,170 @@ describe('gateway → cleaning', () => {
         ).send({ latitude: 95, longitude: 2 })
       ).status,
     ).toBe(400);
+  });
+
+  // --- Plan de passages (ADR-052) -------------------------------------------------------------------
+
+  const WEEKLY = {
+    mode: 'weekly',
+    startDate: '2026-11-10',
+    endDate: '2027-11-11',
+    weekdays: ['mon', 'wed', 'sat'],
+    startTime: '08:00',
+  };
+
+  it('aperçu public d’un plan : corps traduit, dates présentées ; forme refusée par la gateway', async () => {
+    const res = await http()
+      .post('/api/v1/cleaning/schedules/preview')
+      .send({
+        mode: 'monthly',
+        startDate: '2026-12-01',
+        endDate: '2027-05-31',
+        weekdays: ['mon'],
+        weeksOfMonth: [1, 'last'],
+        startTime: '09:30',
+      });
+    expect(res.status).toBe(200);
+    expect(cleaning.stub.last('previewSchedule')!.request).toEqual({
+      schedule: {
+        mode: 'monthly',
+        dates: [],
+        startDate: '2026-12-01',
+        endDate: '2027-05-31',
+        weekdays: ['mon'],
+        everyWeeks: 0,
+        monthDays: [],
+        weeksOfMonth: ['1', 'last'],
+        startTime: '09:30',
+        excludedDates: [],
+        extraDates: [],
+      },
+    });
+    expect(res.body).toEqual({
+      dates: ['2026-11-05', '2026-11-12'],
+      count: 2,
+      firstDate: '2026-11-05',
+      lastDate: '2026-11-12',
+      warnings: [],
+    });
+    for (const body of [
+      { ...WEEKLY, mode: 'daily' },
+      { ...WEEKLY, startTime: '8h' },
+      { ...WEEKLY, weekdays: ['lundi'] },
+      { ...WEEKLY, weeksOfMonth: [5] },
+      { ...WEEKLY, startDate: '10/11/2026' },
+      { ...WEEKLY, unknown: true },
+    ]) {
+      const refused = await http().post('/api/v1/cleaning/schedules/preview').send(body);
+      expect(refused.status).toBe(400);
+      expect(refused.body.error.code).toBe('GATEWAY_VALIDATION_FAILED');
+    }
+  });
+
+  it('simulation avec un plan : montant sur le nombre de passages ; plan et dates présentés partout', async () => {
+    cleaning.stub.on('simulate', async () => ({
+      ...stubDefault('simulate'),
+      schedule: {
+        dates: ['2026-11-11'],
+        count: 1,
+        firstDate: '2026-11-11',
+        lastDate: '2026-11-11',
+        warnings: [],
+      },
+      scheduleTotal: xof(37400),
+      scheduleEstimate: { low: xof(33500), high: xof(43000) },
+    }));
+    const res = await http()
+      .post('/api/v1/cleaning/simulations')
+      .send({ serviceCode: 'home_cleaning', answers: {}, schedule: WEEKLY });
+    expect(res.status).toBe(200);
+    expect(cleaning.stub.last('simulate')!.request).toMatchObject({
+      schedule: { mode: 'weekly', everyWeeks: 0 },
+    });
+    expect(res.body.schedule).toEqual({
+      dates: ['2026-11-11'],
+      count: 1,
+      firstDate: '2026-11-11',
+      lastDate: '2026-11-11',
+      warnings: [],
+      total: xof(37400),
+      estimate: { low: xof(33500), high: xof(43000) },
+    });
+
+    const mission = await http()
+      .get(`/api/v1/cleaning/missions/${IDS.mission}`)
+      .set('Authorization', `Bearer ${customer}`);
+    expect(mission.body).toMatchObject({
+      schedule: {
+        mode: 'weekly',
+        startDate: '2026-11-05',
+        weekdays: ['thu'],
+        everyWeeks: 1,
+        weeksOfMonth: [],
+      },
+      scheduledDates: ['2026-11-05', '2026-11-12'],
+    });
+  });
+
+  it('devis sans créneau avec un plan ; passage planifié sans date (prochaine date du plan)', async () => {
+    const quote = await backoffice(
+      http().post(`/api/v1/admin/cleaning/quote-requests/${IDS.request}/quote`),
+      staff,
+    ).send({
+      durationMinutes: 180,
+      schedule: { mode: 'dates', dates: ['2026-11-20', '2026-12-04'], startTime: '08:00' },
+    });
+    expect(quote.status).toBe(200);
+    expect(cleaning.stub.last('sendQuote')!.request).toMatchObject({
+      proposedSlots: [],
+      schedule: { mode: 'dates', dates: ['2026-11-20', '2026-12-04'], startDate: '', endDate: '' },
+    });
+    const planned = await backoffice(
+      http().post(`/api/v1/admin/cleaning/missions/${IDS.mission}/interventions`),
+      staff,
+    ).send({ durationMinutes: 180, agentIds: [IDS.agent] });
+    expect(planned.status).toBe(200);
+    expect(cleaning.stub.last('scheduleIntervention')!.request).toMatchObject({ scheduledStart: '' });
+  });
+
+  it('planification en lot : clé obligatoire transmise, dates sautées, conflits en 409 avec leurs dates', async () => {
+    const url = `/api/v1/admin/cleaning/missions/${IDS.mission}/interventions/batch`;
+    const body = { until: '2026-12-31', durationMinutes: 120, agentIds: [IDS.agent], skipConflicts: true };
+    const missing = await backoffice(http().post(url), staff).send(body);
+    expect(missing.status).toBe(400);
+    expect(cleaning.stub.last('scheduleInterventionBatch')).toBeUndefined();
+
+    const res = await backoffice(http().post(url), staff).set('Idempotency-Key', 'lot-cle-0001').send(body);
+    expect(res.status).toBe(200);
+    expect(cleaning.stub.last('scheduleInterventionBatch')!.request).toEqual({
+      missionId: IDS.mission,
+      dates: [],
+      until: '2026-12-31',
+      startTime: '',
+      durationMinutes: 120,
+      agentIds: [IDS.agent],
+      teamId: '',
+      skipConflicts: true,
+      idempotencyKey: 'lot-cle-0001',
+    });
+    expect(res.body).toMatchObject({
+      mission: { id: IDS.mission, scheduledDates: ['2026-11-05', '2026-11-12'] },
+      interventionIds: [IDS.intervention],
+      scheduledDates: ['2026-11-12'],
+      skipped: [{ date: '2026-11-05', agentIds: [IDS.agent] }],
+    });
+
+    const conflicts = [{ date: '2026-11-05', agentIds: [IDS.agent] }];
+    cleaning.stub.on('scheduleInterventionBatch', () =>
+      Promise.reject(
+        AppError.conflict('CLEANING_TEAM_UNAVAILABLE', 'Pris.', { agentIds: [IDS.agent], conflicts }),
+      ),
+    );
+    const refused = await backoffice(http().post(url), staff)
+      .set('Idempotency-Key', 'lot-cle-0002')
+      .send({ durationMinutes: 120, agentIds: [IDS.agent] });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatchObject({ code: 'CLEANING_TEAM_UNAVAILABLE', details: { conflicts } });
   });
 
   it('planification commune des missions d’un groupe ; conflit d’agenda en 409', async () => {

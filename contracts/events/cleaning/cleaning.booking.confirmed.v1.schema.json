@@ -84,6 +84,16 @@
       "type": "string",
       "format": "uuid",
       "description": "Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu"
+    },
+    "schedulePeriod": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["firstDate", "lastDate"],
+      "description": "Facultatif (ADR-052) : premier et dernier passage du plan de passages (jours civils du fuseau du service), absent sans plan",
+      "properties": {
+        "firstDate": { "type": "string", "format": "date" },
+        "lastDate": { "type": "string", "format": "date" }
+      }
     }
   }
 }

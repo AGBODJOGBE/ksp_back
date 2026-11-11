@@ -18,6 +18,7 @@ import {
 import { createUseCases } from '../src/application/use-cases';
 import { type RequestQuoteGroupInput } from '../src/application/places/request-groups.use-cases';
 import { definitionProblems, isFullyPriced } from '../src/domain/catalog';
+import { DEFAULT_SCHEDULE_POLICY } from '../src/domain/intervention-schedule';
 import { DEFAULT_FIELD_DATE_POLICY } from '../src/domain/schedule';
 import { homeCleaningService } from '../src/domain/testing';
 import { PrismaAgentRepository } from '../src/infrastructure/persistence/prisma-agent.repository';
@@ -77,6 +78,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       wallet: new FakeWallet(),
       people: { userNames: async () => new Map(), organizationNames: async () => new Map() },
       fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
+      schedules: { ...DEFAULT_SCHEDULE_POLICY },
       clock,
       ids: new UuidV7Generator(),
     };
@@ -324,6 +326,126 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     );
     expect(audit).toEqual(
       expect.arrayContaining(['service.saved', 'quote.sent', 'quote.accepted', 'payment.recorded']),
+    );
+  });
+
+  it('plan de passages : dates enregistrées sur la demande, le devis et la mission (ADR-052)', async () => {
+    const created = await asCustomer(() =>
+      useCases.requestQuote.execute({
+        idempotencyKey: 'int-schedule',
+        serviceCode: 'home_cleaning',
+        answers: { housing_type: 'apartment', rooms: 4, bathrooms: 0, condition: 'normal' },
+        optionSelections: [],
+        frequency: 'once',
+        commune: 'Cotonou',
+        address: 'Lot 14, Cotonou',
+        preferredSlots: [],
+        comment: '',
+        requestedTeamSize: 0,
+        schedule: {
+          mode: 'weekly',
+          startDate: '2026-11-02',
+          endDate: '2026-11-30',
+          weekdays: ['mon', 'thu'],
+          startTime: '08:00',
+          excludedDates: ['2026-11-26'],
+        },
+      }),
+    );
+    const dates = [
+      '2026-11-02',
+      '2026-11-05',
+      '2026-11-09',
+      '2026-11-12',
+      '2026-11-16',
+      '2026-11-19',
+      '2026-11-23',
+      '2026-11-30',
+    ];
+    expect(await deps.requests.findById(created.id)).toMatchObject({
+      schedule: { mode: 'weekly', weekdays: ['mon', 'thu'], excludedDates: ['2026-11-26'] },
+      scheduledDates: dates,
+      recurrence: { period: 'week', visitsPerPeriod: 2, durationMonths: 1 },
+      daysPerWeek: 2,
+    });
+    const visited = await asSupervisor(() =>
+      useCases.scheduleVisit.execute({
+        requestId: created.id,
+        scheduledAt: '2026-10-27T09:00:00Z',
+        agentId: AGENT_ID,
+      }),
+    );
+    const before = clock.current;
+    clock.current = new Date('2026-10-27T09:30:00Z');
+    await asSupervisor(() => useCases.completeVisit.execute({ visitId: visited.visit!.id, report: 'RAS' }));
+    clock.current = before;
+    await asSupervisor(() =>
+      useCases.sendQuote.execute({
+        requestId: created.id,
+        lines: [],
+        proposedSlots: [],
+        validityDays: 0,
+        teamSize: 0,
+        durationMinutes: 120,
+      }),
+    );
+    const quote = (
+      await pool.query('SELECT intervention_count, total, scheduled_dates, schedule FROM quotes')
+    ).rows.find((row) => row.intervention_count === dates.length);
+    expect(quote).toMatchObject({
+      total: 20000 * dates.length,
+      scheduled_dates: dates,
+      schedule: { mode: 'weekly' },
+    });
+    const { mission } = await asCustomer(() =>
+      useCases.acceptQuote.execute({
+        requestId: created.id,
+        idempotencyKey: 'acc-schedule',
+        slotStart: '2026-11-02T07:00:00.000Z',
+        paymentPlan: { option: 'full', timing: 'after', method: 'cash' },
+      }),
+    );
+    const stored = await deps.missions.findById(mission.mission.id);
+    expect(stored).toMatchObject({ plannedInterventions: dates.length, scheduledDates: dates });
+    const view = await asSupervisor(() =>
+      useCases.scheduleIntervention.execute({
+        missionId: mission.mission.id,
+        scheduledStart: '',
+        durationMinutes: 120,
+        agentIds: [AGENT_ID],
+        teamId: '',
+      }),
+    );
+    expect(view.mission.interventions[0]?.scheduledStart.toISOString()).toBe('2026-11-02T07:00:00.000Z');
+    // Planification en lot (ADR-052) : dates restantes jusqu'au 12, une seule fois par clé.
+    const batch = () =>
+      asSupervisor(() =>
+        useCases.scheduleInterventionBatch.execute({
+          missionId: mission.mission.id,
+          idempotencyKey: 'int-lot-0001',
+          dates: [],
+          until: '2026-11-12',
+          startTime: '',
+          durationMinutes: 120,
+          agentIds: [AGENT_ID],
+          teamId: '',
+          skipConflicts: false,
+        }),
+      );
+    const first = await batch();
+    expect(first.outcome.scheduledDates).toEqual(['2026-11-05', '2026-11-09', '2026-11-12']);
+    expect((await batch()).outcome).toEqual(first.outcome);
+    expect((await deps.missions.findById(mission.mission.id))!.interventions).toHaveLength(4);
+    const batches = await pool.query('SELECT count(*)::int AS n FROM intervention_batches');
+    expect(batches.rows[0].n).toBe(1);
+    expect((await outbox()).filter((type) => type === 'cleaning.interventions.batch_scheduled')).toHaveLength(
+      1,
+    );
+    // Plusieurs passages d'un particulier : récurrent, donc suivi pour les impayés (partie 10).
+    expect((await deps.missions.listIndividualRecurring()).map((m) => m.id)).toContain(mission.mission.id);
+    // Mission close : elle ne pèse pas sur les contrôles d'impayés des tests suivants.
+    await asSupervisor(() =>
+      useCases.cancelMissionAsSupervisor.execute({ missionId: mission.mission.id, reason: 'Fin du test.' }),
     );
   });
 

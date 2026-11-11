@@ -11,7 +11,9 @@ import {
   type Mission,
   type MissionStatus,
   remainingToSchedule,
+  unscheduledDates,
 } from '../../domain/mission';
+import { passageStart } from '../../domain/intervention-schedule';
 import {
   type PaymentMethod,
   paymentRefusal,
@@ -105,6 +107,7 @@ export class GetMissionDetailUseCase {
 
 export interface ScheduleInterventionInput {
   missionId: string;
+  /** Vide : prochaine date du plan de passages encore sans passage, à son heure (ADR-052). */
   scheduledStart: string;
   durationMinutes: number;
   agentIds: string[];
@@ -126,7 +129,9 @@ export class ScheduleInterventionUseCase {
       throw CleaningErrors.invalidTransition(mission.status, 'scheduled');
     if (mission.suspension) throw CleaningErrors.contractSuspended();
     if (remainingToSchedule(mission) === 0) throw CleaningErrors.noInterventionLeft();
-    const start = parseDate('scheduledStart', input.scheduledStart);
+    const start = input.scheduledStart
+      ? parseDate('scheduledStart', input.scheduledStart)
+      : nextPlannedStart(this.deps, mission, now);
     if (start <= now) throw CleaningErrors.slotInvalid('Le passage doit être planifié dans le futur.');
     const durationMinutes = requirePositiveInt('durationMinutes', input.durationMinutes, 24 * 60);
     const unique = await resolveAgents(this.deps, input.agentIds, input.teamId);
@@ -151,6 +156,27 @@ export class ScheduleInterventionUseCase {
     if (!result.saved) throw CleaningErrors.concurrentUpdate();
     return missionView(this.deps, { ...updated, version: updated.version + 1 });
   }
+}
+
+/**
+ * Début du prochain passage du plan (ADR-052) quand la supervision n'en donne pas : première date
+ * future encore sans passage, à l'heure de début du plan. Sans plan ou sans date restante : refus.
+ */
+function nextPlannedStart(deps: CleaningDeps, mission: Mission, now: Date): Date {
+  const { timeZone } = deps.fieldDates;
+  const startTime = mission.schedule?.startTime;
+  const next = startTime
+    ? unscheduledDates(mission, timeZone)
+        .map((date) => passageStart(date, startTime, timeZone))
+        .find((start) => start > now)
+    : undefined;
+  if (!next) {
+    throw CleaningErrors.invalid(
+      'scheduledStart',
+      'Indiquez la date du passage : la mission n’a plus de date prévue à venir.',
+    );
+  }
+  return next;
 }
 
 /** Agents d'un passage : agents choisis et membres de l'équipe, distincts, tous actifs. */

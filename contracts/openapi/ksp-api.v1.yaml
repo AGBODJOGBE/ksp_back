@@ -2481,6 +2481,311 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/cleaning/schedules/preview:
+    post:
+      tags:
+        - Nettoyage
+      operationId: previewCleaningSchedule
+      summary: Aperçu d’un plan de passages
+      description: |
+        ADR-052. Le corps est un plan de passages (`CleaningScheduleInput`) ; la réponse donne la **liste exacte des
+        dates**, leur nombre, le premier et le dernier passage, et des avertissements (jour exclu, jour ramené au dernier
+        jour du mois…). Sert au front à afficher le calendrier avant d’envoyer la simulation ou la demande de devis, qui
+        acceptent le même plan dans `schedule`. Public, sans compte, limité comme la simulation ; rien n’est enregistré.
+
+        Mêmes contrôles qu’à la demande de devis : plan bien formé, au moins un passage et au plus 400 (réglable), période
+        de 36 mois au plus (réglable), premier passage au-delà du délai minimum (48 h).
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400, forme du corps), `CLEANING_VALIDATION_FAILED` (400,
+        `details.field` : `schedule.<champ>`, ou `schedule` pour un plan sans passage ou trop chargé),
+        `CLEANING_LEAD_TIME_TOO_SHORT` (422, `details.minimumHours`).
+      x-ksp-grpc: ksp.cleaning.v1.CatalogService/PreviewSchedule
+      x-ksp-access: public
+      x-ksp-rate-limit: cleaning_simulation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleaningScheduleInput'
+            examples:
+              hebdomadaire:
+                summary: Lundi, mercredi et samedi, chaque semaine, du 10/11/2026 au 11/11/2027, à 8 h
+                value:
+                  mode: weekly
+                  startDate: '2026-11-10'
+                  endDate: '2027-11-11'
+                  weekdays:
+                    - mon
+                    - wed
+                    - sat
+                  startTime: '08:00'
+              mensuel:
+                summary: Le 1er lundi de chaque mois, de décembre à mai, sauf le lundi de Pâques
+                value:
+                  mode: monthly
+                  startDate: '2026-12-01'
+                  endDate: '2027-05-31'
+                  weekdays:
+                    - mon
+                  weeksOfMonth:
+                    - 1
+                  startTime: '09:30'
+                  excludedDates:
+                    - '2027-04-05'
+              mensuel_jours_du_mois:
+                summary: Le 5 et le 31 de chaque mois, de janvier à décembre (31 absent → dernier jour du mois)
+                value:
+                  mode: monthly
+                  startDate: '2027-01-01'
+                  endDate: '2027-12-31'
+                  monthDays:
+                    - 5
+                    - 31
+                  startTime: '08:00'
+              une_semaine_sur_deux:
+                summary: Le vendredi, une semaine sur deux, de janvier à juin
+                value:
+                  mode: weekly
+                  startDate: '2027-01-01'
+                  endDate: '2027-06-30'
+                  weekdays:
+                    - fri
+                  everyWeeks: 2
+                  startTime: '15:00'
+              dates_libres:
+                summary: Trois passages à des dates choisies
+                value:
+                  mode: dates
+                  dates:
+                    - '2026-11-20'
+                    - '2026-12-24'
+                    - '2027-01-15'
+                  startTime: '14:00'
+              ponctuel:
+                summary: Une prestation ponctuelle
+                value:
+                  mode: dates
+                  dates:
+                    - '2026-11-20'
+                  startTime: '08:00'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningSchedulePreview'
+              examples:
+                hebdomadaire:
+                  summary: Lundi, mercredi et samedi du 10/11/2026 au 11/11/2027 — 157 passages
+                  value:
+                    dates:
+                      - '2026-11-11'
+                      - '2026-11-14'
+                      - '2026-11-16'
+                      - '2026-11-18'
+                      - '2026-11-21'
+                      - '2026-11-23'
+                      - '2026-11-25'
+                      - '2026-11-28'
+                      - '2026-11-30'
+                      - '2026-12-02'
+                      - '2026-12-05'
+                      - '2026-12-07'
+                      - '2026-12-09'
+                      - '2026-12-12'
+                      - '2026-12-14'
+                      - '2026-12-16'
+                      - '2026-12-19'
+                      - '2026-12-21'
+                      - '2026-12-23'
+                      - '2026-12-26'
+                      - '2026-12-28'
+                      - '2026-12-30'
+                      - '2027-01-02'
+                      - '2027-01-04'
+                      - '2027-01-06'
+                      - '2027-01-09'
+                      - '2027-01-11'
+                      - '2027-01-13'
+                      - '2027-01-16'
+                      - '2027-01-18'
+                      - '2027-01-20'
+                      - '2027-01-23'
+                      - '2027-01-25'
+                      - '2027-01-27'
+                      - '2027-01-30'
+                      - '2027-02-01'
+                      - '2027-02-03'
+                      - '2027-02-06'
+                      - '2027-02-08'
+                      - '2027-02-10'
+                      - '2027-02-13'
+                      - '2027-02-15'
+                      - '2027-02-17'
+                      - '2027-02-20'
+                      - '2027-02-22'
+                      - '2027-02-24'
+                      - '2027-02-27'
+                      - '2027-03-01'
+                      - '2027-03-03'
+                      - '2027-03-06'
+                      - '2027-03-08'
+                      - '2027-03-10'
+                      - '2027-03-13'
+                      - '2027-03-15'
+                      - '2027-03-17'
+                      - '2027-03-20'
+                      - '2027-03-22'
+                      - '2027-03-24'
+                      - '2027-03-27'
+                      - '2027-03-29'
+                      - '2027-03-31'
+                      - '2027-04-03'
+                      - '2027-04-05'
+                      - '2027-04-07'
+                      - '2027-04-10'
+                      - '2027-04-12'
+                      - '2027-04-14'
+                      - '2027-04-17'
+                      - '2027-04-19'
+                      - '2027-04-21'
+                      - '2027-04-24'
+                      - '2027-04-26'
+                      - '2027-04-28'
+                      - '2027-05-01'
+                      - '2027-05-03'
+                      - '2027-05-05'
+                      - '2027-05-08'
+                      - '2027-05-10'
+                      - '2027-05-12'
+                      - '2027-05-15'
+                      - '2027-05-17'
+                      - '2027-05-19'
+                      - '2027-05-22'
+                      - '2027-05-24'
+                      - '2027-05-26'
+                      - '2027-05-29'
+                      - '2027-05-31'
+                      - '2027-06-02'
+                      - '2027-06-05'
+                      - '2027-06-07'
+                      - '2027-06-09'
+                      - '2027-06-12'
+                      - '2027-06-14'
+                      - '2027-06-16'
+                      - '2027-06-19'
+                      - '2027-06-21'
+                      - '2027-06-23'
+                      - '2027-06-26'
+                      - '2027-06-28'
+                      - '2027-06-30'
+                      - '2027-07-03'
+                      - '2027-07-05'
+                      - '2027-07-07'
+                      - '2027-07-10'
+                      - '2027-07-12'
+                      - '2027-07-14'
+                      - '2027-07-17'
+                      - '2027-07-19'
+                      - '2027-07-21'
+                      - '2027-07-24'
+                      - '2027-07-26'
+                      - '2027-07-28'
+                      - '2027-07-31'
+                      - '2027-08-02'
+                      - '2027-08-04'
+                      - '2027-08-07'
+                      - '2027-08-09'
+                      - '2027-08-11'
+                      - '2027-08-14'
+                      - '2027-08-16'
+                      - '2027-08-18'
+                      - '2027-08-21'
+                      - '2027-08-23'
+                      - '2027-08-25'
+                      - '2027-08-28'
+                      - '2027-08-30'
+                      - '2027-09-01'
+                      - '2027-09-04'
+                      - '2027-09-06'
+                      - '2027-09-08'
+                      - '2027-09-11'
+                      - '2027-09-13'
+                      - '2027-09-15'
+                      - '2027-09-18'
+                      - '2027-09-20'
+                      - '2027-09-22'
+                      - '2027-09-25'
+                      - '2027-09-27'
+                      - '2027-09-29'
+                      - '2027-10-02'
+                      - '2027-10-04'
+                      - '2027-10-06'
+                      - '2027-10-09'
+                      - '2027-10-11'
+                      - '2027-10-13'
+                      - '2027-10-16'
+                      - '2027-10-18'
+                      - '2027-10-20'
+                      - '2027-10-23'
+                      - '2027-10-25'
+                      - '2027-10-27'
+                      - '2027-10-30'
+                      - '2027-11-01'
+                      - '2027-11-03'
+                      - '2027-11-06'
+                      - '2027-11-08'
+                      - '2027-11-10'
+                    count: 157
+                    firstDate: '2026-11-11'
+                    lastDate: '2027-11-10'
+                    warnings: []
+                mensuel:
+                  summary: 1er lundi de chaque mois, de décembre à mai, sauf le lundi de Pâques
+                  value:
+                    dates:
+                      - '2026-12-07'
+                      - '2027-01-04'
+                      - '2027-02-01'
+                      - '2027-03-01'
+                      - '2027-05-03'
+                    count: 5
+                    firstDate: '2026-12-07'
+                    lastDate: '2027-05-03'
+                    warnings:
+                      - code: excluded
+                        date: '2027-04-05'
+                        message: 'Jour exclu : aucun passage ce jour-là.'
+                dates_libres:
+                  summary: Trois passages à des dates choisies
+                  value:
+                    dates:
+                      - '2026-11-20'
+                      - '2026-12-24'
+                      - '2027-01-15'
+                    count: 3
+                    firstDate: '2026-11-20'
+                    lastDate: '2027-01-15'
+                    warnings: []
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/cleaning/zones:
     get:
       tags:
@@ -2534,7 +2839,9 @@ paths:
 
         Corps au nouveau format (`answers`, `options` en objets, `frequency`) ou à l’ancien format déprécié (`premisesType`, `quantity`, `options` en codes) : voir `SimulateCleaningRequest`.
 
-        Erreurs : `GATEWAY_VALIDATION_FAILED` et `CLEANING_VALIDATION_FAILED` (400, `details.field` et `details.reason` pour une réponse refusée), `CLEANING_SERVICE_NOT_FOUND` (404).
+        Plan de passages facultatif (`schedule`, ADR-052) : la réponse donne ses dates et le montant estimé sur leur nombre exact (`schedule.total`, `schedule.estimate`) ; mêmes contrôles que `previewCleaningSchedule`.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` et `CLEANING_VALIDATION_FAILED` (400, `details.field` et `details.reason` pour une réponse refusée), `CLEANING_SERVICE_NOT_FOUND` (404), `CLEANING_LEAD_TIME_TOO_SHORT` (422, plan dont le premier passage est trop proche).
       x-ksp-grpc: ksp.cleaning.v1.CatalogService/Simulate
       x-ksp-access: public
       x-ksp-rate-limit: cleaning_simulation
@@ -2614,6 +2921,7 @@ paths:
                     notice: 'Estimation non contractuelle : le prix définitif figure dans le devis établi par KSP.'
                     covered: true
                     communeApplied: true
+                    schedule: null
                     reason: null
                     calculation:
                       pricingVersion: 3
@@ -2707,6 +3015,7 @@ paths:
                     notice: "Le prix de cette prestation n'est pas encore publié : demandez un devis, KSP vous répondra."
                     covered: true
                     communeApplied: true
+                    schedule: null
                     reason: price_not_set
                     calculation:
                       pricingVersion: 1
@@ -2734,6 +3043,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -3262,6 +3573,8 @@ paths:
 
         Corps au nouveau format (`answers`, `options` en objets, `frequency`) ou à l’ancien format déprécié : voir `RequestCleaningQuoteRequest` (ADR-033). La demande garde les réponses, la version de la grille et le détail du calcul (`answers`, `selectedOptions`, `frequency`, `pricingVersion`, `calculation`).
 
+        Plan de passages (ADR-052) : ajouter `schedule` (exemples dans `previewCleaningSchedule`, par exemple `{ "mode": "weekly", "startDate": "2026-11-10", "endDate": "2027-11-11", "weekdays": ["mon", "wed", "sat"], "startTime": "08:00" }`) ; `preferredSlots` devient facultatif. La demande renvoie `schedule` et les dates exactes `scheduledDates`.
+
         Erreurs : `CLEANING_VALIDATION_FAILED` (`details.field`, `details.reason`), `CLEANING_SLOT_INVALID` (400), `CLEANING_SERVICE_NOT_FOUND` (404), `IDENTITY_PROFILE_INCOMPLETE`, `CLEANING_LEAD_TIME_TOO_SHORT`, `CLEANING_TOO_MANY_OPEN_REQUESTS`,
         `CLEANING_ZONE_NOT_COVERED` (422, commune hors des zones desservies, `details.commune`),
         `CLEANING_ORGANIZATION_SUSPENDED` (422, contexte actif sur une organisation suspendue par KSP, ADR-030).
@@ -3325,6 +3638,8 @@ paths:
                     end: 2026-11-05T11:00:00Z
                 comment: Portail bleu.
                 recurrence: null
+                schedule: null
+                scheduledDates: []
                 requestedTeamSize: null
                 daysPerWeek: null
                 recommendedTeamSize: 2
@@ -3559,6 +3874,8 @@ paths:
                         end: 2026-11-05T11:00:00Z
                     comment: Portail bleu.
                     recurrence: null
+                    schedule: null
+                    scheduledDates: []
                     requestedTeamSize: null
                     daysPerWeek: null
                     recommendedTeamSize: 2
@@ -3767,6 +4084,8 @@ paths:
                         amount: 10710
                         currency: XOF
                       recurrence: null
+                      schedule: null
+                      scheduledDates: []
                       teamSize: 2
                       durationMinutes: 180
                       sentAt: 2026-10-23T08:00:00Z
@@ -3834,6 +4153,8 @@ paths:
                     end: 2026-11-05T11:00:00Z
                 comment: Portail bleu.
                 recurrence: null
+                schedule: null
+                scheduledDates: []
                 requestedTeamSize: null
                 daysPerWeek: null
                 recommendedTeamSize: 2
@@ -4042,6 +4363,8 @@ paths:
                     amount: 10710
                     currency: XOF
                   recurrence: null
+                  schedule: null
+                  scheduledDates: []
                   teamSize: 2
                   durationMinutes: 180
                   sentAt: 2026-10-23T08:00:00Z
@@ -4127,6 +4450,8 @@ paths:
                       end: 2026-11-05T11:00:00Z
                   comment: Portail bleu.
                   recurrence: null
+                  schedule: null
+                  scheduledDates: []
                   requestedTeamSize: null
                   daysPerWeek: null
                   recommendedTeamSize: 2
@@ -4335,6 +4660,8 @@ paths:
                       amount: 10710
                       currency: XOF
                     recurrence: null
+                    schedule: null
+                    scheduledDates: []
                     teamSize: 2
                     durationMinutes: 180
                     sentAt: 2026-10-23T08:00:00Z
@@ -4359,6 +4686,8 @@ paths:
                     start: 2026-11-05T08:00:00Z
                     end: 2026-11-05T11:00:00Z
                   recurrence: null
+                  schedule: null
+                  scheduledDates: []
                   plannedInterventions: 1
                   completedInterventions: 0
                   interventions:
@@ -4590,6 +4919,8 @@ paths:
                       start: 2026-11-05T08:00:00Z
                       end: 2026-11-05T11:00:00Z
                     recurrence: null
+                    schedule: null
+                    scheduledDates: []
                     plannedInterventions: 1
                     completedInterventions: 0
                     interventions:
@@ -4704,6 +5035,8 @@ paths:
                   start: 2026-11-05T08:00:00Z
                   end: 2026-11-05T11:00:00Z
                 recurrence: null
+                schedule: null
+                scheduledDates: []
                 plannedInterventions: 1
                 completedInterventions: 0
                 interventions:
@@ -6225,7 +6558,7 @@ paths:
       operationId: scheduleCleaningIntervention
       summary: Planifier un passage
       description: |
-        UC-CL-09. Date, durée et agents (choisis un à un et/ou par équipe). Un contrat récurrent peut avoir d’autres agents à chaque passage.
+        UC-CL-09. Date, durée et agents (choisis un à un et/ou par équipe). Un contrat récurrent peut avoir d’autres agents à chaque passage. Sans `scheduledStart` (ADR-052) : la prochaine date du plan de passages encore sans passage, à l’heure du plan. Pour planifier toutes les dates restantes d’un coup : `scheduleCleaningInterventionBatch`.
 
         Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` (même portée que `cleaning_admin`) ; double authentification faite pendant la session (12 heures au plus).
 
@@ -6264,6 +6597,97 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CleaningMission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/cleaning/missions/{id}/interventions/batch:
+    post:
+      tags:
+        - Nettoyage (back-office)
+      operationId: scheduleCleaningInterventionBatch
+      summary: Planifier en lot les dates restantes
+      description: |
+        ADR-052. Un passage par date restante du plan de passages (dates sans passage planifié, en cours ou fait, encore à venir), avec les mêmes agents (choisis un à un et/ou par équipe), la même heure (`startTime`, par défaut celle du plan) et la même durée. Dates : `dates` (sous-ensemble des dates restantes) ou `until` (toutes les dates restantes jusqu’à cette date incluse) ; ni l’un ni l’autre : toutes.
+
+        Chaque date est contrôlée comme un passage seul (agents déjà pris, indisponibilités ; un passage d’une mission du même groupe n’est pas un conflit), dans une seule transaction, agents verrouillés. **Tout ou rien** par défaut : `CLEANING_TEAM_UNAVAILABLE` (409) avec `details.conflicts` (`date` et `agentIds` de chaque date en conflit), rien n’est planifié. Avec `skipConflicts: true`, les autres dates sont planifiées et les dates sautées sont rendues dans `skipped`.
+
+        Un seul événement récapitulatif (`cleaning.interventions.batch_scheduled`) : le client et les agents reçoivent un message qui résume (nombre de passages, premier et dernier). 400 passages au plus par appel (réglable). `Idempotency-Key` obligatoire : un second envoi avec la même clé pour la même mission rend le résultat du premier.
+
+        Rôles : `cleaning_supervisor`, `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `CLEANING_VALIDATION_FAILED` (400 : `dates[i]` hors des dates restantes, `until` sans date restante, `dates` au-delà du plafond ou des passages restants, `missionId` pour une mission sans plan de passages), `CLEANING_TEAM_UNAVAILABLE` (409), `CLEANING_NO_INTERVENTION_LEFT` (422, plus aucune date à venir), `CLEANING_CONTRACT_SUSPENDED` (422).
+      x-ksp-grpc: ksp.cleaning.v1.CleaningAdminService/ScheduleInterventionBatch
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - cleaning_supervisor
+        - cleaning_admin
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CleaningId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleCleaningInterventionBatchRequest'
+            examples:
+              toutes_les_dates:
+                summary: Toutes les dates restantes, à l’heure du plan, avec une équipe
+                value:
+                  durationMinutes: 180
+                  teamId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7001
+              jusqua_une_date:
+                summary: Les dates restantes jusqu’au 31 décembre, à 14 h, en sautant les conflits
+                value:
+                  until: '2026-12-31'
+                  startTime: '14:00'
+                  durationMinutes: 120
+                  agentIds:
+                    - 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+                  skipConflicts: true
+              dates_choisies:
+                summary: Deux dates restantes choisies
+                value:
+                  dates:
+                    - '2026-11-16'
+                    - '2026-11-23'
+                  durationMinutes: 120
+                  agentIds:
+                    - 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleaningInterventionBatch'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -12860,7 +13284,274 @@ components:
           type: integer
           minimum: 1
           maximum: 36
-      description: 'Contrat récurrent : passages par période, pendant une durée en mois (facture mensuelle avec billing).'
+      description: |
+        Ancien format (ADR-023), **déprécié en entrée** depuis l’ADR-052 : remplacé par `schedule`
+        (`CleaningScheduleInput`). Encore accepté un temps : traduit en plan de passages quand c’est exact (un passage par
+        semaine ou par mois, depuis le premier créneau), sinon gardé approximatif (52/12 semaines par mois). Ne pas
+        l’envoyer avec `schedule`. En sortie, déduit du plan pour les anciens lecteurs (null pour un seul passage).
+    CleaningWeekday:
+      type: string
+      enum:
+        - mon
+        - tue
+        - wed
+        - thu
+        - fri
+        - sat
+        - sun
+    CleaningScheduleInput:
+      type: object
+      additionalProperties: false
+      description: |
+        Plan de passages (ADR-052). Le moteur en tire la **liste exacte des dates** ; le nombre de passages, donc le prix,
+        est celui de cette liste (prix d’un passage × nombre de dates). Jours civils `AAAA-MM-JJ` et heure locale du
+        Bénin (Africa/Porto-Novo, UTC+1 sans heure d’été).
+
+        - `mode: dates` : `dates` (1 à N jours) — prestation ponctuelle ou passages libres ;
+        - `mode: weekly` : `weekdays`, toutes les `everyWeeks` semaines (1 par défaut, 2 = une semaine sur deux, semaines
+          comptées depuis celle de `startDate`), entre `startDate` et `endDate` incluses ;
+        - `mode: monthly` : chaque mois de la période, **soit** `monthDays` (jour absent du mois → dernier jour du mois,
+          sans doublon), **soit** `weekdays` + `weeksOfMonth` (ex. 1er et 3e lundi, ou `last`).
+
+        Commun : `startTime` (obligatoire), `excludedDates` (fériés, absences), `extraDates` (ajouts ponctuels ; un jour
+        exclu le reste même s’il est ajouté). Une période donnée en mois entiers (« de janvier à décembre ») s’envoie
+        avec les dates de début et de fin. Un champ d’un autre mode est refusé.
+
+        Règles (cleaning) : période de 36 mois au plus, au plus 400 passages (réglables), au moins un passage, premier
+        passage au-delà du délai minimum (48 h). Erreurs : `CLEANING_VALIDATION_FAILED` (`details.field` :
+        `schedule.<champ>`, ou `schedule` pour un plan sans passage ou trop chargé), `CLEANING_LEAD_TIME_TOO_SHORT`.
+      required:
+        - mode
+        - startTime
+      properties:
+        mode:
+          enum:
+            - dates
+            - weekly
+            - monthly
+        dates:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          description: Mode `dates` seulement. Doublons ignorés, ordre libre.
+          items:
+            type: string
+            format: date
+        startDate:
+          type: string
+          format: date
+          description: Modes `weekly` et `monthly` (obligatoire), incluse.
+        endDate:
+          type: string
+          format: date
+          description: Modes `weekly` et `monthly` (obligatoire), incluse.
+        weekdays:
+          type: array
+          minItems: 1
+          maxItems: 7
+          description: Mode `weekly`, ou `monthly` avec `weeksOfMonth`.
+          items:
+            $ref: '#/components/schemas/CleaningWeekday'
+        everyWeeks:
+          type: integer
+          minimum: 1
+          maximum: 12
+          description: Mode `weekly` seulement (1 par défaut).
+        monthDays:
+          type: array
+          minItems: 1
+          maxItems: 31
+          description: Mode `monthly`, première forme.
+          items:
+            type: integer
+            minimum: 1
+            maximum: 31
+        weeksOfMonth:
+          type: array
+          minItems: 1
+          maxItems: 5
+          description: Mode `monthly`, seconde forme (avec `weekdays`) — rangs 1 à 4, ou `last`.
+          items:
+            oneOf:
+              - type: integer
+                minimum: 1
+                maximum: 4
+              - const: last
+        startTime:
+          type: string
+          pattern: ^([01]\d|2[0-3]):[0-5]\d$
+          description: Heure de début de chaque passage, `HH:mm`, heure locale.
+        excludedDates:
+          type: array
+          maxItems: 400
+          items:
+            type: string
+            format: date
+        extraDates:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            format: date
+    CleaningSchedule:
+      type: object
+      additionalProperties: false
+      description: Plan de passages enregistré (ADR-052), tel qu’envoyé ; champs d’un autre mode vides, période null en mode `dates`.
+      required:
+        - mode
+        - dates
+        - startDate
+        - endDate
+        - weekdays
+        - everyWeeks
+        - monthDays
+        - weeksOfMonth
+        - startTime
+        - excludedDates
+        - extraDates
+      properties:
+        mode:
+          enum:
+            - dates
+            - weekly
+            - monthly
+        dates:
+          type: array
+          items:
+            type: string
+            format: date
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date
+        endDate:
+          type:
+            - string
+            - 'null'
+          format: date
+        weekdays:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningWeekday'
+        everyWeeks:
+          type: integer
+          minimum: 1
+        monthDays:
+          type: array
+          items:
+            type: integer
+        weeksOfMonth:
+          type: array
+          items:
+            oneOf:
+              - type: integer
+              - const: last
+        startTime:
+          type: string
+        excludedDates:
+          type: array
+          items:
+            type: string
+            format: date
+        extraDates:
+          type: array
+          items:
+            type: string
+            format: date
+    CleaningScheduleWarning:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - date
+        - message
+      properties:
+        code:
+          enum:
+            - moved_to_month_end
+            - excluded
+            - excluded_not_planned
+            - extra_already_planned
+          description: |
+            `moved_to_month_end` : jour du mois absent, passage ramené au dernier jour du mois ; `excluded` : jour exclu ;
+            `excluded_not_planned` : jour exclu qui n’était pas prévu (sans effet) ; `extra_already_planned` : jour ajouté
+            déjà prévu (sans effet).
+        date:
+          type: string
+          format: date
+        message:
+          type: string
+    CleaningSchedulePreview:
+      type: object
+      additionalProperties: false
+      description: Dates exactes d’un plan de passages (ADR-052), à afficher en calendrier.
+      required:
+        - dates
+        - count
+        - firstDate
+        - lastDate
+        - warnings
+      properties:
+        dates:
+          type: array
+          items:
+            type: string
+            format: date
+        count:
+          type: integer
+          minimum: 1
+        firstDate:
+          type: string
+          format: date
+        lastDate:
+          type: string
+          format: date
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningScheduleWarning'
+    CleaningScheduleSimulation:
+      type: object
+      additionalProperties: false
+      description: Dates d’un plan de passages (ADR-052) et montant estimé sur leur nombre exact.
+      required:
+        - dates
+        - count
+        - firstDate
+        - lastDate
+        - warnings
+        - total
+        - estimate
+      properties:
+        dates:
+          type: array
+          items:
+            type: string
+            format: date
+        count:
+          type: integer
+          minimum: 1
+        firstDate:
+          type: string
+          format: date
+        lastDate:
+          type: string
+          format: date
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleaningScheduleWarning'
+        total:
+          description: Prix d’un passage × nombre de passages ; null si la prestation n’a pas de prix.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        estimate:
+          description: Fourchette × nombre de passages ; null si la prestation n’a pas de prix.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningPriceRange'
+            - type: 'null'
     CleaningPremisesType:
       type: string
       enum:
@@ -13166,6 +13857,9 @@ components:
           minLength: 1
           maxLength: 100
           description: Facultative (ADR-034) ; sans elle, coefficient de commune neutre, `communeApplied` faux, prix indicatif.
+        schedule:
+          $ref: '#/components/schemas/CleaningScheduleInput'
+          description: Facultatif (ADR-052) — la réponse donne les dates et le montant estimé sur leur nombre exact.
         frequency:
           type: string
           pattern: ^[a-z][a-z0-9_]{1,49}$
@@ -13417,7 +14111,15 @@ components:
         - reason
         - calculation
         - communeApplied
+        - schedule
       properties:
+        schedule:
+          description: |
+            Plan de passages envoyé (ADR-052) : ses dates, et `total` (prix d’un passage × nombre de passages) et `estimate`
+            (fourchette × nombre de passages), null si la prestation n’a pas de prix. Null sans plan.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningScheduleSimulation'
+            - type: 'null'
         communeApplied:
           type: boolean
           description: Faux si la simulation est faite sans commune (ADR-034) ; coefficient neutre, prix indicatif.
@@ -13517,10 +14219,23 @@ components:
         - depositPercent
         - depositAmount
         - recurrence
+        - schedule
+        - scheduledDates
         - teamSize
         - durationMinutes
         - sentAt
       properties:
+        schedule:
+          description: Plan de passages du devis (ADR-052), null pour un devis sans plan ; avec un plan, `proposedSlots` est le premier passage.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningSchedule'
+            - type: 'null'
+        scheduledDates:
+          type: array
+          description: Dates exactes des passages (`interventionCount` = leur nombre), vides sans plan.
+          items:
+            type: string
+            format: date
         id:
           type: string
           format: uuid
@@ -13581,6 +14296,8 @@ components:
         - preferredSlots
         - comment
         - recurrence
+        - schedule
+        - scheduledDates
         - requestedTeamSize
         - daysPerWeek
         - recommendedTeamSize
@@ -13616,6 +14333,17 @@ components:
         - measuredByName
         - measuredSummary
       properties:
+        schedule:
+          description: Plan de passages (ADR-052), null sans plan.
+          oneOf:
+            - $ref: '#/components/schemas/CleaningSchedule'
+            - type: 'null'
+        scheduledDates:
+          type: array
+          description: Dates exactes des passages tirées du plan, vides sans plan.
+          items:
+            type: string
+            format: date
         id:
           type: string
           format: uuid
@@ -14112,6 +14840,8 @@ components:
         - address
         - chosenSlot
         - recurrence
+        - schedule
+        - scheduledDates
         - plannedInterventions
         - completedInterventions
         - interventions
@@ -14126,6 +14856,17 @@ components:
         - groupId
         - placeType
       properties:
+        schedule:
+          description: Plan de passages du devis accepté (ADR-052), null sans plan ; ses dates sont à planifier passage par passage (`plannedInterventions` = leur nombre).
+          oneOf:
+            - $ref: '#/components/schemas/CleaningSchedule'
+            - type: 'null'
+        scheduledDates:
+          type: array
+          description: Dates exactes des passages tirées du plan, vides sans plan.
+          items:
+            type: string
+            format: date
         location:
           description: Position GPS copiée de la demande (ADR-034), pour aller sur place ; null sans position.
           oneOf:
@@ -14806,7 +15547,6 @@ components:
         - serviceCode
         - commune
         - address
-        - preferredSlots
       properties:
         serviceCode:
           type: string
@@ -14848,8 +15588,10 @@ components:
           maxLength: 500
         preferredSlots:
           type: array
-          minItems: 1
           maxItems: 3
+          description: |
+            1 à 3 créneaux souhaités (obligatoires sans `schedule`). Avec `schedule` : 0 à 3 ; absents, le premier passage
+            (durée indicative de 2 heures, la vraie durée est fixée au devis).
           items:
             $ref: '#/components/schemas/TimeSlot'
         comment:
@@ -14858,6 +15600,12 @@ components:
           maxLength: 2000
         recurrence:
           $ref: '#/components/schemas/CleaningRecurrence'
+          deprecated: true
+        schedule:
+          $ref: '#/components/schemas/CleaningScheduleInput'
+          description: |
+            Plan de passages (ADR-052) : dates exactes, estimation sur leur nombre ; `daysPerWeek` déduit d’un plan `weekly`
+            s’il n’est pas donné. Pas avec `recurrence`.
         requestedTeamSize:
           type: integer
           minimum: 1
@@ -15120,7 +15868,6 @@ components:
       type: object
       additionalProperties: false
       required:
-        - proposedSlots
         - durationMinutes
       properties:
         lines:
@@ -15147,8 +15894,10 @@ components:
                 type: integer
         proposedSlots:
           type: array
-          minItems: 1
           maxItems: 3
+          description: |
+            1 à 3 créneaux (obligatoires sans plan de passages). Avec un plan, ignorés : le créneau proposé est le premier
+            passage, avec `durationMinutes`.
           items:
             $ref: '#/components/schemas/TimeSlot'
         validityDays:
@@ -15157,6 +15906,13 @@ components:
           maximum: 90
         recurrence:
           $ref: '#/components/schemas/CleaningRecurrence'
+          deprecated: true
+        schedule:
+          $ref: '#/components/schemas/CleaningScheduleInput'
+          description: |
+            Plan ajusté après la visite (ADR-052) ; absent, celui de la demande, recontrôlé (premier passage au-delà du délai
+            minimum, sinon `CLEANING_LEAD_TIME_TOO_SHORT` : envoyer un plan ajusté). Total = prix d’un passage × nombre de
+            dates.
         teamSize:
           type: integer
           minimum: 1
@@ -15169,12 +15925,14 @@ components:
       type: object
       additionalProperties: false
       required:
-        - scheduledStart
         - durationMinutes
       properties:
         scheduledStart:
           type: string
           format: date-time
+          description: |
+            Absent (ADR-052) : prochaine date du plan de passages encore sans passage, à l’heure du plan
+            (`CLEANING_VALIDATION_FAILED`, `details.field: scheduledStart`, si la mission n’a plus de date à venir).
         durationMinutes:
           type: integer
           minimum: 1
@@ -15188,6 +15946,88 @@ components:
         teamId:
           type: string
           format: uuid
+    ScheduleCleaningInterventionBatchRequest:
+      type: object
+      additionalProperties: false
+      description: Planification en lot (ADR-052) — `dates` ou `until`, pas les deux ; ni l’un ni l’autre, toutes les dates restantes.
+      required:
+        - durationMinutes
+      properties:
+        dates:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          description: Sous-ensemble des dates restantes du plan.
+          items:
+            type: string
+            format: date
+        until:
+          type: string
+          format: date
+          description: Toutes les dates restantes jusqu’à cette date incluse.
+        startTime:
+          type: string
+          pattern: ^([01]\d|2[0-3]):[0-5]\d$
+          description: Heure de début, `HH:mm`, heure locale ; absente, celle du plan.
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+        agentIds:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+        teamId:
+          type: string
+          format: uuid
+        skipConflicts:
+          type: boolean
+          description: Vrai, planifier les dates libres et sauter les dates en conflit ; faux (défaut), tout ou rien.
+    CleaningBatchConflict:
+      type: object
+      additionalProperties: false
+      required:
+        - date
+        - agentIds
+      properties:
+        date:
+          type: string
+          format: date
+        agentIds:
+          type: array
+          description: Agents déjà pris ou indisponibles sur le créneau de cette date.
+          items:
+            type: string
+            format: uuid
+    CleaningInterventionBatch:
+      type: object
+      additionalProperties: false
+      required:
+        - mission
+        - interventionIds
+        - scheduledDates
+        - skipped
+      properties:
+        mission:
+          $ref: '#/components/schemas/CleaningMission'
+        interventionIds:
+          type: array
+          description: Passages créés, dans l’ordre des dates.
+          items:
+            type: string
+            format: uuid
+        scheduledDates:
+          type: array
+          items:
+            type: string
+            format: date
+        skipped:
+          type: array
+          description: Dates sautées pour conflit (`skipConflicts`), vide sinon.
+          items:
+            $ref: '#/components/schemas/CleaningBatchConflict'
     RecordCleaningPaymentRequest:
       type: object
       additionalProperties: false
@@ -17379,7 +18219,6 @@ components:
         - location
         - landmark
         - items
-        - preferredSlots
       properties:
         placeType:
           type: string
@@ -17404,8 +18243,8 @@ components:
             $ref: '#/components/schemas/CleaningQuoteGroupItem'
         preferredSlots:
           type: array
-          minItems: 1
           maxItems: 3
+          description: Mêmes règles que `RequestCleaningQuoteRequest` (0 à 3 avec `schedule`).
           items:
             $ref: '#/components/schemas/TimeSlot'
         comment:
@@ -17413,6 +18252,10 @@ components:
           maxLength: 2000
         recurrence:
           $ref: '#/components/schemas/CleaningRecurrence'
+          deprecated: true
+        schedule:
+          $ref: '#/components/schemas/CleaningScheduleInput'
+          description: Plan de passages commun à toutes les prestations du lieu (ADR-052). Pas avec `recurrence`.
     DeactivateCleaningZoneRequest:
       type: object
       additionalProperties: false
@@ -17445,20 +18288,23 @@ components:
       type: object
       additionalProperties: false
       required:
-        - proposedSlots
         - quotes
       properties:
         proposedSlots:
           type: array
-          minItems: 1
           maxItems: 3
-          description: Créneaux communs proposés pour tous les devis.
+          description: |
+            Créneaux communs proposés pour tous les devis (1 à 3 sans plan de passages). Ignorés pour un devis avec un plan :
+            son créneau proposé est son premier passage.
           items:
             $ref: '#/components/schemas/TimeSlot'
         validityDays:
           type: integer
           minimum: 1
           maximum: 90
+        schedule:
+          $ref: '#/components/schemas/CleaningScheduleInput'
+          description: Plan de passages commun à tous les devis (ADR-052) ; absent, celui de chaque demande.
         quotes:
           type: array
           minItems: 1

@@ -1,7 +1,7 @@
 import { Body, Controller, Headers, Inject, Param, Query } from '@nestjs/common';
 import { type CleaningApi } from '../../application/cleaning/cleaning.ports';
 import { CLEANING_API } from '../../tokens';
-import { idFrom, optionalBody, pageFrom } from './cleaning.controller';
+import { idFrom, keyFrom, optionalBody, pageFrom } from './cleaning.controller';
 import { cleaningParams, parseParam } from './cleaning-schemas';
 import { Route } from './route.decorator';
 import { parseBody, requestBodies } from './schemas';
@@ -202,6 +202,21 @@ export class CleaningAdminHttpController {
     return this.cleaning.scheduleIntervention(
       missionId,
       parseBody(requestBodies.scheduleCleaningIntervention, body),
+    );
+  }
+
+  @Route('scheduleCleaningInterventionBatch')
+  scheduleInterventionBatch(
+    @Param('id') id: unknown,
+    @Body() body: unknown,
+    @Headers('idempotency-key') key: unknown,
+  ) {
+    const missionId = idFrom(id);
+    const idempotencyKey = keyFrom(key);
+    return this.cleaning.scheduleInterventionBatch(
+      missionId,
+      parseBody(requestBodies.scheduleCleaningInterventionBatch, body),
+      idempotencyKey,
     );
   }
 

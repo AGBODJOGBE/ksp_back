@@ -110,6 +110,8 @@ export interface CleaningEventPayloads {
     depositAmount: CleaningMoney;
     /** Début du créneau choisi : départ des mois de facturation d'un contrat d'entreprise. */
     startsAt?: string;
+    /** Facultatif (ADR-052) : premier et dernier passage du plan (AAAA-MM-JJ), absent sans plan. */
+    schedulePeriod?: { firstDate: string; lastDate: string };
     /** Facultatifs (ADR-034) : prestation, son nom et groupe de la demande. */
     serviceCode?: string;
     serviceName?: string;
@@ -128,6 +130,24 @@ export interface CleaningEventPayloads {
      */
     amountDueBeforeStart?: CleaningMoney;
     /** Facultatifs (ADR-034) : prestation, son nom et groupe de la demande. */
+    serviceCode?: string;
+    serviceName?: string;
+    groupId?: string;
+  };
+  /** Passages planifiés en lot (ADR-052) : un seul événement, aucun cleaning.mission.scheduled. */
+  'cleaning.interventions.batch_scheduled': {
+    missionId: string;
+    customerId: string;
+    interventionIds: string[];
+    count: number;
+    firstStart: string;
+    lastStart: string;
+    durationMinutes: number;
+    agentIds: string[];
+    /** Dates sautées pour conflit d'agenda (skipConflicts), vide sinon. */
+    skippedDates: string[];
+    /** Paiement « avant » encore dû (ADR-049), comme cleaning.mission.scheduled ; absent sinon. */
+    amountDueBeforeStart?: CleaningMoney;
     serviceCode?: string;
     serviceName?: string;
     groupId?: string;

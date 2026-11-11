@@ -1,5 +1,6 @@
 import { type Mission } from '../domain/mission';
 import { effectiveRequestStatus, type QuoteRequest } from '../domain/quote-request';
+import { type SchedulePolicy } from '../domain/intervention-schedule';
 import { type FieldDatePolicy } from '../domain/schedule';
 import {
   type AgentRepository,
@@ -31,6 +32,8 @@ export interface CleaningDeps {
   wallet: WalletLedger;
   /** Contrôles de dates du terrain, réglables par configuration. */
   fieldDates: FieldDatePolicy;
+  /** Bornes des plans de passages (ADR-052) : durée et nombre de passages, par configuration. */
+  schedules: SchedulePolicy;
   clock: Clock;
   ids: IdGenerator;
 }

@@ -234,6 +234,31 @@ export const CLEANING_RULES: { readonly [T in NotifiedCleaningEvent]: EventRule<
     ];
   },
 
+  // Planification en lot (ADR-052) : un seul message par destinataire, qui résume les passages.
+  'cleaning.interventions.batch_scheduled': (event, context) => {
+    const variables = {
+      count: String(event.count),
+      first_date: dateTime(event.firstStart, context),
+      last_date: dateTime(event.lastStart, context),
+      duration: formatDuration(event.durationMinutes),
+      ...withService(event.serviceName),
+    };
+    return [
+      customer(
+        event.customerId,
+        'cleaning.interventions_batch_scheduled.customer',
+        missionLink(context, event.missionId),
+        variables,
+      ),
+      ...[...new Set(event.agentIds)].map((agentId) => ({
+        userId: agentId,
+        templateCode: 'cleaning.interventions_batch_scheduled.agent',
+        variables,
+        link: null,
+      })),
+    ];
+  },
+
   'cleaning.mission.completed': (event, context) => [
     customer(event.customerId, 'cleaning.mission_completed.customer', missionLink(context, event.missionId), {
       completed_interventions: String(event.completedInterventions),
