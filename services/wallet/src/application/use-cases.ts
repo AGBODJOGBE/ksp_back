@@ -1,8 +1,12 @@
+import {
+  ApproveManualCreditUseCase,
+  CreditPrepaidWalletUseCase,
+  ListManualCreditRequestsUseCase,
+} from './manual-credits.use-cases';
 import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import { type WalletDeps } from './ports';
 import {
   CreateTopUpUseCase,
-  CreditPrepaidWalletUseCase,
   CreditTopUpUseCase,
   DebitPrepaidUseCase,
   GetPrepaidBalanceUseCase,
@@ -50,6 +54,8 @@ export function createUseCases(deps: WalletDeps) {
     createTopUp: new CreateTopUpUseCase(deps),
     creditTopUp: new CreditTopUpUseCase(deps),
     creditPrepaidWallet: new CreditPrepaidWalletUseCase(deps),
+    approveManualCredit: new ApproveManualCreditUseCase(deps),
+    listManualCreditRequests: new ListManualCreditRequestsUseCase(deps),
     hasPendingObligations: new HasPendingObligationsUseCase(deps),
   };
 }

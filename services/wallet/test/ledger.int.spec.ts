@@ -5,6 +5,7 @@ import { Client, Pool } from 'pg';
 import { createUseCases } from '../src/application/use-cases';
 import { type PayoutExecutor } from '../src/application/ports';
 import { PrismaLedgerStore } from '../src/infrastructure/persistence/prisma-ledger.store';
+import { PrismaCreditRequests } from '../src/infrastructure/persistence/prisma-credit-requests';
 import { PrismaService } from '../src/infrastructure/prisma/prisma.service';
 import { HmacPhoneFingerprints } from '../src/infrastructure/security/hmac-phone-fingerprints';
 import { SystemClock, UuidV7Generator } from '../src/infrastructure/system/system';
@@ -26,6 +27,7 @@ const BENEFICIARY = { phone: '+2290197000045', operator: 'mtn', name: 'SARL Bén
 const USER = { type: 'user', id: '0192f1c4-0000-7000-8000-00000000c001' };
 const MISSION_ID = '0192f1c4-0000-7000-8000-00000000e001';
 const xof = (amount: number) => ({ amount, currency: 'XOF' });
+const TOP_UP_AMOUNT = 20000;
 
 describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
   const schema = `wallet_test_${Date.now()}`;
@@ -68,6 +70,16 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
         create: async () => {
           throw new Error('non utilisé');
         },
+        // payment confirme chaque recharge de ces tests (relecture avant crédit, ADR-048).
+        get: async (paymentId) => ({
+          paymentId,
+          status: 'succeeded',
+          holderId: USER.id,
+          customerId: USER.id,
+          organizationId: null,
+          amount: TOP_UP_AMOUNT,
+          receivedAmount: TOP_UP_AMOUNT,
+        }),
       },
       fingerprints: new HmacPhoneFingerprints('test-phone-hash-secret-0123456789abcdef'),
       settings: {
@@ -75,7 +87,10 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
         debitCallers: ['cleaning', 'billing'],
         topUpMin: 500,
         topUpMax: 1_000_000,
+        manualRefundMax: 100_000,
+        creditApprovalThreshold: 50_000,
       },
+      creditRequests: new PrismaCreditRequests(prisma),
       clock: new SystemClock(),
       ids: new UuidV7Generator(),
     });

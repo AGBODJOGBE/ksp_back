@@ -1,6 +1,6 @@
 import { type paymentV1 } from '@ksp/contracts';
-import { type GrpcCaller } from '@ksp/platform';
-import { type TopUpPayment, type TopUpPayments } from '../../application/ports';
+import { AppError, type GrpcCaller } from '@ksp/platform';
+import { type TopUpPayment, type TopUpPayments, type TopUpRecord } from '../../application/ports';
 
 /**
  * Recharges créées chez payment (TopUpPaymentService.CreateTopUpPayment, ADR-046) avec le jeton de
@@ -33,6 +33,35 @@ export class GrpcTopUpPayments implements TopUpPayments {
       checkoutUrl: payment.checkoutUrl || null,
       expiresAt: payment.expiresAt ? new Date(payment.expiresAt) : null,
       created: res.created,
+    };
+  }
+
+  /**
+   * Paiement de recharge relu chez payment (TopUpPaymentService.GetTopUpPayment, ADR-048) avant tout
+   * crédit ; inconnu de payment : null. Une panne lève l'erreur (l'appelant réessaie).
+   */
+  async get(paymentId: string): Promise<TopUpRecord | null> {
+    let res;
+    try {
+      res = await this.caller.call(
+        'getTopUpPayment',
+        (metadata) => this.client.getTopUpPayment({ paymentId }, metadata),
+        { idempotent: true, deadlineMs: 5_000 },
+      );
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'PAYMENT_NOT_FOUND') return null;
+      throw error;
+    }
+    const payment = res.payment;
+    if (!payment?.id || !payment.subject) throw new Error('Réponse de payment sans paiement.');
+    return {
+      paymentId: payment.id,
+      status: payment.status,
+      holderId: payment.subject.id,
+      customerId: payment.customerId || null,
+      organizationId: payment.organizationId || null,
+      amount: Number(payment.amount?.amount ?? 0),
+      receivedAmount: res.receivedAmount ? Number(res.receivedAmount.amount) : null,
     };
   }
 }

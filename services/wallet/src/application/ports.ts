@@ -162,6 +162,21 @@ export interface TopUpPayment {
   created: boolean;
 }
 
+/** Paiement de recharge relu chez payment avant tout crédit (ADR-048). */
+export interface TopUpRecord {
+  paymentId: string;
+  /** Statut chez payment : `succeeded`, `amount_mismatch`, `pending`… */
+  status: string;
+  /** Titulaire rechargé (objet `wallet_top_up`) : l'organisation payeuse, sinon le payeur. */
+  holderId: string;
+  customerId: string | null;
+  organizationId: string | null;
+  /** Montant demandé. */
+  amount: number;
+  /** Montant reçu confirmé par le prestataire, en XOF ; null si rien n'est reçu en XOF. */
+  receivedAmount: number | null;
+}
+
 /**
  * Recharges chez payment (TopUpPaymentService, jeton de service) : le payeur est l'utilisateur de la
  * requête, transmis dans les métadonnées. Idempotent par (payeur, clé). Erreurs de payment
@@ -169,6 +184,40 @@ export interface TopUpPayment {
  */
 export interface TopUpPayments {
   create(input: { idempotencyKey: string; amount: number }): Promise<TopUpPayment>;
+  /** Paiement de recharge, relu chez payment ; null s'il est inconnu (ou n'est pas une recharge). */
+  get(paymentId: string): Promise<TopUpRecord | null>;
+}
+
+export type CreditKind = 'refund' | 'top_up';
+export type ManualCreditStatus = 'pending_approval' | 'approved';
+
+/** Demande de crédit manuel au-delà du seuil de double validation (ADR-048). */
+export interface ManualCreditRequest {
+  id: string;
+  /** Clé d'idempotence de la demande (unique). */
+  idempotencyKey: string;
+  holder: Holder;
+  kind: CreditKind;
+  amount: number;
+  reason: string;
+  paymentId: string | null;
+  status: ManualCreditStatus;
+  requestedBy: string;
+  requestedAt: Date;
+  approvedBy: string | null;
+  approvedAt: Date | null;
+  transactionId: string | null;
+  version: number;
+}
+
+export interface ManualCreditRequests {
+  /** Idempotent par clé : une clé déjà enregistrée rend sa demande, avec `created: false`. */
+  create(request: ManualCreditRequest): Promise<{ created: boolean; request: ManualCreditRequest }>;
+  findById(id: string): Promise<ManualCreditRequest | null>;
+  findByKey(idempotencyKey: string): Promise<ManualCreditRequest | null>;
+  /** Enregistre si la version n'a pas changé ; sinon false. */
+  save(request: ManualCreditRequest): Promise<boolean>;
+  list(filter: { status?: ManualCreditStatus }, page: PageRequest): Promise<PageResult<ManualCreditRequest>>;
 }
 
 /**
@@ -187,6 +236,10 @@ export interface WalletSettings {
   /** Montants de recharge acceptés, en XOF (ADR-046). */
   topUpMin: number;
   topUpMax: number;
+  /** Plafond d'un remboursement manuel de la finance, en XOF (ADR-048). */
+  manualRefundMax: number;
+  /** Au-delà (XOF), un crédit manuel attend la validation d'un second membre de la finance. */
+  creditApprovalThreshold: number;
 }
 
 export interface WalletDeps {
@@ -195,6 +248,7 @@ export interface WalletDeps {
   executor: PayoutExecutor;
   topUps: TopUpPayments;
   fingerprints: PhoneFingerprints;
+  creditRequests: ManualCreditRequests;
   settings: WalletSettings;
   clock: Clock;
   ids: IdGenerator;

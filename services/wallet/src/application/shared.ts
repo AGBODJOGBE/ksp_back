@@ -63,6 +63,28 @@ export const WalletErrors = {
       'WALLET_IDEMPOTENCY_KEY_REUSED',
       'Ce paiement a déjà été crédité sur un portefeuille, pour un autre montant ou un autre titulaire.',
     ),
+  /** Crédit manuel d'une recharge non confirmé par payment (ADR-048). */
+  topUpNotVerified: (reason: 'payment_not_found' | 'other_holder' | 'not_received' | 'exceeds_received') =>
+    AppError.precondition(
+      'WALLET_TOP_UP_NOT_VERIFIED',
+      reason === 'exceeds_received'
+        ? 'Le montant dépasse celui reçu par Mobile Money pour cette recharge.'
+        : 'Cette recharge n’est pas confirmée par le service de paiement pour ce portefeuille.',
+      { reason },
+    ),
+  creditLimitExceeded: (maximum: number) =>
+    AppError.precondition(
+      'WALLET_CREDIT_LIMIT_EXCEEDED',
+      `Un remboursement manuel ne peut pas dépasser ${formatXof(maximum)}.`,
+      { maximum: { amount: maximum, currency: 'XOF' } },
+    ),
+  creditRequestNotFound: () =>
+    AppError.notFound('WALLET_CREDIT_REQUEST_NOT_FOUND', 'Cette demande de crédit est introuvable.'),
+  approvalByRequester: () =>
+    AppError.forbidden(
+      'WALLET_APPROVAL_BY_REQUESTER',
+      'Un crédit doit être validé par un autre membre de la finance que l’auteur de la demande.',
+    ),
   viewerForbidden: () =>
     AppError.forbidden(
       'AUTH_FORBIDDEN',
@@ -78,6 +100,8 @@ export function formatXof(amount: number): string {
 /** Back-office du portefeuille : la finance (rôles du domaine wallet). */
 export const WALLET_STAFF = ['finance_officer', 'super_admin'] as const;
 export const BACKOFFICE_MFA_MAX_AGE_SECONDS = 12 * 3600;
+/** Crédit manuel et sa validation : double authentification de moins de 10 minutes (comme la gateway). */
+export const CREDIT_MFA_MAX_AGE_SECONDS = 600;
 
 /**
  * Méthodes « utilisateur » (espace du titulaire) et back-office : appelées par la gateway seulement
@@ -90,13 +114,13 @@ export function requireGateway(): void {
 }
 
 /** Membre de la finance connecté, par la gateway, avec double authentification récente. */
-export function requireStaff(): { userId: string } {
+export function requireStaff(mfaMaxAgeSeconds = BACKOFFICE_MFA_MAX_AGE_SECONDS): { userId: string } {
   requireGateway();
   const user = requireUser();
   if (!WALLET_STAFF.some((role) => hasRole(user, role))) {
     throw AppError.forbidden('AUTH_FORBIDDEN', "Vous n'avez pas les droits nécessaires pour cette action.");
   }
-  requireRecentMfa(BACKOFFICE_MFA_MAX_AGE_SECONDS);
+  requireRecentMfa(mfaMaxAgeSeconds);
   return { userId: user.userId };
 }
 

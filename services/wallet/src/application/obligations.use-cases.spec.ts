@@ -25,6 +25,7 @@ describe('obligations avant la suppression d’un compte (wallet)', () => {
   });
 
   it('solde prépayé, fonds dus puis reversement en cours : bloquent', async () => {
+    setup.topUps.record('0192f1c4-0000-7000-8000-00000000f001', USER_ID, 2500);
     await useCases.creditTopUp.execute({
       eventId: '0192f1c4-0000-7000-c000-000000000001',
       eventType: 'payment.intent.succeeded',

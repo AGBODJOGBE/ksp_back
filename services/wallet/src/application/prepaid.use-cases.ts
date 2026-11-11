@@ -3,7 +3,6 @@ import {
   type Holder,
   type LedgerTransaction,
   type PaidObject,
-  refundEntries,
   reversalEntries,
   sameDebit,
   servicePaymentEntries,
@@ -17,10 +16,8 @@ import {
   IDEMPOTENCY_KEY,
   OBJECT_PART,
   OBJECT_TYPE,
-  oneOf,
   requireCaller,
   requireHolder,
-  requireStaff,
   requireText,
   requireUuid,
   requireXof,
@@ -41,11 +38,11 @@ const xof = (amount: number) => ({ amount, currency: 'XOF' as const });
 export const TOP_UP_DESCRIPTION = 'Recharge Mobile Money';
 
 /** Destinataire des messages : le titulaire (compte), sinon le membre à l'origine de l'écriture. */
-function recipient(holder: Holder, actorId: string | null): string | null {
+export function recipient(holder: Holder, actorId: string | null): string | null {
   return holder.type === 'user' ? holder.id : actorId;
 }
 
-function prepaidAfter(t: LedgerTransaction, balance: number): PrepaidSummary {
+export function prepaidAfter(t: LedgerTransaction, balance: number): PrepaidSummary {
   return { holder: t.holder, balance, lastEntryAt: t.createdAt };
 }
 
@@ -69,7 +66,7 @@ function debitedEvent(t: LedgerTransaction, balance: number): WalletOutboxMessag
   };
 }
 
-function creditedEvent(
+export function creditedEvent(
   t: LedgerTransaction,
   balance: number,
   input: {
@@ -99,7 +96,7 @@ function creditedEvent(
 /** Référence d'un débit : la clé de l'appelant, préfixée (aucune collision avec un remboursement). */
 const debitReference = (key: string) => `debit:${key}`;
 /** Une recharge Mobile Money n'est créditée qu'une fois, automatiquement ou par la finance. */
-const topUpReference = (paymentId: string) => `payment:${paymentId}`;
+export const topUpReference = (paymentId: string) => `payment:${paymentId}`;
 
 /**
  * Débit du portefeuille prépayé pour le paiement d'un service (WalletService.Debit). Jamais partiel :
@@ -299,13 +296,20 @@ export class CreateTopUpUseCase {
   }
 }
 
-export type TopUpCreditOutcome = 'recorded' | 'duplicate' | 'ignored';
+/**
+ * `rejected` : le paiement relu chez payment ne confirme pas l'événement (pas réussi, autre
+ * titulaire, autre montant reçu) : rien n'est crédité (ADR-048).
+ */
+export type TopUpCreditOutcome = 'recorded' | 'duplicate' | 'ignored' | 'rejected';
 
 /**
  * payment.intent.succeeded d'une recharge (objet wallet_top_up) : le portefeuille du titulaire
  * (l'organisation payeuse, sinon le payeur) est crédité du montant confirmé par le prestataire. Une
  * seule fois par paiement : inbox dans la même transaction, et référence `payment:<id>` unique (un
  * crédit manuel de la finance pour ce paiement l'aurait déjà fait). Objet incohérent : ignoré.
+ * Avant tout crédit, le paiement est relu chez payment (ADR-048) : il doit être réussi, pour ce
+ * titulaire, et le montant reçu égal à celui de l'événement ; sinon rien n'est crédité (`rejected`).
+ * payment injoignable : erreur, l'événement est réessayé.
  */
 export class CreditTopUpUseCase {
   constructor(private readonly deps: WalletDeps) {}
@@ -325,6 +329,14 @@ export class CreditTopUpUseCase {
     if (input.subjectId !== holder.id) return 'ignored';
     const reference = topUpReference(input.paymentId);
     if (await this.deps.ledger.findByReference(WALLET, reference)) return 'duplicate';
+    const payment = await this.deps.topUps.get(input.paymentId);
+    const confirmed =
+      payment !== null &&
+      payment.status === 'succeeded' &&
+      payment.holderId === holder.id &&
+      payment.organizationId === input.organizationId &&
+      payment.receivedAmount === input.amount;
+    if (!confirmed) return 'rejected';
     const credit = transaction(this.deps, {
       kind: 'top_up',
       caller: WALLET,
@@ -348,86 +360,6 @@ export class CreditTopUpUseCase {
     });
     if (outcome.kind === 'recorded') return 'recorded';
     if (outcome.kind === 'already_processed' || outcome.kind === 'duplicate') return 'duplicate';
-    throw WalletErrors.concurrentUpdate();
-  }
-}
-
-/** Crédits manuels de la finance. */
-export const CREDIT_KINDS = ['refund', 'top_up'] as const;
-
-/**
- * Back-office (finance, double authentification) : crédit manuel d'un portefeuille prépayé avec
- * motif, l'auteur gardé dans le grand livre (immuable). `refund` : remboursement (service non rendu,
- * geste commercial) ; `top_up` : recharge reçue par Mobile Money mais non créditée (écart de montant
- * traité par la finance), une seule fois par paiement, automatique ou manuelle. Idempotent par clé
- * (remboursement) ou par paiement (recharge).
- */
-export class CreditPrepaidWalletUseCase {
-  constructor(private readonly deps: WalletDeps) {}
-
-  async execute(input: {
-    idempotencyKey: string;
-    holder: { type: string; id: string } | undefined;
-    kind: string;
-    amount: { amount: number; currency: string } | undefined;
-    reason: string;
-    paymentId: string;
-  }): Promise<{ transaction: LedgerTransaction; wallet: PrepaidSummary; created: boolean }> {
-    const staff = requireStaff();
-    if (!IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
-      throw WalletErrors.invalid('idempotencyKey', 'Clé d’idempotence invalide (8 à 100 caractères).');
-    }
-    const holder = requireHolder('holder', input.holder);
-    const kind = oneOf('kind', input.kind, CREDIT_KINDS);
-    const amount = requireXof('amount', input.amount);
-    const reason = requireText('reason', input.reason, 200);
-    let reference = `credit:${input.idempotencyKey}`;
-    let paymentId: string | undefined;
-    if (kind === 'top_up') {
-      paymentId = requireUuid('paymentId', input.paymentId);
-      reference = topUpReference(paymentId);
-    } else if (input.paymentId) {
-      throw WalletErrors.invalid('paymentId', 'Un remboursement ne cite pas de paiement.');
-    }
-
-    const replay = async (existing: LedgerTransaction) => {
-      const same =
-        existing.kind === kind &&
-        existing.holder.type === holder.type &&
-        existing.holder.id === holder.id &&
-        existing.amount === amount &&
-        existing.actorId === staff.userId;
-      if (!same) throw kind === 'top_up' ? WalletErrors.topUpAlreadyCredited() : WalletErrors.keyReused();
-      return { transaction: existing, wallet: await this.deps.ledger.prepaidSummary(holder), created: false };
-    };
-    const existing = await this.deps.ledger.findByReference(WALLET, reference);
-    if (existing) return replay(existing);
-
-    const credit = transaction(this.deps, {
-      kind,
-      caller: WALLET,
-      reference,
-      holder,
-      amount,
-      description: reason,
-      actorId: staff.userId,
-      entries: kind === 'top_up' ? topUpEntries(holder, amount) : refundEntries(holder, amount),
-    });
-    const outcome = await this.deps.ledger.record({
-      transaction: credit,
-      events: (balance) => [
-        creditedEvent(credit, balance, {
-          origin: 'finance',
-          userId: recipient(holder, null),
-          ...(paymentId ? { paymentId } : {}),
-        }),
-      ],
-    });
-    if (outcome.kind === 'recorded') {
-      return { transaction: credit, wallet: prepaidAfter(credit, outcome.holderBalance), created: true };
-    }
-    const raced = await this.deps.ledger.findByReference(WALLET, reference);
-    if (raced) return replay(raced);
     throw WalletErrors.concurrentUpdate();
   }
 }

@@ -33,6 +33,13 @@ export const configSchema = baseServiceConfigSchema
     WALLET_TOP_UP_MAX: z.coerce.number().int().min(1).max(1_000_000_000).default(1_000_000),
     /** Adresse gRPC de payment (reversements, recharges). */
     PAYMENT_GRPC_URL: z.string().min(1).default('localhost:50055'),
+    /** Plafond d'un remboursement manuel de la finance, en XOF (ADR-048). */
+    WALLET_MANUAL_REFUND_MAX: z.coerce.number().int().min(1).max(1_000_000_000).default(100_000),
+    /**
+     * Seuil (XOF) au-delà duquel un crédit manuel attend la validation d'un second membre de la
+     * finance (ADR-048).
+     */
+    WALLET_CREDIT_APPROVAL_THRESHOLD: z.coerce.number().int().min(0).max(1_000_000_000).default(50_000),
     /**
      * Clé de l'empreinte des numéros de bénéficiaire (HMAC-SHA256, 32 caractères au moins), fournie
      * par le coffre, jamais journalisée ; celle de développement est refusée en production (ADR-048).

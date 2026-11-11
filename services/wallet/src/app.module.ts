@@ -15,6 +15,7 @@ import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.serv
 import { GrpcPayoutExecutor } from './infrastructure/payment/grpc-payout-executor';
 import { GrpcTopUpPayments } from './infrastructure/payment/grpc-top-up-payments';
 import { PrismaLedgerStore } from './infrastructure/persistence/prisma-ledger.store';
+import { PrismaCreditRequests } from './infrastructure/persistence/prisma-credit-requests';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { SUBMIT_INTERVAL_MS, SubmitPayoutsService } from './infrastructure/scheduling/submit-payouts.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
@@ -49,15 +50,22 @@ export class AppModule {
         PrismaService,
         OutboxRelayService,
         PrismaLedgerStore,
+        PrismaCreditRequests,
         PayoutEventsConsumer,
         PrepaidEventsConsumer,
         SubmitPayoutsService,
         { provide: SUBMIT_INTERVAL_MS, useValue: config.WALLET_PAYOUT_SUBMIT_INTERVAL_MS },
         {
           provide: WALLET_USE_CASES,
-          inject: [PrismaLedgerStore, PAYMENT_CLIENT, { token: SERVICE_TOKEN_PROVIDER, optional: true }],
+          inject: [
+            PrismaLedgerStore,
+            PrismaCreditRequests,
+            PAYMENT_CLIENT,
+            { token: SERVICE_TOKEN_PROVIDER, optional: true },
+          ],
           useFactory: (
             store: PrismaLedgerStore,
+            creditRequests: PrismaCreditRequests,
             payment: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
           ) => {
@@ -89,7 +97,10 @@ export class AppModule {
                 debitCallers: config.WALLET_DEBIT_CALLERS,
                 topUpMin: config.WALLET_TOP_UP_MIN,
                 topUpMax: config.WALLET_TOP_UP_MAX,
+                manualRefundMax: config.WALLET_MANUAL_REFUND_MAX,
+                creditApprovalThreshold: config.WALLET_CREDIT_APPROVAL_THRESHOLD,
               },
+              creditRequests,
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
             });

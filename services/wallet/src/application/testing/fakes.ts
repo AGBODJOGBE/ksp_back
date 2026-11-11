@@ -27,6 +27,10 @@ import {
   type StatementLine,
   type TopUpPayment,
   type TopUpPayments,
+  type TopUpRecord,
+  type ManualCreditRequest,
+  type ManualCreditRequests,
+  type ManualCreditStatus,
   type WalletDeps,
   type WalletOutboxMessage,
   type WalletPayoutRepository,
@@ -258,10 +262,29 @@ export class FakeExecutor implements PayoutExecutor {
   }
 }
 
-/** payment simulé : recharges créées (une par clé), panne simulable. */
+/** payment simulé : recharges créées (une par clé), relues (paiements connus), panne simulable. */
 export class FakeTopUps implements TopUpPayments {
   readonly requests: { idempotencyKey: string; amount: number }[] = [];
+  /** Paiements de recharge connus de payment, par identifiant. */
+  readonly records = new Map<string, TopUpRecord>();
   down = false;
+  async get(paymentId: string): Promise<TopUpRecord | null> {
+    if (this.down) throw AppError.unavailable('GRPC_UNAVAILABLE', 'payment injoignable');
+    return this.records.get(paymentId) ?? null;
+  }
+  /** Recharge réussie (ou autre statut) du titulaire, telle que payment la rend. */
+  record(paymentId: string, holderId: string, amount: number, overrides: Partial<TopUpRecord> = {}) {
+    this.records.set(paymentId, {
+      paymentId,
+      status: 'succeeded',
+      holderId,
+      customerId: holderId,
+      organizationId: null,
+      amount,
+      receivedAmount: amount,
+      ...overrides,
+    });
+  }
   async create(input: { idempotencyKey: string; amount: number }): Promise<TopUpPayment> {
     if (this.down) throw AppError.unavailable('PAYMENT_PROVIDER_UNAVAILABLE', 'prestataire injoignable');
     const known = this.requests.findIndex((r) => r.idempotencyKey === input.idempotencyKey);
@@ -278,12 +301,49 @@ export class FakeTopUps implements TopUpPayments {
   }
 }
 
+/** Demandes de crédit manuel en mémoire (clé unique, contrôle de version). */
+export class InMemoryCreditRequests implements ManualCreditRequests {
+  readonly rows = new Map<string, ManualCreditRequest>();
+  async create(request: ManualCreditRequest) {
+    const existing = await this.findByKey(request.idempotencyKey);
+    if (existing) return { created: false, request: existing };
+    this.rows.set(request.id, { ...request });
+    return { created: true, request: { ...request } };
+  }
+  async findById(id: string) {
+    const row = this.rows.get(id);
+    return row ? { ...row } : null;
+  }
+  async findByKey(key: string) {
+    const row = [...this.rows.values()].find((r) => r.idempotencyKey === key);
+    return row ? { ...row } : null;
+  }
+  async save(request: ManualCreditRequest) {
+    const current = this.rows.get(request.id);
+    if (!current || current.version !== request.version) return false;
+    this.rows.set(request.id, { ...request, version: request.version + 1 });
+    return true;
+  }
+  async list(filter: { status?: ManualCreditStatus }, page: PageRequest) {
+    const items = [...this.rows.values()]
+      .filter((r) => !filter.status || r.status === filter.status)
+      .sort((a, b) => b.id.localeCompare(a.id))
+      .filter((r) => !page.cursor || r.id < page.cursor);
+    return {
+      items: items.slice(0, page.limit),
+      nextCursor: items.length > page.limit ? items[page.limit - 1]!.id : null,
+    };
+  }
+}
+
 export function makeDeps(overrides: Partial<WalletDeps> = {}) {
   const store = new InMemoryWallet();
   const topUps = new FakeTopUps();
+  const creditRequests = new InMemoryCreditRequests();
   return {
     store,
     topUps,
+    creditRequests,
     deps: {
       ledger: store,
       payouts: store,
@@ -297,7 +357,10 @@ export function makeDeps(overrides: Partial<WalletDeps> = {}) {
         debitCallers: ['cleaning', 'billing'] as readonly string[],
         topUpMin: 500,
         topUpMax: 1_000_000,
+        manualRefundMax: 100_000,
+        creditApprovalThreshold: 50_000,
       },
+      creditRequests,
       clock: new FixedClock(),
       ids: new SequenceIds(),
       ...overrides,
@@ -351,8 +414,13 @@ export function asServiceFor<T>(service: string, userId: string, fn: () => Promi
   );
 }
 
-export function asStaff<T>(fn: () => Promise<T>, role = 'finance_officer', mfa = true): Promise<T> {
-  return as(STAFF_ID, fn, { roles: [role], mfa });
+export function asStaff<T>(
+  fn: () => Promise<T>,
+  role = 'finance_officer',
+  mfa = true,
+  userId = STAFF_ID,
+): Promise<T> {
+  return as(userId, fn, { roles: [role], mfa });
 }
 
 export function asService<T>(service: string, fn: () => Promise<T>): Promise<T> {

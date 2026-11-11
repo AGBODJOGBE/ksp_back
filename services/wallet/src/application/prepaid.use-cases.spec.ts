@@ -1,4 +1,4 @@
-import { type AppError } from '@ksp/platform';
+import { type AppError, runWithContext } from '@ksp/platform';
 import {
   asCustomer,
   asService,
@@ -15,6 +15,7 @@ const USER = { type: 'user', id: USER_ID };
 const ORG = { type: 'organization', id: ORGANIZATION_ID };
 const MISSION_ID = '0192f1c4-0000-7000-8000-00000000e001';
 const PAYMENT_ID = '0192f1c4-0000-7000-8000-00000000f001';
+const OTHER_STAFF_ID = '0192f1c4-0000-7000-8000-00000000d002';
 const xof = (amount: number) => ({ amount, currency: 'XOF' });
 
 async function rejection(promise: Promise<unknown>): Promise<AppError> {
@@ -33,6 +34,8 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
   beforeEach(() => {
     setup = makeDeps();
     useCases = createUseCases(setup.deps);
+    // payment confirme la recharge PAYMENT_ID du client (relue avant tout crédit, ADR-048).
+    setup.topUps.record(PAYMENT_ID, USER_ID, 20000);
   });
 
   const topUp = (amount = 20000, overrides: Record<string, unknown> = {}) =>
@@ -98,6 +101,25 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
       expect(viewer.code).toBe('AUTH_FORBIDDEN');
     });
 
+    it('relue chez payment avant le crédit : non réussie, autre titulaire ou autre montant reçu → rien (ADR-048)', async () => {
+      setup.topUps.record(PAYMENT_ID, USER_ID, 20000, { status: 'pending', receivedAmount: null });
+      expect(await topUp()).toBe('rejected');
+      setup.topUps.record(PAYMENT_ID, ORGANIZATION_ID, 20000, { organizationId: ORGANIZATION_ID });
+      expect(await topUp()).toBe('rejected');
+      setup.topUps.record(PAYMENT_ID, USER_ID, 20000, { receivedAmount: 15000 });
+      expect(await topUp()).toBe('rejected');
+      setup.topUps.records.delete(PAYMENT_ID);
+      expect(await topUp()).toBe('rejected');
+      expect((await prepaid()).balance).toBe(0);
+      // payment injoignable : erreur, l'événement sera réessayé.
+      setup.topUps.record(PAYMENT_ID, USER_ID, 20000);
+      setup.topUps.down = true;
+      expect((await rejection(topUp())).code).toBe('GRPC_UNAVAILABLE');
+      setup.topUps.down = false;
+      expect(await topUp()).toBe('recorded');
+      expect((await prepaid()).balance).toBe(20000);
+    });
+
     it('confirmation : créditée une seule fois, titulaire incohérent ignoré, événement publié', async () => {
       expect(await topUp()).toBe('recorded');
       expect(await topUp()).toBe('duplicate');
@@ -140,6 +162,7 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
     });
 
     it('jamais partiel : solde insuffisant refusé avec le montant manquant, rien n’est écrit', async () => {
+      setup.topUps.record(PAYMENT_ID, USER_ID, 10000);
       await topUp(10000);
       const error = await rejection(debit());
       expect(error).toMatchObject({
@@ -207,7 +230,12 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
   });
 
   describe('crédit manuel de la finance', () => {
-    const credit = (overrides: Record<string, unknown> = {}, role = 'finance_officer', mfa = true) =>
+    const credit = (
+      overrides: Record<string, unknown> = {},
+      role = 'finance_officer',
+      mfa = true,
+      userId = STAFF_ID,
+    ) =>
       asStaff(
         () =>
           useCases.creditPrepaidWallet.execute({
@@ -221,6 +249,7 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
           } as never),
         role,
         mfa,
+        userId,
       );
 
     it('remboursement avec motif et auteur ; rejouable ; finance avec double authentification', async () => {
@@ -239,8 +268,9 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
     });
 
     it('recharge non créditée (écart traité) : une seule fois par paiement, même après le crédit automatique', async () => {
+      setup.topUps.record(PAYMENT_ID, USER_ID, 5000, { status: 'amount_mismatch', receivedAmount: 4900 });
       const manual = await credit({ kind: 'top_up', holder: USER, paymentId: PAYMENT_ID, amount: xof(4900) });
-      expect(manual.transaction.kind).toBe('top_up');
+      expect(manual.transaction?.kind).toBe('top_up');
       expect(await topUp(4900)).toBe('duplicate');
       expect(
         (await rejection(credit({ kind: 'top_up', holder: USER, paymentId: PAYMENT_ID, amount: xof(5000) })))
@@ -250,6 +280,121 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
         'WALLET_VALIDATION_FAILED',
       );
       expect((await prepaid()).balance).toBe(4900);
+    });
+  });
+
+  describe('crédit manuel contrôlé (ADR-048)', () => {
+    const credit = (overrides: Record<string, unknown> = {}, userId = STAFF_ID) =>
+      asStaff(
+        () =>
+          useCases.creditPrepaidWallet.execute({
+            idempotencyKey: 'credit-key-0101',
+            holder: USER,
+            kind: 'refund',
+            amount: xof(3000),
+            reason: 'Passage du 3 novembre non effectué',
+            paymentId: '',
+            ...overrides,
+          } as never),
+        'finance_officer',
+        true,
+        userId,
+      );
+    const approve = (requestId: string, userId = OTHER_STAFF_ID) =>
+      asStaff(() => useCases.approveManualCredit.execute(requestId), 'finance_officer', true, userId);
+    const topUpCredit = (amount: number, holder = USER) =>
+      credit({ kind: 'top_up', holder, paymentId: PAYMENT_ID, amount: xof(amount) });
+
+    it('recharge : confirmée par payment, du même titulaire, jamais au-delà du montant reçu', async () => {
+      const reasonOf = async (promise: Promise<unknown>) => {
+        const error = await rejection(promise);
+        expect(error.code).toBe('WALLET_TOP_UP_NOT_VERIFIED');
+        return error.details['reason'];
+      };
+      setup.topUps.records.delete(PAYMENT_ID);
+      expect(await reasonOf(topUpCredit(4900))).toBe('payment_not_found');
+      setup.topUps.record(PAYMENT_ID, USER_ID, 5000, { status: 'pending', receivedAmount: null });
+      expect(await reasonOf(topUpCredit(4900))).toBe('not_received');
+      setup.topUps.record(PAYMENT_ID, USER_ID, 5000, { status: 'amount_mismatch', receivedAmount: 4900 });
+      expect(await reasonOf(topUpCredit(4900, ORG))).toBe('other_holder');
+      expect(await reasonOf(topUpCredit(5000))).toBe('exceeds_received');
+      expect(await topUpCredit(4900)).toMatchObject({ created: true, transaction: { kind: 'top_up' } });
+    });
+
+    it('remboursement : plafonné et justifié', async () => {
+      expect((await rejection(credit({ amount: xof(100_001) }))).code).toBe('WALLET_CREDIT_LIMIT_EXCEEDED');
+      expect((await rejection(credit({ reason: 'geste' }))).code).toBe('WALLET_VALIDATION_FAILED');
+      expect(await credit()).toMatchObject({ created: true, pendingRequest: null });
+    });
+
+    it('au-delà du seuil : rien n’est écrit avant la validation d’un second membre de la finance', async () => {
+      const first = await credit({ amount: xof(60_000) });
+      expect(first).toMatchObject({
+        created: true,
+        transaction: null,
+        pendingRequest: { status: 'pending_approval', requestedBy: STAFF_ID, amount: 60_000 },
+      });
+      expect((await prepaid()).balance).toBe(0);
+      // Rejeu de la même demande : la même demande ; autre montant avec la même clé : refusé.
+      expect(await credit({ amount: xof(60_000) })).toMatchObject({
+        created: false,
+        pendingRequest: { id: first.pendingRequest!.id },
+      });
+      expect((await rejection(credit({ amount: xof(70_000) }))).code).toBe('WALLET_IDEMPOTENCY_KEY_REUSED');
+      // L'auteur ne valide pas sa propre demande.
+      expect((await rejection(approve(first.pendingRequest!.id, STAFF_ID))).code).toBe(
+        'WALLET_APPROVAL_BY_REQUESTER',
+      );
+      const approved = await approve(first.pendingRequest!.id);
+      expect(approved).toMatchObject({
+        created: true,
+        transaction: { kind: 'refund', amount: 60_000, actorId: STAFF_ID },
+        request: { status: 'approved', approvedBy: OTHER_STAFF_ID },
+        wallet: { balance: 60_000 },
+      });
+      // Validation rejouée : le même crédit ; la demande rejouée rend le crédit.
+      expect(await approve(first.pendingRequest!.id)).toMatchObject({
+        created: false,
+        transaction: { id: approved.transaction.id },
+      });
+      expect(await credit({ amount: xof(60_000) })).toMatchObject({
+        created: false,
+        transaction: { id: approved.transaction.id },
+        pendingRequest: null,
+      });
+      expect((await prepaid()).balance).toBe(60_000);
+      const pending = await asStaff(() =>
+        useCases.listManualCreditRequests.execute({ page: { limit: 20, cursor: null }, status: 'approved' }),
+      );
+      expect(pending.items.map((r) => r.id)).toEqual([first.pendingRequest!.id]);
+    });
+
+    it('double authentification de moins de 10 minutes pour créditer ou valider', async () => {
+      const error = await rejection(
+        runWithContext(
+          {
+            correlationId: 'c-test',
+            user: {
+              userId: STAFF_ID,
+              sessionId: 's-test',
+              activeContext: 'personal',
+              roles: [{ role: 'finance_officer', scopeType: 'global' }],
+              mfa: true,
+              authTime: Math.floor(Date.now() / 1000) - 3600,
+            },
+          },
+          () =>
+            useCases.creditPrepaidWallet.execute({
+              idempotencyKey: 'credit-key-0102',
+              holder: USER,
+              kind: 'refund',
+              amount: xof(3000),
+              reason: 'Passage du 3 novembre non effectué',
+              paymentId: '',
+            } as never),
+        ),
+      );
+      expect(error.code).toBe('AUTH_MFA_REQUIRED');
     });
   });
 

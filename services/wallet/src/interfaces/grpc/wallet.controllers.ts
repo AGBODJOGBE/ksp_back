@@ -1,6 +1,7 @@
 import { commonV1, walletV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import {
+  type ManualCreditRequest,
   type PageResult,
   type PrepaidSummary,
   type StatementLine,
@@ -42,6 +43,24 @@ function presentObject(transaction: LedgerTransaction): walletV1.ObjectReference
   return object
     ? { service: transaction.caller, objectType: object.type, objectId: object.id, part: object.part ?? '' }
     : undefined;
+}
+
+/** Demande de crédit manuel soumise à double validation (ADR-048). */
+export function presentCreditRequest(request: ManualCreditRequest): walletV1.ManualCreditRequest {
+  return {
+    id: request.id,
+    holder: { ...request.holder },
+    kind: request.kind,
+    amount: { amount: request.amount, currency: 'XOF' },
+    reason: request.reason,
+    paymentId: request.paymentId ?? '',
+    status: request.status,
+    requestedBy: request.requestedBy,
+    requestedAt: request.requestedAt.toISOString(),
+    approvedBy: request.approvedBy ?? '',
+    approvedAt: request.approvedAt?.toISOString() ?? '',
+    transactionId: request.transactionId ?? '',
+  };
 }
 
 export function presentTransaction(transaction: LedgerTransaction): walletV1.LedgerTransaction {
@@ -332,8 +351,31 @@ export class WalletAdminGrpcController implements walletV1.WalletAdminServiceCon
       paymentId: request.paymentId,
     });
     return {
+      ...(result.transaction ? { transaction: presentTransaction(result.transaction) } : {}),
+      wallet: presentPrepaid(result.wallet),
+      created: result.created,
+      ...(result.pendingRequest ? { pendingRequest: presentCreditRequest(result.pendingRequest) } : {}),
+    };
+  }
+
+  async listManualCreditRequests(
+    request: walletV1.ListManualCreditRequestsRequest,
+  ): Promise<walletV1.ListManualCreditRequestsResponse> {
+    const page = await this.useCases.listManualCreditRequests.execute({
+      page: parsePage(request.page),
+      status: request.status,
+    });
+    return { requests: page.items.map(presentCreditRequest), nextCursor: page.nextCursor ?? '' };
+  }
+
+  async approveManualCredit(
+    request: walletV1.ApproveManualCreditRequest,
+  ): Promise<walletV1.ApproveManualCreditResponse> {
+    const result = await this.useCases.approveManualCredit.execute(request.requestId);
+    return {
       transaction: presentTransaction(result.transaction),
       wallet: presentPrepaid(result.wallet),
+      request: presentCreditRequest(result.request),
       created: result.created,
     };
   }
