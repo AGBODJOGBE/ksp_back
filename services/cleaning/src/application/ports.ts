@@ -14,6 +14,7 @@ import {
 } from '../domain/quote-request';
 import { type SkippedMission, type SkippedRequest } from '../domain/request-group';
 import { type BusyPeriod } from '../domain/schedule';
+import { type BatchConflict } from '../domain/intervention-batch';
 import { type CleaningSettings } from '../domain/settings';
 import { type Zone } from '../domain/zone';
 import { type PageRequest, type PageResult } from './shared/validation';
@@ -324,6 +325,26 @@ export interface MissionFilter {
   serviceCode?: string;
 }
 
+/** Résultat d'une planification en lot (ADR-052), gardé pour la rejouer à l'identique. */
+export interface InterventionBatchOutcome {
+  missionId: string;
+  interventionIds: string[];
+  /** Dates planifiées, dans l'ordre. */
+  scheduledDates: string[];
+  /** Dates sautées pour conflit d'agenda (skipConflicts), avec leurs agents ; vide sinon. */
+  skipped: BatchConflict[];
+}
+
+/** Plan d'une planification en lot, construit sous le verrou des agents. */
+export type InterventionBatchPlan =
+  { conflicts: BatchConflict[] } | { mission: Mission; changes: Changes; outcome: InterventionBatchOutcome };
+
+export type InterventionBatchResult =
+  | { status: 'saved'; outcome: InterventionBatchOutcome }
+  | { status: 'conflicts'; conflicts: BatchConflict[] }
+  | { status: 'replayed' }
+  | { status: 'stale' };
+
 export interface MissionRepository {
   findById(id: string): Promise<Mission | null>;
   findByInterventionId(interventionId: string): Promise<Mission | null>;
@@ -362,6 +383,19 @@ export interface MissionRepository {
     agentIds: string[],
     plan: (busy: BusyPeriod[]) => { mission: Mission; changes: Changes },
   ): Promise<boolean>;
+  /** Planification en lot déjà faite avec cette clé pour la mission (ADR-052), sinon null. */
+  findInterventionBatch(missionId: string, idempotencyKey: string): Promise<InterventionBatchOutcome | null>;
+  /**
+   * Planification en lot (ADR-052), dans une transaction : verrouille les agents, lit leurs périodes
+   * occupées, laisse `plan` choisir les passages ; s'il en renvoie, enregistre la trace d'idempotence
+   * (clé déjà prise par un appel concurrent : `replayed`), la mission (version changée : `stale`), les
+   * événements et les traces. Sinon, rien n'est écrit (`conflicts`).
+   */
+  scheduleBatch(input: {
+    agentIds: string[];
+    batch: { missionId: string; actorId: string; idempotencyKey: string };
+    plan: (busy: BusyPeriod[]) => InterventionBatchPlan;
+  }): Promise<InterventionBatchResult>;
   /** Missions de particuliers en récurrent, non terminées : surveillance des passages impayés. */
   listIndividualRecurring(): Promise<Mission[]>;
   /** Missions non terminées d'une organisation : suspension ou reprise avec elle (ADR-030). */

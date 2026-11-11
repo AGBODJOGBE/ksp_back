@@ -1,8 +1,9 @@
 import { type ChecklistTemplateItem } from './catalog';
+import { type InterventionSchedule } from './intervention-schedule';
 import { type GeoLocation } from './location';
 import { paidAmount, type PaymentState } from './payment';
 import { type Recurrence } from './recurrence';
-import { type Slot } from './schedule';
+import { localDay, type Slot } from './schedule';
 
 /**
  * Mission (UC-CL-09, 10) : créée par l'acceptation d'un devis, réalisée en un ou plusieurs
@@ -94,6 +95,10 @@ export interface Mission {
   placeType: string | null;
   chosenSlot: Slot;
   recurrence: Recurrence | null;
+  /** Plan de passages (ADR-052) ; absent ou null : ancienne récurrence, ou sans plan. */
+  schedule?: InterventionSchedule | null;
+  /** Dates exactes des passages tirées du plan (AAAA-MM-JJ), vides sans plan ; leur nombre est celui des passages prévus. */
+  scheduledDates?: string[];
   plannedInterventions: number;
   interventions: Intervention[];
   payment: PaymentState;
@@ -191,4 +196,20 @@ export function isChecklistComplete(intervention: Pick<Intervention, 'checklist'
 /** Pour un agent : seulement les missions où il est affecté à au moins un passage. */
 export function isAssignedAgent(mission: Pick<Mission, 'interventions'>, agentId: string): boolean {
   return mission.interventions.some((intervention) => intervention.agentIds.includes(agentId));
+}
+
+/**
+ * Dates du plan de passages (ADR-052) encore sans passage : ni planifié, ni en cours, ni fait, ni en
+ * attente (un passage annulé libère sa date). Jour civil d'un passage lu dans le fuseau donné.
+ */
+export function unscheduledDates(
+  mission: Pick<Mission, 'scheduledDates' | 'interventions'>,
+  timeZone: string,
+): string[] {
+  const taken = new Set(
+    mission.interventions
+      .filter((intervention) => intervention.status !== 'cancelled')
+      .map((intervention) => localDay(intervention.scheduledStart, timeZone)),
+  );
+  return (mission.scheduledDates ?? []).filter((date) => !taken.has(date));
 }

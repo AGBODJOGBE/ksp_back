@@ -17,6 +17,7 @@ import {
 import { bookingChanges, newMission, paymentPlanFor } from '../requests/customer-requests.use-cases';
 import { currentCustomer, requireStaff, SUPERVISION } from '../shared/access';
 import { CleaningErrors } from '../shared/errors';
+import { type ScheduleInput } from '../shared/schedules';
 import { parseDate, requireUuid } from '../shared/validation';
 import {
   anyGroup,
@@ -52,8 +53,11 @@ export class SendGroupQuotesUseCase {
 
   async execute(input: {
     groupId: string;
+    /** 1 à 3 créneaux communs ; ignorés pour un devis avec un plan de passages (ADR-052). */
     proposedSlots: { start: string; end: string }[];
     validityDays: number;
+    /** Plan de passages commun (ADR-052) ; absent : celui de chaque demande. */
+    schedule?: ScheduleInput | null | undefined;
     quotes: GroupQuoteItemInput[];
     idempotencyKey?: string;
   }): Promise<GroupOutcome> {
@@ -67,7 +71,9 @@ export class SendGroupQuotesUseCase {
     }
     const now = this.deps.clock.now();
     const settings = await this.deps.catalog.getSettings();
-    const proposedSlots = parseProposedSlots(input.proposedSlots, settings, now);
+    const proposedSlots = input.proposedSlots.length
+      ? parseProposedSlots(input.proposedSlots, settings, now)
+      : null;
     const seen = new Set<string>();
     const prepared: PreparedQuote[] = [];
     for (const [index, item] of input.quotes.entries()) {
@@ -82,7 +88,7 @@ export class SendGroupQuotesUseCase {
           await prepareQuote(
             this.deps,
             request,
-            { ...item, validityDays: input.validityDays },
+            { ...item, validityDays: input.validityDays, schedule: input.schedule },
             proposedSlots,
             settings,
             now,

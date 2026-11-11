@@ -36,6 +36,29 @@ export const LOCATION = { latitude: 6.4489, longitude: 2.3556, accuracyMeters: 1
 const xof = (amount: number) => ({ amount, currency: 'XOF' });
 const SLOT = { start: '2026-11-05T08:00:00.000Z', end: '2026-11-05T11:00:00.000Z' };
 
+/** Plan de passages (ADR-052) : chaque jeudi à 09:00, du 5 au 12 novembre 2026, soit deux passages. */
+export const protoSchedule: cleaningV1.InterventionSchedule = {
+  mode: 'weekly',
+  dates: [],
+  startDate: '2026-11-05',
+  endDate: '2026-11-12',
+  weekdays: ['thu'],
+  everyWeeks: 1,
+  monthDays: [],
+  weeksOfMonth: [],
+  startTime: '09:00',
+  excludedDates: [],
+  extraDates: [],
+};
+export const SCHEDULED_DATES = ['2026-11-05', '2026-11-12'];
+export const protoSchedulePreview: cleaningV1.SchedulePreview = {
+  dates: SCHEDULED_DATES,
+  count: 2,
+  firstDate: '2026-11-05',
+  lastDate: '2026-11-12',
+  warnings: [],
+};
+
 /** Détail du calcul (ADR-033) : 6 pièces × 4 500 + 1 salle de bain × 3 000 + 8 fenêtres × 500, × 1,05. */
 export const protoCalculation: cleaningV1.PriceCalculation = {
   pricingVersion: 3,
@@ -182,7 +205,10 @@ export const protoRequest: cleaningV1.QuoteRequest = {
     sentAt: '2026-10-23T08:00:00.000Z',
     teamSize: 2,
     durationMinutes: 180,
+    scheduledDates: [],
   },
+  schedule: protoSchedule,
+  scheduledDates: SCHEDULED_DATES,
   missionId: '',
   closingReason: '',
   createdAt: '2026-10-22T10:00:00.000Z',
@@ -226,6 +252,8 @@ export const protoMission: cleaningV1.Mission = {
   plannedInterventions: 2,
   completedInterventions: 0,
   recurrence: { period: 'week', visitsPerPeriod: 1, durationMonths: 1 },
+  schedule: protoSchedule,
+  scheduledDates: SCHEDULED_DATES,
   interventions: [
     {
       id: IDS.intervention,
@@ -581,6 +609,13 @@ const DEFAULTS: Record<Method, () => unknown> = {
     calculation: protoCalculation,
     communeApplied: true,
   }),
+  previewSchedule: () => ({ preview: protoSchedulePreview }),
+  scheduleInterventionBatch: () => ({
+    mission: protoMission,
+    interventionIds: [IDS.intervention],
+    scheduledDates: ['2026-11-12'],
+    skipped: [{ date: '2026-11-05', agentIds: [IDS.agent] }],
+  }),
   getPlaceCatalog: () => ({
     placeTypes: [
       {
@@ -736,6 +771,9 @@ const DEFAULTS: Record<Method, () => unknown> = {
   reactivateTeam: () => ({ team }),
 };
 
+/** Réponse par défaut d'une méthode, pour la compléter dans un test. */
+export const stubDefault = (method: Method) => DEFAULTS[method]() as object;
+
 export class CleaningStub {
   readonly calls: {
     method: Method;
@@ -798,7 +836,14 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
   @Module({
     controllers: [
       stubController(
-        pick(['listServices', 'simulate', 'listServedZones', 'getPlaceCatalog', 'estimate']),
+        pick([
+          'listServices',
+          'simulate',
+          'previewSchedule',
+          'listServedZones',
+          'getPlaceCatalog',
+          'estimate',
+        ]),
         cleaningV1.CatalogServiceControllerMethods,
       ),
       stubController(
@@ -833,6 +878,7 @@ export async function startCleaningStub(keys: TestKeys): Promise<CleaningServer>
             ![
               'listServices',
               'simulate',
+              'previewSchedule',
               'listServedZones',
               'getPlaceCatalog',
               'estimate',

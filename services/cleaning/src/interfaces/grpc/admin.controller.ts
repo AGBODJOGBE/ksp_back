@@ -266,6 +266,18 @@ export class CleaningAdminGrpcController implements cleaningV1.CleaningAdminServ
     return { mission: await this.mission(await this.useCases.scheduleIntervention.execute(request)) };
   }
 
+  async scheduleInterventionBatch(
+    request: cleaningV1.ScheduleInterventionBatchRequest,
+  ): Promise<cleaningV1.ScheduleInterventionBatchResponse> {
+    const { mission, outcome } = await this.useCases.scheduleInterventionBatch.execute(request);
+    return {
+      mission: await this.mission(mission),
+      interventionIds: outcome.interventionIds,
+      scheduledDates: outcome.scheduledDates,
+      skipped: outcome.skipped.map((conflict) => ({ date: conflict.date, agentIds: conflict.agentIds })),
+    };
+  }
+
   async startIntervention(
     request: cleaningV1.StartInterventionRequest,
   ): Promise<cleaningV1.StartInterventionResponse> {

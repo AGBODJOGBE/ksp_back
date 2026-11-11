@@ -15,10 +15,29 @@ export interface Slot {
   end: string;
 }
 
+/** Dépréciée (ADR-052) : remplacée par ScheduleInput. */
 export interface RecurrenceInput {
   period: 'week' | 'month';
   visitsPerPeriod: number;
   durationMonths: number;
+}
+
+/**
+ * Plan de passages (ADR-052) : mode "dates" (liste de jours), "weekly" (jours de semaine sur une
+ * période) ou "monthly" (jours du mois, ou jours de semaine à des rangs). Règles dans cleaning.
+ */
+export interface ScheduleInput {
+  mode: 'dates' | 'weekly' | 'monthly';
+  dates?: string[] | undefined;
+  startDate?: string | undefined;
+  endDate?: string | undefined;
+  weekdays?: string[] | undefined;
+  everyWeeks?: number | undefined;
+  monthDays?: number[] | undefined;
+  weeksOfMonth?: (number | 'last')[] | undefined;
+  startTime: string;
+  excludedDates?: string[] | undefined;
+  extraDates?: string[] | undefined;
 }
 
 /** Réponse à un champ du formulaire d'une prestation (ADR-033). */
@@ -45,6 +64,8 @@ export interface SimulationInput extends FormAnswersInput {
   serviceCode: string;
   /** Facultative (ADR-034) : absente, coefficient de commune neutre. */
   commune?: string | undefined;
+  /** Facultatif (ADR-052) : montant estimé sur le nombre exact de passages. */
+  schedule?: ScheduleInput | undefined;
 }
 
 /** Une prestation d'un lieu (ADR-034) : réponses au nouveau format seulement. */
@@ -73,9 +94,11 @@ export interface QuoteGroupInput {
   /** Repli si le géocodage ne trouve pas la commune. */
   commune?: string | undefined;
   items: (PlaceItemInput & { requestedTeamSize?: number | undefined })[];
-  preferredSlots: Slot[];
+  /** 1 à 3 ; facultatifs avec un plan de passages. */
+  preferredSlots?: Slot[] | undefined;
   comment?: string | undefined;
   recurrence?: RecurrenceInput | undefined;
+  schedule?: ScheduleInput | undefined;
 }
 
 export interface PlaceTypeInput {
@@ -98,9 +121,11 @@ export interface QuoteRequestInput extends FormAnswersInput {
   serviceCode: string;
   commune: string;
   address: string;
-  preferredSlots: Slot[];
+  /** 1 à 3 ; facultatifs avec un plan de passages. */
+  preferredSlots?: Slot[] | undefined;
   comment?: string | undefined;
   recurrence?: RecurrenceInput | undefined;
+  schedule?: ScheduleInput | undefined;
   requestedTeamSize?: number | undefined;
   daysPerWeek?: number | undefined;
 }
@@ -113,9 +138,11 @@ export interface AcceptQuoteInput {
 
 export interface QuoteInput {
   lines?: { label: string; quantity: number; unitPrice: number }[] | undefined;
-  proposedSlots: Slot[];
+  /** 1 à 3 ; ignorés avec un plan de passages (le premier passage est proposé). */
+  proposedSlots?: Slot[] | undefined;
   validityDays?: number | undefined;
   recurrence?: RecurrenceInput | undefined;
+  schedule?: ScheduleInput | undefined;
   teamSize?: number | undefined;
   durationMinutes: number;
 }
@@ -238,9 +265,26 @@ export interface QuoteRequestFilters {
 
 /** Devis d'une demande d'un groupe (ADR-035) : mêmes règles qu'un devis seul. */
 export interface GroupQuotesInput {
-  proposedSlots: Slot[];
+  proposedSlots?: Slot[] | undefined;
   validityDays?: number | undefined;
-  quotes: (Omit<QuoteInput, 'proposedSlots' | 'validityDays'> & { requestId: string })[];
+  /** Plan de passages commun (ADR-052) ; absent : celui de chaque demande. */
+  schedule?: ScheduleInput | undefined;
+  quotes: (Omit<QuoteInput, 'proposedSlots' | 'validityDays' | 'schedule'> & { requestId: string })[];
+}
+
+/** Planification en lot des dates restantes du plan de passages (ADR-052). */
+export interface InterventionBatchInput {
+  /** Sous-ensemble des dates restantes ; absent : selon `until`. */
+  dates?: string[] | undefined;
+  /** Toutes les dates restantes jusqu'à cette date incluse ; absente (avec dates) : toutes. */
+  until?: string | undefined;
+  /** HH:mm ; absente : heure de début du plan. */
+  startTime?: string | undefined;
+  durationMinutes: number;
+  agentIds?: string[] | undefined;
+  teamId?: string | undefined;
+  /** Vrai : sauter les dates en conflit ; faux (défaut) : tout ou rien. */
+  skipConflicts?: boolean | undefined;
 }
 
 export interface GroupInterventionsInput {
@@ -272,6 +316,7 @@ export interface VisitFilters {
 export interface CleaningApi {
   listServices(): Promise<Json>;
   simulate(input: SimulationInput): Promise<Json>;
+  previewSchedule(input: ScheduleInput): Promise<Json>;
   listServedZones(): Promise<Json>;
   getPlaceCatalog(): Promise<Json>;
   estimate(input: EstimateInput): Promise<Json>;
@@ -328,12 +373,14 @@ export interface CleaningApi {
   scheduleIntervention(
     id: string,
     input: {
-      scheduledStart: string;
+      /** Absent : prochaine date du plan de passages (ADR-052). */
+      scheduledStart?: string | undefined;
       durationMinutes: number;
       agentIds?: string[] | undefined;
       teamId?: string | undefined;
     },
   ): Promise<Json>;
+  scheduleInterventionBatch(id: string, input: InterventionBatchInput, idempotencyKey: string): Promise<Json>;
   /** Idempotency-Key facultative : vide, aucun contrôle de rejeu. */
   recordPayment(
     id: string,

@@ -42,6 +42,11 @@ export class CleaningHttpController {
     return this.cleaning.simulate(parseBody(requestBodies.simulateCleaning, body));
   }
 
+  @Route('previewCleaningSchedule')
+  previewSchedule(@Body() body: unknown) {
+    return this.cleaning.previewSchedule(parseBody(requestBodies.previewCleaningSchedule, body));
+  }
+
   // --- Parcours par lieu (ADR-034) ---------------------------------------------------------------
 
   @Route('getCleaningPlaceCatalog')

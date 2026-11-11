@@ -1,9 +1,10 @@
 import { type AppError } from '@ksp/platform';
-import { type Intervention, type Mission } from '../domain/mission';
+import { type Intervention, type Mission, remainingToSchedule } from '../domain/mission';
 import { newPaymentState } from '../domain/payment';
 import { type QuoteRequest, type SiteVisit } from '../domain/quote-request';
 import { ScheduleGroupVisitUseCase } from './groups/group-visits.use-cases';
 import { ScheduleInterventionUseCase } from './missions/admin-missions.use-cases';
+import { ScheduleInterventionBatchUseCase } from './missions/intervention-batch.use-case';
 import {
   RescheduleInterventionUseCase,
   UnscheduleInterventionUseCase,
@@ -415,6 +416,72 @@ describe('compléments du Nettoyage (ADR-053)', () => {
         }),
       );
       expect(again.mission.status).toBe('scheduled');
+    });
+
+    describe('avec un plan de dates (ADR-052)', () => {
+      const PLANNED = mission({
+        schedule: {
+          mode: 'dates',
+          dates: ['2026-11-02', '2026-11-09'],
+          startDate: '',
+          endDate: '',
+          weekdays: [],
+          everyWeeks: 0,
+          monthDays: [],
+          weeksOfMonth: [],
+          startTime: '09:00',
+          excludedDates: [],
+          extraDates: [],
+        },
+        scheduledDates: ['2026-11-02', '2026-11-09'],
+        plannedInterventions: 2,
+        interventions: [
+          intervention({ scheduledStart: new Date('2026-11-02T08:00:00Z') }),
+          intervention({ id: OTHER_INTERVENTION_ID, scheduledStart: new Date('2026-11-09T08:00:00Z') }),
+        ],
+      });
+      const batch = () =>
+        asSupervisor(() =>
+          new ScheduleInterventionBatchUseCase(world).execute({
+            missionId: MISSION_ID,
+            idempotencyKey: 'lot-complements-1',
+            dates: [],
+            until: '',
+            startTime: '',
+            durationMinutes: 120,
+            agentIds: [AGENT_ID],
+            teamId: '',
+            skipConflicts: false,
+          }),
+        );
+      beforeEach(() => world.missions.missions.set(MISSION_ID, PLANNED));
+
+      it('une date libérée par l’annulation pour replanifier redevient une date restante du lot', async () => {
+        await asSupervisor(() =>
+          new UnscheduleInterventionUseCase(world).execute({
+            interventionId: INTERVENTION_ID,
+            reason: 'Pluie',
+          }),
+        );
+        const { outcome } = await batch();
+        expect(outcome.scheduledDates).toEqual(['2026-11-02']);
+        expect(stored().interventions.filter((i) => i.status === 'planned')).toHaveLength(2);
+      });
+
+      it('un passage reporté hors des dates du plan compte dans les passages prévus', async () => {
+        await asSupervisor(() =>
+          new RescheduleInterventionUseCase(world).execute({
+            interventionId: OTHER_INTERVENTION_ID,
+            scheduledStart: '2026-11-12T08:00:00Z',
+            durationMinutes: 0,
+            agentIds: [],
+            teamId: '',
+            reason: 'Jour férié',
+          }),
+        );
+        expect(remainingToSchedule(stored())).toBe(0);
+        expect(await code(batch())).toBe('CLEANING_NO_INTERVENTION_LEFT');
+      });
     });
 
     it('réservé à la supervision', async () => {

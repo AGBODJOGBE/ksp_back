@@ -1,4 +1,5 @@
 import { type Answers, type OptionSelection, type PremisesType } from './answers';
+import { type InterventionSchedule } from './intervention-schedule';
 import { type GeocodingProvider, type GeoLocation } from './location';
 import { type Quote } from './quote';
 import { type Recurrence } from './recurrence';
@@ -99,7 +100,15 @@ export interface QuoteRequest {
   geocodedAddress: string | null;
   preferredSlots: Slot[];
   comment: string | null;
+  /**
+   * Ancienne récurrence (ADR-023) : envoyée par un ancien client, ou déduite du plan de passages
+   * pour les anciens lecteurs (dépréciée en entrée, ADR-052).
+   */
   recurrence: Recurrence | null;
+  /** Plan de passages (ADR-052) ; absent ou null : ancienne récurrence, ou sans plan. */
+  schedule?: InterventionSchedule | null;
+  /** Dates exactes des passages tirées du plan (AAAA-MM-JJ), vides sans plan. */
+  scheduledDates?: string[];
   requestedTeamSize: number;
   /** Entreprise : jours d'intervention par semaine (1 à 7), null si non précisés. */
   daysPerWeek: number | null;

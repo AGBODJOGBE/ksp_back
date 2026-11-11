@@ -3,6 +3,9 @@ import { Prisma } from '../../../prisma/generated';
 import {
   type Changes,
   type GroupOperationRecord,
+  type InterventionBatchOutcome,
+  type InterventionBatchPlan,
+  type InterventionBatchResult,
   type MissionFilter,
   type MissionRepository,
 } from '../../application/ports';
@@ -33,6 +36,8 @@ const ids = new UuidV7Generator();
 
 /** Annule la transaction d'un événement quand la mission a changé depuis sa lecture. */
 class ConcurrentMissionUpdate extends Error {}
+/** Annule la transaction d'une planification en lot dont la clé est déjà enregistrée. */
+class ReplayedBatch extends Error {}
 
 @Injectable()
 export class PrismaMissionRepository implements MissionRepository {
@@ -147,6 +152,55 @@ export class PrismaMissionRepository implements MissionRepository {
       await writeChanges(tx, changes, () => ids.next());
       return true;
     });
+  }
+
+  async findInterventionBatch(
+    missionId: string,
+    idempotencyKey: string,
+  ): Promise<InterventionBatchOutcome | null> {
+    const row = await this.prisma.interventionBatch.findUnique({
+      where: { missionId_idempotencyKey: { missionId, idempotencyKey } },
+    });
+    return row ? (row.outcome as unknown as InterventionBatchOutcome) : null;
+  }
+
+  async scheduleBatch(input: {
+    agentIds: string[];
+    batch: { missionId: string; actorId: string; idempotencyKey: string };
+    plan: (busy: BusyPeriod[]) => InterventionBatchPlan;
+  }): Promise<InterventionBatchResult> {
+    try {
+      return await this.prisma.$transaction(async (tx): Promise<InterventionBatchResult> => {
+        // Même verrou que la planification d'un passage : aucune double réservation possible.
+        await tx.$queryRawUnsafe(
+          'SELECT user_id FROM agents WHERE user_id = ANY($1::uuid[]) ORDER BY user_id FOR UPDATE',
+          input.agentIds,
+        );
+        const planned = input.plan(await this.busyPeriods(tx, input.agentIds, null));
+        if ('conflicts' in planned) return { status: 'conflicts', conflicts: planned.conflicts };
+        const { count } = await tx.interventionBatch.createMany({
+          data: [
+            {
+              missionId: input.batch.missionId,
+              idempotencyKey: input.batch.idempotencyKey,
+              actorId: input.batch.actorId,
+              outcome: json(planned.outcome),
+              createdAt: new Date(),
+            },
+          ],
+          skipDuplicates: true,
+        });
+        // Clé déjà enregistrée par un appel concurrent : rien n'est écrit, son résultat est rejoué.
+        if (count !== 1) throw new ReplayedBatch();
+        if (!(await updateMission(tx, planned.mission))) throw new ConcurrentMissionUpdate();
+        await writeChanges(tx, planned.changes, () => ids.next());
+        return { status: 'saved', outcome: planned.outcome };
+      });
+    } catch (error) {
+      if (error instanceof ReplayedBatch) return { status: 'replayed' };
+      if (error instanceof ConcurrentMissionUpdate) return { status: 'stale' };
+      throw error;
+    }
   }
 
   async listIndividualRecurring(): Promise<Mission[]> {

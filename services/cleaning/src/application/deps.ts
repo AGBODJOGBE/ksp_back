@@ -1,6 +1,7 @@
 import { type Mission } from '../domain/mission';
 import { effectiveRequestStatus, type QuoteRequest } from '../domain/quote-request';
 import { effectiveVisit } from '../domain/request-deadlines';
+import { type SchedulePolicy } from '../domain/intervention-schedule';
 import { type FieldDatePolicy } from '../domain/schedule';
 import {
   type AgentRepository,
@@ -35,6 +36,8 @@ export interface CleaningDeps {
   photos: InterventionPhotoStore;
   /** Contrôles de dates du terrain, réglables par configuration. */
   fieldDates: FieldDatePolicy;
+  /** Bornes des plans de passages (ADR-052) : durée et nombre de passages, par configuration. */
+  schedules: SchedulePolicy;
   clock: Clock;
   ids: IdGenerator;
 }

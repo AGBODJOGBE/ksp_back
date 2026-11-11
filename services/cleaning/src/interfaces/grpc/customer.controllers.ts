@@ -13,6 +13,7 @@ import {
   presentOffer,
   presentPublicPlaceType,
   presentRequest,
+  presentSchedulePreview,
   presentServedZone,
 } from './presenters';
 import { presentPhoto } from './complement.presenters';
@@ -51,10 +52,11 @@ export class CatalogGrpcController implements cleaningV1.CatalogServiceControlle
   }
 
   async simulate(request: cleaningV1.SimulateRequest): Promise<cleaningV1.SimulateResponse> {
-    const { serviceCode, calculation, notice, covered, communeApplied } =
+    const { serviceCode, calculation, notice, covered, communeApplied, schedule } =
       await this.useCases.simulate.execute({
         serviceCode: request.serviceCode,
         commune: request.commune,
+        schedule: request.schedule,
         ...pricingInputFromProto(request),
       });
     const commune = calculation.coefficients.find((coefficient) => coefficient.source === 'commune');
@@ -75,7 +77,19 @@ export class CatalogGrpcController implements cleaningV1.CatalogServiceControlle
       reason: calculation.reason ?? '',
       calculation: calculationToProto(calculation),
       communeApplied,
+      // Plan de passages (ADR-052) : dates et montant sur leur nombre exact.
+      schedule: schedule ? presentSchedulePreview(schedule.preview) : undefined,
+      scheduleTotal: schedule?.total == null ? undefined : money(schedule.total),
+      scheduleEstimate: schedule?.estimate
+        ? { low: money(schedule.estimate.low), high: money(schedule.estimate.high) }
+        : undefined,
     };
+  }
+
+  async previewSchedule(
+    request: cleaningV1.PreviewScheduleRequest,
+  ): Promise<cleaningV1.PreviewScheduleResponse> {
+    return { preview: presentSchedulePreview(await this.useCases.previewSchedule.execute(request.schedule)) };
   }
 
   async getPlaceCatalog(): Promise<cleaningV1.GetPlaceCatalogResponse> {
@@ -183,6 +197,7 @@ export class QuoteGrpcController implements cleaningV1.QuoteServiceController {
       preferredSlots: request.preferredSlots,
       comment: request.comment,
       recurrence: request.recurrence,
+      schedule: request.schedule,
     });
     return { group: await this.group(view) };
   }

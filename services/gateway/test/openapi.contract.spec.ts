@@ -57,7 +57,11 @@ const DOC_ID = 'ksp-api';
 
 interface Operation extends Json {
   operationId: string;
-  requestBody?: { content: { 'application/json': { schema: Json; example?: unknown } } };
+  requestBody?: {
+    content: {
+      'application/json': { schema: Json; example?: unknown; examples?: Record<string, { value: unknown }> };
+    };
+  };
   responses: Record<string, Json>;
   'x-ksp-grpc': string;
   'x-ksp-access': string;
@@ -234,7 +238,11 @@ describe('contrat OpenAPI : corps des requêtes', () => {
       operationId,
       schema: schema as z.ZodType,
       contract: resolveRef(body.schema),
-      example: body.example,
+      // Un exemple (`example`) ou plusieurs exemples nommés (`examples`) : tous doivent être acceptés.
+      examples:
+        body.example !== undefined
+          ? [body.example]
+          : Object.values(body.examples ?? {}).map((named) => named.value),
     };
   });
 
@@ -264,8 +272,9 @@ describe('contrat OpenAPI : corps des requêtes', () => {
     },
   );
 
-  it.each(bodies)('$operationId : l’exemple du contrat est accepté', ({ schema, example }) => {
-    expect(schema.safeParse(example).success).toBe(true);
+  it.each(bodies)('$operationId : l’exemple du contrat est accepté', ({ schema, examples }) => {
+    expect(examples.length).toBeGreaterThan(0);
+    for (const example of examples) expect(schema.safeParse(example).success).toBe(true);
   });
 
   it('les motifs du contrat sont appliqués (téléphone, code, langue, identifiant)', () => {
@@ -940,7 +949,9 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       if (bearer) req = req.set('Authorization', `Bearer ${bearer}`);
       const needsKey = (op.parameters ?? []).some((p) => p.$ref?.endsWith('/IdempotencyKey'));
       if (options.key ?? needsKey) req = req.set('Idempotency-Key', 'cle-0192f1c4-0001');
-      const body = options.body ?? op.requestBody?.content['application/json'].example;
+      const content = op.requestBody?.content['application/json'];
+      // Exemple unique, sinon le premier des exemples nommés.
+      const body = options.body ?? content?.example ?? Object.values(content?.examples ?? {})[0]?.value;
       return body === undefined ? req : req.send(body as object);
     };
     const completeProfile = () =>

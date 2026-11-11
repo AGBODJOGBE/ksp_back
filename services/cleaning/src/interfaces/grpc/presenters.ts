@@ -18,6 +18,8 @@ import { expectedDeposit, paidAmount, paymentStatus, remainingDue } from '../../
 import { type Quote } from '../../domain/quote';
 import { type Measurement, type QuoteRequest } from '../../domain/quote-request';
 import { type Recurrence } from '../../domain/recurrence';
+import { type InterventionSchedule } from '../../domain/intervention-schedule';
+import { type SchedulePreview } from '../../application/catalog/catalog.use-cases';
 import { type Slot } from '../../domain/schedule';
 import { type PriceLine } from '../../domain/simulator';
 import {
@@ -48,6 +50,40 @@ export const presentSlot = (slot: Slot): cleaningV1.TimeSlot => ({
 const presentRecurrence = (recurrence: Recurrence | null): cleaningV1.Recurrence | undefined =>
   recurrence ? { ...recurrence } : undefined;
 
+/** Plan de passages (ADR-052) : champs absents en chaînes vides, rangs dans le mois en chaînes. */
+export const presentSchedule = (
+  schedule: InterventionSchedule | null | undefined,
+): cleaningV1.InterventionSchedule | undefined =>
+  schedule
+    ? {
+        mode: schedule.mode,
+        dates: schedule.dates,
+        startDate: schedule.startDate ?? '',
+        endDate: schedule.endDate ?? '',
+        weekdays: schedule.weekdays,
+        everyWeeks: schedule.everyWeeks,
+        monthDays: schedule.monthDays,
+        weeksOfMonth: schedule.weeksOfMonth.map(String),
+        startTime: schedule.startTime,
+        excludedDates: schedule.excludedDates,
+        extraDates: schedule.extraDates,
+      }
+    : undefined;
+
+export const presentSchedulePreview = (preview: SchedulePreview): cleaningV1.SchedulePreview => ({
+  dates: preview.dates,
+  count: preview.count,
+  firstDate: preview.firstDate,
+  lastDate: preview.lastDate,
+  warnings: preview.warnings.map((warning) => ({ ...warning })),
+});
+
+/** Plan et dates d'une demande, d'un devis ou d'une mission. */
+const scheduleFields = (value: { schedule?: InterventionSchedule | null; scheduledDates?: string[] }) => ({
+  schedule: presentSchedule(value.schedule),
+  scheduledDates: value.scheduledDates ?? [],
+});
+
 /** Position (ADR-034) ; précision inconnue : 0. */
 const presentLocation = (location: GeoLocation | null): cleaningV1.GeoLocation | undefined =>
   location
@@ -77,6 +113,7 @@ function presentQuote(quote: Quote): cleaningV1.Quote {
     depositPercent: quote.depositPercent,
     depositAmount: money(quote.depositAmount),
     recurrence: presentRecurrence(quote.recurrence),
+    ...scheduleFields(quote),
     sentAt: iso(quote.sentAt),
     teamSize: quote.teamSize,
     durationMinutes: quote.durationMinutes,
@@ -111,6 +148,7 @@ export function presentRequest(
     preferredSlots: request.preferredSlots.map(presentSlot),
     comment: text(request.comment),
     recurrence: presentRecurrence(request.recurrence),
+    ...scheduleFields(request),
     requestedTeamSize: request.requestedTeamSize,
     recommendedTeamSize: request.recommendedTeamSize,
     estimate:
@@ -267,6 +305,7 @@ export function presentMission(
     address: mission.address,
     chosenSlot: presentSlot(mission.chosenSlot),
     recurrence: presentRecurrence(mission.recurrence),
+    ...scheduleFields(mission),
     plannedInterventions: mission.plannedInterventions,
     completedInterventions: mission.interventions.filter((i) => i.status === 'completed').length,
     interventions: mission.interventions.map((intervention) => ({

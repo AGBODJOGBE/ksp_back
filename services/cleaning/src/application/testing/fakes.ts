@@ -9,6 +9,7 @@ import {
   isTerminalMission,
   type Mission,
 } from '../../domain/mission';
+import { DEFAULT_SCHEDULE_POLICY, type SchedulePolicy } from '../../domain/intervention-schedule';
 import { type GeocodedPlace, type GeoPoint } from '../../domain/location';
 import { type PlaceType } from '../../domain/place-type';
 import { isOpenRequest, type QuoteRequest, type QuoteRequestGroup } from '../../domain/quote-request';
@@ -34,6 +35,9 @@ import {
   type CreateResult,
   type GroupOperation,
   type GroupOperationRecord,
+  type InterventionBatchOutcome,
+  type InterventionBatchPlan,
+  type InterventionBatchResult,
   type GroupWrite,
   type VisitEntry,
   type VisitFilter,
@@ -274,6 +278,25 @@ export class InMemoryMissions implements MissionRepository {
     const busy = this.busyPeriods(null).filter((period) => agentIds.includes(period.agentId));
     const { mission, changes } = plan(busy);
     return this.save(mission, changes);
+  }
+  /** Planifications en lot enregistrées, par mission et clé (ADR-052). */
+  readonly batches = new Map<string, InterventionBatchOutcome>();
+  async findInterventionBatch(missionId: string, idempotencyKey: string) {
+    return this.batches.get(`${missionId}:${idempotencyKey}`) ?? null;
+  }
+  async scheduleBatch(input: {
+    agentIds: string[];
+    batch: { missionId: string; actorId: string; idempotencyKey: string };
+    plan: (busy: BusyPeriod[]) => InterventionBatchPlan;
+  }): Promise<InterventionBatchResult> {
+    const busy = this.busyPeriods(null).filter((period) => input.agentIds.includes(period.agentId));
+    const planned = input.plan(busy);
+    if ('conflicts' in planned) return { status: 'conflicts', conflicts: planned.conflicts };
+    const key = `${input.batch.missionId}:${input.batch.idempotencyKey}`;
+    if (this.batches.has(key)) return { status: 'replayed' };
+    if (!(await this.save(planned.mission, planned.changes))) return { status: 'stale' };
+    this.batches.set(key, planned.outcome);
+    return { status: 'saved', outcome: planned.outcome };
   }
   async listIndividualRecurring() {
     return [...this.missions.values()].filter(
@@ -778,6 +801,7 @@ export interface TestWorld extends CleaningDeps {
   geocoder: FakeGeocoder;
   fieldDates: FieldDatePolicy;
   photos: FakePhotoStore;
+  schedules: SchedulePolicy;
 }
 
 export function testWorld(): TestWorld {
@@ -805,6 +829,7 @@ export function testWorld(): TestWorld {
     wallet: new FakeWallet(),
     geocoder: new FakeGeocoder(),
     fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
+    schedules: { ...DEFAULT_SCHEDULE_POLICY },
   };
 }
 

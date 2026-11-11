@@ -1,5 +1,6 @@
 import { type cleaningV1, type moneyV1 } from '@ksp/contracts';
 import { AppError } from '@ksp/platform';
+import { type ScheduleInput } from '../../application/cleaning/cleaning.ports';
 import {
   answersFromProto,
   presentCalculation,
@@ -34,6 +35,54 @@ const recurrence = (value: cleaningV1.Recurrence | undefined) =>
   value?.period
     ? { period: value.period, visitsPerPeriod: value.visitsPerPeriod, durationMonths: value.durationMonths }
     : null;
+
+/** Plan de passages (ADR-052) vers le message : champs absents en valeurs vides, rangs en chaînes. */
+export const scheduleToProto = (value: ScheduleInput): cleaningV1.InterventionSchedule => ({
+  mode: value.mode,
+  dates: value.dates ?? [],
+  startDate: value.startDate ?? '',
+  endDate: value.endDate ?? '',
+  weekdays: value.weekdays ?? [],
+  everyWeeks: value.everyWeeks ?? 0,
+  monthDays: value.monthDays ?? [],
+  weeksOfMonth: (value.weeksOfMonth ?? []).map(String),
+  startTime: value.startTime,
+  excludedDates: value.excludedDates ?? [],
+  extraDates: value.extraDates ?? [],
+});
+
+/** Plan de passages en JSON : période null en mode "dates", rangs en nombres sauf "last". */
+const schedule = (value: cleaningV1.InterventionSchedule | undefined) =>
+  value?.mode
+    ? {
+        mode: value.mode,
+        dates: value.dates,
+        startDate: orNull(value.startDate),
+        endDate: orNull(value.endDate),
+        weekdays: value.weekdays,
+        everyWeeks: value.everyWeeks || 1,
+        monthDays: value.monthDays,
+        weeksOfMonth: value.weeksOfMonth.map((rank) => (rank === 'last' ? rank : Number(rank))),
+        startTime: value.startTime,
+        excludedDates: value.excludedDates,
+        extraDates: value.extraDates,
+      }
+    : null;
+
+export function presentSchedulePreview(value: cleaningV1.SchedulePreview | undefined) {
+  if (!value) throw malformed('aperçu du plan de passages');
+  return {
+    dates: value.dates,
+    count: value.count,
+    firstDate: value.firstDate,
+    lastDate: value.lastDate,
+    warnings: value.warnings.map((warning) => ({
+      code: warning.code,
+      date: warning.date,
+      message: warning.message,
+    })),
+  };
+}
 const line = (value: cleaningV1.PriceLine) => ({
   label: value.label,
   quantity: value.quantity,
@@ -86,6 +135,14 @@ export function presentSimulation(value: cleaningV1.SimulateResponse) {
     calculation: presentCalculation(value.calculation) ?? malformedCalculation(),
     // Faux sans commune (ADR-034) : coefficient neutre, prix indicatif.
     communeApplied: value.communeApplied,
+    // Plan de passages envoyé (ADR-052) : ses dates et le montant sur leur nombre exact.
+    schedule: value.schedule
+      ? {
+          ...presentSchedulePreview(value.schedule),
+          total: money(value.scheduleTotal),
+          estimate: range(value.scheduleEstimate),
+        }
+      : null,
   };
 }
 
@@ -208,6 +265,8 @@ function presentQuote(value: cleaningV1.Quote) {
     depositPercent: value.depositPercent,
     depositAmount: requiredMoney(value.depositAmount),
     recurrence: recurrence(value.recurrence),
+    schedule: schedule(value.schedule),
+    scheduledDates: value.scheduledDates,
     teamSize: value.teamSize,
     durationMinutes: value.durationMinutes,
     sentAt: value.sentAt,
@@ -232,6 +291,8 @@ export function presentRequest(value: cleaningV1.QuoteRequest | undefined) {
     preferredSlots: value.preferredSlots.map(slot),
     comment: orNull(value.comment),
     recurrence: recurrence(value.recurrence),
+    schedule: schedule(value.schedule),
+    scheduledDates: value.scheduledDates,
     requestedTeamSize: value.requestedTeamSize || null,
     daysPerWeek: value.daysPerWeek || null,
     recommendedTeamSize: value.recommendedTeamSize,
@@ -303,6 +364,8 @@ export function presentMission(value: cleaningV1.Mission | undefined) {
     placeType: orNull(value.placeType),
     chosenSlot: slot(value.chosenSlot),
     recurrence: recurrence(value.recurrence),
+    schedule: schedule(value.schedule),
+    scheduledDates: value.scheduledDates,
     plannedInterventions: value.plannedInterventions,
     completedInterventions: value.completedInterventions,
     interventions: value.interventions.map((i) => ({

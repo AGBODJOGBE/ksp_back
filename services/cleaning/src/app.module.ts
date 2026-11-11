@@ -193,6 +193,11 @@ export class AppModule {
                 blockEarlyVisitReport: config.CLEANING_BLOCK_EARLY_VISIT_REPORT,
                 timeZone: config.CLEANING_TIME_ZONE,
               },
+              schedules: {
+                maxMonths: config.CLEANING_SCHEDULE_MAX_MONTHS,
+                maxVisits: config.CLEANING_SCHEDULE_MAX_VISITS,
+                maxBatch: config.CLEANING_SCHEDULE_MAX_BATCH,
+              },
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
             });

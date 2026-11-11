@@ -217,6 +217,7 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     paymentPlan: { option: 'deposit', timing: 'before', method: 'cash' },
     depositAmount: xof(144000),
     startsAt: '2026-11-05T08:00:00Z',
+    schedulePeriod: { firstDate: '2026-11-05', lastDate: '2027-01-28' },
   },
   'cleaning.mission.scheduled': {
     missionId: uuid,
@@ -225,6 +226,20 @@ const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } =
     scheduledStart: '2026-11-05T08:00:00Z',
     durationMinutes: 180,
     agentIds: [uuid],
+  },
+  'cleaning.interventions.batch_scheduled': {
+    missionId: uuid,
+    customerId: uuid,
+    interventionIds: [uuid, uuid],
+    count: 2,
+    firstStart: '2026-11-11T07:00:00Z',
+    lastStart: '2026-11-18T07:00:00Z',
+    durationMinutes: 120,
+    agentIds: [uuid],
+    skippedDates: ['2026-11-14'],
+    amountDueBeforeStart: xof(36000),
+    serviceCode: 'house_cleaning',
+    serviceName: 'Nettoyage de maison',
   },
   'cleaning.mission.completed': {
     missionId: uuid,
