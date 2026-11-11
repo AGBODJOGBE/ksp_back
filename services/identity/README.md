@@ -84,8 +84,8 @@ organisation validée (`business`, avec `organization_name`), voir ci-dessous.
   interne, pour le seul administrateur d'une organisation non refusée, et dès qu'un service signale
   une obligation (`IDENTITY_DELETION_BLOCKED`, raisons lisibles) ou ne répond pas
   (`IDENTITY_DELETION_CHECK_UNAVAILABLE`, réessayer plus tard). Services interrogés en parallèle
-  (`ksp.common.v1.ObligationService`) : `OBLIGATION_SERVICES` (par défaut cleaning, billing, payment,
-  wallet), 1,5 s chacun. Acceptée : compte `deletion_pending` jusqu'à `deletion_scheduled_for`
+  (`ksp.common.v1.ObligationService`) : `OBLIGATION_SERVICES` (par défaut cleaning, billing,
+  payment), 1,5 s chacun. Acceptée : compte `deletion_pending` jusqu'à `deletion_scheduled_for`
   (`ACCOUNT_DELETION_DELAY_DAYS`, 30), toutes les sessions fermées,
   `identity.user.deletion_requested`.
 - Pendant le délai, une connexion par code ouvre une **session restreinte** (rôle
