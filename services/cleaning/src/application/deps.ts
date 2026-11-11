@@ -1,11 +1,13 @@
 import { type Mission } from '../domain/mission';
 import { effectiveRequestStatus, type QuoteRequest } from '../domain/quote-request';
+import { effectiveVisit } from '../domain/request-deadlines';
 import { type SchedulePolicy } from '../domain/intervention-schedule';
 import { type FieldDatePolicy } from '../domain/schedule';
 import {
   type AgentRepository,
   type CatalogRepository,
   type ContractInvoiceRepository,
+  type InterventionPhotoStore,
   type MissionRepository,
   type OrganizationStandingRepository,
   type PeopleDirectory,
@@ -30,6 +32,8 @@ export interface CleaningDeps {
   geocoder: ReverseGeocoder;
   /** Portefeuille prépayé des clients (service wallet, ADR-046). */
   wallet: WalletLedger;
+  /** Photos des passages chez le service file (ADR-038, ADR-053). */
+  photos: InterventionPhotoStore;
   /** Contrôles de dates du terrain, réglables par configuration. */
   fieldDates: FieldDatePolicy;
   /** Bornes des plans de passages (ADR-052) : durée et nombre de passages, par configuration. */
@@ -44,9 +48,12 @@ export interface MissionView {
   agentNames: Record<string, string>;
 }
 
-/** Demande telle qu'elle s'affiche : un devis dont la validité est dépassée apparaît expiré. */
+/**
+ * Demande telle qu'elle s'affiche : un devis dont la validité est dépassée apparaît expiré, et la
+ * visite encore planifiée d'une demande close apparaît annulée (ADR-053).
+ */
 export function presentRequest(request: QuoteRequest, now: Date): QuoteRequest {
-  return { ...request, status: effectiveRequestStatus(request, now) };
+  return { ...request, status: effectiveRequestStatus(request, now), visit: effectiveVisit(request, now) };
 }
 
 export async function missionView(deps: CleaningDeps, mission: Mission): Promise<MissionView> {

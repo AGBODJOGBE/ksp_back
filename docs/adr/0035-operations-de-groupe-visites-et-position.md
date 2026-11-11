@@ -1,6 +1,6 @@
 # ADR-035 — Demandes groupées au back-office, visites des agents et conservation de la position
 
-**Statut** : Proposé (lot 2 ; décisions 1 à 9 et 11 à 13 validées par le responsable le 2026-11-04 ; décision 14, messages regroupés (décision 10 de l'audit), validée dans son principe le 2026-11-05, détails à valider)
+**Statut** : Accepté (en service sur `main` depuis le 2026-11-06, constat du 2026-11-10 ; les points « À valider » ci-dessous restent ouverts ; historique : lot 2 ; décisions 1 à 9 et 11 à 13 validées par le responsable le 2026-11-04 ; décision 14, messages regroupés (décision 10 de l'audit), validée dans son principe le 2026-11-05, détails à valider)
 
 ## Contexte
 

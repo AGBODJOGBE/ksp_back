@@ -933,6 +933,9 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       const url = path
         .replace('{id}', ID)
         .replace('{code}', 'home_cleaning')
+        // Photo d'un passage et indisponibilité d'un agent (ADR-053).
+        .replace('{file}', ID)
+        .replace('{unavailability}', ID)
         // Jeton d'un lien : de signature (document, ADR-044) ou de paiement (ADR-040).
         .replace('{token}', path.startsWith('/api/v1/document/') ? SIGNING_TOKEN : LINK_TOKEN)
         .replace('{type}', 'organization');

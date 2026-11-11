@@ -1600,4 +1600,189 @@ describe('gateway → cleaning', () => {
       measuredCalculation: null,
     });
   });
+
+  // --- ADR-053 : compléments du Nettoyage ------------------------------------------------------------
+
+  it('photos des passages : client propriétaire, agent et supervision ; corps et identifiants contrôlés', async () => {
+    const mine = await http()
+      .get(`/api/v1/cleaning/interventions/${IDS.intervention}/photos`)
+      .set('Authorization', `Bearer ${customer}`);
+    expect(mine.status).toBe(200);
+    expect(mine.body.data[0]).toMatchObject({
+      kind: 'before',
+      fileName: 'salon-avant.jpg',
+      sizeBytes: 482113,
+    });
+    expect(cleaning.stub.last('listMyInterventionPhotos')!.request).toEqual({
+      interventionId: IDS.intervention,
+    });
+
+    const agent = await agentToken();
+    const url = `/api/v1/admin/cleaning/interventions/${IDS.intervention}/photos`;
+    const fileId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6101';
+    const added = await backoffice(http().post(url), agent).send({ fileId, kind: 'after' });
+    expect(added.status).toBe(200);
+    expect(added.body.interventions[0]).toMatchObject({ changeReason: null });
+    expect(cleaning.stub.last('addInterventionPhoto')!.request).toEqual({
+      interventionId: IDS.intervention,
+      fileId,
+      kind: 'after',
+    });
+    expect((await backoffice(http().post(url), agent).send({ fileId, kind: 'pendant' })).status).toBe(400);
+    expect((await backoffice(http().get(url), staff)).body.data).toHaveLength(1);
+    expect((await backoffice(http().delete(`${url}/${fileId}`), agent)).status).toBe(200);
+    expect(cleaning.stub.last('removeInterventionPhoto')!.request).toEqual({
+      interventionId: IDS.intervention,
+      fileId,
+    });
+    expect((await backoffice(http().delete(`${url}/pas-un-uuid`), agent)).status).toBe(400);
+    cleaning.stub.on('addInterventionPhoto', () =>
+      Promise.reject(
+        AppError.precondition('CLEANING_PHOTO_LIMIT_REACHED', 'Trop.', { kind: 'after', maximum: 10 }),
+      ),
+    );
+    expect((await backoffice(http().post(url), agent).send({ fileId, kind: 'after' })).status).toBe(422);
+  });
+
+  it('report et annulation pour replanifier : supervision seulement, motif obligatoire', async () => {
+    const base = `/api/v1/admin/cleaning/interventions/${IDS.intervention}`;
+    const moved = await backoffice(http().post(`${base}/reschedule`), staff).send({
+      scheduledStart: '2026-11-07T08:00:00Z',
+      reason: 'Client absent',
+    });
+    expect(moved.status).toBe(200);
+    expect(cleaning.stub.last('rescheduleIntervention')!.request).toEqual({
+      interventionId: IDS.intervention,
+      scheduledStart: '2026-11-07T08:00:00Z',
+      durationMinutes: 0,
+      agentIds: [],
+      teamId: '',
+      reason: 'Client absent',
+    });
+    expect(
+      (
+        await backoffice(http().post(`${base}/reschedule`), staff).send({
+          scheduledStart: '2026-11-07T08:00:00Z',
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (await backoffice(http().post(`${base}/unschedule`), await agentToken()).send({ reason: 'Pluie' }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await backoffice(http().post(`${base}/unschedule`), staff).send({ reason: 'Pluie' })).status,
+    ).toBe(200);
+    expect(cleaning.stub.last('unscheduleIntervention')!.request).toEqual({
+      interventionId: IDS.intervention,
+      reason: 'Pluie',
+    });
+    // Contrat REST additif (ADR-053) : `unscheduled` est présenté en `manual` avec toReschedule.
+    const cancelled = {
+      ...protoMission.interventions[0]!,
+      status: 'cancelled',
+      cancellationCause: 'unscheduled',
+    };
+    cleaning.stub.on('unscheduleIntervention', async () => ({
+      mission: { ...protoMission, interventions: [cancelled, { ...cancelled, cancellationCause: 'manual' }] },
+    }));
+    const res = await backoffice(http().post(`${base}/unschedule`), staff).send({ reason: 'Pluie' });
+    expect(res.body.interventions[0]).toMatchObject({ cancellationCause: 'manual', toReschedule: true });
+    expect(res.body.interventions[1].cancellationCause).toBe('manual');
+    expect(res.body.interventions[1]).not.toHaveProperty('toReschedule');
+  });
+
+  it('agents et équipes : désactivation (409 avec la liste), indisponibilité forcée avec avertissement', async () => {
+    const agents = `/api/v1/admin/cleaning/agents/${IDS.agent}`;
+    expect((await backoffice(http().post(`${agents}/deactivate`), staff)).status).toBe(403);
+    const off = await backoffice(http().post(`${agents}/deactivate`), admin);
+    expect(off.body).toMatchObject({ agentId: IDS.agent, active: false });
+    cleaning.stub.on('deactivateAgent', () =>
+      Promise.reject(
+        AppError.conflict('CLEANING_AGENT_HAS_ASSIGNMENTS', 'Affecté.', {
+          assignments: [{ kind: 'intervention', id: IDS.intervention }],
+        }),
+      ),
+    );
+    const refused = await backoffice(http().post(`${agents}/deactivate`), admin);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.details.assignments).toHaveLength(1);
+    expect((await backoffice(http().post(`${agents}/reactivate`), admin)).body.active).toBe(true);
+
+    cleaning.stub.on('declareUnavailability', async () => ({
+      agent: { agentId: IDS.agent, displayName: 'Awa B.', active: true, unavailabilities: [] },
+      overlappingAssignments: [
+        {
+          kind: 'visit',
+          id: IDS.visit,
+          missionId: '',
+          requestId: IDS.request,
+          start: '2026-11-05T08:00:00.000Z',
+          end: '2026-11-05T09:00:00.000Z',
+        },
+      ],
+    }));
+    const forced = await backoffice(http().post(`${agents}/unavailabilities`), admin).send({
+      start: '2026-11-05T00:00:00Z',
+      end: '2026-11-06T00:00:00Z',
+      force: true,
+    });
+    expect(cleaning.stub.last('declareUnavailability')!.request).toMatchObject({ force: true });
+    expect(forced.body.overlappingAssignments).toEqual([
+      expect.objectContaining({ kind: 'visit', missionId: null, requestId: IDS.request }),
+    ]);
+    const unavailabilityId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9001';
+    expect(
+      (await backoffice(http().delete(`${agents}/unavailabilities/${unavailabilityId}`), admin)).status,
+    ).toBe(200);
+    expect(cleaning.stub.last('removeUnavailability')!.request).toEqual({
+      agentId: IDS.agent,
+      unavailabilityId,
+    });
+
+    const teams = `/api/v1/admin/cleaning/teams/${IDS.team}`;
+    expect((await backoffice(http().post(`${teams}/deactivate`), admin)).body).toMatchObject({
+      active: false,
+    });
+    expect((await backoffice(http().post(`${teams}/reactivate`), admin)).body).toMatchObject({
+      active: true,
+    });
+  });
+
+  it('réglages des compléments : transmis, rappel absent laissé vide, bornes contrôlées', async () => {
+    const settings = {
+      quoteValidityDays: 15,
+      minimumLeadHours: 48,
+      freeCancellationHours: 24,
+      maxOpenRequests: 5,
+      depositPercent: 30,
+    };
+    const res = await backoffice(http().put('/api/v1/admin/cleaning/catalog/settings'), admin).send({
+      ...settings,
+      maxInterventionPhotos: 6,
+    });
+    expect(res.body).toMatchObject({
+      quoteExpiryReminderDays: 2,
+      maxInterventionPhotos: 10,
+      visitDurationMinutes: 60,
+    });
+    const sent = cleaning.stub.last('updateSettings')!.request as { settings: Record<string, unknown> };
+    expect(sent.settings).toMatchObject({ maxInterventionPhotos: 6, visitDurationMinutes: 0 });
+    expect(sent.settings['quoteExpiryReminderDays']).toBeUndefined();
+    await backoffice(http().put('/api/v1/admin/cleaning/catalog/settings'), admin).send({
+      ...settings,
+      quoteExpiryReminderDays: 0,
+    });
+    expect(cleaning.stub.last('updateSettings')!.request).toMatchObject({
+      settings: { quoteExpiryReminderDays: 0 },
+    });
+    expect(
+      (
+        await backoffice(http().put('/api/v1/admin/cleaning/catalog/settings'), admin).send({
+          ...settings,
+          visitDurationMinutes: 5,
+        })
+      ).status,
+    ).toBe(400);
+  });
 });

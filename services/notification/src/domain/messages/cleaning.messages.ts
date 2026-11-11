@@ -572,6 +572,112 @@ export const CLEANING_TEMPLATES: readonly EventTemplateDefinition[] = [
       ),
     }),
   ),
+  // Compléments du Nettoyage (ADR-053).
+  template(
+    'cleaning.quote_expiry_reminder.customer',
+    'short',
+    { first_name: FIRST_NAME, quote_count: COUNT, quotes: LIST, valid_until: TEXT, link: LINK },
+    (v) => {
+      const one = v['quote_count'] === '1';
+      return {
+        subject: one ? 'Votre devis expire bientôt' : 'Vos devis expirent bientôt',
+        text: lines(
+          greeting(v),
+          (one ? `Votre devis ${v['quotes']} reste valable` : `Vos devis ${v['quotes']} restent valables`) +
+            ` jusqu'au ${v['valid_until']}.`,
+          `Pour en profiter, ${one ? 'acceptez-le' : 'acceptez-les'} dans Mon espace KSP : ${v['link']}`,
+        ),
+      };
+    },
+  ),
+  template(
+    'cleaning.quote_expired.customer',
+    'short',
+    { first_name: FIRST_NAME, quote_count: COUNT, quotes: LIST, link: LINK },
+    (v) => {
+      const one = v['quote_count'] === '1';
+      return {
+        subject: one ? 'Votre devis a expiré' : 'Vos devis ont expiré',
+        text: lines(
+          greeting(v),
+          (one ? `Votre devis ${v['quotes']} a expiré` : `Vos devis ${v['quotes']} ont expiré`) +
+            ' sans réponse. Vous pouvez faire une nouvelle demande quand vous le souhaitez.',
+          `Détails : ${v['link']}`,
+        ),
+      };
+    },
+  ),
+  template(
+    'cleaning.intervention_rescheduled.customer',
+    'short',
+    { first_name: FIRST_NAME, date: TEXT, previous_date: TEXT, duration: TEXT, link: LINK },
+    (v) => ({
+      subject: titled('Intervention de nettoyage reportée', v),
+      text: lines(
+        greeting(v),
+        `Votre intervention ${forService(v, 'de nettoyage')} prévue le ${v['previous_date']} est reportée ` +
+          `au ${v['date']} (durée prévue : ${v['duration']}).`,
+        `Suivi : ${v['link']}`,
+      ),
+    }),
+    WITH_SERVICE,
+  ),
+  template(
+    'cleaning.intervention_rescheduled.agent',
+    'short',
+    { first_name: FIRST_NAME, date: TEXT, previous_date: TEXT, duration: TEXT },
+    (v) => ({
+      subject: titled('Intervention de nettoyage reportée', v),
+      text: lines(
+        greeting(v),
+        `L'intervention ${forService(v, 'de nettoyage')} prévue le ${v['previous_date']} est reportée au ` +
+          `${v['date']} (durée prévue : ${v['duration']}) ; elle vous est confiée. ` +
+          'Retrouvez les détails dans votre espace KSP.',
+      ),
+    }),
+    WITH_SERVICE,
+  ),
+  template(
+    'cleaning.intervention_released.agent',
+    'short',
+    { first_name: FIRST_NAME, previous_date: TEXT },
+    (v) => ({
+      subject: titled('Intervention de nettoyage retirée', v),
+      text: lines(
+        greeting(v),
+        `L'intervention ${forService(v, 'de nettoyage')} prévue le ${v['previous_date']} ne vous est plus confiée.`,
+      ),
+    }),
+    WITH_SERVICE,
+  ),
+  template(
+    'cleaning.intervention_unscheduled.customer',
+    'short',
+    { first_name: FIRST_NAME, previous_date: TEXT, link: LINK },
+    (v) => ({
+      subject: titled('Intervention de nettoyage à replanifier', v),
+      text: lines(
+        greeting(v),
+        `Votre intervention ${forService(v, 'de nettoyage')} prévue le ${v['previous_date']} est annulée et sera ` +
+          'replanifiée : nous vous communiquerons la nouvelle date. Votre prestation et son prix ne changent pas.',
+        `Suivi : ${v['link']}`,
+      ),
+    }),
+    WITH_SERVICE,
+  ),
+  template(
+    'cleaning.visit_cancelled.agent',
+    'short',
+    { first_name: FIRST_NAME, date: TEXT, services: LIST },
+    (v) => ({
+      subject: 'Visite technique annulée',
+      text: lines(
+        greeting(v),
+        `La visite technique prévue le ${v['date']} (${v['services']}) est annulée : la demande a été close. ` +
+          "Vous n'avez pas à vous déplacer.",
+      ),
+    }),
+  ),
 ];
 
 const PAYMENT_METHODS: Readonly<Record<string, string>> = {

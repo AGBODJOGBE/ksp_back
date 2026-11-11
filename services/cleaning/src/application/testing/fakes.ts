@@ -55,6 +55,8 @@ import {
 } from '../ports';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { type PageRequest, type PageResult } from '../shared/validation';
+import { agentAssignments, FakePhotoStore, visitBusyPeriods } from './complement-fakes';
+import { isQuoteToExpire, isStaleVisit } from '../../domain/request-deadlines';
 
 /** Doublures en mémoire des ports, pour les tests des cas d'usage. */
 
@@ -201,6 +203,8 @@ export function placeType(overrides: Partial<PlaceType> = {}): PlaceType {
 export class InMemoryMissions implements MissionRepository {
   readonly missions = new Map<string, Mission>();
   unavailabilities: BusyPeriod[] = [];
+  /** Visites planifiées des agents (ADR-053), branchées par testWorld. */
+  visitPeriods: () => BusyPeriod[] = () => [];
 
   constructor(private readonly recorder: Recorder) {}
 
@@ -241,7 +245,7 @@ export class InMemoryMissions implements MissionRepository {
   }
   /** Périodes occupées : passages actifs (hors un passage éventuel) et indisponibilités. */
   busyPeriods(excludedId: string | null): BusyPeriod[] {
-    const busy: BusyPeriod[] = [...this.unavailabilities];
+    const busy: BusyPeriod[] = [...this.unavailabilities, ...this.visitPeriods()];
     for (const other of this.missions.values()) {
       for (const i of other.interventions) {
         if (i.id === excludedId || !ACTIVE_INTERVENTION_STATUSES.includes(i.status)) continue;
@@ -582,6 +586,39 @@ export class InMemoryRequests implements QuoteRequestRepository {
     this.recorder.record(changes);
     return true;
   }
+  /** Devis dont le rappel est fait (ADR-053) : demande → devis. */
+  readonly reminded = new Map<string, string>();
+  async listQuotesToExpire(now: Date, limit: number) {
+    return [...this.requests.values()].filter((r) => isQuoteToExpire(r, now)).slice(0, limit);
+  }
+  async listQuotesToRemind(now: Date, until: Date, limit: number) {
+    return [...this.requests.values()]
+      .filter(
+        (r) =>
+          r.status === 'quote_sent' &&
+          r.quote &&
+          r.quote.validUntil > now &&
+          r.quote.validUntil <= until &&
+          this.reminded.get(r.id) !== r.quote.id,
+      )
+      .slice(0, limit);
+  }
+  async recordQuoteReminders(
+    reminders: readonly { requestId: string; quoteId: string }[],
+    changes: (remindedRequestIds: string[]) => Changes,
+  ) {
+    const marked = reminders
+      .filter((item) => this.requests.get(item.requestId)?.quote?.id === item.quoteId)
+      .filter((item) => this.reminded.get(item.requestId) !== item.quoteId)
+      .map((item) => item.requestId);
+    for (const item of reminders.filter((r) => marked.includes(r.requestId)))
+      this.reminded.set(item.requestId, item.quoteId);
+    if (marked.length) this.recorder.record(changes(marked));
+    return marked;
+  }
+  async listStaleVisits(limit: number) {
+    return [...this.requests.values()].filter(isStaleVisit).slice(0, limit);
+  }
   async accept(request: QuoteRequest, mission: Mission, idempotencyKey: string, changes: Changes) {
     const key = `${request.id}:${idempotencyKey}`;
     const replay = this.acceptances.get(key);
@@ -602,7 +639,11 @@ export class InMemoryAgents implements AgentRepository {
   readonly agents = new Map<string, Agent>();
   readonly teams = new Map<string, Team>();
 
-  constructor(private readonly recorder: Recorder) {}
+  constructor(
+    private readonly recorder: Recorder,
+    /** Agenda (ADR-053) : passages des missions et visites des demandes, branchés par testWorld. */
+    private readonly agenda: { missions?: InMemoryMissions; requests?: InMemoryRequests; clock?: Clock } = {},
+  ) {}
 
   async listAgents() {
     return [...this.agents.values()];
@@ -630,6 +671,64 @@ export class InMemoryAgents implements AgentRepository {
   async saveTeam(team: Team, changes: Changes) {
     this.teams.set(team.id, team);
     this.recorder.record(changes);
+  }
+  async setAgentActive(agentId: string, active: boolean, changes: Changes) {
+    this.agents.set(agentId, { ...this.agents.get(agentId)!, active });
+    this.recorder.record(changes);
+  }
+  async removeUnavailability(agentId: string, unavailabilityId: string, changes: Changes) {
+    const agent = this.agents.get(agentId);
+    if (!agent?.unavailabilities.some((u) => u.id === unavailabilityId)) return false;
+    this.agents.set(agentId, {
+      ...agent,
+      unavailabilities: agent.unavailabilities.filter((u) => u.id !== unavailabilityId),
+    });
+    this.recorder.record(changes);
+    return true;
+  }
+  async setTeamActive(teamId: string, active: boolean, changes: Changes) {
+    this.teams.set(teamId, { ...this.teams.get(teamId)!, active });
+    this.recorder.record(changes);
+  }
+  private now() {
+    return this.agenda.clock?.now() ?? new Date();
+  }
+  async assignments(agentId: string, period: { from: Date; to: Date | null }, visitDurationMinutes: number) {
+    return agentAssignments(
+      agentId,
+      this.agenda.missions?.missions.values() ?? [],
+      this.agenda.requests?.requests.values() ?? [],
+      visitDurationMinutes,
+      this.now(),
+    ).filter((a) => a.slot.end > period.from && (!period.to || a.slot.start < period.to));
+  }
+  async busyPeriods(
+    agentIds: readonly string[],
+    options: { visitDurationMinutes: number; excludedVisitIds: readonly string[] },
+  ) {
+    const visits = visitBusyPeriods(
+      this.agenda.requests?.requests.values() ?? [],
+      options.visitDurationMinutes,
+      this.now(),
+      options.excludedVisitIds,
+    );
+    const passages = [...(this.agenda.missions?.missions.values() ?? [])].flatMap((m) =>
+      m.interventions
+        .filter((i) => ACTIVE_INTERVENTION_STATUSES.includes(i.status))
+        .flatMap((i) =>
+          i.agentIds.map((agentId) => ({
+            agentId,
+            slot: slotFrom(i.scheduledStart, i.durationMinutes),
+            groupId: m.groupId,
+          })),
+        ),
+    );
+    const declared = [...this.agents.values()].flatMap((agent) =>
+      agent.unavailabilities.map((u) => ({ agentId: agent.agentId, slot: u.slot })),
+    );
+    return [...passages, ...(this.agenda.missions?.unavailabilities ?? []), ...declared, ...visits].filter(
+      (p) => agentIds.includes(p.agentId),
+    );
   }
 }
 
@@ -701,6 +800,7 @@ export interface TestWorld extends CleaningDeps {
   people: InMemoryPeople;
   geocoder: FakeGeocoder;
   fieldDates: FieldDatePolicy;
+  photos: FakePhotoStore;
   schedules: SchedulePolicy;
 }
 
@@ -708,14 +808,21 @@ export function testWorld(): TestWorld {
   const recorder = new Recorder();
   const missions = new InMemoryMissions(recorder);
   const organizations = new InMemoryOrganizationStandings();
+  const clock = new FixedClock();
+  const catalog = new InMemoryCatalog(recorder);
+  const requests = new InMemoryRequests(recorder, missions, organizations);
+  // Visites planifiées dans l'agenda des passages (ADR-053).
+  missions.visitPeriods = () =>
+    visitBusyPeriods(requests.requests.values(), catalog.settings.visitDurationMinutes, clock.now());
   return {
     recorder,
-    clock: new FixedClock(),
+    clock,
     ids: new SequentialIds(),
-    catalog: new InMemoryCatalog(recorder),
-    requests: new InMemoryRequests(recorder, missions, organizations),
+    catalog,
+    requests,
     missions,
-    agents: new InMemoryAgents(recorder),
+    agents: new InMemoryAgents(recorder, { missions, requests, clock }),
+    photos: new FakePhotoStore(),
     invoices: new InMemoryContractInvoices(),
     organizations,
     people: new InMemoryPeople(),

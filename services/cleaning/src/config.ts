@@ -18,6 +18,10 @@ export const configSchema = baseServiceConfigSchema
     CLEANING_PAYMENT_WATCH_INTERVAL_MS: z.coerce.number().int().min(0).default(3_600_000),
     /** Intervalle de la purge des positions GPS (ADR-035) : 6 heures ; 0 : désactivée. */
     CLEANING_LOCATION_PURGE_INTERVAL_MS: z.coerce.number().int().min(0).default(21_600_000),
+    /** Intervalle de la tâche des échéances des demandes (ADR-053) : 10 minutes ; 0 : désactivée. */
+    CLEANING_REQUEST_DEADLINES_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
+    /** Adresse gRPC de file : photos des passages (FileInternalService, ADR-038, ADR-053). */
+    FILE_GRPC_URL: z.string().min(1).default('localhost:50056'),
     /** Adresse gRPC d'identity : noms affichés au back-office (GetUsersByIds, GetOrganizationsByIds, ADR-029). */
     IDENTITY_GRPC_URL: z.string().min(1).default('localhost:50051'),
     /** Adresse gRPC de wallet : paiement d'une mission par le portefeuille prépayé (ADR-046). */

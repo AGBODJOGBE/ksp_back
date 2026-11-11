@@ -26,6 +26,7 @@ import { outcomeFromJson, recordGroupOperation } from './group-operations';
 import { updateMission } from './prisma-mission.repository';
 import { TERMINAL_MISSION_STATUSES } from '../../domain/mission';
 import { quoteColumns, REQUEST_INCLUDE, requestColumns, toRequest } from './quote-request.mapper';
+import { VISIT_CLOSING_STATUSES } from '../../domain/request-deadlines';
 
 const ids = new UuidV7Generator();
 
@@ -411,6 +412,70 @@ export class PrismaQuoteRequestRepository implements QuoteRequestRepository {
       );
       return 'processed' as const;
     });
+  }
+
+  // --- Échéances (ADR-053) -----------------------------------------------------------------------
+
+  async listQuotesToExpire(now: Date, limit: number): Promise<QuoteRequest[]> {
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT r.id FROM quote_requests r JOIN quotes q ON q.id = r.current_quote_id
+      WHERE r.status = 'quote_sent' AND q.valid_until <= ${now}
+      ORDER BY q.valid_until, r.id LIMIT ${limit}`;
+    return this.findMany(rows.map((row) => row.id));
+  }
+
+  async listQuotesToRemind(now: Date, until: Date, limit: number): Promise<QuoteRequest[]> {
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT r.id FROM quote_requests r JOIN quotes q ON q.id = r.current_quote_id
+      WHERE r.status = 'quote_sent' AND q.valid_until > ${now} AND q.valid_until <= ${until}
+        AND r.expiry_reminded_quote_id IS DISTINCT FROM r.current_quote_id
+      ORDER BY q.valid_until, r.id LIMIT ${limit}`;
+    return this.findMany(rows.map((row) => row.id));
+  }
+
+  async recordQuoteReminders(
+    reminders: readonly { requestId: string; quoteId: string }[],
+    changes: (remindedRequestIds: string[]) => Changes,
+  ): Promise<string[]> {
+    return this.prisma.$transaction(async (tx) => {
+      const marked: string[] = [];
+      for (const { requestId, quoteId } of reminders) {
+        // Marquage conditionnel : devis toujours en cours, rappel pas encore fait (rejeu sans effet).
+        const { count } = await tx.quoteRequest.updateMany({
+          where: {
+            id: requestId,
+            status: 'quote_sent',
+            currentQuoteId: quoteId,
+            OR: [{ remindedQuoteId: null }, { remindedQuoteId: { not: quoteId } }],
+          },
+          data: { remindedQuoteId: quoteId },
+        });
+        if (count === 1) marked.push(requestId);
+      }
+      if (marked.length) await writeChanges(tx, changes(marked), () => ids.next());
+      return marked;
+    });
+  }
+
+  async listStaleVisits(limit: number): Promise<QuoteRequest[]> {
+    const visits = await this.prisma.siteVisit.findMany({
+      where: { status: 'scheduled', request: { status: { in: [...VISIT_CLOSING_STATUSES] } } },
+      select: { requestId: true },
+      orderBy: { scheduledAt: 'asc' },
+      take: limit,
+    });
+    return this.findMany(visits.map((visit) => visit.requestId));
+  }
+
+  /** Demandes dans l'ordre des identifiants donnés. */
+  private async findMany(requestIds: string[]): Promise<QuoteRequest[]> {
+    if (!requestIds.length) return [];
+    const rows = await this.prisma.quoteRequest.findMany({
+      where: { id: { in: requestIds } },
+      include: REQUEST_INCLUDE,
+    });
+    const byId = new Map(rows.map((row) => [row.id, toRequest(row)]));
+    return requestIds.flatMap((id) => byId.get(id) ?? []);
   }
 
   async save(request: QuoteRequest, changes: Changes): Promise<boolean> {

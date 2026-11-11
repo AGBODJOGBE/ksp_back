@@ -23,6 +23,12 @@ export interface CleaningSettings {
    * au-delà, coordonnées, précision, repère et adresse géocodée sont effacés (12).
    */
   locationRetentionMonths: number;
+  /** Jours avant l'expiration d'un devis pour le rappel au client (ADR-053) : 2 ; 0 = aucun rappel. */
+  quoteExpiryReminderDays: number;
+  /** Photos au plus par type (avant, après) et par passage (ADR-053) : 10. */
+  maxInterventionPhotos: number;
+  /** Durée d'une visite technique dans l'agenda de l'agent, en minutes (ADR-053) : 60. */
+  visitDurationMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: CleaningSettings = {
@@ -37,6 +43,9 @@ export const DEFAULT_SETTINGS: CleaningSettings = {
   individualSuspensionUnpaidInterventions: 1,
   individualPaymentGraceHours: 24,
   locationRetentionMonths: 12,
+  quoteExpiryReminderDays: 2,
+  maxInterventionPhotos: 10,
+  visitDurationMinutes: 60,
 };
 
 const BOUNDS: Record<keyof CleaningSettings, [number, number]> = {
@@ -51,6 +60,9 @@ const BOUNDS: Record<keyof CleaningSettings, [number, number]> = {
   individualSuspensionUnpaidInterventions: [1, 50],
   individualPaymentGraceHours: [1, 720],
   locationRetentionMonths: [1, 120],
+  quoteExpiryReminderDays: [0, 30],
+  maxInterventionPhotos: [1, 50],
+  visitDurationMinutes: [15, 480],
 };
 
 /**
@@ -73,8 +85,8 @@ export function settingsProblems(settings: CleaningSettings): string[] {
 }
 
 /**
- * Réglages ajoutés après coup (partie 10, puis conservation de la position, ADR-035) : à l'écriture,
- * 0 garde la valeur en vigueur.
+ * Réglages ajoutés après coup (partie 10, conservation de la position, ADR-035, puis photos et durée
+ * des visites, ADR-053) : à l'écriture, 0 garde la valeur en vigueur.
  */
 export const STANDING_SETTING_KEYS = [
   'businessWarningUnpaidInvoices',
@@ -82,14 +94,28 @@ export const STANDING_SETTING_KEYS = [
   'individualSuspensionUnpaidInterventions',
   'individualPaymentGraceHours',
   'locationRetentionMonths',
+  'maxInterventionPhotos',
+  'visitDurationMinutes',
 ] as const;
+
+/**
+ * Réglages à écrire : le rappel d'expiration (ADR-053) accepte 0 (rappel désactivé), il est donc
+ * absent pour garder la valeur en vigueur.
+ */
+export type SettingsUpdate = Omit<CleaningSettings, 'quoteExpiryReminderDays'> & {
+  quoteExpiryReminderDays?: number | undefined;
+};
 
 /**
  * Réglages à enregistrer. Le seuil de visite, sans effet depuis le 2026-10-23 (visite obligatoire
  * pour toute demande), est déprécié et ignoré à l'écriture : la valeur enregistrée ne change pas (ADR-033).
  */
-export function mergeSettings(current: CleaningSettings, update: CleaningSettings): CleaningSettings {
-  const merged = { ...update, visitThresholdSquareMeters: current.visitThresholdSquareMeters };
+export function mergeSettings(current: CleaningSettings, update: SettingsUpdate): CleaningSettings {
+  const merged: CleaningSettings = {
+    ...update,
+    visitThresholdSquareMeters: current.visitThresholdSquareMeters,
+    quoteExpiryReminderDays: update.quoteExpiryReminderDays ?? current.quoteExpiryReminderDays,
+  };
   for (const key of STANDING_SETTING_KEYS) {
     if (!merged[key]) merged[key] = current[key];
   }

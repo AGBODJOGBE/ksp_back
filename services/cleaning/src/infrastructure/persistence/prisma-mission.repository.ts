@@ -30,6 +30,7 @@ import {
 } from './mission.mapper';
 import { locationColumns } from './quote-request.mapper';
 import { recordGroupOperation } from './group-operations';
+import { visitBusyPeriods, visitDurationMinutes } from './agenda.queries';
 
 const ids = new UuidV7Generator();
 
@@ -263,8 +264,12 @@ export class PrismaMissionRepository implements MissionRepository {
     return rows.map(toMission);
   }
 
-  /** Passages actifs et indisponibilités des agents donnés, hors un passage éventuel. */
+  /**
+   * Passages actifs, indisponibilités et visites planifiées (ADR-053) des agents donnés, hors un
+   * passage éventuel.
+   */
   private async busyPeriods(tx: Tx, agentIds: string[], excludedId: string | null): Promise<BusyPeriod[]> {
+    const visits = await visitBusyPeriods(tx, agentIds, await visitDurationMinutes(tx));
     const [interventions, unavailabilities] = await Promise.all([
       tx.intervention.findMany({
         where: {
@@ -296,6 +301,7 @@ export class PrismaMissionRepository implements MissionRepository {
         agentId: row.agentId,
         slot: { start: row.startsAt, end: row.endsAt },
       })),
+      ...visits,
     ];
   }
 }

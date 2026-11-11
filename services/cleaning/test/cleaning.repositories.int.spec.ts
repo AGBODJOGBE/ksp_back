@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
+import { FakePhotoStore } from '../src/application/testing/complement-fakes';
 import { join } from 'node:path';
 import { ReadinessRegistry } from '@ksp/platform';
 import { Client, Pool } from 'pg';
@@ -76,6 +77,7 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
       organizations: new PrismaOrganizationStandingRepository(prisma),
       geocoder: new FakeGeocoder(),
       wallet: new FakeWallet(),
+      photos: new FakePhotoStore(),
       people: { userNames: async () => new Map(), organizationNames: async () => new Map() },
       fieldDates: { ...DEFAULT_FIELD_DATE_POLICY },
       schedules: { ...DEFAULT_SCHEDULE_POLICY },
@@ -1179,6 +1181,150 @@ describeWithDatabase('dépôts cleaning (PostgreSQL)', () => {
     const previous = await deps.catalog.findServiceVersion('home_cleaning', saved.pricing.version - 1);
     expect(previous?.pricing.version).toBe(saved.pricing.version - 1);
     expect(await deps.catalog.findServiceVersion('home_cleaning', 999)).toBeNull();
+  });
+
+  it('compléments (ADR-053) : réglages, rappel unique, expiration, agenda des visites, agents et équipes', async () => {
+    const THIRD_AGENT = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0007';
+    const CUSTOMER = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e77';
+    const settings = await deps.catalog.getSettings();
+    expect(settings).toMatchObject({
+      quoteExpiryReminderDays: 2,
+      maxInterventionPhotos: 10,
+      visitDurationMinutes: 60,
+    });
+    await asAdmin(() => useCases.registerAgent.execute({ agentId: THIRD_AGENT, displayName: 'Afi' }));
+    const saved = clock.current;
+    const payloads = async (type: string) =>
+      (await pool.query('SELECT payload FROM outbox WHERE event_type = $1', [type])).rows.map(
+        (r) => r.payload.payload,
+      );
+    const newRequest = (key: string) =>
+      asCustomer(
+        () =>
+          useCases.requestQuote.execute({
+            idempotencyKey: key,
+            serviceCode: 'home_cleaning',
+            answers: { housing_type: 'apartment', rooms: 2, bathrooms: 0, condition: 'normal' },
+            optionSelections: [],
+            frequency: 'once',
+            commune: 'Cotonou',
+            address: 'Lot 9, Cotonou',
+            preferredSlots: [SLOT],
+            comment: '',
+            requestedTeamSize: 0,
+          }),
+        CUSTOMER,
+      );
+    const visitAt = '2026-11-20T09:00:00Z';
+    const scheduleVisit = (requestId: string, at = visitAt) =>
+      asSupervisor(() =>
+        useCases.scheduleVisit.execute({ requestId, scheduledAt: at, agentId: THIRD_AGENT }),
+      );
+
+    // Visite planifiée : dans l'agenda de l'agent, sur la durée réglée ; une autre visite qui la
+    // chevauche est refusée ; l'agent ne peut pas être désactivé.
+    const first = await newRequest('cmp-1');
+    await scheduleVisit(first.id);
+    const busy = await deps.agents.busyPeriods([THIRD_AGENT], {
+      visitDurationMinutes: 60,
+      excludedVisitIds: [],
+    });
+    expect(busy).toEqual([
+      expect.objectContaining({
+        agentId: THIRD_AGENT,
+        slot: { start: new Date(visitAt), end: new Date('2026-11-20T10:00:00Z') },
+      }),
+    ]);
+    const second = await newRequest('cmp-2');
+    await expect(scheduleVisit(second.id, '2026-11-20T09:30:00Z')).rejects.toMatchObject({
+      code: 'CLEANING_TEAM_UNAVAILABLE',
+    });
+    await expect(asAdmin(() => useCases.deactivateAgent.execute(THIRD_AGENT))).rejects.toMatchObject({
+      code: 'CLEANING_AGENT_HAS_ASSIGNMENTS',
+    });
+
+    // Demande annulée par le client : la visite ne compte plus, la tâche l'annule et prévient l'agent, une fois.
+    await asCustomer(() => useCases.cancelRequest.execute({ requestId: first.id, reason: '' }), CUSTOMER);
+    expect(
+      await deps.agents.busyPeriods([THIRD_AGENT], { visitDurationMinutes: 60, excludedVisitIds: [] }),
+    ).toEqual([]);
+    await useCases.watchRequestDeadlines.execute();
+    await useCases.watchRequestDeadlines.execute();
+    expect((await deps.requests.findById(first.id))!.visit!.status).toBe('cancelled');
+    expect(
+      (await payloads('cleaning.visit.cancelled')).filter((p) => p.requestIds.includes(first.id)),
+    ).toHaveLength(1);
+    const agent = await asAdmin(() => useCases.deactivateAgent.execute(THIRD_AGENT));
+    expect(agent.active).toBe(false);
+    await asAdmin(() => useCases.reactivateAgent.execute(THIRD_AGENT));
+
+    // Devis valable un jour : rappel une seule fois, puis expiration enregistrée une seule fois.
+    const visited = await scheduleVisit(second.id, '2026-10-24T09:00:00Z');
+    clock.current = new Date('2026-10-24T09:30:00Z');
+    await asSupervisor(() => useCases.completeVisit.execute({ visitId: visited.visit!.id, report: 'Vu.' }));
+    await asSupervisor(() =>
+      useCases.sendQuote.execute({
+        requestId: second.id,
+        lines: [],
+        proposedSlots: [{ start: '2026-11-30T08:00:00.000Z', end: '2026-11-30T11:00:00.000Z' }],
+        validityDays: 1,
+        teamSize: 0,
+        durationMinutes: 180,
+      }),
+    );
+    expect(await useCases.watchRequestDeadlines.execute()).toMatchObject({ reminded: 1 });
+    await useCases.watchRequestDeadlines.execute();
+    const reminders = (await payloads('cleaning.quote.expiry_reminded')).filter((p) =>
+      p.quotes.some((q: { requestId: string }) => q.requestId === second.id),
+    );
+    expect(reminders).toHaveLength(1);
+    clock.current = new Date('2026-10-26T09:30:00Z');
+    await useCases.watchRequestDeadlines.execute();
+    await useCases.watchRequestDeadlines.execute();
+    expect((await deps.requests.findById(second.id))!.status).toBe('expired');
+    const expired = (await payloads('cleaning.quote.expired')).filter((p) =>
+      p.quotes.some((q: { requestId: string }) => q.requestId === second.id),
+    );
+    expect(expired).toHaveLength(1);
+    expect(JSON.stringify(expired)).not.toContain('Lot 9');
+    clock.current = saved;
+
+    // Indisponibilité supprimée ; équipe désactivée gardée.
+    const { agent: unavailable } = await asAdmin(() =>
+      useCases.declareUnavailability.execute({
+        agentId: THIRD_AGENT,
+        start: '2026-12-01T00:00:00Z',
+        end: '2026-12-02T00:00:00Z',
+        reason: '',
+      }),
+    );
+    const removed = await asAdmin(() =>
+      useCases.removeUnavailability.execute({
+        agentId: THIRD_AGENT,
+        unavailabilityId: unavailable.unavailabilities[0]!.id,
+      }),
+    );
+    expect(removed.unavailabilities).toEqual([]);
+    expect((await deps.agents.findAgents([THIRD_AGENT]))[0]!.unavailabilities).toEqual([]);
+    const team = await asAdmin(() =>
+      useCases.createTeam.execute({ name: 'Équipe C', memberIds: [THIRD_AGENT] }),
+    );
+    await asAdmin(() => useCases.deactivateTeam.execute(team.id));
+    expect(await deps.agents.findTeam(team.id)).toMatchObject({ active: false, memberIds: [THIRD_AGENT] });
+
+    // Motif d'un passage enregistré.
+    const row = await prisma.intervention.findFirst({ orderBy: { id: 'asc' } });
+    const mission = (await deps.missions.findByInterventionId(row!.id))!;
+    const changed = {
+      ...mission,
+      interventions: mission.interventions.map((i) =>
+        i.id === row!.id ? { ...i, changeReason: 'Pluie' } : i,
+      ),
+    };
+    expect(await deps.missions.save(changed, { events: [], audit: [] })).toBe(true);
+    expect(
+      (await deps.missions.findByInterventionId(row!.id))!.interventions.find((i) => i.id === row!.id),
+    ).toMatchObject({ changeReason: 'Pluie' });
   });
 
   it('données de démonstration : chargées après les migrations, rejouables, désinsectisation sans prix', async () => {

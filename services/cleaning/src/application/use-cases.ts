@@ -97,6 +97,24 @@ import {
   RegisterAgentUseCase,
   UpdateTeamUseCase,
 } from './teams/admin-teams.use-cases';
+import {
+  DeactivateAgentUseCase,
+  DeactivateTeamUseCase,
+  ReactivateAgentUseCase,
+  ReactivateTeamUseCase,
+  RemoveUnavailabilityUseCase,
+} from './teams/agent-status.use-cases';
+import {
+  RescheduleInterventionUseCase,
+  UnscheduleInterventionUseCase,
+} from './missions/intervention-changes.use-cases';
+import {
+  AddInterventionPhotoUseCase,
+  ListInterventionPhotosUseCase,
+  ListMyInterventionPhotosUseCase,
+  RemoveInterventionPhotoUseCase,
+} from './missions/intervention-photos.use-cases';
+import { WatchRequestDeadlinesUseCase } from './requests/request-deadlines.use-cases';
 
 /** Les cas d'usage UC-CL-01 à 12 (une classe chacun), reliés aux mêmes dépendances. */
 export function createUseCases(deps: CleaningDeps) {
@@ -184,6 +202,19 @@ export function createUseCases(deps: CleaningDeps) {
     correctLocation: new CorrectLocationUseCase(deps),
     purgeLocations: new PurgeLocationsUseCase(deps),
     eraseCustomerLocations: new EraseCustomerLocationsUseCase(deps),
+    // Compléments du Nettoyage (ADR-053).
+    addInterventionPhoto: new AddInterventionPhotoUseCase(deps),
+    removeInterventionPhoto: new RemoveInterventionPhotoUseCase(deps),
+    listInterventionPhotos: new ListInterventionPhotosUseCase(deps),
+    listMyInterventionPhotos: new ListMyInterventionPhotosUseCase(deps),
+    rescheduleIntervention: new RescheduleInterventionUseCase(deps),
+    unscheduleIntervention: new UnscheduleInterventionUseCase(deps),
+    deactivateAgent: new DeactivateAgentUseCase(deps),
+    reactivateAgent: new ReactivateAgentUseCase(deps),
+    removeUnavailability: new RemoveUnavailabilityUseCase(deps),
+    deactivateTeam: new DeactivateTeamUseCase(deps),
+    reactivateTeam: new ReactivateTeamUseCase(deps),
+    watchRequestDeadlines: new WatchRequestDeadlinesUseCase(deps),
   };
 }
 

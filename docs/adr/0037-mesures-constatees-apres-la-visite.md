@@ -1,6 +1,6 @@
 # ADR-037 — Mesures constatées après la visite technique, recalcul du prix et réponses lisibles
 
-**Statut** : Proposé (lot 2 ; besoin validé par le responsable le 2026-11-05 ; complète l'ADR-033 et l'ADR-035 sans les modifier)
+**Statut** : Accepté (en service sur `main` depuis le 2026-11-06, constat du 2026-11-10 ; les points « À valider » ci-dessous restent ouverts ; historique : lot 2 ; besoin validé par le responsable le 2026-11-05 ; complète l'ADR-033 et l'ADR-035 sans les modifier)
 
 ## Contexte
 

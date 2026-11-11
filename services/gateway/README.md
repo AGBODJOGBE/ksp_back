@@ -72,13 +72,25 @@ celui de la réponse.
 
 ## Routes du Nettoyage (lot 2)
 
-37 routes vers `cleaning` (`CLEANING_GRPC_URL`, `localhost:50053` par défaut), déclarées dans `src/domain/routing/cleaning-routes.ts` :
+71 routes vers `cleaning` (`CLEANING_GRPC_URL`, `localhost:50053` par défaut), déclarées dans `src/domain/routing/cleaning-routes.ts` :
 
 - `/api/v1/cleaning/services` et `/api/v1/cleaning/zones` (zones desservies actives) : public ; `/api/v1/cleaning/simulations` (public, 20 par minute et par IP) ;
 - `/api/v1/cleaning/quote-requests…` et `/api/v1/cleaning/missions…` : connecté ; la demande de devis exige un profil complet (vérifié auprès d'identity par la gateway) et, comme l'acceptation, l'en-tête `Idempotency-Key` ;
 - `/api/v1/admin/cleaning/…` : rôles `cleaning_supervisor`, `cleaning_agent` ou `cleaning_admin` selon la route (extension `x-ksp-roles`), `super_admin` partout avec la portée de `cleaning_admin`, et double authentification faite pendant la session (`x-ksp-mfa-max-age`, 12 heures). Le paiement manuel accepte un en-tête `Idempotency-Key` facultatif (`idempotencyKey: 'optional'` dans le manifeste).
 
 Le détail (corps, réponses, erreurs) est dans le contrat OpenAPI, étiquettes « Nettoyage » et « Nettoyage (back-office) ».
+
+Compléments du Nettoyage (ADR-053) :
+
+| Route                                                                         | Appel                                                  | Accès                                         |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------- |
+| `GET /api/v1/cleaning/interventions/{id}/photos`                              | `MissionService/ListMyInterventionPhotos`              | connecté (client de la mission)               |
+| `GET`, `POST /api/v1/admin/cleaning/interventions/{id}/photos`                | `…/ListInterventionPhotos`, `…/AddInterventionPhoto`   | supervision, agent du passage + MFA           |
+| `DELETE /api/v1/admin/cleaning/interventions/{id}/photos/{file}`              | `CleaningAdminService/RemoveInterventionPhoto`         | supervision, agent du passage + MFA           |
+| `POST /api/v1/admin/cleaning/interventions/{id}/reschedule`, `…/unschedule`   | `…/RescheduleIntervention`, `…/UnscheduleIntervention` | `cleaning_supervisor`, `cleaning_admin` + MFA |
+| `POST /api/v1/admin/cleaning/agents/{id}/deactivate`, `…/reactivate`          | `…/DeactivateAgent`, `…/ReactivateAgent`               | `cleaning_admin`, `super_admin` + MFA         |
+| `DELETE /api/v1/admin/cleaning/agents/{id}/unavailabilities/{unavailability}` | `CleaningAdminService/RemoveUnavailability`            | `cleaning_admin`, `super_admin` + MFA         |
+| `POST /api/v1/admin/cleaning/teams/{id}/deactivate`, `…/reactivate`           | `…/DeactivateTeam`, `…/ReactivateTeam`                 | `cleaning_admin`, `super_admin` + MFA         |
 
 ## Routes des documents et de la signature (ADR-044)
 

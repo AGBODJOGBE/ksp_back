@@ -160,19 +160,46 @@ positions des lieux du compte (ADR-035).
 - **Paiement en ligne sur une mission annulée** : enregistré, tout le montant tracé en trop-perçu
   (audit `excess`) et signalé par une alerte du journal.
 
+## Compléments : photos, échéances, passages, agents (ADR-053)
+
+- **Photos des passages** : le compte connecté envoie la photo au service file (finalité
+  `cleaning_intervention_photo`), puis la rattache au passage :
+  `POST /api/v1/admin/cleaning/interventions/{id}/photos` (`fileId`, `kind` = `before` ou `after`) ;
+  retrait `DELETE …/photos/{file}` ; lecture `GET …/photos` (agent du passage, supervision) et
+  `GET /api/v1/cleaning/interventions/{id}/photos` (client de la mission), avec des adresses de courte
+  durée. Passage non clos seulement ; au plus `maxInterventionPhotos` (10) par type. Configuration :
+  `FILE_GRPC_URL` ; jeton de service `cleaning` → `file`.
+- **Échéances** (tâche planifiée, `CLEANING_REQUEST_DEADLINES_INTERVAL_MS`, 10 minutes, 0 =
+  désactivée) : devis expirés enregistrés (`cleaning.quote.expired`), rappel `quoteExpiryReminderDays`
+  (2) jours avant (`cleaning.quote.expiry_reminded`, une fois par devis, 0 = aucun rappel), visites des
+  demandes closes annulées (`cleaning.visit.cancelled`, message à l'agent). Un message par lot (client et
+  groupe) ; rejeu et instances multiples sans double envoi.
+- **Un passage seul** (supervision) : `POST …/interventions/{id}/reschedule` (nouveau début, agents
+  gardés ou changés, motif ; mêmes contrôles que la planification, `cleaning.intervention.rescheduled`)
+  et `POST …/interventions/{id}/unschedule` (motif ; passage annulé `unscheduled`, à replanifier, sans
+  effet sur l'argent, `cleaning.intervention.unscheduled` ; en REST : `cancellationCause: manual` et
+  `toReschedule: true`).
+- **Agents et équipes** (administration) : `POST …/agents/{id}/deactivate` (refus 409 avec la liste des
+  passages et visites à venir) et `…/reactivate` ; `DELETE …/agents/{id}/unavailabilities/{unavailability}` ;
+  `POST …/teams/{id}/deactivate` et `…/reactivate` (équipe gardée, plus proposée). Une indisponibilité qui
+  chevauche des passages ou visites planifiés est refusée (409 avec la liste), ou enregistrée avec
+  `force: true` (liste renvoyée dans `overlappingAssignments`).
+- **Visites** : agenda de l'agent contrôlé comme pour les passages, une visite durant
+  `visitDurationMinutes` (60).
+
 ## Règles (cahier des charges, parties 4 et 9)
 
-| Sujet      | Fonctionnement                                                                                                                                                                                                                                                                                                |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Simulateur | Formulaire paramétrable par prestation (ADR-033) : `max(minimum, (Σ nombre × prix par unité + suppléments + options × leurs coefficients) × coefficients des réponses × commune × fréquence)`, arrondi une fois au franc ; fourchette −10 % / +15 % arrondie à 500 FCFA ; entiers XOF. Rien n'est enregistré. |
-| Grille     | Versionnée : chaque enregistrement crée une version datée avec son auteur ; un devis envoyé garde son prix.                                                                                                                                                                                                   |
-| Réglages   | Validité des devis (15 j), délai minimum (48 h), annulation sans frais (24 h), 5 demandes ouvertes, acompte 30 %, seuils d'impayés : modifiables au back-office.                                                                                                                                              |
-| Demande    | reçue → visite planifiée → devis envoyé → acceptée / refusée / expirée / annulée, ou refusée par KSP. Visite des lieux réalisée obligatoire avant tout devis.                                                                                                                                                 |
-| Mission    | Un passage par date du plan de passages (ADR-052) : un pour une prestation ponctuelle, plusieurs pour un contrat récurrent ; chaque passage a ses agents, sa liste de contrôle et ses références de photos (service file).                                                                                    |
-| Conflits   | Un agent ne peut être affecté à deux passages qui se chevauchent, ni pendant une indisponibilité (`CLEANING_TEAM_UNAVAILABLE`) ; agents verrouillés pendant la planification.                                                                                                                                 |
-| Paiement   | Option choisie à l'acceptation (acompte ou totalité, avant ou après, espèces ou Mobile Money) ; état dû / acompte reçu / payé ; paiements manuels cochés par le superviseur ; paiement en ligne : port prévu (`payment`).                                                                                     |
-| Droits     | Client : ses demandes et missions (404 sinon) ; agent : les missions où il est affecté ; superviseur et admin : rôle et double authentification revérifiés par le service.                                                                                                                                    |
-| Traces     | Événements par l'outbox dans la transaction de l'état (identifiants seulement, jamais d'adresse ni de position) ; table `audit_log` pour les prix, devis, affectations, paiements, types de lieu et groupes de demandes.                                                                                      |
+| Sujet      | Fonctionnement                                                                                                                                                                                                                                                                                                             |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Simulateur | Formulaire paramétrable par prestation (ADR-033) : `max(minimum, (Σ nombre × prix par unité + suppléments + options × leurs coefficients) × coefficients des réponses × commune × fréquence)`, arrondi une fois au franc ; fourchette −10 % / +15 % arrondie à 500 FCFA ; entiers XOF. Rien n'est enregistré.              |
+| Grille     | Versionnée : chaque enregistrement crée une version datée avec son auteur ; un devis envoyé garde son prix.                                                                                                                                                                                                                |
+| Réglages   | Validité des devis (15 j), délai minimum (48 h), annulation sans frais (24 h), 5 demandes ouvertes, acompte 30 %, seuils d'impayés : modifiables au back-office.                                                                                                                                                           |
+| Demande    | reçue → visite planifiée → devis envoyé → acceptée / refusée / expirée / annulée, ou refusée par KSP. Visite des lieux réalisée obligatoire avant tout devis.                                                                                                                                                              |
+| Mission    | Un passage par date du plan de passages (ADR-052) : un pour une prestation ponctuelle, plusieurs pour un contrat récurrent ; chaque passage a ses agents, sa liste de contrôle et ses références de photos (service file).                                                                                                 |
+| Conflits   | Un agent ne peut être affecté à deux passages qui se chevauchent, ni pendant une indisponibilité ou une visite technique (`CLEANING_TEAM_UNAVAILABLE`) ; agents verrouillés pendant la planification. Visites contrôlées de même (ADR-053).                                                                                |
+| Paiement   | Option choisie à l'acceptation (acompte ou totalité, avant ou après, espèces ou Mobile Money) ; état dû / acompte reçu / payé ; paiements manuels cochés par le superviseur ; paiement en ligne Mobile Money par le service `payment` (ADR-031), rendu secondaire par le portefeuille prépayé (ADR-046), moyen recommandé. |
+| Droits     | Client : ses demandes et missions (404 sinon) ; agent : les missions où il est affecté ; superviseur et admin : rôle et double authentification revérifiés par le service.                                                                                                                                                 |
+| Traces     | Événements par l'outbox dans la transaction de l'état (identifiants seulement, jamais d'adresse ni de position) ; table `audit_log` pour les prix, devis, affectations, paiements, types de lieu et groupes de demandes.                                                                                                   |
 
 ## Zones desservies et visite des lieux (décisions du 2026-10-23)
 

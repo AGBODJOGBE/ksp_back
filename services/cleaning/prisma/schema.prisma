@@ -101,6 +101,11 @@ model CleaningSettings {
   individualPaymentGraceHours             Int       @default(24) @map("individual_payment_grace_hours")
   /// Mois de conservation de la position des demandes et missions clôturées (ADR-035).
   locationRetentionMonths                 Int       @default(12) @map("location_retention_months")
+  /// Compléments (ADR-053) : rappel avant l'expiration d'un devis (0 : aucun), photos par type et
+  /// par passage, durée d'une visite dans l'agenda de l'agent.
+  quoteExpiryReminderDays                 Int       @default(2) @map("quote_expiry_reminder_days")
+  maxInterventionPhotos                   Int       @default(10) @map("max_intervention_photos")
+  visitDurationMinutes                    Int       @default(60) @map("visit_duration_minutes")
   updatedBy                               String?   @map("updated_by")
   updatedAt                               DateTime? @map("updated_at") @db.Timestamptz(3)
 
@@ -171,6 +176,8 @@ model QuoteRequest {
   measuredVersion     Int?               @map("measured_pricing_version")
   measuredAt          DateTime?          @map("measured_at") @db.Timestamptz(3)
   measuredBy          String?            @map("measured_by") @db.Uuid
+  /// Devis dont le rappel avant l'expiration est fait (ADR-053), null sinon : un rappel par devis.
+  remindedQuoteId     String?            @map("expiry_reminded_quote_id") @db.Uuid
   createdAt           DateTime           @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime           @map("updated_at") @db.Timestamptz(3)
   /// Contrôle de concurrence optimiste.
@@ -237,6 +244,7 @@ model SiteVisit {
 
   @@index([groupVisitId])
   @@index([agentId, scheduledAt])
+  @@index([status])
   @@map("site_visits")
 }
 
@@ -348,6 +356,8 @@ model Intervention {
   /// suspension (reprogrammable au déblocage) ou manual ; null si le passage n'est pas annulé.
   cancellationCause  String?   @map("cancellation_cause")
   cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(3)
+  /// Motif du dernier report ou de l'annulation pour replanifier (ADR-053).
+  changeReason       String?   @map("change_reason")
   mission            Mission   @relation(fields: [missionId], references: [id])
 
   @@index([missionId])
@@ -402,6 +412,8 @@ model AgentUnavailability {
 model Team {
   id        String       @id @db.Uuid
   name      String
+  /// Équipe désactivée (ADR-053) : gardée, plus proposée à la planification.
+  active    Boolean      @default(true)
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   members   TeamMember[]
 

@@ -1,6 +1,8 @@
 import { type Agent, normalizeDisplayName, type Team } from '../../domain/agent';
+import { type Assignment, overlappingAssignments } from '../../domain/agenda';
 import { type CleaningDeps } from '../deps';
 import { ADMINISTRATION, requireStaff, SUPERVISION } from '../shared/access';
+import { ComplementErrors } from '../shared/complement-errors';
 import { CleaningErrors } from '../shared/errors';
 import { optionalText, parseSlot, requiredText, requireUuid } from '../shared/validation';
 
@@ -45,11 +47,21 @@ export class RegisterAgentUseCase {
   }
 }
 
-/** UC-CL-12 : déclarer une indisponibilité (congé, maladie…) : l'agent ne peut plus être affecté sur la période. */
+/**
+ * UC-CL-12 : déclarer une indisponibilité (congé, maladie…) : l'agent ne peut plus être affecté sur la
+ * période. ADR-053 : si elle chevauche des passages ou des visites déjà planifiés, refus avec leur liste
+ * (CLEANING_UNAVAILABILITY_CONFLICT) ; avec `force`, enregistrée quand même, la liste en avertissement.
+ */
 export class DeclareUnavailabilityUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
-  async execute(input: { agentId: string; start: string; end: string; reason: string }): Promise<Agent> {
+  async execute(input: {
+    agentId: string;
+    start: string;
+    end: string;
+    reason: string;
+    force?: boolean | undefined;
+  }): Promise<{ agent: Agent; overlapping: Assignment[] }> {
     const staff = requireStaff(ADMINISTRATION);
     const agentId = requireUuid('agentId', input.agentId);
     const [agent] = await this.deps.agents.findAgents([agentId]);
@@ -59,6 +71,16 @@ export class DeclareUnavailabilityUseCase {
       slot: parseSlot('period', { start: input.start, end: input.end }),
       reason: optionalText('reason', input.reason, 200),
     };
+    const { visitDurationMinutes } = await this.deps.catalog.getSettings();
+    const overlapping = overlappingAssignments(
+      await this.deps.agents.assignments(
+        agentId,
+        { from: unavailability.slot.start, to: unavailability.slot.end },
+        visitDurationMinutes,
+      ),
+      unavailability.slot,
+    );
+    if (overlapping.length && !input.force) throw ComplementErrors.unavailabilityConflict(overlapping);
     const now = this.deps.clock.now();
     await this.deps.agents.addUnavailability(agentId, unavailability, {
       events: [],
@@ -69,10 +91,14 @@ export class DeclareUnavailabilityUseCase {
           entityType: 'agent',
           entityId: agentId,
           at: now,
+          details: { unavailabilityId: unavailability.id, overlapping: overlapping.length },
         },
       ],
     });
-    return { ...agent, unavailabilities: [...agent.unavailabilities, unavailability] };
+    return {
+      agent: { ...agent, unavailabilities: [...agent.unavailabilities, unavailability] },
+      overlapping,
+    };
   }
 }
 
@@ -103,6 +129,7 @@ export class CreateTeamUseCase {
       id: this.deps.ids.next(),
       name: requiredText('name', input.name, 100),
       memberIds: await checkedMembers(this.deps, input.memberIds),
+      active: true,
     };
     await this.deps.agents.saveTeam(team, {
       events: [],
@@ -132,6 +159,7 @@ export class UpdateTeamUseCase {
       id: existing.id,
       name: requiredText('name', input.name, 100),
       memberIds: await checkedMembers(this.deps, input.memberIds),
+      active: existing.active,
     };
     await this.deps.agents.saveTeam(team, {
       events: [],

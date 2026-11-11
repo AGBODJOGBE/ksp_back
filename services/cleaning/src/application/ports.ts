@@ -1,5 +1,6 @@
 import { type CleaningEventPayloads, type CleaningEventType } from '@ksp/contracts';
 import { type Agent, type Team, type Unavailability } from '../domain/agent';
+import { type Assignment } from '../domain/agenda';
 import { type PricingRule, type ServiceDefinition } from '../domain/catalog';
 import { type GeocodedPlace, type GeoPoint } from '../domain/location';
 import { type Intervention, type Mission, type MissionStatus } from '../domain/mission';
@@ -293,6 +294,24 @@ export interface QuoteRequestRepository {
     | { status: 'conflict' }
     | { status: 'organization_suspended' }
   >;
+  /** Échéances (ADR-053) : devis envoyés dont la validité est dépassée, les plus anciens d'abord. */
+  listQuotesToExpire(now: Date, limit: number): Promise<QuoteRequest[]>;
+  /**
+   * Devis envoyés encore valides qui expirent au plus tard à `until`, dont le devis en cours n'a pas
+   * encore eu son rappel (ADR-053), les plus proches de l'expiration d'abord.
+   */
+  listQuotesToRemind(now: Date, until: Date, limit: number): Promise<QuoteRequest[]>;
+  /**
+   * Marque le rappel de chaque devis cité, s'il est toujours le devis en cours et sans rappel, puis
+   * écrit les changements construits avec les demandes marquées, dans la même transaction : un
+   * rappel n'est jamais publié deux fois. Renvoie les demandes marquées.
+   */
+  recordQuoteReminders(
+    reminders: readonly { requestId: string; quoteId: string }[],
+    changes: (remindedRequestIds: string[]) => Changes,
+  ): Promise<string[]>;
+  /** Visites encore planifiées de demandes closes (refusées, annulées, déclinées, expirées). */
+  listStaleVisits(limit: number): Promise<QuoteRequest[]>;
 }
 
 export interface MissionFilter {
@@ -442,6 +461,53 @@ export interface AgentRepository {
   listTeams(): Promise<Team[]>;
   findTeam(teamId: string): Promise<Team | null>;
   saveTeam(team: Team, changes: Changes): Promise<void>;
+  /** Compléments (ADR-053) : désactivation et réactivation d'un agent ou d'une équipe. */
+  setAgentActive(agentId: string, active: boolean, changes: Changes): Promise<void>;
+  /** Supprime l'indisponibilité de cet agent ; false si elle n'existe pas. */
+  removeUnavailability(agentId: string, unavailabilityId: string, changes: Changes): Promise<boolean>;
+  setTeamActive(teamId: string, active: boolean, changes: Changes): Promise<void>;
+  /**
+   * Passages actifs et visites planifiées (demande ouverte) de l'agent qui se terminent après `from`
+   * (et commencent avant `to` s'il est donné) ; une visite dure `visitDurationMinutes`.
+   */
+  assignments(
+    agentId: string,
+    period: { from: Date; to: Date | null },
+    visitDurationMinutes: number,
+  ): Promise<Assignment[]>;
+  /**
+   * Périodes occupées des agents : passages actifs, indisponibilités et visites planifiées (demande
+   * ouverte, hors visites données) ; une visite dure `visitDurationMinutes`.
+   */
+  busyPeriods(
+    agentIds: readonly string[],
+    options: { visitDurationMinutes: number; excludedVisitIds: readonly string[] },
+  ): Promise<BusyPeriod[]>;
+}
+
+/** Fichier d'une photo de passage chez file, avec son adresse de lecture de courte durée. */
+export interface StoredPhoto {
+  fileId: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedAt: Date;
+  downloadUrl: string | null;
+  downloadExpiresAt: Date | null;
+}
+
+/**
+ * Photos des passages chez le service file (FileInternalService, ADR-038 ; finalité
+ * cleaning_intervention_photo, objet cleaning_intervention). Les erreurs de file sont transmises
+ * telles quelles (FILE_NOT_FOUND, FILE_OWNER_MISMATCH…). Rattachement idempotent pour le même passage ;
+ * suppression idempotente.
+ */
+export interface InterventionPhotoStore {
+  /** Rattache au passage un fichier envoyé par `ownerId` lui-même. */
+  attach(input: { fileId: string; interventionId: string; ownerId: string }): Promise<void>;
+  remove(fileId: string, interventionId: string): Promise<void>;
+  /** Fichiers disponibles rattachés au passage, avec leurs adresses de lecture. */
+  list(interventionId: string): Promise<StoredPhoto[]>;
 }
 
 /**

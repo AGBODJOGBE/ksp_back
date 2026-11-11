@@ -1,6 +1,6 @@
 # ADR-034 — Parcours client du Nettoyage par type de lieu, plusieurs prestations et position GPS
 
-**Statut** : Proposé (lot 2 ; besoin et décisions 1 à 5 validés par le responsable le 2026-11-04 ; compléments techniques du back-office validés le même jour)
+**Statut** : Accepté (en service sur `main` depuis le 2026-11-06, constat du 2026-11-10 ; les points « À valider » ci-dessous restent ouverts ; historique : lot 2 ; besoin et décisions 1 à 5 validés par le responsable le 2026-11-04 ; compléments techniques du back-office validés le même jour)
 
 ## Contexte
 

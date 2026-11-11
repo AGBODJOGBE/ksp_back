@@ -11,7 +11,7 @@ import {
   type ServiceDraft,
 } from '../../domain/catalog';
 import { BASIS_POINTS } from '../../domain/money';
-import { type CleaningSettings, mergeSettings, settingsProblems } from '../../domain/settings';
+import { mergeSettings, type SettingsUpdate, settingsProblems } from '../../domain/settings';
 import { calculatePrice, type PriceCalculation } from '../../domain/simulator';
 import { isCovered } from '../../domain/zone';
 import { type CleaningDeps } from '../deps';
@@ -261,7 +261,7 @@ export class PreviewServiceUseCase {
 export class UpdateSettingsUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
-  async execute(update: CleaningSettings): Promise<StoredSettings> {
+  async execute(update: SettingsUpdate): Promise<StoredSettings> {
     const staff = requireStaff(ADMINISTRATION);
     const settings = mergeSettings(await this.deps.catalog.getSettings(), update);
     const problems = settingsProblems(settings);
