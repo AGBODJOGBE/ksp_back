@@ -61,6 +61,16 @@ export class TopUpPaymentGrpcController implements paymentV1.TopUpPaymentService
     });
     return { payment: presentPayment(result.payment), created: result.created };
   }
+
+  async getTopUpPayment(
+    request: paymentV1.GetTopUpPaymentRequest,
+  ): Promise<paymentV1.GetTopUpPaymentResponse> {
+    const { payment, receivedAmount } = await this.useCases.getTopUpPayment.execute(request.paymentId);
+    return {
+      payment: presentPayment(payment),
+      receivedAmount: receivedAmount === null ? undefined : { amount: receivedAmount, currency: 'XOF' },
+    };
+  }
 }
 
 /**

@@ -59,6 +59,10 @@ import "ksp/common/v1/money.proto";
 //   PAYMENT_NOT_AMOUNT_MISMATCH         FAILED_PRECONDITION traitement d'un écart demandé pour un paiement qui n'est
 //                                                           pas amount_mismatch
 //   PAYMENT_MISMATCH_ALREADY_RESOLVED   ALREADY_EXISTS      écart déjà traité (autre note, autre auteur ou autre clé)
+//   PAYMENT_CHECKOUT_OPEN               ALREADY_EXISTS      une page de paiement est déjà ouverte pour l'objet (autre
+//                                                           part, autre payeur, ou page encore payable chez le
+//                                                           prestataire) : une seule à la fois (ADR-048) ;
+//                                                           details.expiresAt
 //   PAYMENT_CONCURRENT_UPDATE           ALREADY_EXISTS      paiement modifié en même temps par un autre appel
 //   PAYMENT_PROVIDER_UNAVAILABLE        UNAVAILABLE         prestataire injoignable : réessayer avec la même clé
 //   PAYMENT_CALLER_FORBIDDEN            PERMISSION_DENIED   méthode réservée à un autre service
@@ -552,6 +556,22 @@ message FailPayoutResponse {
 // portefeuille ; un écart de montant reste "amount_mismatch" (rien n'est crédité, la finance tranche).
 service TopUpPaymentService {
   rpc CreateTopUpPayment(CreateTopUpPaymentRequest) returns (CreateTopUpPaymentResponse);
+  // Paiement de recharge relu par wallet avant tout crédit (ADR-048) : crédit automatique sur
+  // payment.intent.succeeded, ou crédit manuel d'une recharge par la finance. Paiement inconnu, ou
+  // d'un autre objet que "wallet_top_up" : PAYMENT_NOT_FOUND.
+  rpc GetTopUpPayment(GetTopUpPaymentRequest) returns (GetTopUpPaymentResponse);
+}
+
+message GetTopUpPaymentRequest {
+  string payment_id = 1;
+}
+
+message GetTopUpPaymentResponse {
+  Payment payment = 1;
+  // Montant reçu confirmé par le prestataire, en XOF : celui du paiement s'il a réussi, le montant
+  // approuvé d'un écart de montant ("amount_mismatch") en XOF ; absent sinon (rien reçu, ou devise
+  // différente).
+  ksp.common.v1.Money received_amount = 2;
 }
 
 message CreateTopUpPaymentRequest {

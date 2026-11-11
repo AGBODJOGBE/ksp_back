@@ -57,6 +57,7 @@ function toDomain(row: PaymentRow): PaymentIntent {
             idempotencyKey: row.mismatchResolutionKey,
           }
         : null,
+    receivedAmount: row.receivedAmount,
     version: row.version,
   };
 }
@@ -82,6 +83,7 @@ function mutableColumns(intent: PaymentIntent) {
     mismatchResolvedBy: intent.mismatchResolution?.resolvedBy ?? null,
     mismatchResolutionNote: intent.mismatchResolution?.note ?? null,
     mismatchResolutionKey: intent.mismatchResolution?.idempotencyKey ?? null,
+    receivedAmount: intent.receivedAmount,
   };
 }
 

@@ -358,6 +358,7 @@ export class PayPaymentLinkUseCase {
       completedAt: null,
       lastCheckedAt: null,
       mismatchResolution: null,
+      receivedAmount: null,
       version: 0,
     };
     const stored = await this.deps.payments.create(draft);

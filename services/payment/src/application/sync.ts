@@ -132,9 +132,11 @@ export class PaymentSync {
       const transition = wrongAmount
         ? flagAmountMismatch(current, now)
         : applyProviderStatus(current, transaction.status, now);
+      const received = transaction.status === 'approved' && transaction.currency.toUpperCase() === CURRENCY;
       const next: PaymentIntent = {
         ...(transition ? transition.intent : current),
         providerReference: current.providerReference ?? transaction.reference,
+        receivedAmount: received ? transaction.amount : current.receivedAmount,
         lastCheckedAt: now,
       };
       const events = transition ? transitionEvents({ ...transition, intent: next }) : [];
