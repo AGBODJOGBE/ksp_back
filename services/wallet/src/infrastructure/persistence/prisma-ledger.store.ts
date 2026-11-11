@@ -157,7 +157,7 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
         // Compte du titulaire créé au besoin, puis verrouillé : le solde contrôlé ne bouge plus.
         await db.$executeRawUnsafe(
           'INSERT INTO ledger_accounts (code, kind, holder_type, holder_id, normal_side) ' +
-            "VALUES ($1, $2, $3, $4::uuid, 'credit') ON CONFLICT (code) DO NOTHING",
+            "VALUES ($1, $2, $3, $4::uuid, 'credit') ON CONFLICT DO NOTHING",
           holderCode,
           holderAccountKind(tx.kind),
           tx.holder.type,

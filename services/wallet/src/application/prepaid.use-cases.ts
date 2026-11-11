@@ -3,6 +3,7 @@ import {
   type Holder,
   type LedgerTransaction,
   type PaidObject,
+  refundEntries,
   reversalEntries,
   sameDebit,
   servicePaymentEntries,
@@ -253,6 +254,53 @@ export class RefundFromEventUseCase {
       else counts.already += 1;
     }
     return counts;
+  }
+}
+
+/** Émetteur de cleaning.mission.credited. */
+const CLEANING = 'cleaning';
+
+/**
+ * cleaning.mission.credited (ADR-049) : montant payé pour des passages non faits d'une mission
+ * récurrente arrêtée, crédité au portefeuille prépayé du client (écriture `refund`, quel que soit le
+ * moyen de paiement d'origine). Une seule fois par crédit : référence `mission-credit:<creditId>`
+ * propre à cleaning, et inbox dans la même transaction. Émetteur autre que cleaning : ignoré.
+ */
+export class CreditFromMissionUseCase {
+  constructor(private readonly deps: WalletDeps) {}
+
+  async execute(input: {
+    eventId: string;
+    eventType: string;
+    producer: string;
+    missionId: string;
+    customerId: string;
+    creditId: string;
+    amount: number;
+  }): Promise<'recorded' | 'duplicate' | 'ignored'> {
+    if (input.producer !== CLEANING || !this.deps.settings.debitCallers.includes(CLEANING)) return 'ignored';
+    const holder: Holder = { type: 'user', id: requireUuid('customerId', input.customerId) };
+    const amount = requireXof('amount', { amount: input.amount, currency: 'XOF' });
+    const reference = `mission-credit:${requireUuid('creditId', input.creditId)}`;
+    if (await this.deps.ledger.findByReference(CLEANING, reference)) return 'duplicate';
+    const credit = transaction(this.deps, {
+      kind: 'refund',
+      caller: CLEANING,
+      reference,
+      holder,
+      amount,
+      description: 'Remboursement au prorata — passages non effectués',
+      object: { type: 'cleaning_mission', id: requireUuid('missionId', input.missionId), part: null },
+      entries: refundEntries(holder, amount),
+    });
+    const outcome = await this.deps.ledger.record({
+      transaction: credit,
+      inbox: { eventId: input.eventId, consumer: `wallet.${input.eventType}` },
+      events: (balance) => [creditedEvent(credit, balance, { origin: 'service', userId: holder.id })],
+    });
+    if (outcome.kind === 'recorded') return 'recorded';
+    if (outcome.kind === 'already_processed' || outcome.kind === 'duplicate') return 'duplicate';
+    throw WalletErrors.concurrentUpdate();
   }
 }
 

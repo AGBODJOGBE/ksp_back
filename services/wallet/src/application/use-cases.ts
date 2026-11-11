@@ -7,6 +7,7 @@ import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import { type WalletDeps } from './ports';
 import {
   CreateTopUpUseCase,
+  CreditFromMissionUseCase,
   CreditTopUpUseCase,
   DebitPrepaidUseCase,
   GetPrepaidBalanceUseCase,
@@ -50,6 +51,7 @@ export function createUseCases(deps: WalletDeps) {
     debitPrepaid: new DebitPrepaidUseCase(deps),
     refundDebit: new RefundDebitUseCase(deps),
     refundFromEvent: new RefundFromEventUseCase(deps),
+    creditFromMission: new CreditFromMissionUseCase(deps),
     getPrepaidBalance: new GetPrepaidBalanceUseCase(deps),
     createTopUp: new CreateTopUpUseCase(deps),
     creditTopUp: new CreditTopUpUseCase(deps),

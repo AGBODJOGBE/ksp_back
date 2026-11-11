@@ -313,5 +313,24 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       expect(balance('ksp:prepaid_funds')).toBe(overview.owedToCustomers + balance('ksp:service_revenue'));
       expect(overview).toMatchObject({ owedToCustomers: 12000, customersCount: 1 });
     });
+
+    it('crédit au prorata d’une mission arrêtée : une seule fois par creditId (ADR-049)', async () => {
+      const holder = { type: 'user' as const, id: '0192f1c4-0000-7000-8000-00000000c0aa' };
+      const event = {
+        eventId: '0192f1c4-0000-7000-b000-00000000e0a1',
+        eventType: 'cleaning.mission.credited',
+        producer: 'cleaning',
+        missionId: MISSION_ID,
+        customerId: holder.id,
+        creditId: '0192f1c4-0000-7000-b000-00000000e0c1',
+        amount: 30000,
+      };
+      const results = await Promise.all([
+        useCases.creditFromMission.execute(event),
+        useCases.creditFromMission.execute({ ...event, eventId: '0192f1c4-0000-7000-b000-00000000e0a2' }),
+      ]);
+      expect(results.filter((r) => r === 'recorded')).toHaveLength(1);
+      expect((await asCleaning(() => useCases.getPrepaidBalance.execute(holder))).balance).toBe(30000);
+    });
   });
 });
