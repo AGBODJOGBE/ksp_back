@@ -133,20 +133,38 @@ describeWithDatabase('dépôt document (PostgreSQL)', () => {
     const request = pending(document.id, { signerUserId: SIGNER });
     await documents.openRequest(request, ['draft']);
     const codeId = ids.next();
-    await documents.createCode({
-      id: codeId,
-      requestId: request.id,
-      codeHash: 'h',
-      channel: 'whatsapp',
-      createdAt: now,
-      expiresAt: new Date(now.getTime() + 600_000),
-      attempts: 0,
-      consumedAt: null,
+    const seen: Date[][] = [];
+    const decision = await documents.createCodeWithinLimits(
+      {
+        id: codeId,
+        requestId: request.id,
+        codeHash: 'h',
+        channel: 'whatsapp',
+        createdAt: now,
+        expiresAt: new Date(now.getTime() + 600_000),
+        attempts: 0,
+        consumedAt: null,
+      },
+      new Date(now.getTime() - 1000),
+      (sentAt) => (seen.push(sentAt), { allowed: true }),
+    );
+    expect(decision).toEqual({ allowed: true });
+    expect(seen).toEqual([[]]);
+    const limits = { perCode: 5, perRequest: 2 };
+    expect(await documents.takeCodeAttempt(request.id, now, limits)).toMatchObject({
+      kind: 'taken',
+      code: { id: codeId, attempts: 1 },
+      requestAttempts: 1,
     });
-    expect(await documents.recordFailedAttempt(codeId)).toBe(1);
     expect((await documents.activeCode(request.id, now, 5))?.id).toBe(codeId);
     expect(await documents.activeCode(request.id, now, 1)).toBeNull();
-    expect(await documents.codeSentDates(request.id, new Date(now.getTime() - 1000))).toHaveLength(1);
+    expect(await documents.takeCodeAttempt(request.id, now, { ...limits, perCode: 1 })).toEqual({
+      kind: 'no_code',
+    });
+    expect(await documents.takeCodeAttempt(request.id, now, limits)).toMatchObject({ requestAttempts: 2 });
+    expect(await documents.takeCodeAttempt(request.id, now, limits)).toEqual({ kind: 'request_exhausted' });
+    await pool.query('UPDATE signature_codes SET attempts = 0');
+    await pool.query('UPDATE signature_requests SET code_attempts = 0');
 
     const signedFileId = ids.next();
     const completion = {
@@ -210,6 +228,27 @@ describeWithDatabase('dépôt document (PostgreSQL)', () => {
     expect(JSON.stringify(outbox.rows[0].payload)).not.toContain('+2290197000045');
     expect(await documents.isSigner(document.id, SIGNER)).toBe(true);
     expect(await documents.cancelDocument(document.id, { reason: null, now })).toBe(false);
+
+    // Preuve immuable (ADR-050) : seul l'identifiant du signataire peut être effacé.
+    const where = [request.id];
+    await expect(
+      pool.query("UPDATE signature_evidence SET ip = '10.0.0.1' WHERE request_id = $1", where),
+    ).rejects.toThrow(/immuable/);
+    await expect(
+      pool.query(
+        'UPDATE signature_evidence SET signer_user_id = NULL, signer_name = $2 WHERE request_id = $1',
+        [...where, 'Autre'],
+      ),
+    ).rejects.toThrow(/immuable/);
+    await expect(pool.query('DELETE FROM signature_evidence WHERE request_id = $1', where)).rejects.toThrow(
+      /immuable/,
+    );
+    await expect(pool.query('TRUNCATE signature_evidence CASCADE')).rejects.toThrow(/immuable/);
+    const erased = await pool.query(
+      'UPDATE signature_evidence SET signer_user_id = NULL WHERE request_id = $1',
+      where,
+    );
+    expect(erased.rowCount).toBe(1);
   });
 
   it('clôture des demandes expirées par lots : coordonnées effacées, document expiré', async () => {

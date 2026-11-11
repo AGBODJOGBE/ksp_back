@@ -7,18 +7,20 @@ import { eventDate } from './rule-dates';
  * Messages des événements de la facturation (CDC Nettoyage, partie 10 ; ADR-025) : facture émise,
  * facture impayée, facture réglée.
  *
- * Destinataire : le compte client qui porte le contrat facturé (`customerId`) : WhatsApp et
- * notification dans l'espace KSP. Facture d'une organisation (`organizationId`) : l'e-mail part à
- * l'e-mail de facturation vérifié de l'organisation ; sans lui, à l'adresse vérifiée du compte
- * client (ADR-026) ; sinon aucun e-mail (WhatsApp, et la facture reste dans l'espace KSP). La
- * raison sociale (`organization_name`, vide par défaut) est ajoutée par le service quand la fiche de
- * l'organisation est connue : elle figure dans l'objet de l'e-mail, pas dans le modèle WhatsApp.
+ * Destinataire d'une facture personnelle : le compte client qui porte le contrat facturé
+ * (`customerId`). Facture d'une organisation (`organizationId`, ADR-050) : ses administrateurs
+ * actuels, lus dans identity au moment de l'événement (jamais le compte client, qui a pu quitter
+ * l'organisation), et l'e-mail de facturation vérifié, qui reçoit alors seul l'e-mail (une copie).
+ * La raison sociale (`organization_name`, vide par défaut) est ajoutée par le service : elle figure
+ * dans l'objet de l'e-mail, pas dans le modèle WhatsApp.
  *
- * Lien : la facture dans « Mes factures » du portail, /mon-espace/factures/<invoiceId>.
+ * Lien : la facture dans « Mes factures » du portail, /mon-espace/factures/<invoiceId> ; pour une
+ * organisation, `?organisation=<organizationId>` : le portail ouvre la facture dans ce contexte.
  */
 
-function invoiceLink(context: RuleContext, invoiceId: string): string {
-  return `${context.portalBaseUrl}/mon-espace/factures/${encodeURIComponent(invoiceId)}`;
+function invoiceLink(context: RuleContext, invoiceId: string, organizationId: string | null): string {
+  const link = `${context.portalBaseUrl}/mon-espace/factures/${encodeURIComponent(invoiceId)}`;
+  return organizationId ? `${link}?organisation=${encodeURIComponent(organizationId)}` : link;
 }
 
 /**
@@ -45,34 +47,49 @@ function customer(
     templateCode,
     variables: { ...variables, organization_name: '', link },
     link,
-    ...(event.organizationId ? { billingOrganizationId: event.organizationId } : {}),
+    ...(event.organizationId ? { organizationId: event.organizationId } : {}),
   };
 }
 
 export const BILLING_RULES: { readonly [T in BillingEventType]: EventRule<T> } = {
   'billing.invoice.issued': (event, context) => [
-    customer(event, 'billing.invoice_issued.customer', invoiceLink(context, event.invoiceId), {
-      invoice_number: event.invoiceNumber,
-      period: period(event.periodStart, event.periodEnd, context),
-      total: formatXof(event.total.amount),
-      due_on: eventDate(event.dueAt, context),
-    }),
+    customer(
+      event,
+      'billing.invoice_issued.customer',
+      invoiceLink(context, event.invoiceId, event.organizationId),
+      {
+        invoice_number: event.invoiceNumber,
+        period: period(event.periodStart, event.periodEnd, context),
+        total: formatXof(event.total.amount),
+        due_on: eventDate(event.dueAt, context),
+      },
+    ),
   ],
 
   'billing.invoice.overdue': (event, context) => [
-    customer(event, 'billing.invoice_overdue.customer', invoiceLink(context, event.invoiceId), {
-      invoice_number: event.invoiceNumber,
-      total: formatXof(event.total.amount),
-      due_on: eventDate(event.dueAt, context),
-    }),
+    customer(
+      event,
+      'billing.invoice_overdue.customer',
+      invoiceLink(context, event.invoiceId, event.organizationId),
+      {
+        invoice_number: event.invoiceNumber,
+        total: formatXof(event.total.amount),
+        due_on: eventDate(event.dueAt, context),
+      },
+    ),
   ],
 
   'billing.invoice.paid': (event, context) => [
-    customer(event, 'billing.invoice_paid.customer', invoiceLink(context, event.invoiceId), {
-      invoice_number: event.invoiceNumber,
-      total: formatXof(event.total.amount),
-      paid_on: eventDate(event.paidAt, context),
-      unpaid_left: String(event.overdueCount),
-    }),
+    customer(
+      event,
+      'billing.invoice_paid.customer',
+      invoiceLink(context, event.invoiceId, event.organizationId),
+      {
+        invoice_number: event.invoiceNumber,
+        total: formatXof(event.total.amount),
+        paid_on: eventDate(event.paidAt, context),
+        unpaid_left: String(event.overdueCount),
+      },
+    ),
   ],
 };

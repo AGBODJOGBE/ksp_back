@@ -69,8 +69,8 @@ export interface EmailVerificationRepository {
   findLatest(userId: string): Promise<StoredEmailVerification | null>;
   /** Dernière demande pour l'e-mail de facturation de l'organisation, quel que soit le membre qui l'a faite. */
   findLatestForOrganization(organizationId: string): Promise<StoredEmailVerification | null>;
-  /** Compte un essai faux et renvoie le nombre d'essais, de façon atomique. */
-  registerFailedAttempt(id: string): Promise<number>;
+  /** Prend un essai avant la comparaison, de façon atomique (comme les codes par téléphone). */
+  takeAttempt(id: string, maxAttempts: number, now: Date): Promise<number | null>;
   /**
    * Consomme la demande, enregistre l'adresse comme e-mail vérifié du compte et écrit l'événement
    * identity.user.verified. Lève VerificationAlreadyConsumedError ou EmailAlreadyUsedError.

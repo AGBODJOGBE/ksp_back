@@ -80,6 +80,8 @@ export interface PresignedUpload {
 export interface ObjectStat {
   sizeBytes: number;
   contentType: string | null;
+  /** Version du contenu (ETag) : la copie n'a lieu que si elle n'a pas changé. */
+  etag: string | null;
 }
 
 /**
@@ -103,6 +105,11 @@ export interface ObjectStorage {
   readHead(key: string, bytes: number): Promise<Uint8Array>;
   /** Efface le contenu ; sans effet s'il n'existe pas. */
   remove(key: string): Promise<void>;
+  /**
+   * Copie le contenu de `from` vers `to` s'il est toujours à la version `etag` (contenu vérifié) ;
+   * false s'il a changé ou disparu entre-temps.
+   */
+  copyIfUnchanged(from: string, to: string, etag: string | null): Promise<boolean>;
 }
 
 /**

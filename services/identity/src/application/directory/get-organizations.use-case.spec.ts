@@ -1,5 +1,5 @@
-import { type Organization } from '../../domain/organization/organization';
 import {
+  type DirectoryOrganization,
   GetOrganizationsUseCase,
   MAX_ORGANIZATION_IDS,
   type OrganizationDirectory,
@@ -8,7 +8,7 @@ import {
 const ORG_1 = '0192f1c4-0000-7000-8000-00000000a001';
 const ORG_2 = '0192f1c4-0000-7000-8000-00000000a002';
 
-const organization = (id: string, overrides: Partial<Organization> = {}): Organization => ({
+const organization = (id: string, overrides: Partial<DirectoryOrganization> = {}): DirectoryOrganization => ({
   id,
   legalName: 'SARL Bénin Propre',
   address: 'Lot 12, Haie Vive, Cotonou',
@@ -23,6 +23,7 @@ const organization = (id: string, overrides: Partial<Organization> = {}): Organi
   rejectionReason: null,
   suspendedAt: null,
   suspensionReason: null,
+  adminUserIds: ['0192f1c4-0000-7000-8000-000000000001'],
   ...overrides,
 });
 
@@ -48,6 +49,8 @@ describe('GetOrganizationsUseCase', () => {
       [ORG_1, 'active', 'compta@benin-propre.bj'],
       [ORG_2, 'suspended', null],
     ]);
+    // Administrateurs actuels : destinataires des factures de l'organisation (ADR-050).
+    expect(found[0]!.adminUserIds).toEqual(['0192f1c4-0000-7000-8000-000000000001']);
   });
 
   it('rend à billing l’en-tête sans l’e-mail de facturation', async () => {
@@ -59,6 +62,7 @@ describe('GetOrganizationsUseCase', () => {
       ifu: '3201912345678',
       rccm: 'RB/COT/19 B 1234',
       billingEmail: null,
+      adminUserIds: [],
     });
   });
 

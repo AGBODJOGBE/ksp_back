@@ -1,3 +1,4 @@
+import { AllowedCallers } from '@ksp/platform';
 import { identityV1 } from '@ksp/contracts';
 import { Controller } from '@nestjs/common';
 import { FindAccountByPhoneUseCase } from '../../application/account-admin/find-account-by-phone.use-case';
@@ -83,6 +84,7 @@ export function toAccountDetailMessage(detail: AccountDetailView): identityV1.Ac
  * gateway. Rôles, double authentification et périmètre revérifiés par les cas d'usage.
  */
 @Controller()
+@AllowedCallers('gateway')
 @identityV1.AccountAdminServiceControllerMethods()
 export class AccountAdminGrpcController implements identityV1.AccountAdminServiceController {
   constructor(

@@ -1,3 +1,4 @@
+import { AllowedCallers } from '@ksp/platform';
 import { fileV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import { FILE_USE_CASES, type FileUseCases } from '../../application/use-cases';
@@ -8,6 +9,7 @@ import { presentDownload, presentFile, presentTicket } from './presenters';
  * présignée n'est journalisée.
  */
 @Controller()
+@AllowedCallers('gateway')
 @fileV1.FileServiceControllerMethods()
 export class FileGrpcController implements fileV1.FileServiceController {
   constructor(@Inject(FILE_USE_CASES) private readonly useCases: FileUseCases) {}

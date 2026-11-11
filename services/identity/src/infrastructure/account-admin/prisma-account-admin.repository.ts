@@ -236,6 +236,7 @@ export class PrismaAccountAdminRepository implements AccountAdminRepository {
     reason: string;
     auditId: string;
     now: Date;
+    enrollBefore: Date;
   }): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       const factors = await tx.mfaFactor.deleteMany({ where: { userId: change.userId } });
@@ -261,6 +262,19 @@ export class PrismaAccountAdminRepository implements AccountAdminRepository {
           details: { reason: change.reason, recoveryCodesRemoved: codes.count },
         },
       });
+      // Reconfiguration ouverte peu de temps, et titulaire prévenu (ADR-050).
+      await tx.user.update({
+        where: { id: change.userId },
+        data: { mfaEnrollmentDeadline: change.enrollBefore },
+      });
+      await appendToOutbox(
+        tx as unknown as SqlExecutor,
+        createEnvelope(
+          'identity.user.mfa_reset',
+          { userId: change.userId, enrollBefore: change.enrollBefore.toISOString() },
+          { producer: 'identity', occurredAt: change.now },
+        ),
+      );
       return true;
     });
   }

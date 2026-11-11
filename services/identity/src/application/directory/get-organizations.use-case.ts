@@ -1,14 +1,21 @@
 import { AppError } from '@ksp/platform';
 import { type Organization } from '../../domain/organization/organization';
 
+/** Fiche d'organisation lue par un autre service, avec ses administrateurs actuels. */
+export type DirectoryOrganization = Organization & {
+  /** Membres org_admin non retirés : destinataires des messages adressés à l'organisation. */
+  adminUserIds: string[];
+};
+
 /** Lecture d'organisations par identifiant, pour les autres services (IdentityService). */
 export interface OrganizationDirectory {
   /** Organisations trouvées, dans un ordre quelconque ; un identifiant inconnu est simplement absent. */
-  findByIds(organizationIds: readonly string[]): Promise<Organization[]>;
+  findByIds(organizationIds: readonly string[]): Promise<DirectoryOrganization[]>;
 }
 
 /**
- * Services autorisés à lire les fiches d'organisation, et s'ils reçoivent l'e-mail de facturation.
+ * Services autorisés à lire les fiches d'organisation, et s'ils reçoivent les coordonnées (e-mail
+ * de facturation et administrateurs actuels).
  * Carte des services : billing copie l'en-tête des factures (raison sociale, adresse, IFU, RCCM) ;
  * notification envoie les factures à l'e-mail de facturation ; cleaning affiche la raison sociale au
  * back-office, sans l'e-mail. Tout autre appelant est refusé
@@ -50,12 +57,15 @@ export const OrganizationDirectoryErrors = {
  *   uniquement, le kit l'interdit en production).
  * - Tous les états sont rendus : l'appelant décide (une facture garde l'en-tête d'une organisation
  *   suspendue).
- * - Sans le droit aux coordonnées, l'e-mail de facturation est retiré.
+ * - Sans le droit aux coordonnées, l'e-mail de facturation et les administrateurs sont retirés.
  */
 export class GetOrganizationsUseCase {
   constructor(private readonly directory: OrganizationDirectory) {}
 
-  async many(callerService: string | null, organizationIds: readonly string[]): Promise<Organization[]> {
+  async many(
+    callerService: string | null,
+    organizationIds: readonly string[],
+  ): Promise<DirectoryOrganization[]> {
     let policy = { billingEmail: true };
     if (callerService !== null) {
       if (!Object.hasOwn(ORGANIZATION_DIRECTORY_CALLERS, callerService)) {
@@ -73,6 +83,6 @@ export class GetOrganizationsUseCase {
     const organizations = await this.directory.findByIds(ids);
     return policy.billingEmail
       ? organizations
-      : organizations.map((organization) => ({ ...organization, billingEmail: null }));
+      : organizations.map((organization) => ({ ...organization, billingEmail: null, adminUserIds: [] }));
   }
 }

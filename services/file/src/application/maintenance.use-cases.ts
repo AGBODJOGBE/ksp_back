@@ -1,4 +1,5 @@
 import { ERASED_WITH_ACCOUNT } from '../domain/purposes';
+import { incomingKeyFor } from '../domain/stored-file';
 import { type AccountErasure, type FileDeps } from './ports';
 
 const MINUTE_MS = 60_000;
@@ -46,6 +47,7 @@ export class PurgeFilesUseCase {
     for (const file of await files.listToErase(now, PURGE_BATCH_SIZE)) {
       try {
         await storage.remove(file.storageKey);
+        await storage.remove(incomingKeyFor(file.id));
         await files.remove(file.id, now);
         erased += 1;
       } catch {

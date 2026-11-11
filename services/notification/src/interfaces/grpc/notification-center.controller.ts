@@ -1,3 +1,4 @@
+import { AllowedCallers } from '@ksp/platform';
 import { notificationV1 } from '@ksp/contracts';
 import { Controller } from '@nestjs/common';
 import {
@@ -76,6 +77,7 @@ export function presentTemplate(value: TemplatePreview): notificationV1.MessageT
  * requête, posé par la gateway. Aucune règle métier ici.
  */
 @Controller()
+@AllowedCallers('gateway')
 @notificationV1.InAppNotificationServiceControllerMethods()
 export class InAppNotificationGrpcController implements notificationV1.InAppNotificationServiceController {
   constructor(
@@ -130,6 +132,7 @@ export class InAppNotificationGrpcController implements notificationV1.InAppNoti
 
 /** Back-office des notifications (ADR-039) : droits vérifiés par les cas d'usage. */
 @Controller()
+@AllowedCallers('gateway')
 @notificationV1.NotificationAdminServiceControllerMethods()
 export class NotificationAdminGrpcController implements notificationV1.NotificationAdminServiceController {
   constructor(

@@ -1,5 +1,5 @@
 import { identityV1 } from '@ksp/contracts';
-import { currentContext, requireUser } from '@ksp/platform';
+import { AllowedCallers, currentContext, requireUser } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
 import {
   DecideOrganizationUseCase,
@@ -25,6 +25,7 @@ const STATUS_IN = Object.fromEntries(
  * L'utilisateur vient toujours du contexte transmis par la gateway, jamais du message.
  */
 @Controller()
+@AllowedCallers('gateway')
 @identityV1.OrganizationServiceControllerMethods()
 export class OrganizationGrpcController implements identityV1.OrganizationServiceController {
   constructor(
@@ -96,6 +97,7 @@ export class OrganizationGrpcController implements identityV1.OrganizationServic
  * Rôles et double authentification revérifiés par les cas d'usage.
  */
 @Controller()
+@AllowedCallers('gateway')
 @identityV1.OrganizationAdminServiceControllerMethods()
 export class OrganizationAdminGrpcController implements identityV1.OrganizationAdminServiceController {
   constructor(

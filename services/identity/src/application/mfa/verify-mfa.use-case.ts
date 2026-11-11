@@ -15,7 +15,7 @@ import {
   type TotpGenerator,
   TotpStepAlreadyUsedError,
 } from './mfa.ports';
-import { type ClientDetails, type MfaStep, type MfaStepGuard } from './mfa-step-guard';
+import { type ClientDetails, type MfaCodeStep, type MfaStepGuard } from './mfa-step-guard';
 
 export interface VerifyMfaInput extends ClientDetails {
   mfaToken: string;
@@ -43,7 +43,7 @@ export class VerifyMfaUseCase {
 
   async execute(input: VerifyMfaInput): Promise<BackofficeSession> {
     const now = this.clock.now();
-    const step = await this.guard.open(input, now);
+    const step = await this.guard.openForCode(input, now);
     const factor = await this.factors.findTotp(step.account.id);
     if (!factor?.enabledAt) throw mfaErrors.enrollmentRequired();
 
@@ -66,7 +66,7 @@ export class VerifyMfaUseCase {
   }
 
   private async totpProof(
-    step: MfaStep,
+    step: MfaCodeStep,
     factor: TotpFactor,
     input: VerifyMfaInput,
     now: Date,
@@ -84,7 +84,7 @@ export class VerifyMfaUseCase {
     return { kind: 'totp', factorId: factor.id, step: check.step };
   }
 
-  private async recoveryProof(step: MfaStep, input: VerifyMfaInput): Promise<SecondFactorProof> {
+  private async recoveryProof(step: MfaCodeStep, input: VerifyMfaInput): Promise<SecondFactorProof> {
     const normalized = normalizeRecoveryCode(input.code);
     const codeId = normalized
       ? await this.factors.findUnusedRecoveryCode(

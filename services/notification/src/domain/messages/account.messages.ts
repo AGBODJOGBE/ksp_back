@@ -46,6 +46,23 @@ export const ACCOUNT_TEMPLATES: readonly EventTemplateDefinition[] = [
       ),
     }),
   ),
+  {
+    // Alerte de sécurité : WhatsApp ET e-mail, jamais écartée par les préférences.
+    code: 'identity.mfa_reset.staff',
+    channels: ['whatsapp', 'email'],
+    secret: false,
+    kind: 'important',
+    variables: { first_name: FIRST_NAME, enroll_before: DATE },
+    render: (v) => ({
+      subject: 'Double authentification réinitialisée sur votre compte KSP',
+      text: lines(
+        greeting(v),
+        "La double authentification de votre compte KSP vient d'être réinitialisée par un administrateur.",
+        `Reconnectez-vous au back-office et configurez de nouveau votre application d'authentification avant le ${v['enroll_before']}.`,
+        "Si vous n'êtes pas à l'origine de cette demande, prévenez immédiatement la direction de KSP.",
+      ),
+    }),
+  },
   template('identity.account_deletion_cancelled.customer', { first_name: FIRST_NAME, link: LINK }, (v) => ({
     subject: 'Suppression de votre compte KSP annulée',
     text: lines(

@@ -97,6 +97,7 @@ import { LocalServiceTokenProvider } from './infrastructure/service-token/local-
 import {
   CryptoRefreshTokenGenerator,
   hashRefreshToken,
+  HmacRefreshTokenSuccessor,
 } from './infrastructure/session/crypto-refresh-token-generator';
 import { PrismaLoginRepository } from './infrastructure/session/prisma-login.repository';
 import { PrismaSessionStore } from './infrastructure/session/prisma-session.store';
@@ -377,7 +378,7 @@ export class AppModule {
           ) =>
             new RefreshSessionUseCase(
               sessions,
-              new CryptoRefreshTokenGenerator(),
+              new HmacRefreshTokenSuccessor(config.OTP_HMAC_SECRET),
               hashRefreshToken,
               accessTokens,
               new UuidV7Generator(),
@@ -385,6 +386,7 @@ export class AppModule {
               sessionPoliciesFrom(config),
               roles,
               organizations,
+              config.REFRESH_TOKEN_REUSE_GRACE_SECONDS,
             ),
         },
         {
@@ -474,7 +476,13 @@ export class AppModule {
           provide: ResetAccountMfaUseCase,
           inject: [AccountDetails, PrismaAccountAdminRepository],
           useFactory: (details: AccountDetails, accounts: PrismaAccountAdminRepository) =>
-            new ResetAccountMfaUseCase(details, accounts, new UuidV7Generator(), new SystemClock()),
+            new ResetAccountMfaUseCase(
+              details,
+              accounts,
+              new UuidV7Generator(),
+              new SystemClock(),
+              config.MFA_RESET_ENROLLMENT_SECONDS,
+            ),
         },
         {
           provide: GetUsersUseCase,

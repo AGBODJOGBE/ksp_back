@@ -21,8 +21,11 @@ export interface MfaChallengeRepository {
    */
   openAfterOtp(otpChallengeId: string, challenge: NewMfaChallenge, now: Date): Promise<void>;
   findByTokenHash(tokenHash: string): Promise<StoredMfaChallenge | null>;
-  /** Compte un code faux et renvoie le nombre d'essais, de façon atomique. */
-  registerFailedAttempt(id: string): Promise<number>;
+  /**
+   * Prend un essai avant la comparaison, de façon atomique : renvoie le nombre d'essais, ou null si
+   * l'étape n'est plus utilisable (consommée, expirée ou essais épuisés).
+   */
+  takeAttempt(id: string, maxAttempts: number, now: Date): Promise<number | null>;
 }
 
 /** Application d'authentification d'un compte : secret chiffré, actif une fois confirmé. */
@@ -36,6 +39,8 @@ export interface TotpFactor {
 
 export interface MfaFactorRepository {
   findTotp(userId: string): Promise<TotpFactor | null>;
+  /** Échéance de la reconfiguration après une réinitialisation (ADR-050) ; null : aucune. */
+  enrollmentDeadline(userId: string): Promise<Date | null>;
   /**
    * Enregistre un secret en attente de confirmation, en remplaçant un secret non confirmé.
    * Lève TotpAlreadyEnabledError si l'application est déjà active.

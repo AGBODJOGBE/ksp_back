@@ -47,7 +47,7 @@ const organization: Organization = {
 };
 
 const organizations: OrganizationDirectory = {
-  findByIds: async (ids) => (ids.includes(ORG_ID) ? [organization] : []),
+  findByIds: async (ids) => (ids.includes(ORG_ID) ? [{ ...organization, adminUserIds: [ID] }] : []),
 };
 
 const controller = new IdentityGrpcController(
@@ -99,6 +99,7 @@ describe('IdentityGrpcController', () => {
           id: ORG_ID,
           legalName: 'SARL Bénin Propre',
           address: 'Lot 12, Haie Vive, Cotonou',
+          adminUserIds: [ID],
           ifu: '3201912345678',
           rccm: '',
           billingEmail: 'compta@benin-propre.bj',
@@ -110,6 +111,7 @@ describe('IdentityGrpcController', () => {
       controller.getOrganizationsByIds({ organizationIds: [ORG_ID] }),
     );
     expect(forBilling.organizations[0]?.billingEmail).toBe('');
+    expect(forBilling.organizations[0]?.adminUserIds).toEqual([]);
     await expect(
       asCaller('gateway', () => controller.getOrganizationsByIds({ organizationIds: [ORG_ID] })),
     ).rejects.toMatchObject({ code: 'IDENTITY_CALLER_FORBIDDEN' });

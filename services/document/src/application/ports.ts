@@ -1,5 +1,5 @@
 import { type DocumentEventPayloads } from '@ksp/contracts';
-import { type CodePolicy } from '../domain/code-policy';
+import { type CodePolicy, type SendDecision } from '../domain/code-policy';
 import { type DocumentContent, type Issuer } from '../domain/content';
 import { type DocumentRecord, type DocumentStatus } from '../domain/document';
 import {
@@ -26,6 +26,13 @@ export interface AccountErasure {
   /** Demandes de signature en attente adressées au compte : annulées. */
   cancelledRequests: number;
 }
+
+/** Issue de la prise d'un essai sur le code d'une demande. */
+export type CodeAttempt =
+  | { kind: 'taken'; code: SignatureCode; requestAttempts: number }
+  | { kind: 'no_code' }
+  | { kind: 'request_exhausted' }
+  | { kind: 'closed' };
 
 /** Fin de la signature, enregistrée en une transaction avec l'événement (outbox). */
 export interface SignatureCompletion {
@@ -72,17 +79,33 @@ export interface DocumentRepository {
   /** Demandes en attente dont l'expiration est passée : closes par lots. */
   expireDue(now: Date, limit: number): Promise<number>;
 
-  /** Dates d'envoi des codes de la demande depuis `since`. */
-  codeSentDates(requestId: string, since: Date): Promise<Date[]>;
-  createCode(code: SignatureCode): Promise<void>;
+  /**
+   * Sous le verrou de la demande en attente (ADR-050) : lit les dates d'envoi de ses codes depuis
+   * `since`, applique `decide`, et enregistre le code s'il est permis. Des envois simultanés passent
+   * ainsi l'un après l'autre. null si la demande n'est plus en attente.
+   */
+  createCodeWithinLimits(
+    code: SignatureCode,
+    since: Date,
+    decide: (sentAt: Date[]) => SendDecision,
+  ): Promise<SendDecision | null>;
   /** Canal effectivement utilisé, connu après l'envoi. */
   setCodeChannel(codeId: string, channel: CodeChannel): Promise<void>;
   /** Retire un code qui n'a pas pu être envoyé. */
   deleteCode(codeId: string): Promise<void>;
   /** Dernier code ni consommé, ni expiré, ni épuisé ; null sinon. */
   activeCode(requestId: string, now: Date, maxAttempts: number): Promise<SignatureCode | null>;
-  /** Compte un essai faux ; renvoie le nombre d'essais du code. */
-  recordFailedAttempt(codeId: string): Promise<number>;
+  /**
+   * Prend un essai avant la comparaison, sous le verrou de la demande (ADR-050) : sur le dernier
+   * code (ni consommé, ni expiré, ni épuisé) et sur la demande (plafond tous codes confondus).
+   */
+  takeCodeAttempt(
+    requestId: string,
+    now: Date,
+    limits: { perCode: number; perRequest: number },
+  ): Promise<CodeAttempt>;
+  /** Clôt une demande en attente dont les essais sont épuisés, comme une expiration. */
+  closeExhaustedRequest(requestId: string, now: Date): Promise<boolean>;
   /**
    * Signature : code consommé, demande et document signés, preuve et événement enregistrés, en une
    * transaction. false si la demande n'est plus en attente ou le code déjà consommé.
@@ -190,6 +213,8 @@ export interface DocumentSettings {
   genericTemplateEnabled: boolean;
   /** Services métier autorisés à appeler DocumentInternalService. */
   internalCallers: readonly string[];
+  /** Jours pendant lesquels le lien reste lisible après la signature ; ensuite, introuvable (ADR-050). */
+  signedLinkDays: number;
 }
 
 export interface DocumentDeps {

@@ -36,6 +36,7 @@ export class IdentityOrganizationDirectory implements OrganizationDirectory {
           legalName: organization.legalName,
           // Convention protobuf : une chaîne vide vaut une valeur absente.
           billingEmail: organization.billingEmail || null,
+          adminUserIds: organization.adminUserIds,
         })),
       );
     }

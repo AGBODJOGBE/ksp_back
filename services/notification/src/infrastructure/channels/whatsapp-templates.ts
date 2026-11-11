@@ -191,6 +191,7 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
     'link',
   ]),
   'identity.account_deletion_cancelled.customer': spec('ksp_identity_account_deletion_cancelled', ['link']),
+  'identity.mfa_reset.staff': spec('ksp_identity_mfa_reset', ['enroll_before']),
   'cleaning.contract_resumed.team': spec('ksp_cleaning_team_contract_resumed', [
     'mission_id',
     'rescheduled_count',

@@ -947,7 +947,7 @@ describe('NotifyEventUseCase — factures mensuelles (billing)', () => {
     invoiceId: INVOICE,
     invoiceNumber: 'FAC-2026-000042',
     customerId: CUSTOMER,
-    organizationId: ORG,
+    organizationId: null,
     source: 'cleaning' as const,
     contractId: MISSION,
     total: { amount: 150000, currency: 'XOF' as const },
@@ -1050,74 +1050,89 @@ describe('NotifyEventUseCase — factures mensuelles (billing)', () => {
     expect(email.sent).toHaveLength(1);
   });
 
-  describe('facture d’une organisation (ADR-027)', () => {
-    const billing = (billingEmail: string | null) => [
-      { organizationId: ORG, legalName: 'SARL Bénin Propre', billingEmail },
+  describe('facture d’une organisation (ADR-027, ADR-050)', () => {
+    const ADMIN = '0192f1c4-0000-7000-8000-0000000ad001';
+    const ADMIN_2 = '0192f1c4-0000-7000-8000-0000000ad002';
+    const ORG_LINK = `${LINK}?organisation=${ORG}`;
+    const admin = contact(ADMIN, { firstName: 'Awa', phoneE164: '+2290197000046', email: 'awa@example.com' });
+    const admin2 = contact(ADMIN_2, { firstName: 'Sena', phoneE164: '+2290197000047', email: null });
+    const toOrg = (received: ReceivedEvent): ReceivedEvent => ({
+      ...received,
+      payload: { ...(received.payload as object), organizationId: ORG },
+    });
+    const billing = (billingEmail: string | null, adminUserIds = [ADMIN]) => [
+      { organizationId: ORG, legalName: 'SARL Bénin Propre', billingEmail, adminUserIds },
     ];
-    const setupOrg = (contacts: RecipientContact[], billingEmail: string | null) =>
-      setup(contacts, undefined, [], [], billing(billingEmail));
+    const setupOrg = (billingEmail: string | null, adminUserIds = [ADMIN]) =>
+      setup([withEmail, admin, admin2], undefined, [], [], billing(billingEmail, adminUserIds));
 
-    it('e-mail à l’adresse de facturation vérifiée ; l’espace KSP reste celui du compte client', async () => {
-      const { useCase, whatsapp, email, inbox, organizations } = setupOrg(
-        [withEmail],
-        'Compta@Benin-Propre.bj',
-      );
-      await expect(useCase.execute(issued)).resolves.toMatchObject({ accepted: 1, inApp: 1 });
+    it('administrateurs actuels seulement : le compte client, ancien membre, ne reçoit rien', async () => {
+      const { useCase, whatsapp, email, inbox, organizations } = setupOrg(null, [ADMIN, ADMIN_2]);
+      await expect(useCase.execute(toOrg(issued))).resolves.toMatchObject({ accepted: 2, inApp: 2 });
       expect(organizations.lookups).toEqual([[ORG]]);
-      expect(whatsapp.sent).toHaveLength(0);
-      expect(email.sent).toHaveLength(1);
-      expect(email.sent[0]).toMatchObject({
-        templateCode: 'billing.invoice_issued.customer',
-        email: 'compta@benin-propre.bj',
-      });
+      expect(inbox.inApp.map((item) => [item.userId, item.link])).toEqual([
+        [ADMIN, ORG_LINK],
+        [ADMIN_2, ORG_LINK],
+      ]);
+      // Sans e-mail de facturation : chacun à son adresse vérifiée, sinon WhatsApp.
+      expect(email.sent).toEqual([expect.objectContaining({ email: 'awa@example.com' })]);
+      expect(whatsapp.sent).toEqual([expect.objectContaining({ phoneE164: '+2290197000047' })]);
+      expect([...email.sent, ...whatsapp.sent].map((message) => message.variables['link'])).toEqual([
+        ORG_LINK,
+        ORG_LINK,
+      ]);
       expect(email.sent[0]!.content!.subject).toBe('Votre facture FAC-2026-000042 — SARL Bénin Propre');
-      expect(inbox.inApp).toEqual([expect.objectContaining({ userId: CUSTOMER, link: LINK })]);
     });
 
-    it('e-mail de facturation refusé par le prestataire : bascule sur le WhatsApp du compte client', async () => {
-      const providers = [
-        new FakeProvider('whatsapp'),
-        new FakeProvider('email', [{ accepted: false, reason: 'recipient_invalid' }]),
-      ];
-      const { useCase, whatsapp } = setup([contact(CUSTOMER)], providers, [], [], billing('compta@bp.bj'));
-      await expect(useCase.execute(overdue)).resolves.toMatchObject({ accepted: 1 });
-      expect(whatsapp.sent).toEqual([expect.objectContaining({ phoneE164: '+2290197000045' })]);
+    it('e-mail de facturation vérifié : une seule copie ; les administrateurs par WhatsApp et dans l’espace', async () => {
+      const { useCase, whatsapp, email, inbox, notifications } = setupOrg('Compta@Benin-Propre.bj', [
+        ADMIN,
+        ADMIN_2,
+      ]);
+      await expect(useCase.execute(toOrg(issued))).resolves.toMatchObject({ accepted: 3, inApp: 2 });
+      expect(email.sent).toEqual([
+        expect.objectContaining({
+          templateCode: 'billing.invoice_issued.customer',
+          email: 'compta@benin-propre.bj',
+        }),
+      ]);
+      expect(email.sent[0]!.content!.subject).toBe('Votre facture FAC-2026-000042 — SARL Bénin Propre');
+      expect(whatsapp.sent.map((message) => message.phoneE164)).toEqual(['+2290197000046', '+2290197000047']);
+      expect(inbox.inApp.map((item) => item.userId)).toEqual([ADMIN, ADMIN_2]);
+      expect(notifications.rows.map((row) => row.idempotencyKey)).toContain(
+        `${EVENT_ID}:billing.invoice_issued.customer:organization:${ORG}`,
+      );
+      // Rejouée, la facture ne part pas deux fois à l'adresse de facturation.
+      await useCase.execute(toOrg(issued));
+      expect(email.sent).toHaveLength(1);
     });
 
-    it('sans e-mail de facturation : repli sur l’adresse vérifiée du compte client, objet nommant l’entreprise', async () => {
-      const { useCase, email } = setupOrg([withEmail], null);
-      await useCase.execute(paid);
-      expect(email.sent).toEqual([expect.objectContaining({ email: 'koffi@example.com' })]);
-      expect(email.sent[0]!.content!.subject).toBe('Facture FAC-2026-000042 réglée — SARL Bénin Propre');
+    it('organisation introuvable : personne n’est prévenu à sa place', async () => {
+      const { useCase, whatsapp, email, inbox } = setup([withEmail]);
+      await expect(useCase.execute(toOrg(paid))).resolves.toMatchObject({ accepted: 0, inApp: 0 });
+      expect([...whatsapp.sent, ...email.sent]).toHaveLength(0);
+      expect(inbox.inApp).toHaveLength(0);
     });
 
-    it('organisation introuvable : repli sur l’adresse vérifiée du compte client, objet inchangé', async () => {
-      const { useCase, email } = setup([withEmail]);
-      await useCase.execute(issued);
-      expect(email.sent).toEqual([expect.objectContaining({ email: 'koffi@example.com' })]);
-      expect(email.sent[0]!.content!.subject).toBe('Votre facture FAC-2026-000042');
-    });
-
-    it('ni e-mail de facturation ni adresse vérifiée : WhatsApp au compte client, aucun e-mail', async () => {
-      const { useCase, whatsapp, email } = setupOrg([contact(CUSTOMER)], null);
-      await useCase.execute(issued);
-      expect(email.sent).toHaveLength(0);
-      expect(whatsapp.sent).toHaveLength(1);
-      // Le modèle WhatsApp ne change pas : la raison sociale n'est pas un de ses paramètres.
-      expect(whatsapp.sent[0]!.variables['organization_name']).toBe('SARL Bénin Propre');
+    it('sans administrateur actuel : seule l’adresse de facturation reçoit la facture', async () => {
+      const { useCase, whatsapp, email, inbox } = setupOrg('compta@bp.bj', []);
+      await expect(useCase.execute(toOrg(paid))).resolves.toMatchObject({ accepted: 1, inApp: 0 });
+      expect(email.sent).toEqual([expect.objectContaining({ email: 'compta@bp.bj' })]);
+      expect(whatsapp.sent).toHaveLength(0);
+      expect(inbox.inApp).toHaveLength(0);
     });
 
     it('identity indisponible pour l’organisation : erreur (reprise par la file), rien n’est envoyé', async () => {
-      const { useCase, whatsapp, email, inbox, organizations } = setupOrg([withEmail], 'compta@bp.bj');
+      const { useCase, whatsapp, email, inbox, organizations } = setupOrg('compta@bp.bj');
       organizations.unavailable = true;
-      await expect(useCase.execute(issued)).rejects.toThrow('identity indisponible');
+      await expect(useCase.execute(toOrg(issued))).rejects.toThrow('identity indisponible');
       expect([...whatsapp.sent, ...email.sent]).toHaveLength(0);
       expect(inbox.processed.size).toBe(0);
     });
 
     it('facture d’un particulier : l’annuaire des organisations n’est pas lu', async () => {
-      const { useCase, email, organizations } = setupOrg([withEmail], 'compta@bp.bj');
-      await useCase.execute({ ...issued, payload: { ...(issued.payload as object), organizationId: null } });
+      const { useCase, email, organizations } = setupOrg('compta@bp.bj');
+      await useCase.execute(issued);
       expect(organizations.lookups).toEqual([]);
       expect(email.sent).toEqual([expect.objectContaining({ email: 'koffi@example.com' })]);
       expect(email.sent[0]!.content!.subject).toBe('Votre facture FAC-2026-000042');
@@ -1283,6 +1298,22 @@ describe('NotifyEventUseCase — suppression du compte (ADR-036)', () => {
     expect(whatsapp.sent[0]).toMatchObject({ templateCode: 'identity.account_deletion_cancelled.customer' });
     expect(whatsapp.sent[0]!.content!.text).toContain('il est de nouveau actif');
   });
+
+  it('double authentification réinitialisée : le titulaire est prévenu par WhatsApp et par e-mail (ADR-050)', async () => {
+    const { useCase, whatsapp, email, inbox } = setup([contact(CUSTOMER, { email: 'koffi@example.com' })]);
+    await expect(
+      useCase.execute(
+        event('identity.user.mfa_reset', { userId: CUSTOMER, enrollBefore: '2026-10-23T11:00:00.000Z' }),
+      ),
+    ).resolves.toMatchObject({ accepted: 2, inApp: 1 });
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'identity.mfa_reset.staff',
+      variables: { enroll_before: expect.stringContaining('23 octobre 2026') },
+    });
+    expect(email.sent).toHaveLength(1);
+    expect(email.sent[0]!.content!.text).toContain("Si vous n'êtes pas à l'origine de cette demande");
+    expect(inbox.inApp).toEqual([expect.objectContaining({ userId: CUSTOMER, link: null })]);
+  });
 });
 
 describe('NotifyEventUseCase — paiement en ligne (ADR-031)', () => {
@@ -1329,7 +1360,14 @@ describe('NotifyEventUseCase — paiement en ligne (ADR-031)', () => {
       undefined,
       [],
       [],
-      [{ organizationId: ORG, legalName: 'SARL Bénin Propre', billingEmail: 'compta@beninpropre.bj' }],
+      [
+        {
+          organizationId: ORG,
+          legalName: 'SARL Bénin Propre',
+          billingEmail: 'compta@beninpropre.bj',
+          adminUserIds: [],
+        },
+      ],
     );
     await useCase.execute(
       event('payment.intent.succeeded', {
