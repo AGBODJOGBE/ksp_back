@@ -208,6 +208,40 @@ describe('NotifyEventUseCase — messages des 7 premiers événements du Nettoya
     ]);
   });
 
+  it('cleaning.interventions.batch_scheduled : un seul message résumé au client et à chaque agent', async () => {
+    const { useCase, whatsapp, inbox } = setup([contact(CUSTOMER), contact(AGENT_1), contact(AGENT_2)]);
+    await expect(
+      useCase.execute(
+        event('cleaning.interventions.batch_scheduled', {
+          missionId: MISSION,
+          customerId: CUSTOMER,
+          interventionIds: ['0192f1c4-0000-7000-8000-00000000i001', '0192f1c4-0000-7000-8000-00000000i002'],
+          count: 157,
+          firstStart: '2026-11-11T07:00:00Z',
+          lastStart: '2027-11-10T07:00:00Z',
+          durationMinutes: 120,
+          agentIds: [AGENT_1, AGENT_2, AGENT_1],
+          skippedDates: [],
+          serviceName: 'Nettoyage de maison',
+        }),
+      ),
+    ).resolves.toMatchObject({ accepted: 3, inApp: 3 });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.interventions_batch_scheduled.customer',
+      'cleaning.interventions_batch_scheduled.agent',
+      'cleaning.interventions_batch_scheduled.agent',
+    ]);
+    const text = whatsapp.sent[0]!.content!.text;
+    expect(text).toContain('157 passages pour « Nettoyage de maison » sont planifiés du ');
+    expect(text).toContain('2027');
+    expect(whatsapp.sent[1]!.content!.text).toContain('vous sont confiés');
+    expect(inbox.inApp.map((notification) => notification.link)).toEqual([
+      `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION}`,
+      null,
+      null,
+    ]);
+  });
+
   it('cleaning.mission.completed : compte rendu, document', async () => {
     const { useCase, email } = setup([contact(CUSTOMER, { email: 'koffi@example.com' })]);
     await useCase.execute(

@@ -147,6 +147,13 @@ export const CleaningErrors = {
     AppError.conflict('CLEANING_TEAM_UNAVAILABLE', 'Un ou plusieurs agents sont déjà pris sur ce créneau.', {
       agentIds,
     }),
+  /** Planification en lot (ADR-052) : dates en conflit et leurs agents ; agentIds : tous les agents en cause. */
+  batchConflicts: (conflicts: { date: string; agentIds: string[] }[]) =>
+    AppError.conflict(
+      'CLEANING_TEAM_UNAVAILABLE',
+      `Des agents sont déjà pris ou indisponibles à ${conflicts.length} date(s) : aucun passage n'a été planifié.`,
+      { agentIds: [...new Set(conflicts.flatMap((conflict) => conflict.agentIds))], conflicts },
+    ),
   concurrentUpdate: () =>
     AppError.conflict(
       'CLEANING_CONCURRENT_UPDATE',
