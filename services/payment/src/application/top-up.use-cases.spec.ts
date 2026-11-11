@@ -102,6 +102,60 @@ describe('recharge du portefeuille prépayé (ADR-046)', () => {
     });
   });
 
+  describe('relecture par wallet avant tout crédit (ADR-048)', () => {
+    const read = (paymentId: string, service = 'wallet') =>
+      asService(service, () => useCases.getTopUpPayment.execute(paymentId));
+    const approve = (transactionId: string, amount?: number, currency = 'XOF') => {
+      provider().set(transactionId, { status: 'approved', ...(amount ? { amount } : {}), currency });
+      return asService('gateway', () =>
+        useCases.receiveProviderNotification.execute({
+          provider: 'fedapay',
+          payload: Buffer.from(
+            JSON.stringify({ name: 'transaction.approved', entity: { id: Number(transactionId) } }),
+          ),
+          signature: 'valid',
+        }),
+      );
+    };
+
+    it('en attente : rien de reçu ; réussi : montant reçu = montant du paiement', async () => {
+      const { payment } = await topUp();
+      expect(await read(payment.id)).toMatchObject({ payment: { status: 'pending' }, receivedAmount: null });
+      await approve(payment.providerTransactionId!);
+      expect(await read(payment.id)).toMatchObject({
+        payment: { status: 'succeeded', subject: { type: 'wallet_top_up', id: CUSTOMER_ID } },
+        receivedAmount: 5000,
+      });
+    });
+
+    it('écart de montant en XOF : montant approuvé ; autre devise : rien de reçu en XOF', async () => {
+      const first = await topUp(5000, 'topup-key-0101');
+      await approve(first.payment.providerTransactionId!, 4000);
+      expect(await read(first.payment.id)).toMatchObject({
+        payment: { status: 'amount_mismatch' },
+        receivedAmount: 4000,
+      });
+      const second = await topUp(7000, 'topup-key-0102');
+      await approve(second.payment.providerTransactionId!, 7000, 'EUR');
+      expect(await read(second.payment.id)).toMatchObject({
+        payment: { status: 'amount_mismatch' },
+        receivedAmount: null,
+      });
+    });
+
+    it('réservé à wallet ; paiement inconnu ou autre objet qu’une recharge : 404', async () => {
+      const { payment } = await topUp();
+      expect((await rejection(read(payment.id, 'cleaning'))).code).toBe('PAYMENT_CALLER_FORBIDDEN');
+      expect((await rejection(read('0192f1c4-0000-7000-8000-0000000fffff'))).code).toBe('PAYMENT_NOT_FOUND');
+      const mission = { ...payment, id: '0192f1c4-0000-7000-8000-0000000ffffe' };
+      payments().rows.set(mission.id, {
+        ...mission,
+        subject: { type: 'cleaning_mission', id: mission.subject.id, part: 'deposit', reference: null },
+      });
+      expect((await rejection(read(mission.id))).code).toBe('PAYMENT_NOT_FOUND');
+    });
+  });
+
   it('réservé à wallet ; jamais par la création d’un paiement client ni par un lien', async () => {
     const run = () =>
       fromWallet(
@@ -114,6 +168,8 @@ describe('recharge du portefeuille prépayé (ADR-046)', () => {
         'cleaning',
       );
     expect((await rejection(run())).code).toBe('PAYMENT_CALLER_FORBIDDEN');
+    // Objet réservé : refusé à la validation de la création d'un paiement client (la gateway seule
+    // appelle cette méthode, contrôlé par le contrôleur, ADR-048).
     const direct = await rejection(
       fromWallet(() =>
         useCases.createPayment.execute({

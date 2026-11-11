@@ -1,3 +1,4 @@
+import { AllowedCallers } from '@ksp/platform';
 import { commonV1, paymentV1 } from '@ksp/contracts';
 import { Controller, Inject, Logger } from '@nestjs/common';
 import { parsePage } from '../../application/shared/validation';
@@ -6,6 +7,7 @@ import { presentAdminPayment, presentPayment } from './presenters';
 
 /** Adaptateur gRPC de l'espace client. Aucune règle métier ici. */
 @Controller()
+@AllowedCallers('gateway')
 @paymentV1.PaymentServiceControllerMethods()
 export class PaymentGrpcController implements paymentV1.PaymentServiceController {
   constructor(@Inject(PAYMENT_USE_CASES) private readonly useCases: PaymentUseCases) {}
@@ -61,6 +63,16 @@ export class TopUpPaymentGrpcController implements paymentV1.TopUpPaymentService
     });
     return { payment: presentPayment(result.payment), created: result.created };
   }
+
+  async getTopUpPayment(
+    request: paymentV1.GetTopUpPaymentRequest,
+  ): Promise<paymentV1.GetTopUpPaymentResponse> {
+    const { payment, receivedAmount } = await this.useCases.getTopUpPayment.execute(request.paymentId);
+    return {
+      payment: presentPayment(payment),
+      receivedAmount: receivedAmount === null ? undefined : { amount: receivedAmount, currency: 'XOF' },
+    };
+  }
 }
 
 /**
@@ -68,6 +80,7 @@ export class TopUpPaymentGrpcController implements paymentV1.TopUpPaymentService
  * l'issue l'est (identifiants seulement).
  */
 @Controller()
+@AllowedCallers('gateway')
 @paymentV1.PaymentWebhookServiceControllerMethods()
 export class PaymentWebhookGrpcController implements paymentV1.PaymentWebhookServiceController {
   private readonly logger = new Logger('PaymentWebhook');
@@ -93,6 +106,7 @@ export class PaymentWebhookGrpcController implements paymentV1.PaymentWebhookSer
 
 /** Adaptateur gRPC du back-office. Droits vérifiés par les cas d'usage. */
 @Controller()
+@AllowedCallers('gateway')
 @paymentV1.PaymentAdminServiceControllerMethods()
 export class PaymentAdminGrpcController implements paymentV1.PaymentAdminServiceController {
   constructor(@Inject(PAYMENT_USE_CASES) private readonly useCases: PaymentUseCases) {}

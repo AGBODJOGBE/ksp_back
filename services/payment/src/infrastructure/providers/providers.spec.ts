@@ -2,6 +2,7 @@ import { type AppError } from '@ksp/platform';
 import { type PaymentProvider } from '../../application/ports';
 import { SimulatedProvider } from './simulated.provider';
 import { FedapayProvider } from './fedapay.provider';
+import { FedapayPayoutProvider } from './payout.providers';
 import { signatureHeader, verifySignature } from './webhook-signature';
 
 const SECRET = 'wh_sandbox_test_secret';
@@ -224,5 +225,27 @@ describe('prestataire simulé : annulation', () => {
     const second = await provider.createCheckout(request);
     await provider.settle(second.transactionId, 'succeeded');
     expect(await provider.cancelTransaction(second.transactionId)).toBe(false);
+  });
+});
+
+describe('reversements FedaPay : refus définitif ou panne (ADR-048)', () => {
+  const statuses: number[] = [];
+  const provider = new FedapayPayoutProvider({
+    apiUrl: 'https://sandbox-api.fedapay.com/v1',
+    secretKey: 'sk_sandbox_secret',
+    fetch: (async () =>
+      new Response(JSON.stringify({ message: 'refusé' }), {
+        status: statuses.shift() ?? 500,
+      })) as unknown as typeof fetch,
+  });
+  const start = async () => ((await provider.startPayout('9001').catch((e: unknown) => e)) as AppError).code;
+
+  it('4xx : PAYMENT_PROVIDER_REJECTED (jamais réessayé) ; 408, 429 et 5xx : panne passagère', async () => {
+    statuses.push(400, 422, 408, 429, 503);
+    expect(await start()).toBe('PAYMENT_PROVIDER_REJECTED');
+    expect(await start()).toBe('PAYMENT_PROVIDER_REJECTED');
+    expect(await start()).toBe('PAYMENT_PROVIDER_UNAVAILABLE');
+    expect(await start()).toBe('PAYMENT_PROVIDER_UNAVAILABLE');
+    expect(await start()).toBe('PAYMENT_PROVIDER_UNAVAILABLE');
   });
 });

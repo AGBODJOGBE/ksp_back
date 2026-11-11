@@ -487,11 +487,66 @@ export interface CreditPrepaidWalletRequest {
 }
 
 export interface CreditPrepaidWalletResponse {
+  /** Absent tant que le crédit attend sa validation (pending_request). */
   transaction?: LedgerTransaction | undefined;
   wallet?:
     | PrepaidWallet
     | undefined;
-  /** false : crédit déjà enregistré avec cette clé (ou ce paiement). */
+  /** false : crédit déjà enregistré avec cette clé (ou ce paiement), ou demande déjà enregistrée. */
+  created: boolean;
+  /**
+   * Crédit au-delà du seuil de double validation (ADR-048) : demande en attente d'un second membre de
+   * la finance ; absente sinon.
+   */
+  pendingRequest?: ManualCreditRequest | undefined;
+}
+
+/** Demande de crédit manuel soumise à double validation (ADR-048). */
+export interface ManualCreditRequest {
+  id: string;
+  holder?:
+    | Holder
+    | undefined;
+  /** "refund" ou "top_up". */
+  kind: string;
+  amount?: Money | undefined;
+  reason: string;
+  /** Recharge : paiement crédité ; vide sinon. */
+  paymentId: string;
+  /** "pending_approval" ou "approved". */
+  status: string;
+  requestedBy: string;
+  requestedAt: string;
+  /** Vides tant qu'elle n'est pas validée. */
+  approvedBy: string;
+  approvedAt: string;
+  transactionId: string;
+}
+
+export interface ListManualCreditRequestsRequest {
+  page?:
+    | Page
+    | undefined;
+  /** "pending_approval" ou "approved" ; vide : toutes. */
+  status: string;
+}
+
+export interface ListManualCreditRequestsResponse {
+  requests: ManualCreditRequest[];
+  nextCursor: string;
+}
+
+export interface ApproveManualCreditRequest {
+  requestId: string;
+}
+
+export interface ApproveManualCreditResponse {
+  transaction?: LedgerTransaction | undefined;
+  wallet?: PrepaidWallet | undefined;
+  request?:
+    | ManualCreditRequest
+    | undefined;
+  /** false : demande déjà validée (le même crédit est rendu). */
   created: boolean;
 }
 
@@ -694,12 +749,34 @@ export interface WalletAdminServiceClient {
   /**
    * Crédit manuel d'un portefeuille prépayé avec motif (ADR-046) : remboursement, ou recharge reçue
    * mais non créditée (écart de montant traité par la finance). Auteur gardé dans le grand livre.
+   * Contrôles (ADR-048) : une recharge est vérifiée auprès de payment (paiement "wallet_top_up" du
+   * même titulaire, réussi ou en écart de montant, montant au plus égal au montant reçu) ; un
+   * remboursement est plafonné (WALLET_MANUAL_REFUND_MAX) et justifié (motif de 15 caractères au
+   * moins). Au-delà de WALLET_CREDIT_APPROVAL_THRESHOLD, le crédit attend la validation d'un second
+   * membre de la finance : rien n'est écrit, la demande est rendue dans pending_request.
    */
 
   creditPrepaidWallet(
     request: CreditPrepaidWalletRequest,
     metadata?: Metadata,
   ): Observable<CreditPrepaidWalletResponse>;
+
+  /** Demandes de crédit manuel en attente de validation (ou validées), les plus récentes d'abord. */
+
+  listManualCreditRequests(
+    request: ListManualCreditRequestsRequest,
+    metadata?: Metadata,
+  ): Observable<ListManualCreditRequestsResponse>;
+
+  /**
+   * Validation par un second membre de la finance (jamais l'auteur de la demande) : le crédit est
+   * écrit. Rejouable : une demande déjà validée rend son crédit.
+   */
+
+  approveManualCredit(
+    request: ApproveManualCreditRequest,
+    metadata?: Metadata,
+  ): Observable<ApproveManualCreditResponse>;
 }
 
 /** Back-office : finance_officer, super_admin, avec double authentification. */
@@ -730,12 +807,37 @@ export interface WalletAdminServiceController {
   /**
    * Crédit manuel d'un portefeuille prépayé avec motif (ADR-046) : remboursement, ou recharge reçue
    * mais non créditée (écart de montant traité par la finance). Auteur gardé dans le grand livre.
+   * Contrôles (ADR-048) : une recharge est vérifiée auprès de payment (paiement "wallet_top_up" du
+   * même titulaire, réussi ou en écart de montant, montant au plus égal au montant reçu) ; un
+   * remboursement est plafonné (WALLET_MANUAL_REFUND_MAX) et justifié (motif de 15 caractères au
+   * moins). Au-delà de WALLET_CREDIT_APPROVAL_THRESHOLD, le crédit attend la validation d'un second
+   * membre de la finance : rien n'est écrit, la demande est rendue dans pending_request.
    */
 
   creditPrepaidWallet(
     request: CreditPrepaidWalletRequest,
     metadata?: Metadata,
   ): Promise<CreditPrepaidWalletResponse> | Observable<CreditPrepaidWalletResponse> | CreditPrepaidWalletResponse;
+
+  /** Demandes de crédit manuel en attente de validation (ou validées), les plus récentes d'abord. */
+
+  listManualCreditRequests(
+    request: ListManualCreditRequestsRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ListManualCreditRequestsResponse>
+    | Observable<ListManualCreditRequestsResponse>
+    | ListManualCreditRequestsResponse;
+
+  /**
+   * Validation par un second membre de la finance (jamais l'auteur de la demande) : le crédit est
+   * écrit. Rejouable : une demande déjà validée rend son crédit.
+   */
+
+  approveManualCredit(
+    request: ApproveManualCreditRequest,
+    metadata?: Metadata,
+  ): Promise<ApproveManualCreditResponse> | Observable<ApproveManualCreditResponse> | ApproveManualCreditResponse;
 }
 
 export function WalletAdminServiceControllerMethods() {
@@ -746,6 +848,8 @@ export function WalletAdminServiceControllerMethods() {
       "listWalletPayouts",
       "getLedgerOverview",
       "creditPrepaidWallet",
+      "listManualCreditRequests",
+      "approveManualCredit",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);

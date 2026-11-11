@@ -20,8 +20,12 @@ export const PAYOUT_OPERATORS: readonly PayoutOperator[] = ['mtn', 'moov', 'celt
 
 export type PayoutProviderName = 'fedapay' | 'manual';
 
-/** Code d'échec publié (la raison détaillée reste dans payment). */
-export type PayoutFailureCode = 'provider_failed' | 'rejected_by_finance';
+/**
+ * Code d'échec publié (la raison détaillée reste dans payment) : `provider_failed` (échec relu chez
+ * le prestataire), `provider_rejected` (refus définitif, HTTP 4xx, à la création ou au lancement,
+ * ADR-048), `rejected_by_finance` (mode manuel).
+ */
+export type PayoutFailureCode = 'provider_failed' | 'provider_rejected' | 'rejected_by_finance';
 
 /** Numéro béninois E.164 : +229 suivi de 8 chiffres (ancien plan) ou de 10 (depuis 2024). */
 export const BENIN_PHONE = /^\+229(\d{8}|\d{10})$/;
@@ -142,6 +146,25 @@ export function applyProviderPayoutStatus(
     };
   }
   return null;
+}
+
+/**
+ * Refus définitif du prestataire (HTTP 4xx) à la création ou au lancement : échec, jamais réessayé.
+ * Aucun argent n'est parti (le prestataire a refusé l'opération).
+ */
+export function rejectByProvider(payout: Payout, input: { httpStatus: number; now: Date }): PayoutTransition {
+  if (isSettled(payout.status)) return null;
+  return {
+    kind: 'failed',
+    payout: {
+      ...payout,
+      status: 'failed',
+      failureCode: 'provider_rejected',
+      failureReason: `Refusé par le prestataire (HTTP ${input.httpStatus}).`,
+      failedAt: input.now,
+      updatedAt: input.now,
+    },
+  };
 }
 
 /** Issue d'une décision de la finance sur un reversement manuel. */

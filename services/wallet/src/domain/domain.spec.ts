@@ -64,6 +64,7 @@ describe('reversement wallet', () => {
     beneficiaryPhone: '+2290197000045',
     beneficiaryName: 'X',
     beneficiaryPhoneMasked: maskPhone('+2290197000045'),
+    beneficiaryPhoneHash: null,
     beneficiaryOperator: 'moov',
     paymentPayoutId: null,
     holdTransactionId: 't1',

@@ -75,6 +75,7 @@ model PaymentIntent {
   mismatchResolvedAt     DateTime?    @map("mismatch_resolved_at") @db.Timestamptz(3)
   mismatchResolvedBy     String?      @map("mismatch_resolved_by") @db.Uuid
   mismatchResolutionNote String?      @map("mismatch_resolution_note")
+  receivedAmount        Int?      @map("received_amount")
   mismatchResolutionKey  String?      @map("mismatch_resolution_key")
   version                Int          @default(0)
   /// Lien de paiement payé (payeur sans compte) ; exactement un des deux : payeur ou lien.

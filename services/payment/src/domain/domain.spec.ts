@@ -32,6 +32,7 @@ const intent = (overrides: Partial<PaymentIntent> = {}): PaymentIntent => ({
   completedAt: null,
   lastCheckedAt: null,
   mismatchResolution: null,
+  receivedAmount: null,
   version: 0,
   ...overrides,
 });

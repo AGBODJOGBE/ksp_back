@@ -118,6 +118,7 @@ model WalletPayout {
   beneficiaryPhone        String?   @map("beneficiary_phone")
   beneficiaryName         String?   @map("beneficiary_name")
   beneficiaryPhoneMasked  String    @map("beneficiary_phone_masked")
+  beneficiaryPhoneHash    String?   @map("beneficiary_phone_hash")
   beneficiaryOperator     String    @map("beneficiary_operator")
   paymentPayoutId         String?   @map("payment_payout_id")
   holdTransactionId       String    @map("hold_transaction_id") @db.Uuid
@@ -133,4 +134,35 @@ model WalletPayout {
   @@index([holderType, holderId, id])
   @@index([status, createdAt])
   @@map("wallet_payouts")
+}
+
+/// Débit du portefeuille rapproché avec le service qui l'a fait (ADR-048).
+model DebitCheck {
+  transactionId String   @id @map("transaction_id") @db.Uuid
+  outcome       String
+  checkedAt     DateTime @map("checked_at") @db.Timestamptz(3)
+
+  @@map("debit_checks")
+}
+
+/// Demande de crédit manuel au-delà du seuil de double validation (ADR-048).
+model ManualCreditRequest {
+  id             String    @id @db.Uuid
+  idempotencyKey String    @unique @map("idempotency_key")
+  holderType     String    @map("holder_type")
+  holderId       String    @map("holder_id") @db.Uuid
+  kind           String
+  amount         BigInt
+  reason         String
+  paymentId      String?   @map("payment_id") @db.Uuid
+  status         String
+  requestedBy    String    @map("requested_by") @db.Uuid
+  requestedAt    DateTime  @map("requested_at") @db.Timestamptz(3)
+  approvedBy     String?   @map("approved_by") @db.Uuid
+  approvedAt     DateTime? @map("approved_at") @db.Timestamptz(3)
+  transactionId  String?   @map("transaction_id") @db.Uuid
+  version        Int       @default(0)
+
+  @@index([status, id])
+  @@map("manual_credit_requests")
 }

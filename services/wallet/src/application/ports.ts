@@ -122,6 +122,13 @@ export interface LedgerStore {
     page: PageRequest,
   ): Promise<PageResult<StatementLine>>;
   overview(): Promise<LedgerOverview>;
+  /**
+   * Débits du portefeuille (paiement d'un service) créés avant `before`, ni vérifiés ni remboursés,
+   * les plus anciens d'abord (rapprochement, ADR-048).
+   */
+  listUncheckedDebits(before: Date, limit: number): Promise<LedgerTransaction[]>;
+  /** Note le débit vérifié (enregistré par le service, ou remboursé) : il n'est plus relu. */
+  markDebitChecked(transactionId: string, outcome: 'recorded' | 'refunded', at: Date): Promise<void>;
 }
 
 export interface PayoutFilter {
@@ -162,6 +169,21 @@ export interface TopUpPayment {
   created: boolean;
 }
 
+/** Paiement de recharge relu chez payment avant tout crédit (ADR-048). */
+export interface TopUpRecord {
+  paymentId: string;
+  /** Statut chez payment : `succeeded`, `amount_mismatch`, `pending`… */
+  status: string;
+  /** Titulaire rechargé (objet `wallet_top_up`) : l'organisation payeuse, sinon le payeur. */
+  holderId: string;
+  customerId: string | null;
+  organizationId: string | null;
+  /** Montant demandé. */
+  amount: number;
+  /** Montant reçu confirmé par le prestataire, en XOF ; null si rien n'est reçu en XOF. */
+  receivedAmount: number | null;
+}
+
 /**
  * Recharges chez payment (TopUpPaymentService, jeton de service) : le payeur est l'utilisateur de la
  * requête, transmis dans les métadonnées. Idempotent par (payeur, clé). Erreurs de payment
@@ -169,6 +191,62 @@ export interface TopUpPayment {
  */
 export interface TopUpPayments {
   create(input: { idempotencyKey: string; amount: number }): Promise<TopUpPayment>;
+  /** Paiement de recharge, relu chez payment ; null s'il est inconnu (ou n'est pas une recharge). */
+  get(paymentId: string): Promise<TopUpRecord | null>;
+}
+
+/**
+ * « Débit enregistré ? » chez le service qui l'a fait (WalletDebitCheckService de cleaning et de
+ * billing, ADR-048) : true si un paiement de l'objet cite le débit. null : service ou objet que ce
+ * contrôle ne couvre pas (le débit est laissé tel quel). Une panne lève l'erreur.
+ */
+export interface DebitRecordChecks {
+  isRecorded(debit: {
+    caller: string;
+    objectType: string;
+    objectId: string;
+    transactionId: string;
+  }): Promise<boolean | null>;
+}
+
+export type CreditKind = 'refund' | 'top_up';
+export type ManualCreditStatus = 'pending_approval' | 'approved';
+
+/** Demande de crédit manuel au-delà du seuil de double validation (ADR-048). */
+export interface ManualCreditRequest {
+  id: string;
+  /** Clé d'idempotence de la demande (unique). */
+  idempotencyKey: string;
+  holder: Holder;
+  kind: CreditKind;
+  amount: number;
+  reason: string;
+  paymentId: string | null;
+  status: ManualCreditStatus;
+  requestedBy: string;
+  requestedAt: Date;
+  approvedBy: string | null;
+  approvedAt: Date | null;
+  transactionId: string | null;
+  version: number;
+}
+
+export interface ManualCreditRequests {
+  /** Idempotent par clé : une clé déjà enregistrée rend sa demande, avec `created: false`. */
+  create(request: ManualCreditRequest): Promise<{ created: boolean; request: ManualCreditRequest }>;
+  findById(id: string): Promise<ManualCreditRequest | null>;
+  findByKey(idempotencyKey: string): Promise<ManualCreditRequest | null>;
+  /** Enregistre si la version n'a pas changé ; sinon false. */
+  save(request: ManualCreditRequest): Promise<boolean>;
+  list(filter: { status?: ManualCreditStatus }, page: PageRequest): Promise<PageResult<ManualCreditRequest>>;
+}
+
+/**
+ * Empreinte d'un numéro de bénéficiaire (HMAC à clé secrète, ADR-048) : compare deux demandes sans
+ * garder le numéro complet après la transmission à payment.
+ */
+export interface PhoneFingerprints {
+  of(phone: string): string;
 }
 
 export interface WalletSettings {
@@ -179,6 +257,12 @@ export interface WalletSettings {
   /** Montants de recharge acceptés, en XOF (ADR-046). */
   topUpMin: number;
   topUpMax: number;
+  /** Plafond d'un remboursement manuel de la finance, en XOF (ADR-048). */
+  manualRefundMax: number;
+  /** Au-delà (XOF), un crédit manuel attend la validation d'un second membre de la finance. */
+  creditApprovalThreshold: number;
+  /** Âge (minutes) au-delà duquel un débit est rapproché avec le service qui l'a fait (ADR-048). */
+  debitCheckDelayMinutes: number;
 }
 
 export interface WalletDeps {
@@ -186,6 +270,9 @@ export interface WalletDeps {
   payouts: WalletPayoutRepository;
   executor: PayoutExecutor;
   topUps: TopUpPayments;
+  fingerprints: PhoneFingerprints;
+  creditRequests: ManualCreditRequests;
+  debitChecks: DebitRecordChecks;
   settings: WalletSettings;
   clock: Clock;
   ids: IdGenerator;

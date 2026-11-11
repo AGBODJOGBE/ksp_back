@@ -54,12 +54,24 @@ export interface PaymentFilter {
   underReview?: boolean;
 }
 
+/** Issue de l'enregistrement d'un nouveau paiement. */
+export type CreatedIntent =
+  | { created: true; intent: PaymentIntent }
+  | { created: false; intent: PaymentIntent; conflict: 'idempotency_key' | 'open_checkout' };
+
 export interface PaymentRepository {
   /**
    * Enregistre un nouveau paiement. Idempotent par (payeur, clé) : si la clé existe déjà (envoi
-   * concurrent), renvoie le paiement enregistré avec `created: false`.
+   * concurrent), renvoie le paiement enregistré avec `created: false` et `conflict:
+   * 'idempotency_key'`. Une seule page en attente par objet à montant dû (mission, facture) et par
+   * lien (index uniques, ADR-048) : sinon renvoie celle qui existe, avec `conflict: 'open_checkout'`.
    */
-  create(intent: PaymentIntent): Promise<{ created: boolean; intent: PaymentIntent }>;
+  create(intent: PaymentIntent): Promise<CreatedIntent>;
+  /**
+   * Paiement en attente d'un objet, quel que soit le payeur ou la part (au plus un pour une mission
+   * ou une facture, ADR-048) ; le plus récent, null s'il n'y en a pas.
+   */
+  findPendingForSubject(input: { subjectType: string; subjectId: string }): Promise<PaymentIntent | null>;
   findById(id: string): Promise<PaymentIntent | null>;
   findByIdempotencyKey(customerId: string, idempotencyKey: string): Promise<PaymentIntent | null>;
   findByTransaction(provider: ProviderName, transactionId: string): Promise<PaymentIntent | null>;
@@ -293,8 +305,17 @@ export interface PaymentProvider {
 
 /** Réglages des cas d'usage, lus dans la configuration du service. */
 export interface PaymentSettings {
-  /** Délai après lequel un paiement encore en attente expire. */
+  /**
+   * Délai après lequel un paiement encore en attente expire, quand le prestataire sait annuler sa
+   * page (sinon : `checkoutValidityMinutes`).
+   */
   intentTtlMinutes: number;
+  /**
+   * Durée pendant laquelle une page du prestataire peut encore être payée s'il ne sait pas l'annuler
+   * (FedaPay : non documentée, 24 h par défaut, à valider ; ADR-048). Le paiement reste en attente
+   * (page réutilisée, aucune autre ouverte pour l'objet) jusque-là. En minutes.
+   */
+  checkoutValidityMinutes: number;
   /** Adresse du portail où le client revient : <returnUrl>/<id du paiement>. */
   returnUrl: string;
   /** Intervalle minimal entre deux relectures d'un même paiement chez le prestataire. */
@@ -364,6 +385,31 @@ export interface PaymentAlerts {
     expectedAmount: number;
     reportedAmount: number;
     currency: string;
+  }): void;
+  /**
+   * Reversement refusé définitivement par le prestataire (HTTP 4xx) à sa création ou à son
+   * lancement (ADR-048) : il passe en échec `provider_rejected`, la finance vérifie la cause.
+   */
+  payoutRejected(input: {
+    payoutId: string;
+    providerPayoutId: string | null;
+    stage: 'create' | 'start';
+    httpStatus: number;
+  }): void;
+  /**
+   * Lancement d'un reversement sans réponse (panne, délai) : il est peut-être parti. Il reste
+   * `processing` et n'est jamais relancé ; la relecture chez le prestataire tranche (ADR-048).
+   */
+  payoutStartUncertain(input: { payoutId: string; providerPayoutId: string }): void;
+  /**
+   * Paiement clos (expiré ou remplacé) alors que sa page n'a pas pu être annulée chez le prestataire
+   * (ADR-048) : une réussite tardive reste possible ; elle est encore relue pendant la fenêtre de
+   * réussite tardive, puis enregistrée comme trop-perçu si l'objet est déjà réglé.
+   */
+  checkoutClosedUnconfirmed(input: {
+    paymentId: string;
+    transactionId: string;
+    reason: 'expired' | 'superseded';
   }): void;
 }
 

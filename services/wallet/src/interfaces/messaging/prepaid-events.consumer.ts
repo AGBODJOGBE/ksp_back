@@ -6,7 +6,9 @@ import { WALLET_USE_CASES, type WalletUseCases } from '../../application/use-cas
  * Portefeuille prépayé (ADR-046) :
  * - file wallet.payment.intent.succeeded : une recharge confirmée (objet wallet_top_up) est créditée
  *   au portefeuille, une seule fois (inbox et référence du paiement) ; les autres objets sont ignorés ;
- * - file wallet.cleaning.mission.refunded : chaque débit cité est remboursé, une seule fois.
+ * - file wallet.cleaning.mission.refunded : chaque débit cité est remboursé, une seule fois ;
+ * - file wallet.cleaning.mission.credited : montant des passages payés non faits d'une mission
+ *   récurrente arrêtée crédité au portefeuille du client, une seule fois (ADR-049).
  * Un échec repasse par la file de reprise.
  */
 @Injectable()
@@ -31,6 +33,14 @@ export class PrepaidEventsConsumer implements OnApplicationBootstrap {
         organizationId: payload.organizationId,
         amount: payload.amount.amount,
       });
+      if (outcome === 'rejected') {
+        // Paiement relu chez payment qui ne confirme pas l'événement (ADR-048) : rien n'est crédité.
+        this.logger.error(
+          `ALERTE wallet : recharge ${payload.paymentId} non confirmée par payment (statut, titulaire ` +
+            "ou montant reçu) ; rien n'est crédité, à vérifier par la finance",
+        );
+        return;
+      }
       if (outcome === 'ignored') {
         // Identifiants seulement : la recharge ne désigne pas le titulaire du payeur.
         this.logger.error(
@@ -54,6 +64,20 @@ export class PrepaidEventsConsumer implements OnApplicationBootstrap {
           result === 'ignored' ? 'ignoré' : `${result.refunded} remboursé(s), ${result.already} déjà fait(s)`
         }`,
       );
+    });
+
+    await this.consumer.subscribe('cleaning.mission.credited', async (envelope) => {
+      const payload = envelope.payload;
+      const outcome = await this.useCases.creditFromMission.execute({
+        eventId: envelope.eventId,
+        eventType: envelope.type,
+        producer: envelope.producer,
+        missionId: payload.missionId,
+        customerId: payload.customerId,
+        creditId: payload.creditId,
+        amount: payload.amount.amount,
+      });
+      this.logger.log(`Crédit au prorata de la mission ${payload.missionId} : ${outcome}`);
     });
   }
 }

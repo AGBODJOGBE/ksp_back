@@ -117,6 +117,23 @@ export const protoWalletPayout: walletV1.WalletPayout = {
   failedAt: '',
 };
 
+/** Demande de crédit manuel en attente d'une seconde validation (ADR-048). */
+export const CREDIT_REQUEST_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7c01';
+export const protoCreditRequest: walletV1.ManualCreditRequest = {
+  id: CREDIT_REQUEST_ID,
+  holder: { type: 'organization', id: HOLDER_ID },
+  kind: 'refund',
+  amount: xof(60000),
+  reason: 'Prestation annulée, remboursement accordé',
+  paymentId: '',
+  status: 'pending_approval',
+  requestedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0d01',
+  requestedAt: '2026-11-08T10:30:00.000Z',
+  approvedBy: '',
+  approvedAt: '',
+  transactionId: '',
+};
+
 type Method = keyof walletV1.WalletAccountServiceController | keyof walletV1.WalletAdminServiceController;
 const ACCOUNT_METHODS: readonly Method[] = ['getMyWallet', 'listMyStatement', 'listMyPayouts', 'createTopUp'];
 
@@ -154,6 +171,37 @@ const DEFAULTS: Record<Method, () => unknown> = {
       holder: { type: 'organization', id: HOLDER_ID },
       balance: xof(10000),
       lastEntryAt: '2026-11-08T10:00:00.000Z',
+    },
+    created: true,
+  }),
+  listManualCreditRequests: () => ({ requests: [protoCreditRequest], nextCursor: '' }),
+  approveManualCredit: () => ({
+    transaction: {
+      id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7012',
+      kind: 'refund',
+      reference: 'credit:cle-0192f1c4-0002',
+      holder: { type: 'organization', id: HOLDER_ID },
+      amount: xof(60000),
+      grossAmount: undefined,
+      commission: undefined,
+      commissionRateBps: 0,
+      description: 'Prestation annulée, remboursement accordé',
+      reversesTransactionId: '',
+      createdAt: '2026-11-08T11:00:00.000Z',
+      entries: [],
+      object: undefined,
+    },
+    wallet: {
+      holder: { type: 'organization', id: HOLDER_ID },
+      balance: xof(70000),
+      lastEntryAt: '2026-11-08T11:00:00.000Z',
+    },
+    request: {
+      ...protoCreditRequest,
+      status: 'approved',
+      approvedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0d02',
+      approvedAt: '2026-11-08T11:00:00.000Z',
+      transactionId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7012',
     },
     created: true,
   }),

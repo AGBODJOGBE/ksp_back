@@ -172,6 +172,7 @@ export class AppModule {
               alerts: new LoggerPaymentAlerts(),
               settings: {
                 intentTtlMinutes: config.PAYMENT_INTENT_TTL_MINUTES,
+                checkoutValidityMinutes: config.PAYMENT_CHECKOUT_VALIDITY_MINUTES,
                 returnUrl: config.PAYMENT_RETURN_URL,
                 recheckAfterSeconds: config.PAYMENT_RECHECK_AFTER_SECONDS,
                 simulationEnabled: simulationEnabled(config),

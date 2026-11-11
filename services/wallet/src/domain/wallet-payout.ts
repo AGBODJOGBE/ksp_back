@@ -39,6 +39,12 @@ export interface WalletPayout {
   beneficiaryPhone: string | null;
   beneficiaryName: string | null;
   beneficiaryPhoneMasked: string;
+  /**
+   * Empreinte (HMAC-SHA256 à clé secrète) du numéro complet, gardée après la transmission : le rejeu
+   * d'une demande est jugé sur elle, jamais sur le numéro masqué (ADR-048). null : reversement
+   * antérieur à son introduction.
+   */
+  beneficiaryPhoneHash: string | null;
   beneficiaryOperator: Operator;
   /** Reversement chez payment, null tant qu'il n'est pas transmis. */
   paymentPayoutId: string | null;

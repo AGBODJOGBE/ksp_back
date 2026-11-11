@@ -85,6 +85,26 @@ export const WALLET_ROUTES = [
     idempotencyKey: 'required',
   },
   {
+    // Demandes de crédit au-delà du seuil de double validation (ADR-048).
+    operationId: 'listManualCreditRequests',
+    method: 'GET',
+    path: '/api/v1/admin/wallet/credit-requests',
+    grpc: `${ADMIN}/ListManualCreditRequests`,
+    access: staff,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
+    // Validation par un second membre de la finance : l'argent est crédité (ADR-048).
+    operationId: 'approveManualCredit',
+    method: 'POST',
+    path: '/api/v1/admin/wallet/credit-requests/{id}/approve',
+    grpc: `${ADMIN}/ApproveManualCredit`,
+    access: { ...staff, recentMfaSeconds: CRITICAL_MFA_SECONDS },
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
     operationId: 'listWalletPayouts',
     method: 'GET',
     path: '/api/v1/admin/wallet/payouts',
