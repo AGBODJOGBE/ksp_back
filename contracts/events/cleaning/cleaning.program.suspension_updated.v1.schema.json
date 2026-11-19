@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.program.suspension_updated.v1.schema.json",
+  "title": "cleaning.program.suspension_updated",
+  "description": "Cause ajoutée ou levée sur un programme qui reste suspendu (R-SU-01). Écouté par notification.",
+  "x-event-type": "cleaning.program.suspension_updated",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "programId",
+    "customerId",
+    "organizationId",
+    "change",
+    "cause",
+    "causes",
+    "unpaidCount",
+    "overdueCount",
+    "updatedAt"
+  ],
+  "properties": {
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "change": {
+      "enum": ["cause_added", "cause_lifted"]
+    },
+    "cause": {
+      "enum": ["overdue_sessions", "unpaid_invoices", "ksp_decision", "organization_suspended"],
+      "description": "Cause ajoutée ou levée"
+    },
+    "causes": {
+      "type": "array",
+      "items": {
+        "enum": ["overdue_sessions", "unpaid_invoices", "ksp_decision", "organization_suspended"]
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Causes actives après le changement"
+    },
+    "unpaidCount": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "overdueCount": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

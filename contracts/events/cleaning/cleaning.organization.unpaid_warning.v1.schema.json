@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.organization.unpaid_warning.v1.schema.json",
+  "title": "cleaning.organization.unpaid_warning",
+  "description": "Avertissement avant suspension (R-PE-06). Écouté par notification (administrateurs de l’organisation, superviseur).",
+  "x-event-type": "cleaning.organization.unpaid_warning",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "organizationId",
+    "unpaidCount",
+    "warningThreshold",
+    "suspensionThreshold",
+    "overdueInvoiceIds",
+    "warnedAt"
+  ],
+  "properties": {
+    "organizationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "unpaidCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "warningThreshold": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "suspensionThreshold": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "overdueInvoiceIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "warnedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

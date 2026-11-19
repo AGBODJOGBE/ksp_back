@@ -11,20 +11,21 @@ import { type KspEventType } from '@ksp/contracts';
  * pour un abonnement absent d'ici) ; déclarer un nouvel abonnement ici dans la même modification.
  */
 export const EVENT_CONSUMERS = {
-  billing: [
-    'cleaning.booking.confirmed',
-    'cleaning.request.cancelled',
-    'cleaning.contract.suspended',
-    'cleaning.contract.resumed',
-    'payment.intent.succeeded',
-  ],
+  // Facture mensuelle des entreprises : séances réalisées et manquées, avec leur montant dû
+  // (CDC Nettoyage v2, 15.5 et R-PE-01).
+  billing: ['cleaning.session.completed', 'cleaning.session.missed', 'payment.intent.succeeded'],
   cleaning: [
     'billing.invoice.overdue',
     'billing.invoice.paid',
     'identity.organization.suspended',
     'identity.organization.reactivated',
     'identity.user.deleted',
+    // Suivi du paiement direct seulement : le débit ne part jamais de cet événement.
     'payment.intent.succeeded',
+    // Paiement direct (R-WL-05, R-PP-03) : crédit dont forObject désigne une demande ou une séance,
+    // seul déclencheur du débit qui le suit ; toute recharge relance aussi les débits en attente
+    // (frais de visite, séances en retard, séances à payer).
+    'wallet.prepaid.credited',
   ],
   document: ['identity.user.deleted'],
   file: ['identity.user.deleted'],
@@ -32,25 +33,9 @@ export const EVENT_CONSUMERS = {
     'billing.invoice.issued',
     'billing.invoice.overdue',
     'billing.invoice.paid',
-    'cleaning.booking.confirmed',
-    'cleaning.contract.resumed',
-    'cleaning.contract.suspended',
-    'cleaning.contract.suspension_updated',
-    'cleaning.contract.suspension_warning',
-    'cleaning.intervention.rescheduled',
-    'cleaning.intervention.unscheduled',
-    'cleaning.interventions.batch_scheduled',
-    'cleaning.mission.completed',
-    'cleaning.mission.scheduled',
     'cleaning.quote.expired',
-    'cleaning.quote.expiry_reminded',
-    'cleaning.quote.requested',
     'cleaning.quote.sent',
-    'cleaning.quote_group.requested',
-    'cleaning.quote_group.sent',
     'cleaning.request.cancelled',
-    'cleaning.rescheduling.failed',
-    'cleaning.visit.cancelled',
     'cleaning.visit.scheduled',
     'identity.organization.created',
     'identity.organization.reactivated',
@@ -64,13 +49,7 @@ export const EVENT_CONSUMERS = {
     'wallet.prepaid.credited',
     'wallet.prepaid.debited',
   ],
-  wallet: [
-    'cleaning.mission.credited',
-    'cleaning.mission.refunded',
-    'payment.intent.succeeded',
-    'payment.payout.completed',
-    'payment.payout.failed',
-  ],
+  wallet: ['payment.intent.succeeded', 'payment.payout.completed', 'payment.payout.failed'],
 } as const satisfies Record<string, readonly KspEventType[]>;
 
 /** Types d'événements attendus par au moins un consommateur. */

@@ -2,65 +2,89 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.visit.scheduled.v1.schema.json",
   "title": "cleaning.visit.scheduled",
-  "description": "Visite technique planifiée (UC-CL-07) : le client est prévenu. Une visite commune à plusieurs demandes d'un groupe (ADR-035) ne publie qu'un événement, avec groupVisitId et requestIds.",
+  "description": "Visite planifiée ou déplacée (UC-NT-31, R-VI-03). Écouté par notification (client, agent).",
   "x-event-type": "cleaning.visit.scheduled",
   "x-event-version": 1,
   "type": "object",
   "additionalProperties": false,
-  "required": ["requestId", "visitId", "customerId", "agentId", "scheduledAt"],
+  "required": [
+    "visitId",
+    "requestId",
+    "requestNumber",
+    "customerId",
+    "organizationId",
+    "agentIds",
+    "scheduledAt",
+    "durationMinutes",
+    "previousScheduledAt",
+    "releasedAgentIds",
+    "placeTypeName",
+    "cleaningTypeNames"
+  ],
   "properties": {
-    "requestId": { "type": "string", "format": "uuid" },
-    "visitId": { "type": "string", "format": "uuid" },
-    "customerId": { "type": "string", "format": "uuid" },
-    "agentId": { "type": "string", "format": "uuid" },
-    "scheduledAt": { "type": "string", "format": "date-time" },
-    "serviceCode": {
+    "visitId": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*$",
-      "description": "Facultatif (ADR-034) : prestation de la demande"
+      "format": "uuid"
     },
-    "serviceName": {
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "agentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "Agents de la visite"
+    },
+    "scheduledAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "durationMinutes": {
+      "type": "integer",
+      "minimum": 15
+    },
+    "previousScheduledAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Date précédente pour un déplacement ; null pour une première planification"
+    },
+    "releasedAgentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "Agents retirés par ce changement ; vide sinon"
+    },
+    "placeTypeName": {
       "type": "string",
       "minLength": 1,
-      "description": "Facultatif (ADR-034) : nom de la prestation au moment de l'événement"
+      "description": "Nom du lieu en vigueur"
     },
-    "groupId": {
-      "type": "string",
-      "format": "uuid",
-      "description": "Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu"
-    },
-    "groupVisitId": {
-      "type": "string",
-      "format": "uuid",
-      "description": "Facultatif (ADR-035) : visite technique commune à plusieurs demandes du groupe (un seul événement pour toutes)"
-    },
-    "requestIds": {
+    "cleaningTypeNames": {
       "type": "array",
-      "minItems": 1,
-      "maxItems": 10,
-      "uniqueItems": true,
-      "items": { "type": "string", "format": "uuid" },
-      "description": "Facultatif (ADR-035) : demandes concernées par la visite commune, requestId compris"
-    },
-    "requests": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 10,
-      "description": "Facultatif (ADR-035 point 14) : demandes de la visite commune avec leur prestation, dans l'ordre de requestIds",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["requestId", "serviceCode"],
-        "properties": {
-          "requestId": { "type": "string", "format": "uuid" },
-          "serviceCode": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-          "serviceName": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Nom de la prestation au moment de l'événement ; absent si la prestation n'existe plus"
-          }
-        }
-      }
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Noms des types en vigueur, dans l’ordre de la demande"
     }
   }
 }

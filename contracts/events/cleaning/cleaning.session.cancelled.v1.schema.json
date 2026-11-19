@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.cancelled.v1.schema.json",
+  "title": "cleaning.session.cancelled",
+  "description": "Séance annulée par le client plus de 24 h avant, par KSP, ou faute d’agent (R-PL-10). Non publié pour un arrêt de programme (cleaning.program.cancelled) ni pour une annulation tardive (cleaning.session.missed).",
+  "x-event-type": "cleaning.session.cancelled",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "programNumber",
+    "rank",
+    "sessionsCount",
+    "scheduledStart",
+    "cancelledBy",
+    "cause",
+    "releasedAgentIds",
+    "cancelledAt"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PN-000057"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rang de la séance"
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre de séances du programme"
+    },
+    "scheduledStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "cancelledBy": {
+      "enum": ["customer", "ksp"]
+    },
+    "cause": {
+      "enum": ["customer", "ksp", "no_agent"]
+    },
+    "releasedAgentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "cancelledAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

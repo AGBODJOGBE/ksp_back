@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.payment_due.v1.schema.json",
+  "title": "cleaning.session.payment_due",
+  "description": "Séance d’un particulier à payer : solde insuffisant au débit automatique (R-PP-03). Lien de paiement envoyé par notification.",
+  "x-event-type": "cleaning.session.payment_due",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "amountDue",
+    "dueBy",
+    "programNumber",
+    "rank",
+    "sessionsCount",
+    "scheduledStart"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "amountDue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "dueBy": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Fin du délai de grâce (24 h)"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PN-000057"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rang de la séance"
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre de séances du programme"
+    },
+    "scheduledStart": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

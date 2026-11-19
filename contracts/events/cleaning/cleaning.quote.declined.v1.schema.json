@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.quote.declined.v1.schema.json",
+  "title": "cleaning.quote.declined",
+  "description": "Devis refusé par le client (UC-NT-09, R-AC-03) : dossier clos, superviseur prévenu.",
+  "x-event-type": "cleaning.quote.declined",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "quoteId",
+    "requestId",
+    "customerId",
+    "organizationId",
+    "declinedBy",
+    "reasonCode",
+    "declinedAt",
+    "requestNumber",
+    "communeKey"
+  ],
+  "properties": {
+    "quoteId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "declinedBy": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reasonCode": {
+      "enum": ["price", "schedule", "no_longer_needed", "other", null],
+      "description": "Motif dans la liste ; null sans motif"
+    },
+    "declinedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    }
+  }
+}

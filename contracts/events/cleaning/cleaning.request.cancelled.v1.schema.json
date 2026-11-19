@@ -2,44 +2,67 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.request.cancelled.v1.schema.json",
   "title": "cleaning.request.cancelled",
-  "description": "Demande ou mission annulée, ou demande refusée par KSP (UC-CL-05, 06). Le motif libre n'y figure pas.",
+  "description": "Demande annulée par le client (UC-NT-10) ou par le système, frais de visite non payés sous 72 h (R-FV-03, UC-NT-44).",
   "x-event-type": "cleaning.request.cancelled",
   "x-event-version": 1,
   "type": "object",
   "additionalProperties": false,
-  "required": ["requestId", "missionId", "customerId", "cancelledBy", "outcome"],
+  "required": [
+    "requestId",
+    "requestNumber",
+    "customerId",
+    "organizationId",
+    "cause",
+    "visitFeeRefund",
+    "cancelledAt"
+  ],
   "properties": {
-    "requestId": { "type": "string", "format": "uuid" },
-    "missionId": {
-      "type": ["string", "null"],
-      "format": "uuid",
-      "description": "Mission annulée, null si seule la demande l'est"
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
     },
-    "customerId": { "type": "string", "format": "uuid" },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
     "organizationId": {
       "type": ["string", "null"],
       "format": "uuid",
-      "description": "Organisation cliente, null pour un particulier (ajouté par l'ADR-032, toujours renseigné par cleaning ; absent des événements antérieurs). billing attend la confirmation d'une mission d'organisation avant d'appliquer son annulation"
+      "description": "Organisation cliente ; null pour un particulier"
     },
-    "cancelledBy": { "enum": ["customer", "supervisor"] },
-    "outcome": {
-      "enum": ["cancelled", "rejected", "declined"],
-      "description": "cancelled : annulation ; rejected : refus de KSP ; declined : devis refusé par le client"
+    "cause": {
+      "enum": ["customer", "visit_fee_unpaid"]
     },
-    "serviceCode": {
+    "visitFeeRefund": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["amount", "currency"],
+          "properties": {
+            "amount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "currency": {
+              "const": "XOF"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Frais remboursés au wallet (R-FV-06) ; null : rien à rembourser"
+    },
+    "cancelledAt": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*$",
-      "description": "Facultatif (ADR-034) : prestation de la demande"
-    },
-    "serviceName": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Facultatif (ADR-034) : nom de la prestation au moment de l'événement"
-    },
-    "groupId": {
-      "type": "string",
-      "format": "uuid",
-      "description": "Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu"
+      "format": "date-time"
     }
   }
 }

@@ -20,6 +20,8 @@ interface Operation extends Json {
   'x-ksp-access'?: string;
   'x-ksp-rate-limit'?: string;
   'x-ksp-roles'?: string[];
+  'x-ksp-permission'?: string;
+  'x-ksp-default-roles'?: string[];
   'x-ksp-mfa-max-age'?: number;
   'x-ksp-raw-body'?: boolean;
   'x-ksp-pending-deletion'?: boolean;
@@ -117,18 +119,31 @@ describe('contrat OpenAPI de la gateway', () => {
   );
 
   it.each(operations)(
-    '$method $path : rôles et double authentification seulement sur une route connectée ; toujours sur le back-office',
+    '$method $path : rôles ou permission et double authentification seulement sur une route connectée ; toujours sur le back-office',
     ({ path, op }) => {
       const roles = op['x-ksp-roles'];
+      const permission = op['x-ksp-permission'];
+      const defaultRoles = op['x-ksp-default-roles'];
       const mfa = op['x-ksp-mfa-max-age'];
-      if (roles !== undefined || mfa !== undefined) expect(op['x-ksp-access']).toBe('authenticated');
-      if (roles !== undefined) {
-        expect(Array.isArray(roles) && roles.length > 0).toBe(true);
-        for (const role of roles) expect(role).toMatch(/^[a-z]+(_[a-z]+)*$/);
+      if (roles !== undefined || permission !== undefined || mfa !== undefined) {
+        expect(op['x-ksp-access']).toBe('authenticated');
       }
+      for (const list of [roles, defaultRoles]) {
+        if (list === undefined) continue;
+        expect(Array.isArray(list) && list.length > 0).toBe(true);
+        for (const role of list) expect(role).toMatch(/^[a-z]+(_[a-z]+)*$/);
+      }
+      // RBAC dynamique (R-RB-02) : la permission est la seule condition d'accès ; une liste de rôles
+      // exigés à côté d'elle refuserait un rôle créé au back-office. Les rôles par défaut ne sont
+      // qu'une information.
+      if (permission !== undefined) {
+        expect(permission).toMatch(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/);
+        expect(roles).toBeUndefined();
+      }
+      if (defaultRoles !== undefined) expect(permission).toBeDefined();
       if (mfa !== undefined) expect(Number.isInteger(mfa) && mfa > 0).toBe(true);
       if (path.startsWith('/api/v1/admin/')) {
-        expect(roles).toBeDefined();
+        expect(roles !== undefined || permission !== undefined).toBe(true);
         expect(mfa).toBeDefined();
       }
     },
@@ -201,5 +216,240 @@ describe('contrat OpenAPI de la gateway', () => {
   it.each(examples)('exemple valide : %s', (_label, schema, example) => {
     const validate = ajv.compile(absolutize(schema) as Json);
     expect(validate(example) ? [] : validate.errors).toEqual([]);
+  });
+});
+
+/**
+ * Routes du Nettoyage v2 qui reprennent les règles de la v1 : permission, clé d'idempotence, double
+ * authentification récente pour les actions sensibles, limite d'appels des paiements, profil complet.
+ */
+describe('contrat OpenAPI du Nettoyage : règles reprises de la v1', () => {
+  const byId = new Map(operations.map((entry) => [entry.op.operationId, entry]));
+  const route = (operationId: string) => {
+    const entry = byId.get(operationId);
+    if (!entry) throw new Error(`route absente : ${operationId}`);
+    return entry;
+  };
+  const hasIdempotencyKey = (op: Operation): boolean =>
+    ((op['parameters'] ?? []) as Json[]).some((p) => p['$ref'] === '#/components/parameters/IdempotencyKey');
+
+  // operationId, méthode, chemin, permission (null : sans permission déclarée), double authentification
+  it.each([
+    [
+      'cleaningCorrectRequestLocation',
+      'put',
+      '/api/v1/admin/cleaning/requests/{id}/location',
+      'cleaning.request.process',
+      43200,
+    ],
+    [
+      'cleaningCorrectRequestLocationOnSite',
+      'put',
+      '/api/v1/cleaning/agent/requests/{id}/location',
+      null,
+      undefined,
+    ],
+    [
+      'cleaningRequestNewVisit',
+      'post',
+      '/api/v1/admin/cleaning/requests/{id}/new-visit',
+      'cleaning.request.process',
+      43200,
+    ],
+    [
+      'cleaningCompleteVisitOnBehalf',
+      'post',
+      '/api/v1/admin/cleaning/visits/{id}/complete',
+      'cleaning.request.process',
+      600,
+    ],
+    [
+      'cleaningReportVisitMissedOnBehalf',
+      'post',
+      '/api/v1/admin/cleaning/visits/{id}/missed',
+      'cleaning.request.process',
+      600,
+    ],
+    [
+      'cleaningRemoveVisitPhotoAsKsp',
+      'post',
+      '/api/v1/admin/cleaning/visits/{id}/photos/{fileId}/remove',
+      'cleaning.request.process',
+      600,
+    ],
+    [
+      'cleaningCompleteSessionAsKsp',
+      'post',
+      '/api/v1/admin/cleaning/sessions/{id}/complete',
+      'cleaning.program.manage',
+      600,
+    ],
+    [
+      'cleaningReportSessionMissedAsKsp',
+      'post',
+      '/api/v1/admin/cleaning/sessions/{id}/missed',
+      'cleaning.program.manage',
+      600,
+    ],
+    [
+      'cleaningRemoveSessionPhotoAsKsp',
+      'post',
+      '/api/v1/admin/cleaning/sessions/{id}/photos/{fileId}/remove',
+      'cleaning.program.manage',
+      600,
+    ],
+    [
+      'cleaningRemoveSessionPhoto',
+      'delete',
+      '/api/v1/cleaning/sessions/{id}/photos/{fileId}',
+      'cleaning.session.perform',
+      undefined,
+    ],
+    [
+      'cleaningRemoveVisitPhoto',
+      'delete',
+      '/api/v1/cleaning/visits/{id}/photos/{fileId}',
+      'cleaning.visit.perform',
+      undefined,
+    ],
+    [
+      'cleaningRemoveAssignment',
+      'post',
+      '/api/v1/admin/cleaning/assignments/{id}/remove',
+      'cleaning.planning.manage',
+      43200,
+    ],
+  ] as const)(
+    '%s : %s %s, permission %s, idempotente, double authentification %s',
+    (id, method, path, permission, mfa) => {
+      const { op, method: actualMethod, path: actualPath } = route(id);
+      expect([actualMethod, actualPath]).toEqual([method, path]);
+      expect(op['x-ksp-permission']).toBe(permission ?? undefined);
+      expect(op['x-ksp-mfa-max-age']).toBe(mfa);
+      expect(hasIdempotencyKey(op)).toBe(true);
+    },
+  );
+
+  it.each([
+    ['cleaningLocatePoint', 'post', '/api/v1/cleaning/places/locate', null],
+    ['cleaningListCommunes', 'get', '/api/v1/admin/cleaning/communes', 'cleaning.catalog.read'],
+    [
+      'cleaningEstimateRetainedValues',
+      'post',
+      '/api/v1/admin/cleaning/requests/{id}/retained-values/estimate',
+      'cleaning.quote.manage',
+    ],
+  ] as const)('%s : lecture sans écriture, sans clé d’idempotence', (id, method, path, permission) => {
+    const { op, method: actualMethod, path: actualPath } = route(id);
+    expect([actualMethod, actualPath]).toEqual([method, path]);
+    expect(op['x-ksp-permission']).toBe(permission ?? undefined);
+    expect(hasIdempotencyKey(op)).toBe(false);
+  });
+
+  it('la correction de position a une route back-office et une route de l’agent sur place, sur le même appel', () => {
+    const admin = route('cleaningCorrectRequestLocation').op;
+    const onSite = route('cleaningCorrectRequestLocationOnSite').op;
+    expect(onSite['x-ksp-grpc']).toBe(admin['x-ksp-grpc']);
+    expect(onSite.requestBody).toEqual(admin.requestBody);
+    expect(onSite['x-ksp-access']).toBe('authenticated');
+    expect(onSite['x-ksp-default-roles']).toBeUndefined();
+  });
+
+  it('la désaffectation ne passe plus par un DELETE avec un corps', () => {
+    expect(doc.paths['/api/v1/admin/cleaning/assignments/{id}']?.delete).toBeUndefined();
+    for (const { path, method, op } of operations) {
+      if (method === 'delete' && path.includes('/cleaning/')) expect(op.requestBody).toBeUndefined();
+    }
+  });
+
+  it.each([
+    'cleaningRescheduleSession',
+    'cleaningCancelSession',
+    'cleaningStopProgram',
+    'cleaningRescheduleSessionAsKsp',
+    'cleaningCancelSessionAsKsp',
+    'cleaningCancelProgram',
+    'cleaningApproveProgramCancellation',
+    'cleaningChangeProgramSchedule',
+    'cleaningApproveClaimCredit',
+    'cleaningCancelVisit',
+    'cleaningApproveProposals',
+    'cleaningUpdateClaim',
+    'cleaningDecideReactivation',
+    'cleaningCancelRequest',
+    'cleaningRejectRequest',
+    'cleaningChangeVisitSlot',
+    'cleaningUpdateVisit',
+    'cleaningSuspendProgram',
+    'cleaningResumeProgram',
+    'cleaningResumeSession',
+    'cleaningApproveAgent',
+    'cleaningApproveQuoteAdjustment',
+    'cleaningRequestReactivation',
+    'cleaningDeclineQuote',
+    'cleaningPublishTariff',
+    'cleaningSetZoneActive',
+    'cleaningStartAgentReview',
+    'cleaningRejectAgent',
+    'cleaningSuspendAgent',
+    'cleaningReactivateAgent',
+    'cleaningDeactivateAgent',
+  ])('%s exige Idempotency-Key (toute action qui change un dossier, l’agenda ou l’argent)', (id) => {
+    expect(hasIdempotencyKey(route(id).op)).toBe(true);
+  });
+
+  it('le catalogue public et la vue de l’agent ne portent pas la trace de modification des paramètres', () => {
+    const schemas = doc.components.schemas;
+    for (const field of ['updatedAt', 'updatedBy', 'updatedByName']) {
+      expect((schemas['CleaningPublicParameter']?.['properties'] as Json)[field]).toBeUndefined();
+    }
+    const parameterItems = (schema: string, property: string) =>
+      ((schemas[schema]?.['properties'] as Record<string, Json>)[property]?.['items'] as Json)['$ref'];
+    expect(parameterItems('CleaningPublicOffer', 'extraParameters')).toBe(
+      '#/components/schemas/CleaningPublicParameter',
+    );
+    expect(parameterItems('CleaningPublicPlaceTypeDetail', 'parameters')).toBe(
+      '#/components/schemas/CleaningPublicParameter',
+    );
+    expect(parameterItems('CleaningAgentVisitView', 'parameters')).toBe(
+      '#/components/schemas/CleaningPublicParameter',
+    );
+    // Aucune route hors back-office n'atteint ParameterDefinition, même par un schéma intermédiaire.
+    const reaches = (node: unknown, seen = new Set<string>()): boolean => {
+      if (Array.isArray(node)) return node.some((item) => reaches(item, seen));
+      if (!node || typeof node !== 'object') return false;
+      const ref = (node as Json)['$ref'];
+      if (typeof ref === 'string') {
+        const name = ref.split('/').pop() as string;
+        if (name === 'CleaningParameterDefinition') return true;
+        if (seen.has(name)) return false;
+        seen.add(name);
+        return reaches(schemas[name], seen);
+      }
+      return Object.values(node).some((value) => reaches(value, seen));
+    };
+    for (const { path, op } of operations) {
+      if (path.startsWith('/api/v1/cleaning/')) expect([path, reaches(op.responses)]).toEqual([path, false]);
+    }
+  });
+
+  it.each(['cleaningPayVisitFee', 'cleaningPaySession'])('%s : limite d’appels des paiements', (id) => {
+    expect(route(id).op['x-ksp-rate-limit']).toBe('payment_create');
+  });
+
+  it.each(['cleaningSubmitRequest', 'cleaningRenewProgram', 'cleaningReorderProgram'])(
+    '%s : profil complet vérifié par la gateway',
+    (id) => {
+      expect(route(id).op['x-ksp-requires-complete-profile']).toBe(true);
+    },
+  );
+
+  it('les permissions de terrain ne sont livrées par défaut qu’au rôle agent', () => {
+    for (const { op } of operations) {
+      const permission = op['x-ksp-permission'];
+      if (permission === 'cleaning.visit.perform' || permission === 'cleaning.session.perform') {
+        expect(op['x-ksp-default-roles']).toEqual(['cleaning_agent']);
+      }
+    }
   });
 });

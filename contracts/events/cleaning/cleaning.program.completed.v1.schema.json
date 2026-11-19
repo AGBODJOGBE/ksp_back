@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.program.completed.v1.schema.json",
+  "title": "cleaning.program.completed",
+  "description": "Programme terminé : toutes les séances sont réalisées, manquées ou annulées. Écouté par notification (client).",
+  "x-event-type": "cleaning.program.completed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "programId",
+    "customerId",
+    "organizationId",
+    "sessionsCompleted",
+    "sessionsMissed",
+    "sessionsCancelled",
+    "completedAt",
+    "programNumber",
+    "planKind"
+  ],
+  "properties": {
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "sessionsCompleted": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sessionsMissed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sessionsCancelled": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "planKind": {
+      "enum": ["one_off", "weekly", "monthly"],
+      "description": "Ponctuel : « commander à nouveau » (R-PG-08)"
+    }
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.arrived.v1.schema.json",
+  "title": "cleaning.session.arrived",
+  "description": "Équipe arrivée (partie 10).",
+  "x-event-type": "cleaning.session.arrived",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "programNumber",
+    "rank",
+    "sessionsCount",
+    "communeKey",
+    "distanceMeters",
+    "alert",
+    "arrivedAt"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PN-000057"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rang de la séance"
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre de séances du programme"
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    },
+    "distanceMeters": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Distance à la position du lieu ; null : arrivée sans position"
+    },
+    "alert": {
+      "type": "boolean",
+      "description": "Au-delà de arrivalAlertMeters : superviseur alerté"
+    },
+    "arrivedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -2,58 +2,86 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.quote.expired.v1.schema.json",
   "title": "cleaning.quote.expired",
-  "description": "Devis arrivés au terme de leur validité sans réponse du client (ADR-053) : la tâche planifiée de cleaning enregistre leur expiration. Un événement par client et par groupe de demandes (ou par demande seule) traités ensemble, pour un seul message.",
+  "description": "Devis sans réponse à sa date de validité (R-AC-04, UC-NT-44).",
   "x-event-type": "cleaning.quote.expired",
   "x-event-version": 1,
   "type": "object",
   "additionalProperties": false,
-  "required": ["customerId", "organizationId", "quotes", "expiredAt"],
+  "required": [
+    "quoteId",
+    "requestId",
+    "customerId",
+    "organizationId",
+    "validUntil",
+    "expiredAt",
+    "requestNumber",
+    "communeKey",
+    "total",
+    "placeTypeName",
+    "cleaningTypeNames"
+  ],
   "properties": {
-    "customerId": { "type": "string", "format": "uuid" },
+    "quoteId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
     "organizationId": {
       "type": ["string", "null"],
       "format": "uuid",
-      "description": "Organisation cliente, null pour un particulier"
+      "description": "Organisation cliente ; null pour un particulier"
     },
-    "groupId": {
+    "validUntil": {
       "type": "string",
-      "format": "uuid",
-      "description": "Facultatif : groupe des demandes créées ensemble pour un même lieu (ADR-034)"
+      "format": "date-time"
     },
-    "quotes": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 10,
-      "description": "Devis expirés, un par demande",
-      "items": { "$ref": "#/$defs/quoteRef" }
+    "expiredAt": {
+      "type": "string",
+      "format": "date-time"
     },
-    "expiredAt": { "type": "string", "format": "date-time" }
-  },
-  "$defs": {
-    "quoteRef": {
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    },
+    "total": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requestId", "quoteId", "serviceCode", "total", "validUntil"],
+      "required": ["amount", "currency"],
       "properties": {
-        "requestId": { "type": "string", "format": "uuid" },
-        "quoteId": { "type": "string", "format": "uuid" },
-        "serviceCode": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-        "serviceName": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Nom de la prestation au moment de l'événement ; absent si la prestation n'existe plus"
+        "amount": {
+          "type": "integer",
+          "minimum": 0
         },
-        "total": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["amount", "currency"],
-          "properties": {
-            "amount": { "type": "integer", "minimum": 0 },
-            "currency": { "const": "XOF" }
-          }
-        },
-        "validUntil": { "type": "string", "format": "date-time" }
+        "currency": {
+          "const": "XOF"
+        }
       }
+    },
+    "placeTypeName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Nom du lieu en vigueur"
+    },
+    "cleaningTypeNames": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Noms des types en vigueur, dans l’ordre de la demande"
     }
   }
 }

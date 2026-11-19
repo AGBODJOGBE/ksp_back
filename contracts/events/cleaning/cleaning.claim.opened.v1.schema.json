@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.claim.opened.v1.schema.json",
+  "title": "cleaning.claim.opened",
+  "description": "Réclamation déposée (R-RC-01).",
+  "x-event-type": "cleaning.claim.opened",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "claimId",
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "category",
+    "openedAt",
+    "communeKey"
+  ],
+  "properties": {
+    "claimId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "category": {
+      "enum": ["incomplete_work", "damage", "behavior", "missing_item", "other"]
+    },
+    "openedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    }
+  }
+}

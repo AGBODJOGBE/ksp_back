@@ -10,2147 +10,5021 @@ import { GrpcMethod, GrpcStreamMethod } from "@nestjs/microservices";
 import { Observable } from "rxjs";
 import { Money } from "../../common/v1/money";
 
-/** Créneau horaire, début inclus et fin exclue. */
-export interface TimeSlot {
-  start: string;
-  end: string;
+/** Valeur d'un paramètre déclaré, constaté ou retenu. */
+export interface ParameterValue {
+  /** Paramètre "number" : entier de 0 à 1 000 000. */
+  number?:
+    | number
+    | undefined;
+  /** Paramètre "choice" : code de la valeur. */
+  choice?:
+    | string
+    | undefined;
+  /** Paramètre "boolean" : un "non" n'a jamais d'effet sur le prix. */
+  flag?: boolean | undefined;
 }
 
-/**
- * Contrat récurrent (client entreprise, ou particulier qui le demande) : nombre de passages
- * par période, pendant une durée en mois. La facture mensuelle viendra avec billing.
- * Ancien format (ADR-023), déprécié en entrée depuis l'ADR-052 : remplacé par InterventionSchedule.
- * En sortie, déduit du plan de passages pour les anciens lecteurs (absent pour un seul passage).
- */
-export interface Recurrence {
-  /** "week" ou "month". */
-  period: string;
-  visitsPerPeriod: number;
-  durationMonths: number;
-}
-
-/**
- * Plan de passages (ADR-052) : le moteur en tire la liste exacte des dates (AAAA-MM-JJ, jours civils
- * du fuseau du service, Africa/Porto-Novo par défaut) ; le nombre de passages, donc le prix, est
- * celui de cette liste. Erreurs : CLEANING_VALIDATION_FAILED, details.field "schedule.<champ>"
- * (ou "schedule" : aucun passage, ou plus que le maximum réglé, 400 par défaut) ;
- * CLEANING_LEAD_TIME_TOO_SHORT si le premier passage est trop proche.
- */
-export interface InterventionSchedule {
-  /** "dates" (liste explicite), "weekly" (jours de semaine) ou "monthly" (chaque mois). */
-  mode: string;
-  /** Mode "dates" seulement : 1 à N jours, sans ordre imposé (doublons ignorés). */
-  dates: string[];
-  /**
-   * Modes "weekly" et "monthly" : période, bornes incluses ; vides en mode "dates". La période
-   * couvre au plus 36 mois (réglable).
-   */
-  startDate: string;
-  endDate: string;
-  /**
-   * "mon", "tue", "wed", "thu", "fri", "sat" ou "sun" : mode "weekly", ou "monthly" avec
-   * weeks_of_month.
-   */
-  weekdays: string[];
-  /**
-   * Mode "weekly" : 0 ou 1 chaque semaine, 2 une semaine sur deux… (12 au plus), semaines comptées
-   * depuis celle de start_date (du lundi au dimanche).
-   */
-  everyWeeks: number;
-  /**
-   * Mode "monthly", première forme : jours du mois (1 à 31) ; un jour absent du mois devient son
-   * dernier jour, sans doublon.
-   */
-  monthDays: number[];
-  /**
-   * Mode "monthly", seconde forme (avec weekdays) : rangs dans le mois, "1" à "4" ou "last".
-   * Une seule des deux formes.
-   */
-  weeksOfMonth: string[];
-  /** Heure de début de chaque passage, HH:mm, heure locale (obligatoire). */
-  startTime: string;
-  /** Jours retirés (fériés, absences) et jours ajoutés ; un jour exclu le reste même s'il est ajouté. */
-  excludedDates: string[];
-  extraDates: string[];
-}
-
-export interface ScheduleWarning {
-  /**
-   * "moved_to_month_end" (jour ramené au dernier jour du mois), "excluded" (jour exclu),
-   * "excluded_not_planned" (jour exclu qui n'était pas prévu) ou "extra_already_planned".
-   */
+/** Valeur possible d’un paramètre de nature « choix ». */
+export interface ParameterChoice {
+  /** Code stable de la valeur. */
   code: string;
-  date: string;
-  message: string;
-}
-
-/** Dates exactes d'un plan de passages (ADR-052). */
-export interface SchedulePreview {
-  dates: string[];
-  count: number;
-  firstDate: string;
-  lastDate: string;
-  warnings: ScheduleWarning[];
-}
-
-export interface PriceLine {
+  /** Libellé affiché. */
   label: string;
-  /** Quantité entière dans l'unité de la prestation (m², pièces, fosses…), 1 pour un forfait. */
-  quantity: number;
-  unitPrice?: Money | undefined;
+  /**
+   * Valeur proposée ; inactive : masquée du portail, refusée en saisie, lisible dans les dossiers
+   * (R-CA-06)
+   */
+  active: boolean;
+}
+
+/** Paramètre demandé au client (R-CA-01, R-CA-02). */
+export interface ParameterDefinition {
+  /** Identifiant du paramètre. UUID. */
+  id: string;
+  /** Code stable, clé des valeurs déclarées ("superficie", "chambres"…) */
+  code: string;
+  /** Libellé affiché. */
+  label: string;
+  /** Nature : nombre, choix ou oui/non. Valeurs : "number", "choice", "boolean". */
+  kind: string;
+  /** Unité affichée ("m²", "m³"), null sans unité. */
+  unit?:
+    | string
+    | undefined;
+  /** Borne basse (nombre seulement) Absent : null. */
+  min?:
+    | number
+    | undefined;
+  /** Borne haute (nombre seulement) Absent : null. */
+  max?:
+    | number
+    | undefined;
+  /** Valeurs possibles (choix seulement), dans l’ordre d’affichage ; vide sinon. */
+  choices: ParameterChoice[];
+  /** Valeur obligatoire. */
+  required: boolean;
+  /** Aide à la saisie. */
+  help?:
+    | string
+    | undefined;
+  /** Désactivé : n’apparaît plus sur le portail (R-CA-06) */
+  active: boolean;
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+  /** Auteur de la dernière modification. UUID. Absent : null. */
+  updatedBy?: string | undefined;
+  updatedByName?: string | undefined;
+}
+
+/**
+ * Paramètre demandé au client (R-CA-01, R-CA-02), vu par le portail public et l’agent, sans trace
+ * de modification.
+ */
+export interface PublicParameter {
+  /** Identifiant du paramètre. UUID. */
+  id: string;
+  /** Code stable, clé des valeurs déclarées ("superficie", "chambres"…) */
+  code: string;
+  /** Libellé affiché. */
+  label: string;
+  /** Nature : nombre, choix ou oui/non. Valeurs : "number", "choice", "boolean". */
+  kind: string;
+  /** Unité affichée ("m²", "m³"), null sans unité. */
+  unit?:
+    | string
+    | undefined;
+  /** Borne basse (nombre seulement) Absent : null. */
+  min?:
+    | number
+    | undefined;
+  /** Borne haute (nombre seulement) Absent : null. */
+  max?:
+    | number
+    | undefined;
+  /** Valeurs possibles (choix seulement), dans l’ordre d’affichage ; vide sinon. */
+  choices: ParameterChoice[];
+  /** Valeur obligatoire. */
+  required: boolean;
+  /** Aide à la saisie. */
+  help?:
+    | string
+    | undefined;
+  /** Désactivé : n’apparaît plus sur le portail (R-CA-06) */
+  active: boolean;
+}
+
+/** Catégorie de lieu (Maison, Salle de fête, Chantier, Bureaux, Autre). */
+export interface PlaceCategory {
+  /** UUID. */
+  id: string;
+  code: string;
+  name: string;
+  /** Nom de l’icône. */
+  icon?:
+    | string
+    | undefined;
+  /** Ordre d’affichage. */
+  order: number;
+  active: boolean;
+  /**
+   * Frais de visite de la catégorie (R-FV-01, décision du 18/11/2026) ; null : valeur par défaut
+   * des réglages ("defaultVisitFee") Absent pour qui n’a pas le droit de voir les montants (agent ;
+   * personnel sans cleaning.amounts.read).
+   */
+  visitFee?:
+    | Money
+    | undefined;
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+  /** Auteur de la dernière modification. UUID. Absent : null. */
+  updatedBy?: string | undefined;
+  updatedByName?: string | undefined;
+}
+
+/** Paramètre demandé pour un lieu, dans l’ordre (R-CA-01). */
+export interface PlaceTypeParameter {
+  /** UUID. */
+  parameterId: string;
+  code: string;
+  order: number;
+}
+
+/** Lieu (sous-type d’une catégorie : villa, appartement, studio…), vue du back-office. */
+export interface PlaceType {
+  /** UUID. */
+  id: string;
+  code: string;
+  /** UUID. */
+  categoryId: string;
+  name: string;
+  icon?:
+    | string
+    | undefined;
+  /** Photo (service file) UUID. Absent : null. */
+  photoFileId?: string | undefined;
+  description?: string | undefined;
+  order: number;
+  active: boolean;
+  /**
+   * Lieu « Autre » (R-CA-05) : pas de simulateur, le client décrit son besoin et joint jusqu’à 5
+   * photos ; le prix vient de la visite.
+   */
+  freeDescription: boolean;
+  /**
+   * Paramètres du lieu, ordonnés ; la superficie est obligatoire sauf pour un lieu « Autre »
+   * (R-CA-01)
+   */
+  parameters: PlaceTypeParameter[];
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+  /** Auteur de la dernière modification. UUID. Absent : null. */
+  updatedBy?:
+    | string
+    | undefined;
+  /**
+   * Paramètre « superficie » du lieu (R-CA-14) ; null seulement pour un lieu « Autre ». UUID.
+   * Absent : null.
+   */
+  areaParameterId?:
+    | string
+    | undefined;
+  /** Visible sur le portail (R-CA-12) */
+  publiclyVisible: boolean;
+  /**
+   * Raisons du masquage ; vide si visible. Valeurs : "inactive", "category_inactive",
+   * "no_active_offer", "type_inactive".
+   */
+  visibilityReasons: string[];
+  updatedByName?: string | undefined;
+}
+
+/** Type de nettoyage (sol, vitres, vidange…) ou pack (R-CA-04, R-CA-09). */
+export interface CleaningType {
+  /** UUID. */
+  id: string;
+  code: string;
+  name: string;
+  description?: string | undefined;
+  icon?:
+    | string
+    | undefined;
+  /**
+   * Compétence exigée de l’agent (R-CA-09) ; null pour un pack (compétences de ses types) Absent :
+   * null.
+   */
+  requiredSkillCode?:
+    | string
+    | undefined;
+  /** Durée de référence. */
+  referenceDurationMinutes: number;
+  /** Liste de contrôle des séances, ordonnée. */
+  checklist: ChecklistTemplateItem[];
+  /** Pack « Nettoyage complet » (R-CA-04) */
+  isPack: boolean;
+  /** Types contenus dans le pack (vide sinon) ; choisir le pack les masque. UUID. */
+  packItemIds: string[];
+  active: boolean;
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+  /** Auteur de la dernière modification. UUID. Absent : null. */
+  updatedBy?: string | undefined;
+  updatedByName?: string | undefined;
+}
+
+/** Point de la liste de contrôle d’un type de nettoyage. */
+export interface ChecklistTemplateItem {
+  code: string;
+  label: string;
+  order: number;
+}
+
+/** Compétence d’agent (nettoyage intérieur, vidange, jardinage, piscine, travaux en hauteur). */
+export interface Skill {
+  /** UUID. */
+  id: string;
+  code: string;
+  name: string;
+  active: boolean;
+}
+
+/** Jour férié national, proposé à l’exclusion des programmes (R-PG-02). */
+export interface Holiday {
+  /** UUID. */
+  id: string;
+  /** AAAA-MM-JJ. */
+  date: string;
+  name: string;
+}
+
+/** Taille d’équipe et durée d’une séance par tranche de superficie (R-CA-10). */
+export interface TeamRuleBracket {
+  /** Superficie de (m², incluse) */
+  fromArea: number;
+  /** Superficie à (m², incluse) ; null : sans limite. Absent : null. */
+  toArea?:
+    | number
+    | undefined;
+  /** Nombre d’agents. */
+  agents: number;
+  /** Durée de la séance. */
+  durationMinutes: number;
+}
+
+/** Offre : un type de nettoyage proposé pour un lieu, avec son tarif (R-CA-02, R-CA-03, R-CA-10). */
+export interface Offer {
+  /** UUID. */
+  id: string;
+  /** UUID. */
+  placeTypeId: string;
+  /** UUID. */
+  cleaningTypeId: string;
+  /** Paramètres demandés en plus quand ce type est choisi (R-CA-02) */
+  extraParameters: PlaceTypeParameter[];
+  /** Taille d’équipe et durée par tranche de superficie, modifiable au devis. */
+  teamRule: TeamRuleBracket[];
+  /** Version publiée en vigueur ; null tant qu’aucune n’est publiée. Absent : null. */
+  currentTariffVersion?:
+    | number
+    | undefined;
+  /** Brouillon en cours, null sinon. Absent : null. */
+  draftTariffVersion?: number | undefined;
+  active: boolean;
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+  /** Auteur de la dernière modification. UUID. Absent : null. */
+  updatedBy?: string | undefined;
+  order: number;
+  /** Visible sur le portail (R-CA-12) */
+  publiclyVisible: boolean;
+  /**
+   * Raisons du masquage ; vide si visible. Valeurs : "inactive", "category_inactive",
+   * "no_active_offer", "type_inactive".
+   */
+  visibilityReasons: string[];
+  updatedByName?: string | undefined;
+}
+
+/** Tranche du paramètre de base (bornes entières, contiguës, sans chevauchement). */
+export interface TariffBracket {
+  /** De (inclus) */
+  from: number;
+  /** À (inclus) ; au-delà de la dernière tranche : « sur devis ». */
+  to: number;
+  /** Forfait de la tranche, ou prix par unité × valeur (R-PX-01) Valeurs : "flat", "per_unit". */
+  mode: string;
+  /**
+   * Forfait ou prix unitaire. Absent pour qui n’a pas le droit de voir les montants (agent ;
+   * personnel sans cleaning.amounts.read).
+   */
   amount?: Money | undefined;
 }
 
+/** Supplément lié à un autre paramètre (partie 4, « Tarif d’une offre »). */
+export interface TariffSupplement {
+  parameterCode: string;
+  /** Paramètre « choix » : valeur concernée ("apres_travaux") ; null sinon. Absent : null. */
+  choiceCode?:
+    | string
+    | undefined;
+  /** Montant fixe, montant par unité, ou coefficient. Valeurs : "fixed", "per_unit", "coefficient". */
+  mode: string;
+  /**
+   * Montant (fixe ou par unité) ; null pour un coefficient. Absent pour qui n’a pas le droit de
+   * voir les montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  amount?:
+    | Money
+    | undefined;
+  /** Coefficient en points de base (13000 = × 1,3), plafond × 10 (R-PX-02) Absent : null. */
+  coefficientBps?:
+    | number
+    | undefined;
+  /**
+   * Par unité : unités incluses avant le supplément (« chaque chambre au-delà de 3 » : 3) ; 0 :
+   * toutes comptent (D16)
+   */
+  includedUnits: number;
+}
+
+/** Remise récurrente selon la fréquence (R-PX-06) ; seul endroit où la fréquence agit sur le prix. */
+export interface FrequencyCoefficient {
+  /** Clé de fréquence (R-PX-06) */
+  key: string;
+  /** Coefficient en points de base (9000 = × 0,9) */
+  coefficientBps: number;
+}
+
+/** Version de tarif d’une offre (R-CA-07, R-CA-08). */
+export interface Tariff {
+  /** UUID. */
+  id: string;
+  /** UUID. */
+  offerId: string;
+  version: number;
+  /** Brouillon, publiée (en vigueur) ou archivée. Valeurs : "draft", "published", "archived". */
+  status: string;
+  /**
+   * Paramètre de base des tranches (superficie par défaut) ; null pour un pack à remise. Absent :
+   * null.
+   */
+  baseParameterCode?:
+    | string
+    | undefined;
+  /** Tranches, dans l’ordre ; vide pour un pack à remise. */
+  brackets: TariffBracket[];
+  supplements: TariffSupplement[];
+  /**
+   * Prix minimum d’une séance pour cette offre. Absent pour qui n’a pas le droit de voir les
+   * montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  minimum?: Money | undefined;
+  frequencyCoefficients: FrequencyCoefficient[];
+  /** ISO 8601 UTC. */
+  createdAt: string;
+  /** UUID. */
+  createdBy: string;
+  /** ISO 8601 UTC. Absent : null. */
+  publishedAt?:
+    | string
+    | undefined;
+  /** UUID. Absent : null. */
+  publishedBy?:
+    | string
+    | undefined;
+  /**
+   * Pack : remise en points de base sur la somme de ses types (1000 = 10 %), plafond 9000 ; null :
+   * prix par tranches. Absent : null.
+   */
+  packDiscountBps?: number | undefined;
+  createdByName?: string | undefined;
+  publishedByName?: string | undefined;
+}
+
+/** Commune desservie (partie 4, R-ZN-01). */
+export interface Zone {
+  /** UUID. */
+  id: string;
+  /** Clé de la commune (contour officiel stocké dans geo), par exemple "abomey-calavi". */
+  communeKey: string;
+  name: string;
+  /** Coefficient de commune en points de base (10000 = × 1, défaut) */
+  coefficientBps: number;
+  /**
+   * Majoration fixe des frais de visite dans cette commune (R-FV-01) ; null : aucune. Absent pour
+   * qui n’a pas le droit de voir les montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  visitFeeSurcharge?:
+    | Money
+    | undefined;
+  /**
+   * Mode de planification de la zone (R-PL-05) ; null : réglage général. Valeurs : "manual",
+   * "proposal", "automatic". Absent : null.
+   */
+  planningMode?: string | undefined;
+  active: boolean;
+  /** Demandes ouvertes dans la zone (confirmation avant désactivation) */
+  openRequests: number;
+  /** Programmes actifs dans la zone. */
+  activePrograms: number;
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+  /** Auteur de la dernière modification. UUID. Absent : null. */
+  updatedBy?: string | undefined;
+  updatedByName?: string | undefined;
+}
+
+/** Commune du référentiel de geo (R-ZN-03) et sa zone. */
+export interface CommuneOption {
+  communeKey: string;
+  /** Nom officiel. */
+  name: string;
+  /** Zone de la commune ; null : aucune. UUID. Absent : null. */
+  zoneId?: string | undefined;
+  zoneActive: boolean;
+}
+
+/** Commune desservie, vue publique. */
+export interface PublicZone {
+  communeKey: string;
+  name: string;
+}
+
+/** Lieu proposé sur le portail. */
+export interface PublicPlaceTypeSummary {
+  /** UUID. */
+  id: string;
+  code: string;
+  name: string;
+  icon?:
+    | string
+    | undefined;
+  /** Lien temporaire de la photo. Absent : null. */
+  photoUrl?: string | undefined;
+  description?:
+    | string
+    | undefined;
+  /** Lieu « Autre » : pas de simulateur (R-CA-05) */
+  freeDescription: boolean;
+}
+
+/** Catégorie de lieu et ses lieux actifs, vue publique. */
+export interface PublicPlaceCategory {
+  /** UUID. */
+  id: string;
+  code: string;
+  name: string;
+  icon?:
+    | string
+    | undefined;
+  /** Lieux actifs, dans l’ordre d’affichage. */
+  placeTypes: PublicPlaceTypeSummary[];
+}
+
+/** Type de nettoyage proposé pour un lieu, vue publique. */
+export interface PublicCleaningType {
+  /** UUID. */
+  id: string;
+  code: string;
+  name: string;
+  description?: string | undefined;
+  icon?: string | undefined;
+  isPack: boolean;
+  /** Types masqués quand le pack est choisi (R-CA-04) UUID. */
+  packItemIds: string[];
+}
+
+/** Offre active d’un lieu, sans prix. */
+export interface PublicOffer {
+  /** UUID. */
+  offerId: string;
+  cleaningType?:
+    | PublicCleaningType
+    | undefined;
+  /** Paramètres demandés en plus quand ce type est choisi (R-CA-02) */
+  extraParameters: PublicParameter[];
+}
+
+/** Lieu, ses paramètres et ses offres actives, sans prix (UC-NT-01). */
+export interface PublicPlaceTypeDetail {
+  placeType?:
+    | PublicPlaceTypeSummary
+    | undefined;
+  /** UUID. */
+  categoryId: string;
+  /** Paramètres du lieu, dans l’ordre (R-CA-01) */
+  parameters: PublicParameter[];
+  /** Types de nettoyage proposés pour ce lieu. */
+  offers: PublicOffer[];
+  /** Frais de la catégorie (ou par défaut), hors majoration de commune. */
+  visitFee?: Money | undefined;
+}
+
+/** Jour de semaine à un rang dans le mois (1er samedi, dernier vendredi). */
+export interface MonthWeekday {
+  /** Valeurs : "first", "second", "third", "fourth", "last". */
+  rank: string;
+  /** Valeurs : "mon", "tue", "wed", "thu", "fri", "sat", "sun". */
+  weekday: string;
+}
+
+/**
+ * Programme souhaité (partie 8) : ponctuel, hebdomadaire ou mensuel, fuseau Africa/Porto-Novo
+ * (R-PG-01).
+ */
+export interface SchedulePlan {
+  /**
+   * Ponctuel, récurrent hebdomadaire ou récurrent mensuel. Valeurs : "one_off", "weekly",
+   * "monthly".
+   */
+  kind: string;
+  /** Heure de début des séances (HH:MM, heure de Porto-Novo) HH:MM, heure de Porto-Novo. */
+  startTime: string;
+  /** Ponctuel : jours de passage. AAAA-MM-JJ. */
+  dates: string[];
+  /** Hebdomadaire : jours de la semaine. Valeurs : "mon", "tue", "wed", "thu", "fri", "sat", "sun". */
+  weekdays: string[];
+  /** Hebdomadaire : toutes les N semaines. */
+  everyWeeks?:
+    | number
+    | undefined;
+  /** Mensuel : jours du mois (31 absent → dernier jour du mois, R-PG-01) */
+  monthDays: number[];
+  /** Mensuel : jour de semaine à un rang. */
+  monthWeekdays: MonthWeekday[];
+  /** Récurrent : date de début. AAAA-MM-JJ. */
+  startDate?:
+    | string
+    | undefined;
+  /** Récurrent : date de fin (ou durée) AAAA-MM-JJ. */
+  endDate?:
+    | string
+    | undefined;
+  /** Récurrent : durée en semaines (ou date de fin) */
+  durationWeeks?:
+    | number
+    | undefined;
+  /** Récurrent : durée en mois (ou date de fin) */
+  durationMonths?:
+    | number
+    | undefined;
+  /** Jours exclus (R-PG-02) AAAA-MM-JJ. */
+  excludedDates: string[];
+  /** Jours ajoutés (R-PG-02) AAAA-MM-JJ. */
+  addedDates: string[];
+  /** Exclure les jours fériés nationaux (proposé par défaut, R-PG-02) */
+  excludeHolidays?: boolean | undefined;
+}
+
+/** Date de séance calculée. */
+export interface ScheduledOccurrence {
+  /** Jour (heure de Porto-Novo) AAAA-MM-JJ. */
+  date: string;
+  /** Début (UTC) ISO 8601 UTC. */
+  start: string;
+}
+
+/** Ajustement fait au calcul des dates. */
+export interface ScheduleNotice {
+  /**
+   * Valeurs : "month_day_adjusted", "holiday_excluded", "date_excluded", "date_added",
+   * "excluded_not_planned", "added_already_planned".
+   */
+  code: string;
+  /** AAAA-MM-JJ. */
+  date: string;
+  /** Nom du jour férié, le cas échéant. */
+  label?: string | undefined;
+}
+
+/** Liste exacte des dates d’un programme (R-PG-04). */
+export interface SchedulePreview {
+  /** Dates, dans l’ordre chronologique. */
+  occurrences: ScheduledOccurrence[];
+  /** Nombre de séances. */
+  count: number;
+  /** ISO 8601 UTC. Absent : null. */
+  firstStart?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  lastStart?:
+    | string
+    | undefined;
+  /** Jours décalés, exclus ou ajoutés. */
+  notices: ScheduleNotice[];
+}
+
+/** Ligne du détail du calcul (R-PX-04). */
+export interface PricingLine {
+  /**
+   * Valeurs : "bracket", "supplement", "coefficient", "frequency", "minimum", "pack_discount",
+   * "commune".
+   */
+  kind: string;
+  /** Libellé lisible (« Sol, tranche 51 à 150 m² ») */
+  label: string;
+  /** Absent : null. */
+  parameterCode?:
+    | string
+    | undefined;
+  /** Quantité (m², pièces au-delà du seuil…) Absent : null. */
+  quantity?:
+    | number
+    | undefined;
+  /**
+   * Prix unitaire. Absent pour qui n’a pas le droit de voir les montants (agent ; personnel sans
+   * cleaning.amounts.read).
+   */
+  unitAmount?:
+    | Money
+    | undefined;
+  /** Coefficient appliqué. Absent : null. */
+  coefficientBps?:
+    | number
+    | undefined;
+  /**
+   * Montant de la ligne. Absent pour qui n’a pas le droit de voir les montants (agent ; personnel
+   * sans cleaning.amounts.read).
+   */
+  amount?: Money | undefined;
+}
+
+/** Prix d’un type de nettoyage (offre) pour une séance. */
+export interface PricedOffer {
+  /** UUID. */
+  offerId: string;
+  /** UUID. */
+  cleaningTypeId: string;
+  cleaningTypeCode: string;
+  name: string;
+  /** Version du tarif utilisée ; null si aucune n’est publiée. Absent : null. */
+  tariffVersion?:
+    | number
+    | undefined;
+  /** "on_quote" : prix fixé après la visite, voir "onQuoteReason". Valeurs : "priced", "on_quote". */
+  status: string;
+  /** Le minimum de l’offre a été retenu. */
+  minimumApplied: boolean;
+  /**
+   * Prix de l’offre pour une séance ; null si "on_quote". Absent pour qui n’a pas le droit de voir
+   * les montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  price?:
+    | Money
+    | undefined;
+  /** Détail ligne par ligne. */
+  lines: PricingLine[];
+  /**
+   * Raison du « sur devis » ; null si chiffrée. Valeurs : "no_published_tariff",
+   * "above_last_bracket", "below_first_bracket", "base_value_missing". Absent : null.
+   */
+  onQuoteReason?:
+    | string
+    | undefined;
+  /** Version utilisée ; null sans tarif. Valeurs : "published", "draft". Absent : null. */
+  tariffStatus?: string | undefined;
+}
+
+/** Fourchette affichée (R-PX-07). */
 export interface PriceRange {
-  low?: Money | undefined;
+  /**
+   * Prix × 0,90, arrondi au multiple de 500 inférieur. Absent pour qui n’a pas le droit de voir les
+   * montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  low?:
+    | Money
+    | undefined;
+  /**
+   * Prix × 1,15, arrondi au multiple de 500 supérieur. Absent pour qui n’a pas le droit de voir les
+   * montants (agent ; personnel sans cleaning.amounts.read).
+   */
   high?: Money | undefined;
 }
 
-/** Option choisie par le client à l'acceptation du devis. */
-export interface PaymentPlan {
-  /** "deposit" (acompte) ou "full" (totalité). */
-  option: string;
-  /** "before" ou "after" la mission. */
-  timing: string;
+/**
+ * Résultat du calcul (partie 5), gardé sur la demande, le constat, la version retenue et le devis
+ * (R-PX-04).
+ */
+export interface Pricing {
+  /** Commune retenue ; null : coefficient neutre (R-PX-05) Absent : null. */
+  communeKey?:
+    | string
+    | undefined;
+  /** Coefficient de commune appliqué à chaque offre, avant son minimum (10000 = neutre) */
+  communeCoefficientBps: number;
+  /** Une entrée par type choisi. */
+  offers: PricedOffer[];
+  /** false : au moins une offre est « sur devis ». */
+  complete: boolean;
   /**
-   * "cash", "mobile_money_offline" (coché par le superviseur) ou "mobile_money_online"
-   * (payé en ligne par le client depuis la fiche de la mission, service payment, ADR-031 ; le client
-   * peut aussi payer en ligne avec un autre moyen prévu).
+   * Remise pack appliquée, plafonnée (R-CA-04) Absent pour qui n’a pas le droit de voir les
+   * montants (agent ; personnel sans cleaning.amounts.read).
    */
-  method: string;
+  packDiscount?:
+    | Money
+    | undefined;
+  /**
+   * Prix d’une séance ; null si complete = false (R-PX-08) Absent pour qui n’a pas le droit de voir
+   * les montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  sessionPrice?:
+    | Money
+    | undefined;
+  /** Fourchette affichée ; null si complete = false (R-PX-08) */
+  range?:
+    | PriceRange
+    | undefined;
+  /** Nombre de séances du programme ; null sans programme. Absent : null. */
+  sessionsCount?:
+    | number
+    | undefined;
+  /**
+   * Prix d’une séance × nombre de séances ; null si complete = false (R-PX-08) Absent pour qui n’a
+   * pas le droit de voir les montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  programTotal?:
+    | Money
+    | undefined;
+  /**
+   * Effet de la remise de fréquence sur une séance (information) ; null si complete = false
+   * (R-PX-08) Absent pour qui n’a pas le droit de voir les montants (agent ; personnel sans
+   * cleaning.amounts.read).
+   */
+  frequencyDiscount?:
+    | Money
+    | undefined;
+  /**
+   * Frais de visite à prévoir pour demander un devis. Absent pour qui n’a pas le droit de voir les
+   * montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  visitFee?:
+    | Money
+    | undefined;
+  /** ISO 8601 UTC. */
+  calculatedAt: string;
+  /**
+   * Somme des offres chiffrées, affichée « à partir de » si status = partially_priced. Absent pour
+   * qui n’a pas le droit de voir les montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  pricedSubtotal?:
+    | Money
+    | undefined;
+  /** R-PX-08. Valeurs : "priced", "partially_priced", "on_quote". */
+  status: string;
+  /** Fourchette du programme (fourchette × nombre de séances) ; null si le prix n’est pas complet. */
+  programRange?:
+    | PriceRange
+    | undefined;
+  /** Agents proposés (R-CA-13) Absent : null. */
+  teamSize?:
+    | number
+    | undefined;
+  /** Durée proposée d’une séance (R-CA-13) Absent : null. */
+  durationMinutes?: number | undefined;
 }
 
-export interface PaymentRecord {
+/** Estimation non contractuelle (partie 5). */
+export interface Simulation {
+  pricing?:
+    | Pricing
+    | undefined;
+  /** Dates du programme quand un programme est donné. */
+  schedule?:
+    | SchedulePreview
+    | undefined;
+  /** « Estimation non contractuelle, confirmée après la visite des lieux ». */
+  disclaimer: string;
+  /** Commune connue et desservie. */
+  covered: boolean;
+  /** Coefficient de commune appliqué. */
+  communeApplied: boolean;
+  /**
+   * Mentions à afficher (codes traduits par le front) Valeurs : "no_commune",
+   * "commune_not_covered", "partially_priced", "on_quote".
+   */
+  notices: string[];
+  /** Au moins un brouillon utilisé. */
+  usesDrafts: boolean;
+}
+
+/**
+ * Position et repère (données personnelles, chiffrées en base, jamais dans les événements ni les
+ * journaux).
+ */
+export interface PlaceLocation {
+  latitude: number;
+  longitude: number;
+  /** Point de repère. */
+  landmark: string;
+  /** Adresse en texte saisie par le client. */
+  address?:
+    | string
+    | undefined;
+  /** Adresse lisible (Nominatim, Google en secours), à titre d’information. */
+  readableAddress?:
+    | string
+    | undefined;
+  /** 0 ou null : inconnue. Absent : null. */
+  accuracyMeters?: number | undefined;
+}
+
+/** Lieu enregistré du client (« Mes lieux »). */
+export interface Place {
+  /** UUID. */
   id: string;
+  name: string;
+  /** UUID. */
+  placeTypeId: string;
+  placeTypeName: string;
+  /** Commune dont le contour contient la position (R-ZN-01) */
+  communeKey: string;
+  communeName: string;
+  /** Commune dans une zone active. */
+  served: boolean;
+  /** null après effacement, R-DP-01. */
+  location?:
+    | PlaceLocation
+    | undefined;
+  /** Paramètres déclarés, réutilisés pour une nouvelle demande. Clé : code du paramètre. */
+  declaredValues: { [key: string]: ParameterValue };
+  archived: boolean;
+  /** ISO 8601 UTC. */
+  createdAt: string;
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+  /** Position corrigée par KSP ou par l’agent sur place (R-DM-07) ISO 8601 UTC. Absent : null. */
+  locationCorrectedAt?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  locationErasedAt?: string | undefined;
+}
+
+export interface Place_DeclaredValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+/** Résultat d’une correction de position, sans montant. */
+export interface LocationCorrection {
+  /** UUID. */
+  requestId: string;
+  communeKey: string;
+  communeName: string;
+  communeChanged: boolean;
+  /** Lieu de « Mes lieux » mis à jour. */
+  placeUpdated: boolean;
+  /** ISO 8601 UTC. */
+  correctedAt: string;
+}
+
+/** Position vérifiée avant l’enregistrement d’un lieu (R-ZN-01), rien n’est enregistré. */
+export interface PointLocation {
+  /** null : hors de tout contour. Absent : null. */
+  communeKey?: string | undefined;
+  communeName?:
+    | string
+    | undefined;
+  /** Commune dans une zone active. */
+  served: boolean;
+  /** Adresse lisible (null si non desservie ou indisponible) */
+  readableAddress?: string | undefined;
+}
+
+/**
+ * Lieu d’un dossier : nom et type en vigueur, position copiée dans la demande à l’envoi (R-DM-08).
+ * `location` : null pour qui n’a pas à la voir (R-EX-06, 16.3) ou après effacement (R-DP-01).
+ */
+export interface PlaceSummary {
+  /** UUID. */
+  placeId: string;
+  name: string;
+  /** UUID. */
+  placeTypeId: string;
+  /** Nom en vigueur, même si l’élément est désactivé. */
+  placeTypeName: string;
+  communeKey: string;
+  communeName: string;
+  location?: PlaceLocation | undefined;
+}
+
+/** Type de nettoyage d’un dossier. */
+export interface CleaningTypeRef {
+  /** UUID. */
+  id: string;
+  code: string;
+  /** Nom en vigueur, même si l’élément est désactivé. */
+  name: string;
+}
+
+/** Frais de visite d’une demande (partie 7.2). */
+export interface VisitFee {
+  /**
+   * Absent pour qui n’a pas le droit de voir les montants (agent ; personnel sans
+   * cleaning.amounts.read).
+   */
   amount?:
     | Money
     | undefined;
   /**
-   * "cash", "mobile_money_offline", "mobile_money_online" ou "wallet" (portefeuille prépayé,
-   * ADR-046 ; reference = transaction du portefeuille).
+   * À payer, payés, remboursés au wallet (R-FV-06), conservés, ou déduits du premier paiement
+   * (R-FV-05) Valeurs : "awaiting_payment", "paid", "refunded", "retained", "deducted".
    */
-  method: string;
-  reference: string;
-  recordedBy: string;
-  recordedAt: string;
-  /** Back-office : nom affiché de la personne qui a enregistré le paiement (ADR-029). */
-  recordedByName: string;
-  /**
-   * Paiement par portefeuille remboursé dans le portefeuille (mission annulée, ADR-046) : il ne
-   * compte plus dans le montant payé. Vide sinon.
-   */
-  refundedAt: string;
+  status: string;
+  /** Limite de paiement (72 h, R-FV-03) ISO 8601 UTC. Absent : null. */
+  payBefore?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  paidAt?:
+    | string
+    | undefined;
+  /** Reçu émis par billing (R-FV-04) UUID. Absent : null. */
+  invoiceId?:
+    | string
+    | undefined;
+  /** UUID. */
+  id: string;
+  /** 1 à l’envoi, puis 2, 3… après chaque absence du client. */
+  rank: number;
+  /** ISO 8601 UTC. Absent : null. */
+  refundedAt?: string | undefined;
 }
 
-export interface PaymentState {
-  plan?:
-    | PaymentPlan
+/** Photo (service file), lisible par un lien temporaire (R-EX-07). */
+export interface Photo {
+  /** UUID. */
+  fileId: string;
+  /** Valeurs : "request", "visit", "absence", "before", "after", "incident", "claim". */
+  kind: string;
+  /** Heure réelle (hors connexion compris) ISO 8601 UTC. */
+  takenAt: string;
+  /** Lien temporaire de lecture ; null si la photo n’est plus conservée. Absent : null. */
+  url?:
+    | string
     | undefined;
-  /** "due", "deposit_received" ou "paid". */
+  /** ISO 8601 UTC. Absent : null. */
+  urlExpiresAt?: string | undefined;
+}
+
+/** Agent affecté (nom et photo visibles du client). */
+export interface AssignedAgent {
+  /** UUID. */
+  agentId: string;
+  firstName: string;
+  lastName: string;
+  /** Lien temporaire. Absent : null. */
+  photoUrl?:
+    | string
+    | undefined;
+  /** Chef d’équipe (R-EQ-03) */
+  isLead: boolean;
+  /**
+   * Confirmée ; en attente de l’indépendant (R-PL-08) ; proposée par la planification (R-PL-05)
+   * Valeurs : "confirmed", "pending", "proposed".
+   */
+  confirmation: string;
+}
+
+/**
+ * Arrivée comparée à la position du lieu (partie 10 : alerte au-delà de `arrivalAlertMeters`, sans
+ * blocage).
+ */
+export interface ArrivalCheck {
+  /** ISO 8601 UTC. */
+  arrivedAt: string;
+  /** null si l’arrivée n’a pas de position. Absent : null. */
+  distanceMeters?:
+    | number
+    | undefined;
+  /** Au-delà de "arrivalAlertMeters" : superviseur alerté. */
+  alert: boolean;
+  /** Absent : null. */
+  placeAccuracyMeters?:
+    | number
+    | undefined;
+  /** Absent : null. */
+  arrivalAccuracyMeters?:
+    | number
+    | undefined;
+  /** Somme des précisions au-delà du seuil. */
+  uncertain: boolean;
+}
+
+/** Visite des lieux (partie 7.3). */
+export interface Visit {
+  /** UUID. */
+  id: string;
+  /** UUID. */
+  requestId: string;
+  requestNumber: string;
+  /** Valeurs : "scheduled", "in_progress", "completed", "missed", "cancelled". */
   status: string;
+  /** ISO 8601 UTC. */
+  scheduledAt: string;
+  durationMinutes: number;
+  /** Temps de trajet réservé avant la visite (R-VI-02, R-ZN-02) Absent : null. */
+  travelMinutes?: number | undefined;
+  agents: AssignedAgent[];
+  arrival?:
+    | ArrivalCheck
+    | undefined;
+  /** Constat de l’agent. Clé : code du paramètre. */
+  observedValues: { [key: string]: ParameterValue };
+  photos: Photo[];
+  /** ISO 8601 UTC. Absent : null. */
+  completedAt?:
+    | string
+    | undefined;
+  /** Client absent (R-VI-05) ISO 8601 UTC. Absent : null. */
+  missedAt?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  cancelledAt?:
+    | string
+    | undefined;
+  /**
+   * null sauf visite annulée. Valeurs : "request_cancelled", "request_rejected", "slot_changed",
+   * "ksp", "agent_no_show". Absent : null.
+   */
+  cancelCause?:
+    | string
+    | undefined;
+  /** Remarque de l’agent pour le superviseur ; jamais montrée au client. */
+  note?: string | undefined;
+}
+
+export interface Visit_ObservedValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+/** Écart d’un paramètre (R-CS-02). */
+export interface ComparisonRow {
+  parameterCode: string;
+  label: string;
+  unit?:
+    | string
+    | undefined;
+  /** Valeur déclarée par le client. */
+  declared?:
+    | ParameterValue
+    | undefined;
+  /** Valeur constatée par l’agent. */
+  observed?:
+    | ParameterValue
+    | undefined;
+  /** Valeur retenue. */
+  retained?:
+    | ParameterValue
+    | undefined;
+  /**
+   * Effet sur le prix d’une séance (positif ou négatif) Absent pour qui n’a pas le droit de voir
+   * les montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  priceEffect?:
+    | Money
+    | undefined;
+  /** Motif de l’écart entre constaté et retenu. */
+  reason?: string | undefined;
+  declaredDisplay?: string | undefined;
+  observedDisplay?: string | undefined;
+  retainedDisplay?: string | undefined;
+}
+
+/** Ligne figée d’une réponse, dans l’ordre du formulaire. */
+export interface ValueRow {
+  code: string;
+  label: string;
+  /** Valeurs : "number", "choice", "boolean". */
+  kind: string;
+  unit?: string | undefined;
+  value?:
+    | ParameterValue
+    | undefined;
+  /** Texte affiché (« 120 m² », « Oui », « Après travaux ») */
+  display: string;
+  /** Libellé du choix au moment du figement. */
+  choiceLabel?: string | undefined;
+}
+
+/** Déclaré, constaté, retenu (partie 7.4). */
+export interface Comparison {
+  /** Retenu identique au déclaré : « Informations confirmées » (R-CS-01) */
+  confirmed: boolean;
+  /** Une ligne par paramètre. */
+  rows: ComparisonRow[];
+  /** Types ajoutés par la supervision. */
+  addedCleaningTypes: CleaningTypeRef[];
+  /** Types retirés par la supervision. */
+  removedCleaningTypes: CleaningTypeRef[];
+  /**
+   * Absent pour qui n’a pas le droit de voir les montants (agent ; personnel sans
+   * cleaning.amounts.read).
+   */
+  declaredSessionPrice?:
+    | Money
+    | undefined;
+  /**
+   * Absent pour qui n’a pas le droit de voir les montants (agent ; personnel sans
+   * cleaning.amounts.read).
+   */
+  retainedSessionPrice?: Money | undefined;
+}
+
+/** Motif d’un écart (obligatoire pour chaque écart avec le constat, partie 7.4). */
+export interface ValueReason {
+  /** Paramètre concerné ; null pour un type ajouté ou retiré. Absent : null. */
+  parameterCode?:
+    | string
+    | undefined;
+  /** Type ajouté ou retiré ; null pour un paramètre. UUID. Absent : null. */
+  cleaningTypeId?: string | undefined;
+  reason: string;
+}
+
+/** Version retenue par la supervision (partie 7.4). */
+export interface RetainedValues {
+  /** Clé : code du paramètre. */
+  values: { [key: string]: ParameterValue };
+  cleaningTypes: CleaningTypeRef[];
+  reasons: ValueReason[];
+  pricing?:
+    | Pricing
+    | undefined;
+  /** UUID. */
+  authorId: string;
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+  /** Révision figée par l’envoi d’un devis. */
+  locked: boolean;
+  revision: number;
+  /** Motif de la révision. */
+  reason?: string | undefined;
+}
+
+export interface RetainedValues_ValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+/** Ligne de devis par type (R-DV-01). */
+export interface QuoteLine {
+  /** UUID. */
+  offerId: string;
+  /** UUID. */
+  cleaningTypeId: string;
+  name: string;
+  quantity: number;
+  unit?:
+    | string
+    | undefined;
+  /**
+   * Absent pour qui n’a pas le droit de voir les montants (agent ; personnel sans
+   * cleaning.amounts.read).
+   */
+  unitPrice?:
+    | Money
+    | undefined;
+  /**
+   * Absent pour qui n’a pas le droit de voir les montants (agent ; personnel sans
+   * cleaning.amounts.read).
+   */
+  amount?:
+    | Money
+    | undefined;
+  /** Ligne d’offre ou remise pack (offre du pack) Valeurs : "offer", "pack_discount". */
+  kind: string;
+}
+
+/** Remise ou majoration manuelle (R-DV-03). */
+export interface QuoteAdjustment {
+  /** Valeurs : "discount", "surcharge". */
+  kind: string;
+  /**
+   * En points de base du prix d’une séance (2000 = 20 %) ; null pour un montant fixe. Absent :
+   * null.
+   */
+  percentBps?:
+    | number
+    | undefined;
+  /**
+   * Montant fixe par séance ; null pour un pourcentage. Absent pour qui n’a pas le droit de voir
+   * les montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  fixedAmount?:
+    | Money
+    | undefined;
+  /**
+   * Effet calculé sur le prix d’une séance. Absent pour qui n’a pas le droit de voir les montants
+   * (agent ; personnel sans cleaning.amounts.read).
+   */
+  amount?: Money | undefined;
+  reason: string;
+  /**
+   * Remise au-delà du seuil (20 %) : validation d’un admin. Valeurs : "not_required", "pending",
+   * "approved".
+   */
+  approvalStatus: string;
+  /** UUID. Absent : null. */
+  approvedBy?: string | undefined;
+}
+
+/** Devis (partie 7.5). */
+export interface Quote {
+  /** UUID. */
+  id: string;
+  /** UUID. */
+  requestId: string;
+  requestNumber: string;
+  /** Programme créé à l’acceptation, ou programme complété par un avenant. UUID. Absent : null. */
+  programId?:
+    | string
+    | undefined;
+  /**
+   * Devis initial, avenant (R-PG-06), renouvellement (R-PG-07), nouvelle commande (R-PG-08)
+   * Valeurs : "initial", "amendment", "renewal", "reorder".
+   */
+  kind: string;
+  /** Révision (R-DV-05) */
+  version: number;
+  /** Valeurs : "draft", "sent", "accepted", "declined", "expired", "superseded", "withdrawn". */
+  status: string;
+  place?: PlaceSummary | undefined;
+  lines: QuoteLine[];
+  adjustments: QuoteAdjustment[];
+  /**
+   * Prix d’une séance, strictement positif (R-DV-03) Absent pour qui n’a pas le droit de voir les
+   * montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  sessionPrice?: Money | undefined;
+  sessionsCount: number;
+  /** Dates du programme. ISO 8601 UTC. */
+  sessionStarts: string[];
+  /**
+   * Somme des séances (R-PG-05) Absent pour qui n’a pas le droit de voir les montants (agent ;
+   * personnel sans cleaning.amounts.read).
+   */
   total?:
     | Money
     | undefined;
-  /** Pourcentage d'acompte figé à l'acceptation (30 par défaut, réglable). */
-  depositPercent: number;
-  depositAmount?: Money | undefined;
-  paid?: Money | undefined;
-  payments: PaymentRecord[];
-  /** Reste dû : total moins les paiements enregistrés, jamais négatif (calculé par cleaning). */
-  remainingDue?:
-    | Money
-    | undefined;
-  /** Acompte encore attendu (plan « acompte », acompte pas encore reçu en entier) ; absent sinon. */
-  depositDue?: Money | undefined;
-}
-
-export interface SiteVisit {
-  id: string;
-  /** "scheduled", "completed" ou "cancelled". */
-  status: string;
-  scheduledAt: string;
-  agentId: string;
-  report: string;
-  completedAt: string;
-  /** Back-office : nom affiché de l'agent de la visite (fiche agent du Nettoyage). */
-  agentName: string;
   /**
-   * Visite technique commune à plusieurs demandes d'un groupe (ADR-035) : même identifiant pour
-   * toutes ; vide pour une visite propre à la demande (ou détachée de la visite de groupe).
+   * Frais de visite déduits (R-FV-05) Absent pour qui n’a pas le droit de voir les montants
+   * (agent ; personnel sans cleaning.amounts.read).
    */
-  groupVisitId: string;
-}
-
-export interface Quote {
-  id: string;
-  /** Lignes d'un passage, préremplies depuis la grille et modifiables par le superviseur. */
-  lines: PriceLine[];
-  /** Prix d'un passage. */
-  subtotal?:
-    | Money
-    | undefined;
-  /** 1 pour une prestation ponctuelle ; nombre de passages prévus pour un contrat récurrent. */
-  interventionCount: number;
-  total?: Money | undefined;
-  proposedSlots: TimeSlot[];
-  validUntil: string;
-  depositPercent: number;
-  depositAmount?: Money | undefined;
-  recurrence?: Recurrence | undefined;
-  sentAt: string;
+  visitFeeDeduction?: Money | undefined;
   teamSize: number;
   durationMinutes: number;
+  schedule?:
+    | SchedulePlan
+    | undefined;
   /**
-   * Plan de passages du devis (ADR-052) et ses dates exactes (intervention_count = leur nombre) ;
-   * absent et vide pour un devis sans plan (ancienne récurrence). Avec un plan, proposed_slots est
-   * le premier passage.
+   * Particulier : après chaque séance ; entreprise : facture mensuelle. Valeurs : "per_session",
+   * "monthly_invoice".
    */
-  schedule?: InterventionSchedule | undefined;
-  scheduledDates: string[];
+  paymentTerms: string;
+  /** Écarts déclaré / retenu montrés au client. */
+  comparison?:
+    | Comparison
+    | undefined;
+  /** Validité (15 jours par défaut, R-DV-04) ; null pour un brouillon. ISO 8601 UTC. Absent : null. */
+  validUntil?:
+    | string
+    | undefined;
+  /** Version des conditions générales. */
+  termsVersion: string;
+  /**
+   * PDF du devis (service document, modèle cleaning_quote) ; null pour un brouillon ou tant que le
+   * PDF n’est pas produit. UUID. Absent : null.
+   */
+  pdfDocumentId?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  sentAt?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  respondedAt?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. */
+  createdAt: string;
+  /** Révision retenue figée à l’envoi. Absent : null. */
+  retainedRevision?: number | undefined;
 }
 
-export interface QuoteRequest {
+/** Demande de réactivation d’un devis expiré (R-AC-04). */
+export interface Reactivation {
+  /** ISO 8601 UTC. */
+  requestedAt: string;
+  /** Valeurs : "pending", "accepted", "refused". */
+  status: string;
+  /** ISO 8601 UTC. Absent : null. */
+  decidedAt?: string | undefined;
+}
+
+/** Demande de devis, élément de liste. */
+export interface RequestSummary {
+  /** UUID. */
   id: string;
+  /** Numéro lisible (DN-000124) */
+  number: string;
   /**
-   * "received", "visit_scheduled", "quote_sent", "accepted", "declined", "rejected",
-   * "expired" ou "cancelled".
+   * Statut effectif, calculé d’après l’heure (15.2) ; transitions : partie 15.2. Valeurs :
+   * "awaiting_visit_fee", "visit_to_schedule", "visit_scheduled", "visit_missed", "visit_done",
+   * "quote_sent", "accepted", "declined", "expired", "cancelled", "rejected".
    */
   status: string;
-  customerId: string;
-  /** "individual" ou "business". */
+  /** Valeurs : "individual", "organization". */
   customerKind: string;
-  /** Organisation au nom de laquelle la demande est faite, vide pour un particulier. */
-  organizationId: string;
-  serviceCode: string;
-  /**
-   * Déprécié (ADR-033) : valeur dérivée des réponses pour les anciens lecteurs, "other" si la
-   * prestation n'a pas de champ "premises_type". "apartment", "house", "office", "shop",
-   * "warehouse" ou "other".
-   *
-   * @deprecated
-   */
-  premisesType: string;
-  /**
-   * Déprécié (ADR-033) : réponse au champ de la taille d'équipe (TeamSizeRule.field_code), 1 sinon.
-   *
-   * @deprecated
-   */
-  quantity: number;
-  /** Codes des options choisies (le détail de leurs réponses est dans option_selections). */
-  options: string[];
-  commune: string;
-  /** Adresse d'intervention : jamais dans les journaux ni dans les événements. */
-  address: string;
-  preferredSlots: TimeSlot[];
-  comment: string;
-  recurrence?:
-    | Recurrence
+  /** Compte qui a envoyé la demande. UUID. */
+  customerId: string;
+  /** UUID. Absent : null. */
+  organizationId?: string | undefined;
+  placeTypeName: string;
+  communeKey: string;
+  communeName: string;
+  cleaningTypes: CleaningTypeRef[];
+  /** ISO 8601 UTC. Absent : null. */
+  nextVisitAt?:
+    | string
     | undefined;
-  /** Taille d'équipe demandée par le client, 0 si non précisée. */
-  requestedTeamSize: number;
-  recommendedTeamSize: number;
-  /** Fourchette du simulateur au moment de la demande, absente si la prestation n'a pas de prix. */
-  estimate?: PriceRange | undefined;
-  visit?: SiteVisit | undefined;
-  quote?: Quote | undefined;
-  missionId: string;
-  closingReason: string;
+  /** ISO 8601 UTC. */
   createdAt: string;
+  /** ISO 8601 UTC. */
   updatedAt: string;
-  /** Entreprise : jours d'intervention par semaine indiqués, 0 si non précisés. */
-  daysPerWeek: number;
-  /** Back-office : nom affiché du client (prénom et nom du compte, ADR-029). */
-  customerName: string;
-  /** Back-office : raison sociale de l'organisation, vide pour un particulier (ADR-029). */
-  organizationName: string;
-  /**
-   * Réponses au formulaire de la prestation, telles qu'enregistrées (ancien format converti,
-   * ADR-033). Absentes pour une demande antérieure à la grille paramétrable.
-   */
-  answers?:
-    | AnswerSet
+  /** Rempli pour le personnel seulement. */
+  customerName?:
+    | string
     | undefined;
-  /** Options choisies, avec leurs réponses. */
-  optionSelections: OptionSelection[];
-  /** Code de la fréquence choisie, vide si aucune. */
-  frequency: string;
-  /** Version de la grille utilisée pour le calcul, 0 si inconnue (demande antérieure). */
-  pricingVersion: number;
-  /**
-   * Détail du calcul au moment de la demande, absent pour une demande antérieure ; le devis est
-   * prérempli à partir de lui.
-   */
-  calculation?:
-    | PriceCalculation
-    | undefined;
-  /** Groupe de demandes créées ensemble pour un même lieu (ADR-034), vide pour une demande seule. */
-  groupId: string;
-  /** Code du type de lieu choisi par le client, vide pour une demande sans lieu. */
-  placeType: string;
-  /**
-   * Position GPS du lieu, absente pour une demande sans position. Jamais dans les journaux ni
-   * dans les événements.
-   */
-  location?:
-    | GeoLocation
-    | undefined;
-  /** Point de repère donné par le client, vide sans position. */
-  landmark: string;
-  /**
-   * Fournisseur qui a trouvé la commune : "nominatim" ou "google" ; vide si la commune est celle
-   * choisie par le client (aucun fournisseur n'a répondu) ou pour une demande sans position.
-   */
-  geocodingProvider: string;
-  /** Nombre de demandes du groupe (1 pour une demande seule). */
-  groupSize: number;
-  /**
-   * Nom de la prestation et libellé du type de lieu, résolus par cleaning au moment de la réponse
-   * (même pour une prestation ou un lieu désactivé) ; vides s'ils sont inconnus.
-   */
-  serviceName: string;
-  placeTypeLabel: string;
-  /** Adresse lisible rendue par le géocodeur pour la position, vide si aucune. */
-  geocodedAddress: string;
-  /**
-   * Mesures constatées sur le terrain après la visite (ADR-037) ; absentes sans mesure, et toujours
-   * dans l'espace client. Les réponses du client (answers, option_selections, frequency,
-   * calculation) ne sont jamais remplacées.
-   */
-  measurement?:
-    | RequestMeasurement
-    | undefined;
-  /**
-   * Réponses du client, lisibles (libellés des champs et des choix, Oui/Non, unités), résolues avec
-   * la version de grille de son calcul (ADR-037) ; type de locaux et quantité pour une demande à
-   * l'ancien format. Absent seulement si la demande n'a pas pu être décrite.
-   */
-  answerSummary?:
-    | AnswerSummary
-    | undefined;
-  /**
-   * Mesures constatées, lisibles, résolues avec leur version de grille ; absent sans mesure et dans
-   * l'espace client.
-   */
-  measuredSummary?:
-    | AnswerSummary
-    | undefined;
-  /** Plan de passages demandé (ADR-052) et ses dates exactes ; absent et vide sans plan. */
-  schedule?: InterventionSchedule | undefined;
-  scheduledDates: string[];
+  /** Rempli pour le personnel seulement. */
+  organizationName?: string | undefined;
 }
 
-/** Mesures constatées après la visite technique (ADR-037). */
-export interface RequestMeasurement {
-  answers?: AnswerSet | undefined;
-  optionSelections: OptionSelection[];
-  /** Code de la fréquence, vide si aucune. */
-  frequency: string;
+/** Demande de devis et son dossier (« un dossier = un lieu »). */
+export interface Request {
+  /** UUID. */
+  id: string;
+  number: string;
   /**
-   * Calcul des mesures : grille en vigueur et commune de la demande au moment de la saisie ; le
-   * devis est prérempli à partir de lui.
+   * Statut effectif, calculé d’après l’heure (15.2) Valeurs : "awaiting_visit_fee",
+   * "visit_to_schedule", "visit_scheduled", "visit_missed", "visit_done", "quote_sent", "accepted",
+   * "declined", "expired", "cancelled", "rejected".
    */
-  calculation?: PriceCalculation | undefined;
-  pricingVersion: number;
-  measuredAt: string;
-  /** Agent ou superviseur qui a saisi les mesures, et son nom affiché (ADR-029, vide s'il est inconnu). */
-  measuredBy: string;
-  measuredByName: string;
-}
-
-/** Réponses lisibles d'une demande (ADR-037), sans aucun prix. */
-export interface AnswerSummary {
-  /** Champs de la prestation, dans l'ordre du formulaire (un oui/non sans réponse n'apparaît pas). */
-  fields: AnswerSummaryField[];
-  /** Options choisies, dans l'ordre du formulaire. */
-  options: AnswerSummaryOption[];
-  /** Fréquence choisie, absente si aucune. */
-  frequency?: AnswerSummaryFrequency | undefined;
-}
-
-export interface AnswerSummaryField {
-  code: string;
-  /** Libellé du champ ; le code s'il n'existe pas dans la version de grille. */
-  label: string;
-  /** "number", "choice" ou "boolean". */
-  type: string;
-  value?:
-    | AnswerValue
+  status: string;
+  /** Valeurs : "individual", "organization". */
+  customerKind: string;
+  /** UUID. */
+  customerId: string;
+  /** UUID. Absent : null. */
+  organizationId?: string | undefined;
+  place?:
+    | PlaceSummary
     | undefined;
-  /** Valeur affichable : "120 m²", "Très sale", "Oui". */
-  display: string;
-  /** Unité d'un nombre, vide sinon. */
-  unitLabel: string;
+  /** Types choisis par le client (R-DM-02) */
+  cleaningTypes: CleaningTypeRef[];
+  /** Version « déclaré », jamais modifiée après l’envoi. Clé : code du paramètre. */
+  declaredValues: { [key: string]: ParameterValue };
+  /** Lieu « Autre » : besoin décrit par le client (R-CA-05) */
+  freeDescription?: string | undefined;
+  comment?:
+    | string
+    | undefined;
+  /** Photos du client (5 au plus) */
+  photos: Photo[];
+  /** Programme souhaité. */
+  schedule?:
+    | SchedulePlan
+    | undefined;
+  /** 1 à 3 créneaux de disponibilité pour la visite. */
+  visitSlots: TimeSlot[];
+  /** Calcul à la demande, version du tarif comprise (R-DM-03) */
+  declaredPricing?:
+    | Pricing
+    | undefined;
+  /** Frais en cours (le plus récent) */
+  visitFee?:
+    | VisitFee
+    | undefined;
+  /** Visites, la plus récente d’abord. */
+  visits: Visit[];
+  /** Version retenue (supervision) */
+  retained?:
+    | RetainedValues
+    | undefined;
+  /** Écarts montrés au client (R-CS-01, R-CS-02) */
+  comparison?:
+    | Comparison
+    | undefined;
+  /** Devis en cours (envoyé) ou accepté. */
+  currentQuote?:
+    | Quote
+    | undefined;
+  /** Versions précédentes (R-DV-05) ; brouillons visibles du back-office seulement. */
+  quoteHistory: Quote[];
+  /** UUID. Absent : null. */
+  programId?: string | undefined;
+  reactivation?:
+    | Reactivation
+    | undefined;
+  /** ISO 8601 UTC. */
+  createdAt: string;
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+  /** Déclaré figé à l’envoi. */
+  declaredRows: ValueRow[];
+  /** Tous les frais du dossier, du plus récent au plus ancien. */
+  visitFees: VisitFee[];
+  /** Rempli pour le personnel seulement. */
+  customerName?:
+    | string
+    | undefined;
+  /** Rempli pour le personnel seulement. */
+  organizationName?:
+    | string
+    | undefined;
+  /** Avertissements non bloquants, calculés à la lecture. Valeurs : "organization_unpaid_invoices". */
+  warnings: string[];
 }
 
-export interface AnswerSummaryOption {
-  optionCode: string;
-  label: string;
-  fields: AnswerSummaryField[];
+export interface Request_DeclaredValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
 }
 
-export interface AnswerSummaryFrequency {
-  code: string;
-  label: string;
+/** Résultat d’un paiement (un seul chemin : le wallet, R-WL-05). */
+export interface PaymentOutcome {
+  /**
+   * "paid" : wallet débité ; "awaiting_payment" : paiement Mobile Money créé, le débit suit sa
+   * réussite. Valeurs : "paid", "awaiting_payment".
+   */
+  status: string;
+  /**
+   * Montant payé par Mobile Money : ce qui manque au solde (montant dû − solde disponible) ;
+   * montant débité si "paid".
+   */
+  amount?:
+    | Money
+    | undefined;
+  /** Débit du wallet. UUID. Absent : null. */
+  walletTransactionId?:
+    | string
+    | undefined;
+  /** Paiement Mobile Money (service payment) UUID. Absent : null. */
+  paymentId?:
+    | string
+    | undefined;
+  /** Page de paiement du prestataire. Absent : null. */
+  checkoutUrl?:
+    | string
+    | undefined;
+  /** Facture ou reçu émis par billing. UUID. Absent : null. */
+  invoiceId?: string | undefined;
 }
 
-/**
- * Mesures saisies (ADR-037) : réponses au nouveau format seulement, validées comme une simulation
- * (erreurs : details.field préfixé, "measurements.answers.surface").
- */
-export interface MeasurementInput {
-  /** Obligatoire, même vide. */
-  answers?: AnswerSet | undefined;
-  optionSelections: OptionSelection[];
-  /** Code d'une fréquence active de la prestation, obligatoire si elle en a. */
-  frequency: string;
+/** Cause de suspension (R-SU-01), cumulable. */
+export interface SuspensionCause {
+  /** Valeurs : "overdue_sessions", "unpaid_invoices", "ksp_decision", "organization_suspended". */
+  cause: string;
+  /** ISO 8601 UTC. */
+  since: string;
+  /** Motif d’une décision de KSP. */
+  reason?: string | undefined;
 }
 
-/**
- * Mesures d'une demande de la visite commune (ADR-037) : erreurs "measurements[1].answers.surface",
- * demande hors de la visite ou citée deux fois : "measurements[1].requestId".
- */
-export interface RequestMeasurementInput {
+/** Renouvellement proposé (R-PG-07). */
+export interface Renewal {
+  /** Valeurs : "proposed", "accepted", "declined". */
+  status: string;
+  /** ISO 8601 UTC. */
+  proposedAt: string;
+  /** Devis de renouvellement. UUID. Absent : null. */
+  quoteId?:
+    | string
+    | undefined;
+  /** Dernière visite de plus de 12 mois : nouvelle visite. */
+  visitRequired: boolean;
+}
+
+/** Programme de nettoyage (partie 8). */
+export interface Program {
+  /** UUID. */
+  id: string;
+  /** Numéro lisible (PN-000057) */
+  number: string;
+  /**
+   * Transitions : partie 15.2. Valeurs : "confirmed", "in_progress", "suspended", "completed",
+   * "cancelled".
+   */
+  status: string;
+  /** UUID. */
   requestId: string;
-  answers?: AnswerSet | undefined;
-  optionSelections: OptionSelection[];
-  frequency: string;
+  /** UUID. */
+  quoteId: string;
+  /** Valeurs : "individual", "organization". */
+  customerKind: string;
+  /** UUID. */
+  customerId: string;
+  /** UUID. Absent : null. */
+  organizationId?:
+    | string
+    | undefined;
+  /** Valeurs : "individual", "organization". */
+  payerKind: string;
+  place?: PlaceSummary | undefined;
+  cleaningTypes: CleaningTypeRef[];
+  schedule?: SchedulePlan | undefined;
+  sessionsCount: number;
+  sessionsCompleted: number;
+  /**
+   * Absent pour qui n’a pas le droit de voir les montants (agent ; personnel sans
+   * cleaning.amounts.read).
+   */
+  sessionPrice?:
+    | Money
+    | undefined;
+  /**
+   * Somme des séances. Absent pour qui n’a pas le droit de voir les montants (agent ; personnel
+   * sans cleaning.amounts.read).
+   */
+  total?:
+    | Money
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  firstSessionAt?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  lastSessionAt?:
+    | string
+    | undefined;
+  /** Vide sauf programme suspendu. */
+  suspensionCauses: SuspensionCause[];
+  renewal?:
+    | Renewal
+    | undefined;
+  /** ISO 8601 UTC. */
+  createdAt: string;
+  /**
+   * Arrêt demandé par KSP, en attente de validation par une deuxième personne (partie 12, à
+   * valider) ; renseigné au back-office seulement.
+   */
+  pendingCancellation?:
+    | ProgramCancellationRequest
+    | undefined;
+  /** Rempli pour le personnel seulement. */
+  customerName?:
+    | string
+    | undefined;
+  /** Rempli pour le personnel seulement. */
+  organizationName?: string | undefined;
 }
 
-/** Position GPS d'un lieu d'intervention (ADR-034). */
-export interface GeoLocation {
-  latitude: number;
-  longitude: number;
-  /** Précision annoncée par le téléphone, en mètres ; 0 si inconnue. */
-  accuracyMeters: number;
+/** Séance à rattraper après une suspension (R-SU-03). */
+export interface CatchUpProposal {
+  /** UUID. */
+  sessionId: string;
+  rank: number;
+  /** ISO 8601 UTC. */
+  previousStart: string;
+  /** null : aucune date libre trouvée. ISO 8601 UTC. Absent : null. */
+  suggestedStart?: string | undefined;
 }
 
+/** Programme repris et séances à rattraper (R-SU-03). */
+export interface ProgramResumption {
+  program?:
+    | Program
+    | undefined;
+  /** Séances à rattraper. */
+  catchUp: CatchUpProposal[];
+}
+
+/** Arrêt d’un programme demandé par KSP, en attente de validation (partie 12, à valider). */
+export interface ProgramCancellationRequest {
+  /** Motif obligatoire. */
+  reason: string;
+  /** Auteur de la demande (le valideur doit être une autre personne) UUID. */
+  requestedBy: string;
+  /** ISO 8601 UTC. */
+  requestedAt: string;
+}
+
+/** Point de la liste de contrôle d’une séance. */
 export interface ChecklistItem {
   code: string;
   label: string;
-  done: boolean;
+  /** null : point commun. Absent : null. */
+  cleaningTypeCode?: string | undefined;
+  checked: boolean;
+  /** Heure réelle. ISO 8601 UTC. Absent : null. */
+  checkedAt?: string | undefined;
 }
 
-export interface AgentRef {
-  agentId: string;
-  displayName: string;
-}
-
-/**
- * Passage d'une mission : une prestation ponctuelle en a un, un contrat récurrent plusieurs,
- * chacun avec ses agents.
- */
-export interface Intervention {
+/** Incident sur place (partie 10). */
+export interface Incident {
+  /** UUID. */
   id: string;
-  /** "planned", "in_progress", "on_hold", "completed" ou "cancelled". */
-  status: string;
-  scheduledStart: string;
-  durationMinutes: number;
-  agents: AgentRef[];
-  checklist: ChecklistItem[];
-  incidentNote: string;
-  /** Références de fichiers du service file (photos avant et après), sans stockage ici. */
-  beforePhotoFileIds: string[];
-  afterPhotoFileIds: string[];
-  startedAt: string;
-  completedAt: string;
   /**
-   * Passage annulé : "suspension" (reprogrammable au déblocage) ou "manual" ; vide sinon.
-   * "unscheduled" (ADR-053) : annulé pour être replanifié, la mission a de nouveau un passage à planifier.
+   * Matériel, accès, sécurité, demande hors devis (R-EX-03), autre. Valeurs : "equipment",
+   * "access", "safety", "out_of_scope_request", "other".
    */
-  cancellationCause: string;
-  /** Motif du dernier report, ou de l'annulation pour replanifier (ADR-053) ; vide sinon. */
-  changeReason: string;
+  category: string;
+  note: string;
+  photos: Photo[];
+  /** ISO 8601 UTC. */
+  reportedAt: string;
+  /** Décision du superviseur. Valeurs : "pending", "resumed", "rescheduled", "cancelled". */
+  decision: string;
+  /** ISO 8601 UTC. Absent : null. */
+  decidedAt?: string | undefined;
 }
 
-export interface Mission {
-  id: string;
-  requestId: string;
-  quoteId: string;
-  customerId: string;
-  /** "to_schedule", "scheduled", "in_progress", "on_hold", "completed" ou "cancelled". */
-  status: string;
-  serviceCode: string;
-  commune: string;
-  /** Adresse d'intervention : jamais dans les journaux ni dans les événements. */
-  address: string;
-  chosenSlot?: TimeSlot | undefined;
-  recurrence?: Recurrence | undefined;
-  plannedInterventions: number;
-  completedInterventions: number;
-  interventions: Intervention[];
-  payment?: PaymentState | undefined;
-  cancellationReason: string;
-  createdAt: string;
-  updatedAt: string;
-  /** Suspension en cours, absente sinon (CDC Nettoyage, partie 10 ; ADR-030). */
-  suspension?:
-    | Suspension
+/** Note du client (partie 10). */
+export interface Rating {
+  stars: number;
+  comment?:
+    | string
     | undefined;
-  /** Jours d'intervention par semaine indiqués par l'entreprise, 0 si non précisés. */
-  daysPerWeek: number;
-  /**
-   * "individual" ou "business" (organisation au nom de laquelle le devis a été accepté) : une
-   * mission d'entreprise se règle par sa facture, jamais par un paiement manuel.
-   */
-  customerKind: string;
-  /** Organisation de la mission, vide pour un particulier. */
-  organizationId: string;
-  /** Back-office : nom affiché du client (ADR-029). */
-  customerName: string;
-  /** Back-office : raison sociale de l'organisation, vide pour un particulier (ADR-029). */
-  organizationName: string;
-  /**
-   * Position GPS et point de repère copiés de la demande à l'acceptation (ADR-034), pour que les
-   * agents aillent sur place ; absents pour une mission sans position.
-   */
-  location?: GeoLocation | undefined;
-  landmark: string;
-  /** Groupe et type de lieu de la demande d'origine (ADR-034), vides sinon. */
-  groupId: string;
-  placeType: string;
-  /**
-   * Plan de passages du devis accepté (ADR-052) et ses dates exactes (planned_interventions = leur
-   * nombre), à planifier passage par passage ; absent et vide sans plan.
-   */
-  schedule?: InterventionSchedule | undefined;
-  scheduledDates: string[];
+  /** ISO 8601 UTC. */
+  ratedAt: string;
 }
 
-export interface Suspension {
+/** Ancienne date d’une séance reportée (un report n’est pas un statut). */
+export interface Reschedule {
+  /** ISO 8601 UTC. */
+  previousStart: string;
+  /** ISO 8601 UTC. */
+  newStart: string;
+  /** Valeurs : "customer", "ksp". */
+  by: string;
+  /** ISO 8601 UTC. */
+  at: string;
+  /** Motif ; au client : seulement pour une décision de KSP. */
+  reason?:
+    | string
+    | undefined;
+  /** Auteur ; back-office seulement. UUID. Absent : null. */
+  actorId?: string | undefined;
+}
+
+/** Annulation d’une séance (partie 12). */
+export interface SessionCancellation {
+  /** Valeurs : "customer", "ksp". */
+  by: string;
+  /** Moins de 24 h avant, via le support : 50 % du prix dû. */
+  late: boolean;
+  /** ISO 8601 UTC. */
+  at: string;
   /**
-   * Plus ancienne cause encore active : "unpaid_invoices" (entreprise), "unpaid_interventions"
-   * (particulier) ou "organization_suspended" (organisation suspendue par KSP, ADR-030).
+   * Cause de l’annulation. Valeurs : "customer", "customer_late", "ksp", "no_agent",
+   * "program_stopped".
    */
   cause: string;
-  since: string;
-  /** Impayés connus à la dernière décision ; 0 possible pour une organisation suspendue. */
-  unpaidCount: number;
-  /**
-   * Toutes les causes actives, la plus ancienne d'abord : la mission reprend quand il n'en reste
-   * aucune (ADR-030).
-   */
-  causes: string[];
+  /** Motif ; au client : seulement pour une décision de KSP. */
+  reason?:
+    | string
+    | undefined;
+  /** Auteur ; back-office seulement. UUID. Absent : null. */
+  actorId?: string | undefined;
 }
 
-export interface CatalogOption {
+/** Séance d’un programme (parties 8 et 10). */
+export interface Session {
+  /** UUID. */
+  id: string;
+  /** UUID. */
+  programId: string;
+  programNumber: string;
+  /** Rang dans le programme (3 pour « 3/15 ») */
+  rank: number;
+  sessionsCount: number;
+  /**
+   * Transitions : partie 15.2. Valeurs : "to_assign", "assigned", "in_progress", "interrupted",
+   * "completed", "missed", "suspended", "cancelled".
+   */
+  status: string;
+  /** ISO 8601 UTC. */
+  scheduledStart: string;
+  /** ISO 8601 UTC. */
+  scheduledEnd: string;
+  /**
+   * Particulier seulement (null pour une entreprise, payée par facture mensuelle) ; "waived" :
+   * repasse gratuite. Valeurs : "not_due", "due", "paid", "overdue", "waived". Absent : null.
+   */
+  paymentStatus?:
+    | string
+    | undefined;
+  /**
+   * Prix de la séance (prix d’une séance du devis) Absent pour qui n’a pas le droit de voir les
+   * montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  price?:
+    | Money
+    | undefined;
+  /**
+   * Montant dû (frais de visite déduits, 50 % pour une séance manquée ou annulée tard) Absent pour
+   * qui n’a pas le droit de voir les montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  amountDue?:
+    | Money
+    | undefined;
+  /**
+   * Frais de visite déduits de cette séance (R-PP-02) Absent pour qui n’a pas le droit de voir les
+   * montants (agent ; personnel sans cleaning.amounts.read).
+   */
+  visitFeeDeduction?:
+    | Money
+    | undefined;
+  /** Fin du délai de paiement (24 h, R-PP-03) ISO 8601 UTC. Absent : null. */
+  dueBy?: string | undefined;
+  agents: AssignedAgent[];
+  arrival?:
+    | ArrivalCheck
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  startedAt?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  completedAt?: string | undefined;
+  checklist: ChecklistItem[];
+  photos: Photo[];
+  incidents: Incident[];
+  /** Signature du client sur le téléphone de l’agent (facultative) */
+  signed: boolean;
+  rating?: Rating | undefined;
+  reschedules: Reschedule[];
+  cancellation?:
+    | SessionCancellation
+    | undefined;
+  /** Repasse gratuite décidée sur réclamation (R-RC-03) */
+  isRedo: boolean;
+  /** Facture de la séance (particulier) UUID. Absent : null. */
+  invoiceId?:
+    | string
+    | undefined;
+  /** UUID. */
+  claimIds: string[];
+  /** Rempli pour le personnel seulement. */
+  customerName?:
+    | string
+    | undefined;
+  /** Rempli pour le personnel seulement. */
+  organizationName?: string | undefined;
+}
+
+/** Devis accepté et programme créé (R-AC-01). */
+export interface AcceptQuoteResult {
+  quote?: Quote | undefined;
+  program?: Program | undefined;
+}
+
+/** Échange sur une réclamation (R-RC-02). */
+export interface ClaimMessage {
+  /** UUID. */
+  id: string;
+  /** Valeurs : "customer", "staff". */
+  author: string;
+  /** UUID. */
+  authorId: string;
+  text: string;
+  /** ISO 8601 UTC. */
+  at: string;
+}
+
+/** Décision sur une réclamation (R-RC-03). */
+export interface ClaimDecision {
+  /**
+   * Repasse gratuite ; crédit : au wallet pour un particulier, avoir billing (IssueCreditNote) pour
+   * une entreprise ; rejet motivé. Valeurs : "free_redo", "wallet_credit", "rejected".
+   */
+  outcome: string;
+  /**
+   * Crédit ; null sinon. Absent pour qui n’a pas le droit de voir les montants (agent ; personnel
+   * sans cleaning.amounts.read).
+   */
+  creditAmount?:
+    | Money
+    | undefined;
+  /** Séance à 0 FCFA ajoutée au programme. UUID. Absent : null. */
+  redoSessionId?:
+    | string
+    | undefined;
+  /** Décision motivée. */
+  reason: string;
+  /** UUID. */
+  decidedBy: string;
+  /** ISO 8601 UTC. */
+  decidedAt: string;
+  /**
+   * Crédit de plus de 50 000 FCFA : validé par une deuxième personne. Valeurs : "not_required",
+   * "pending", "approved".
+   */
+  approvalStatus: string;
+  /** UUID. Absent : null. */
+  approvedBy?: string | undefined;
+  decidedByName?: string | undefined;
+}
+
+/** Réclamation sur une séance (partie 12). */
+export interface Claim {
+  /** UUID. */
+  id: string;
+  /** UUID. */
+  sessionId: string;
+  /** UUID. */
+  programId: string;
+  /** UUID. */
+  customerId: string;
+  /** UUID. Absent : null. */
+  organizationId?:
+    | string
+    | undefined;
+  /** Valeurs : "incomplete_work", "damage", "behavior", "missing_item", "other". */
+  category: string;
+  text: string;
+  photos: Photo[];
+  /** Valeurs : "open", "in_progress", "resolved", "rejected". */
+  status: string;
+  /** Dans l’ordre chronologique. */
+  messages: ClaimMessage[];
+  decision?:
+    | ClaimDecision
+    | undefined;
+  /** ISO 8601 UTC. */
+  openedAt: string;
+  /** Objectif : 24 h. ISO 8601 UTC. Absent : null. */
+  firstResponseAt?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  closedAt?:
+    | string
+    | undefined;
+  /** Rempli pour le personnel seulement. */
+  customerName?:
+    | string
+    | undefined;
+  /** Rempli pour le personnel seulement. */
+  organizationName?: string | undefined;
+}
+
+/** Plage horaire d’une journée (heure de Porto-Novo). */
+export interface TimeRange {
+  /** HH:MM, heure de Porto-Novo. */
+  start: string;
+  /** HH:MM, heure de Porto-Novo. */
+  end: string;
+}
+
+/** Plages d’un jour de la semaine (R-DS-01). */
+export interface AvailabilityRule {
+  /** Valeurs : "mon", "tue", "wed", "thu", "fri", "sat", "sun". */
+  weekday: string;
+  ranges: TimeRange[];
+}
+
+/** Disponibilité exceptionnelle (R-DS-02). */
+export interface ExtraAvailability {
+  /** UUID. */
+  id: string;
+  /** ISO 8601 UTC. */
+  start: string;
+  /** ISO 8601 UTC. */
+  end: string;
+}
+
+/** Indisponibilité (R-DS-02). */
+export interface Unavailability {
+  /** UUID. */
+  id: string;
+  /** ISO 8601 UTC. */
+  start: string;
+  /** ISO 8601 UTC. */
+  end: string;
+  /** Congé, maladie, motif libre. Valeurs : "leave", "sickness", "other". */
+  kind: string;
+  note?:
+    | string
+    | undefined;
+  /** Forcée par le superviseur malgré des affectations (R-DS-04) */
+  forced: boolean;
+  /** UUID. */
+  createdBy: string;
+  /** ISO 8601 UTC. */
+  createdAt: string;
+  createdByName?: string | undefined;
+}
+
+/** Disponibilités d’un agent (partie 9.2). */
+export interface Availability {
+  /** Modèle hebdomadaire. */
+  weekly: AvailabilityRule[];
+  extraAvailabilities: ExtraAvailability[];
+  /** À venir et en cours. */
+  unavailabilities: Unavailability[];
+  /** Charge maximale (R-DS-03) */
+  maxHoursPerDay: number;
+  maxHoursPerWeek: number;
+}
+
+/** Compétence d’un agent. */
+export interface AgentSkill {
   code: string;
-  label: string;
-  /** Absent tant que l'option n'a pas de prix. Depuis l'ADR-033 : forfait de l'option (flat_price). */
+  name: string;
+  /** Une compétence déclarée mais non validée ne compte pas (R-AG-01) */
+  validated: boolean;
+}
+
+/** Personne à prévenir en cas d’urgence. */
+export interface EmergencyContact {
+  name: string;
+  phone: string;
+}
+
+/** Activité d’un agent (R-AG-04), sans montants. */
+export interface AgentStats {
+  sessionsCompleted: number;
+  visitsCompleted: number;
+  hoursThisWeek: number;
+  hoursThisMonth: number;
+  /** Note moyenne des clients. Absent : null. */
+  ratingAverage?: number | undefined;
+  ratingsCount: number;
+  openClaims: number;
+}
+
+/** Agent de nettoyage (partie 9.1). */
+export interface Agent {
+  /** UUID. */
+  id: string;
+  /** Compte KSP (identity) UUID. */
+  userId: string;
+  /**
+   * Transitions : partie 15.2. Valeurs : "applicant", "under_review", "active", "suspended",
+   * "deactivated", "rejected".
+   */
+  status: string;
+  firstName: string;
+  lastName: string;
+  /** Téléphone vérifié du compte. */
+  phone: string;
+  /** Lien temporaire. Absent : null. */
+  photoUrl?:
+    | string
+    | undefined;
+  /** Salarié ou indépendant partenaire (R-PL-08) Valeurs : "employee", "independent". */
+  employmentKind: string;
+  residenceCommuneKey: string;
+  /** Communes de travail. */
+  zoneKeys: string[];
+  skills: AgentSkill[];
+  maxHoursPerDay: number;
+  maxHoursPerWeek: number;
+  emergencyContact?:
+    | EmergencyContact
+    | undefined;
+  /** Rémunération, gérée hors du module. Absent : null. */
+  mobileMoneyNumber?:
+    | string
+    | undefined;
+  /** Pièce d’identité déposée (lisible de l’admin seulement) */
+  hasIdDocument: boolean;
+  stats?:
+    | AgentStats
+    | undefined;
+  /** ISO 8601 UTC. */
+  createdAt: string;
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+}
+
+/** Pièce d’identité (chiffrée, visible de l’admin Nettoyage seulement). */
+export interface IdDocument {
+  front?: Photo | undefined;
+  back?: Photo | undefined;
+}
+
+/** Invitation d’un agent par SMS (R-AG-02). */
+export interface AgentInvitation {
+  /** UUID. */
+  id: string;
+  phone: string;
+  /** ISO 8601 UTC. */
+  expiresAt: string;
+}
+
+/** Membre d’une équipe. */
+export interface TeamMember {
+  /** UUID. */
+  agentId: string;
+  firstName: string;
+  lastName: string;
+  /** Valeurs : "applicant", "under_review", "active", "suspended", "deactivated", "rejected". */
+  status: string;
+}
+
+/** Équipe (partie 9.3). */
+export interface Team {
+  /** UUID. */
+  id: string;
+  name: string;
+  /** UUID. */
+  leadAgentId: string;
+  members: TeamMember[];
+  active: boolean;
+  /** ISO 8601 UTC. */
+  createdAt: string;
+}
+
+/** Visite ou séance concernée. */
+export interface AssignmentTarget {
+  /** Valeurs : "visit", "session". */
+  kind: string;
+  /** UUID. */
+  id: string;
+}
+
+/** Contrôle contourné par le superviseur, avec motif (9.4). */
+export interface CheckOverride {
+  /** Seuls ces contrôles sont contournables. Valeurs : "zone", "availability", "load", "team_size". */
+  check: string;
+  reason: string;
+}
+
+/** Affectation qui chevauche, temps de trajet compris (9.4). */
+export interface ScheduleConflict {
+  target?:
+    | AssignmentTarget
+    | undefined;
+  /** ISO 8601 UTC. */
+  start: string;
+  /** ISO 8601 UTC. */
+  end: string;
+  /** Temps de trajet compté (OSRM, ou valeur par défaut, R-ZN-02) */
+  travelMinutes: number;
+}
+
+/** Résultat d’un contrôle. */
+export interface CheckResult {
+  /**
+   * Valeurs : "active", "skills", "zone", "availability", "unavailability", "conflict", "load",
+   * "team_size".
+   */
+  check: string;
+  passed: boolean;
+  overridable: boolean;
+  /** Contourné avec motif. */
+  overridden: boolean;
+  /** Compétences manquantes ("skills") */
+  missingSkills: string[];
+  /** Chevauchements ("conflict") */
+  conflicts: ScheduleConflict[];
+  /** Indisponibilité en cause ("unavailability") UUID. Absent : null. */
+  unavailabilityId?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  unavailabilityStart?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  unavailabilityEnd?: string | undefined;
+}
+
+/** Contrôles d’une affectation pour un agent (9.4). */
+export interface AgentCheck {
+  /** UUID. */
+  agentId: string;
+  target?:
+    | AssignmentTarget
+    | undefined;
+  /** Tous les contrôles passent (ou sont contournés) */
+  passed: boolean;
+  results: CheckResult[];
+}
+
+/** Affectation d’un agent à une visite ou une séance. */
+export interface Assignment {
+  /** UUID. */
+  id: string;
+  target?:
+    | AssignmentTarget
+    | undefined;
+  /** UUID. */
+  agentId: string;
+  agentFirstName: string;
+  agentLastName: string;
+  isLead: boolean;
+  /** Valeurs : "manual", "auto". */
+  source: string;
+  /**
+   * Proposée (mode proposition), en attente de l’indépendant, confirmée, refusée, sans réponse sous
+   * 12 h, retirée. Valeurs : "proposed", "pending_confirmation", "confirmed", "declined",
+   * "expired", "removed".
+   */
+  status: string;
+  /** Indépendant : limite de réponse (R-PL-08) ISO 8601 UTC. Absent : null. */
+  respondBefore?: string | undefined;
+  overrides: CheckOverride[];
+  /** null pour la planification automatique. UUID. Absent : null. */
+  createdBy?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. */
+  createdAt: string;
+  createdByName?: string | undefined;
+}
+
+/** Résultat d’une affectation (tout ou rien, sauf skipFailing). */
+export interface AssignmentBatch {
+  assignments: Assignment[];
+  checks: AgentCheck[];
+  /**
+   * Moins d’agents que prévu : alerte au superviseur. Valeurs : "team_size_short",
+   * "team_lead_missing".
+   */
+  warnings: string[];
+  /** Lot (plusieurs séances d’un programme) UUID. Absent : null. */
+  batchId?:
+    | string
+    | undefined;
+  /** Cibles écartées (skipFailing) */
+  skipped: AgentCheck[];
+}
+
+/** Contrôles en direct (glisser-déposer, 9.6), sans rien enregistrer. */
+export interface AssignmentCheckReport {
+  passed: boolean;
+  checks: AgentCheck[];
+}
+
+/** Visite ou séance au planning (9.6). */
+export interface PlanningItem {
+  /** Valeurs : "visit", "session". */
+  kind: string;
+  /** UUID. */
+  id: string;
+  /** Numéro du dossier ou du programme. */
+  number: string;
+  /** Rang de la séance. Absent : null. */
+  rank?:
+    | number
+    | undefined;
+  /** Statut de la visite ou de la séance. */
+  status: string;
+  /** ISO 8601 UTC. */
+  start: string;
+  /** ISO 8601 UTC. */
+  end: string;
+  communeKey: string;
+  communeName: string;
+  /** Carte du jour (personnel du back-office) */
+  location?: PlaceLocation | undefined;
+  cleaningTypes: CleaningTypeRef[];
+  requiredSkills: string[];
+  /** Nombre d’agents prévu. */
+  teamSize: number;
+  agents: AssignedAgent[];
+  /** En retard (non démarrée à l’heure) */
+  late: boolean;
+  /** Sans équipe complète à moins de 48 h (R-PL-06) */
+  urgent: boolean;
+  /** Rattrapage proposé (R-SU-03) ISO 8601 UTC. Absent : null. */
+  suggestedStart?: string | undefined;
+}
+
+/** Charge d’un agent sur la période (heures prévues / maximum). */
+export interface AgentLoad {
+  /** UUID. */
+  agentId: string;
+  firstName: string;
+  lastName: string;
+  plannedMinutes: number;
+  maxMinutes: number;
+}
+
+/** Planning du back-office sur une période (9.6). */
+export interface Planning {
+  /** ISO 8601 UTC. */
+  from: string;
+  /** ISO 8601 UTC. */
+  to: string;
+  /** Dans l’ordre chronologique. */
+  items: PlanningItem[];
+  loads: AgentLoad[];
+}
+
+/** Visite ou séance restée « à affecter » (R-PL-06). */
+export interface AutoPlanningFailure {
+  target?:
+    | AssignmentTarget
+    | undefined;
+  /** Valeurs : "no_candidate", "team_incomplete", "no_lead". */
+  reason: string;
+}
+
+/** Passage de la planification automatique (R-PL-01 à 07). */
+export interface AutoPlanningRun {
+  /** UUID. */
+  id: string;
+  /** Mode appliqué (manuel : rien n’est lancé) Valeurs : "proposal", "automatic". */
+  mode: string;
+  /** ISO 8601 UTC. */
+  from: string;
+  /** ISO 8601 UTC. */
+  to: string;
+  /** Affectations appliquées (mode automatique) */
+  assigned: number;
+  /** Affectations proposées (mode proposition) */
+  proposed: number;
+  failures: AutoPlanningFailure[];
+  /** ISO 8601 UTC. */
+  startedAt: string;
+}
+
+/** Affectation vue par l’agent (« Mon planning »), sans montants. */
+export interface AgentAssignmentView {
+  /** UUID. */
+  assignmentId: string;
+  target?:
+    | AssignmentTarget
+    | undefined;
+  /** Valeurs : "proposed", "pending_confirmation", "confirmed", "declined", "expired", "removed". */
+  status: string;
+  isLead: boolean;
+  /** ISO 8601 UTC. */
+  start: string;
+  /** ISO 8601 UTC. */
+  end: string;
+  /** Statut de la visite ou de la séance. */
+  targetStatus: string;
+  placeTypeName: string;
+  communeName: string;
+  /** ISO 8601 UTC. Absent : null. */
+  respondBefore?: string | undefined;
+}
+
+/** Lieu vu par l’agent : `location` null hors de la visite ou de la séance en cours (R-EX-06). */
+export interface AgentPlaceView {
+  name: string;
+  placeTypeName: string;
+  communeName: string;
+  location?:
+    | PlaceLocation
+    | undefined;
+  /** Prénom du client ; appel par numéro masqué (prestataire à choisir) */
+  customerFirstName: string;
+}
+
+/** Visite vue par l’agent (13.2), sans montants (R-EX-04). */
+export interface AgentVisitView {
+  /** UUID. */
+  id: string;
+  requestNumber: string;
+  /** Valeurs : "scheduled", "in_progress", "completed", "missed", "cancelled". */
+  status: string;
+  /** ISO 8601 UTC. */
+  scheduledAt: string;
+  durationMinutes: number;
+  isLead: boolean;
+  place?: AgentPlaceView | undefined;
+  cleaningTypes: CleaningTypeRef[];
+  /** Formulaire du constat. */
+  parameters: PublicParameter[];
+  /** Pré-remplissage du constat. Clé : code du paramètre. */
+  declaredValues: { [key: string]: ParameterValue };
+  /** Clé : code du paramètre. */
+  observedValues: { [key: string]: ParameterValue };
+  photos: Photo[];
+  arrival?:
+    | ArrivalCheck
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  completedAt?:
+    | string
+    | undefined;
+  /** Remarque de l’agent pour le superviseur ; jamais montrée au client. */
+  note?: string | undefined;
+}
+
+export interface AgentVisitView_DeclaredValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+export interface AgentVisitView_ObservedValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+/** Séance vue par l’agent (partie 10), sans montants (R-EX-04). */
+export interface AgentSessionView {
+  /** UUID. */
+  id: string;
+  programNumber: string;
+  rank: number;
+  /**
+   * Valeurs : "to_assign", "assigned", "in_progress", "interrupted", "completed", "missed",
+   * "suspended", "cancelled".
+   */
+  status: string;
+  /** ISO 8601 UTC. */
+  scheduledStart: string;
+  /** ISO 8601 UTC. */
+  scheduledEnd: string;
+  /** Le chef d’équipe démarre et clôture (R-EQ-03) */
+  isLead: boolean;
+  team: AssignedAgent[];
+  place?: AgentPlaceView | undefined;
+  checklist: ChecklistItem[];
+  photos: Photo[];
+  incidents: Incident[];
+  arrival?:
+    | ArrivalCheck
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  startedAt?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. Absent : null. */
+  completedAt?: string | undefined;
+}
+
+/** Activité de l’agent (« Mon activité », 13.2), sans montants. */
+export interface AgentActivity {
+  stats?:
+    | AgentStats
+    | undefined;
+  /** Heures par semaine, les plus récentes d’abord. */
+  weeks: AgentActivityPeriod[];
+  /** Heures par mois. */
+  months: AgentActivityPeriod[];
+}
+
+/** Heures réalisées sur une période. */
+export interface AgentActivityPeriod {
+  /** AAAA-MM-JJ. */
+  periodStart: string;
+  hours: number;
+  sessionsCompleted: number;
+}
+
+/** Poids du score des candidats (R-PL-03), total = 100. */
+export interface ScoreWeights {
+  /** Défaut 40. */
+  continuity: number;
+  /** Défaut 25. */
+  proximity: number;
+  /** Défaut 20. */
+  balance: number;
+  /** Défaut 15. */
+  rating: number;
+}
+
+/** Réglages du module (partie 16.1), bornés et tracés au journal d’audit. */
+export interface Settings {
+  /** Demandes ouvertes par compte (défaut 5, R-DM-04) */
+  maxOpenRequestsPerAccount: number;
+  /** Délai minimum avant une visite (défaut 24 h, R-DM-05) */
+  minVisitLeadHours: number;
+  /** Délai de paiement des frais de visite (défaut 72 h, R-FV-03) */
+  visitFeePaymentHours: number;
+  /** Objectif de délai de visite (défaut 72 h ouvrées, R-VI-01) */
+  visitTargetBusinessHours: number;
+  /** Durée d’une visite (défaut 60 min, R-VI-02) */
+  visitDurationMinutes: number;
+  /** Temps de trajet si OSRM est indisponible (défaut 30 min, R-ZN-02) */
+  defaultTravelMinutes: number;
+  /**
+   * Frais de visite par défaut (R-FV-01) Absent pour qui n’a pas le droit de voir les montants
+   * (agent ; personnel sans cleaning.amounts.read).
+   */
+  defaultVisitFee?:
+    | Money
+    | undefined;
+  /** Déduction des frais de visite du premier paiement (défaut oui, R-FV-05) */
+  deductVisitFee: boolean;
+  /** Validité d’un devis (défaut 15 j, R-DV-04) */
+  quoteValidityDays: number;
+  /** Rappel avant expiration (défaut 2 j) */
+  quoteReminderDays: number;
+  /** Remise maximale sans validation d’un admin (défaut 20 %, R-DV-03) */
+  maxDiscountWithoutApprovalPercent: number;
+  /** Délai minimum avant la première séance (défaut 48 h, R-PG-03) */
+  firstSessionLeadHours: number;
+  /** Durée maximale d’un programme (défaut 24 mois) */
+  programMaxMonths: number;
+  /** Nombre maximum de séances (défaut 400) */
+  programMaxSessions: number;
+  /** Annulation ou report sans frais (défaut 24 h avant) */
+  freeCancellationHours: number;
+  /** Reports par mois (défaut 2) */
+  reschedulesPerMonth: number;
+  /** Frais d’annulation tardive / de client absent (défaut 50 %) */
+  lateCancellationFeePercent: number;
+  /** Délai de paiement d’une séance, particulier (défaut 24 h, R-PP-03) */
+  sessionPaymentGraceHours: number;
+  /** Séances en retard avant suspension (défaut 1, R-PP-04) */
+  overdueSessionsBeforeSuspension: number;
+  /** Garantie de solde avant une séance (défaut non, R-PP-05) */
+  balanceGuarantee: boolean;
+  /** Factures impayées avant avertissement (défaut 1, R-PE-06) */
+  unpaidInvoicesWarning: number;
+  /** Factures impayées avant suspension (défaut 2) ; plus grand que l’avertissement. */
+  unpaidInvoicesSuspension: number;
+  /**
+   * Mode de planification par défaut (proposition, R-PL-05) Valeurs : "manual", "proposal",
+   * "automatic".
+   */
+  defaultPlanningMode: string;
+  /** Horizon de planification automatique (défaut 14 j, R-PL-01) */
+  planningHorizonDays: number;
+  /** Poids du score (total 100, R-PL-03) */
+  scoreWeights?:
+    | ScoreWeights
+    | undefined;
+  /** Délai d’acceptation d’une affectation, indépendants (défaut 12 h, R-PL-08) */
+  assignmentResponseHours: number;
+  /** Charge maximale par défaut d’un agent (8 h / jour, R-DS-03) */
+  defaultMaxHoursPerDay: number;
+  /** Charge maximale par défaut d’un agent (48 h / semaine) */
+  defaultMaxHoursPerWeek: number;
+  /** Photos par type et par séance (défaut 10) */
+  maxPhotosPerKind: number;
+  /** Fenêtre de réclamation (défaut 48 h, R-RC-01) */
+  claimWindowHours: number;
+  /** Conservation des positions et des photos (défaut 12 mois) */
+  retentionMonths: number;
+  /** Points communs de toutes les séances (R-EX-09) */
+  commonChecklist: ChecklistTemplateItem[];
+  /** Distance d’alerte à l’arrivée (défaut 300 m) */
+  arrivalAlertMeters: number;
+  /** Avance maximale à l’arrivée (défaut 30 min ; 0 = pas de contrôle) */
+  arrivalMaxAdvanceMinutes: number;
+  /** Attente avant de déclarer le client absent (défaut 30 min, R-EX-02) */
+  customerWaitMinutes: number;
+  /** ISO 8601 UTC. */
+  updatedAt: string;
+  /** UUID. Absent : null. */
+  updatedBy?: string | undefined;
+  updatedByName?: string | undefined;
+}
+
+/** Remise ou majoration manuelle demandée (R-DV-03). */
+export interface AdjustmentInput {
+  /** Valeurs : "discount", "surcharge". */
+  kind: string;
+  /** Pourcentage du prix d’une séance ; ou "fixedAmount". */
+  percentBps?:
+    | number
+    | undefined;
+  /** Montant fixe par séance ; ou "percentBps". */
+  fixedAmount?:
+    | Money
+    | undefined;
+  /** Motif. */
+  reason: string;
+}
+
+/** Prix fixé par le superviseur pour une offre « sur devis ». */
+export interface OnQuotePrice {
+  /** UUID. */
+  offerId: string;
+  /** Prix de l’offre pour une séance. */
   price?: Money | undefined;
 }
 
-export interface ServiceOffer {
-  code: string;
-  name: string;
-  description: string;
-  /**
-   * Déprécié (ADR-033) : unité de l'ancien formulaire, "square_meter", "room", "septic_tank" ou
-   * "cubic_meter". Les unités sont désormais celles des champs (FormField.unit_label).
-   *
-   * @deprecated
-   */
-  unit: string;
-  /**
-   * Déprécié (ADR-033) : options actives avec leur forfait ; lire form.options.
-   *
-   * @deprecated
-   */
-  options: CatalogOption[];
-  /**
-   * Vrai si toute réponse au formulaire (hors options) peut être chiffrée : tous les prix
-   * nécessaires des champs actifs sont fixés.
-   */
-  priced: boolean;
-  /**
-   * Déprécié (ADR-033) : le formulaire public ne montre plus de prix.
-   *
-   * @deprecated
-   */
-  minimumPrice?:
-    | Money
-    | undefined;
-  /** Formulaire de la prestation, sans aucun prix (ADR-033). */
-  form?: ServiceForm | undefined;
-}
-
-/**
- * Réponse à un champ : nombre entier (type "number"), code d'un choix ("choice") ou oui/non
- * ("boolean").
- */
-export interface AnswerValue {
-  numberValue?: number | undefined;
-  choiceValue?: string | undefined;
-  booleanValue?: boolean | undefined;
-}
-
-/**
- * Réponses à un formulaire, par code de champ. Le message présent (même vide) signale le nouveau
- * format de demande ; absent, la demande est à l'ancien format (premises_type, quantity, options).
- */
-export interface AnswerSet {
-  values: { [key: string]: AnswerValue };
-}
-
-export interface AnswerSet_ValuesEntry {
-  key: string;
-  value?: AnswerValue | undefined;
-}
-
-/** Option choisie par le client, avec les réponses à ses propres champs. */
-export interface OptionSelection {
-  code: string;
-  answers?: AnswerSet | undefined;
-}
-
-/** Valeur d'un champ "choice" (définition complète, back-office). */
-export interface FieldChoice {
-  code: string;
-  label: string;
-  /** Supplément ajouté au prix ; absent si non fixé. */
-  supplement?:
-    | Money
-    | undefined;
-  /**
-   * Coefficient appliqué au prix, en points de base ; 0 si aucun.
-   * Supplément absent et coefficient 0 : valeur sans prix (priced = false si elle est choisie).
-   */
-  coefficientBp: number;
-  active: boolean;
-}
-
-/** Champ du formulaire (définition complète, back-office). Les champs sont dans l'ordre d'affichage. */
-export interface FieldDefinition {
-  /** Code unique dans la prestation (ou dans l'option), par exemple "surface". */
-  code: string;
-  label: string;
-  /** "number", "choice" ou "boolean". */
-  type: string;
-  required: boolean;
-  /** Aide affichée sous le champ, vide si aucune. */
-  helpText: string;
-  active: boolean;
-  /**
-   * "number" : unité libre ("m²", "m³", "pièces", "mètres linéaires"…), bornes entières incluses
-   * et prix par unité (absent tant que non fixé).
-   */
-  unitLabel: string;
-  min: number;
-  max: number;
-  pricePerUnit?:
-    | Money
-    | undefined;
-  /** "choice" : valeurs proposées, dans l'ordre d'affichage. */
-  choices: FieldChoice[];
-  /**
-   * "boolean" : effet de la réponse « oui » (la réponse « non » n'a jamais d'effet). Supplément
-   * absent et coefficient 0 : non fixé (priced = false si le client répond oui).
-   */
-  supplementIfYes?: Money | undefined;
-  coefficientBpIfYes: number;
-}
-
-/** Option (prestation complémentaire) : forfait facultatif et champs propres. */
-export interface OptionDefinition {
-  code: string;
-  label: string;
-  description: string;
-  active: boolean;
-  /** Forfait de l'option, absent si aucun. Une option sans champ et sans forfait n'a pas de prix. */
-  flatPrice?: Money | undefined;
-  fields: FieldDefinition[];
-}
-
-/** Fréquence propre à la prestation, avec son coefficient sur le prix d'un passage. */
-export interface ServiceFrequency {
-  /** Par exemple "once", "weekly", "monthly". */
-  code: string;
-  label: string;
-  coefficientBp: number;
-  active: boolean;
-}
-
-/** Valeur d'un champ "choice" vue du public : sans supplément ni coefficient. */
-export interface FormChoice {
-  code: string;
-  label: string;
-}
-
-/** Champ actif du formulaire public : jamais de prix, de supplément ni de coefficient. */
-export interface FormField {
-  code: string;
-  label: string;
-  /** "number", "choice" ou "boolean". */
-  type: string;
-  required: boolean;
-  helpText: string;
-  /** "number" seulement : unité et bornes entières incluses. */
-  unitLabel: string;
-  min: number;
-  max: number;
-  /** "choice" seulement : valeurs actives. */
-  choices: FormChoice[];
-}
-
-export interface FormOption {
-  code: string;
-  label: string;
-  description: string;
-  fields: FormField[];
-}
-
-export interface FormFrequency {
-  code: string;
-  label: string;
-}
-
-/** Formulaire public d'une prestation : éléments actifs seulement, dans l'ordre d'affichage. */
-export interface ServiceForm {
-  fields: FormField[];
-  options: FormOption[];
-  /** Fréquences actives ; si la liste n'est pas vide, la fréquence est obligatoire (nouveau format). */
-  frequencies: FormFrequency[];
-}
-
-/** Ligne du détail d'un calcul. */
-export interface CalculationLine {
-  /**
-   * "unit_price" (nombre × prix par unité), "supplement" (choix ou réponse oui) ou "flat_price"
-   * (forfait d'une option).
-   */
-  kind: string;
-  /** Option concernée, vide pour la prestation elle-même. */
-  optionCode: string;
-  /** Champ concerné, vide pour un forfait. */
-  fieldCode: string;
-  /** Valeur choisie ("choice"), vide sinon. */
-  choiceCode: string;
-  label: string;
-  quantity: number;
-  unitLabel: string;
-  unitPrice?: Money | undefined;
+/** Tranche de tarif. */
+export interface TariffBracketInput {
+  from: number;
+  to: number;
+  /** Valeurs : "flat", "per_unit". */
+  mode: string;
   amount?: Money | undefined;
 }
 
-/** Coefficient appliqué : au montant d'une option (option_code renseigné) ou au total. */
-export interface AppliedCoefficient {
-  /** "choice", "boolean", "commune" ou "frequency". */
-  source: string;
-  /**
-   * Option dont le champ porte ce coefficient : il ne s'applique qu'au montant de cette option.
-   * Vide pour un coefficient de la prestation, de la commune ou de la fréquence.
-   */
-  optionCode: string;
-  fieldCode: string;
-  /** Code du choix, clé de la commune ou code de la fréquence ; vide pour un booléen. */
-  code: string;
-  label: string;
-  coefficientBp: number;
-}
-
-/**
- * Prix manquant dans la grille : forfait d'une option (field_code vide), prix par unité d'un champ
- * (choice_code vide) ou effet d'une valeur choisie.
- */
-export interface MissingPrice {
-  optionCode: string;
-  fieldCode: string;
-  choiceCode: string;
-}
-
-/**
- * Détail du calcul d'un passage (ADR-033) :
- *   prix = max(minimum, (Σ lignes de la prestation + Σ options [Σ lignes de l'option × Π coefficients
- *   de ses champs]) × Π coefficients des champs de la prestation × commune × fréquence),
- *   arrondi une seule fois, au franc le plus proche.
- */
-export interface PriceCalculation {
-  pricingVersion: number;
-  priced: boolean;
-  /**
-   * Vide si priced ; sinon "price_not_set" (prix d'un champ de la prestation), "option_price_not_set"
-   * (prix d'une option ou de ses champs) ou "answers_incomplete" (ancien format sans les réponses
-   * obligatoires du nouveau formulaire).
-   */
-  reason: string;
-  missingPrices: MissingPrice[];
-  /** Lignes calculables ; complètes seulement si priced. */
-  lines: CalculationLine[];
-  /** Montants absents si priced = false. */
-  baseAmount?: Money | undefined;
-  coefficients: AppliedCoefficient[];
-  subtotal?:
+/** Supplément de tarif. */
+export interface TariffSupplementInput {
+  parameterCode: string;
+  choiceCode?:
+    | string
+    | undefined;
+  /** Valeurs : "fixed", "per_unit", "coefficient". */
+  mode: string;
+  /** Fixe ou par unité. */
+  amount?:
     | Money
     | undefined;
-  /** Minimum de commande de la grille, absent s'il n'est pas fixé. */
-  minimumPrice?: Money | undefined;
-  minimumApplied: boolean;
-  computedPrice?: Money | undefined;
-  estimate?: PriceRange | undefined;
-  recommendedTeamSize: number;
-}
-
-export interface ListServicesRequest {
-}
-
-export interface ListServicesResponse {
-  services: ServiceOffer[];
-}
-
-/**
- * Deux formats (ADR-033), distingués par la présence du message answers :
- * - nouveau : answers (présent, même vide), option_selections, frequency (code d'une fréquence
- *   active de la prestation, obligatoire si elle en a) ; premises_type, quantity et options vides ;
- * - ancien (déprécié) : premises_type, quantity, options (codes) ; converti vers le nouveau.
- */
-export interface SimulateRequest {
-  serviceCode: string;
-  /**
-   * Ancien format (déprécié).
-   *
-   * @deprecated
-   */
-  premisesType: string;
-  /**
-   * Ancien format (déprécié) : quantité dans l'unité de la prestation, entière et positive ;
-   * devient la réponse au champ de la taille d'équipe (TeamSizeRule.field_code).
-   *
-   * @deprecated
-   */
-  quantity: number;
-  /**
-   * Ancien format (déprécié) : codes des options choisies.
-   *
-   * @deprecated
-   */
-  options: string[];
-  /** Facultative (ADR-034) : vide, coefficient de commune neutre (10000) et commune_applied = false. */
-  commune: string;
-  /**
-   * Nouveau format : code d'une fréquence de la prestation (coefficient sur le prix d'un passage).
-   * Ancien format : "once", "weekly" ou "monthly", appliqué si la prestation a une fréquence de
-   * même code, sans effet sinon.
-   */
-  frequency: string;
-  /** Nouveau format : réponses au formulaire de la prestation. */
-  answers?:
-    | AnswerSet
+  /** Coefficient. */
+  coefficientBps?:
+    | number
     | undefined;
-  /** Nouveau format : options choisies, avec leurs réponses. */
-  optionSelections: OptionSelection[];
-  /**
-   * Facultatif (ADR-052) : plan de passages ; la réponse donne ses dates et le montant estimé sur
-   * leur nombre exact.
-   */
-  schedule?: InterventionSchedule | undefined;
+  /** Absent : 0. */
+  includedUnits?: number | undefined;
 }
 
-export interface SimulateResponse {
-  serviceCode: string;
-  priced: boolean;
-  /** Absents si priced = false. */
-  estimate?: PriceRange | undefined;
-  computedPrice?: Money | undefined;
-  breakdown: PriceLine[];
-  minimumApplied: boolean;
-  communeCoefficientBp: number;
-  recommendedTeamSize: number;
-  /** Mention « estimation non contractuelle », ou raison de l'absence de prix. */
-  notice: string;
-  /** Vrai si la commune est dans une zone desservie ; l'estimation est donnée dans tous les cas. */
-  covered: boolean;
-  /** Raison de l'absence de prix (voir PriceCalculation.reason), vide si priced. */
-  reason: string;
-  /** Détail complet du calcul (ADR-033) ; breakdown reprend ses lignes. */
-  calculation?:
-    | PriceCalculation
-    | undefined;
-  /**
-   * Faux si la simulation est faite sans commune (ADR-034) : coefficient neutre, prix indicatif,
-   * recalculé avec la vraie commune à la demande de devis.
-   */
-  communeApplied: boolean;
-  /** Plan de passages envoyé (ADR-052) : ses dates ; absent sans plan. */
-  schedule?:
-    | SchedulePreview
-    | undefined;
-  /**
-   * Prix d'un passage × nombre de passages, et la fourchette de même ; absents sans plan ou si
-   * priced = false.
-   */
-  scheduleTotal?: Money | undefined;
-  scheduleEstimate?: PriceRange | undefined;
-}
-
-export interface PreviewScheduleRequest {
-  schedule?: InterventionSchedule | undefined;
-}
-
-export interface PreviewScheduleResponse {
-  preview?: SchedulePreview | undefined;
-}
-
-/** Zone desservie vue du public. */
-export interface ServedZone {
-  /** Clé normalisée, par exemple "abomey-calavi" (voir Zone). */
+/** Case cochée ou décochée. */
+export interface ChecklistTick {
   code: string;
-  /** Nom affiché, par exemple "Abomey-Calavi". */
-  commune: string;
+  checked: boolean;
+  /** Absent : point commun. */
+  cleaningTypeCode?: string | undefined;
+}
+
+/** Proposition validée en un clic (R-PL-05). */
+export interface ProposalApproval {
+  /** UUID. */
+  assignmentId: string;
+}
+
+/** Créneau horaire, début inclus, fin exclue. */
+export interface TimeSlot {
+  /** ISO 8601 UTC. */
+  start: string;
+  /** ISO 8601 UTC. */
+  end: string;
+}
+
+export interface ListCatalogRequest {
+}
+
+export interface ListCatalogResponse {
+  categories: PublicPlaceCategory[];
+}
+
+export interface GetCatalogPlaceTypeRequest {
+  /** Lieu. UUID. */
+  placeTypeId: string;
+}
+
+export interface GetCatalogPlaceTypeResponse {
+  publicPlaceTypeDetail?: PublicPlaceTypeDetail | undefined;
 }
 
 export interface ListServedZonesRequest {
 }
 
 export interface ListServedZonesResponse {
-  zones: ServedZone[];
+  zones: PublicZone[];
 }
 
-/** Type de lieu vu du public (ADR-034). */
-export interface PublicPlaceType {
-  /** Code stable, par exemple "house". */
-  code: string;
-  label: string;
-  description: string;
-  /** Nom d'icône libre, interprété par le front (par exemple "house"). */
-  icon: string;
-  displayOrder: number;
-  /** Codes des prestations actives proposées pour ce lieu, dans l'ordre choisi au back-office. */
-  serviceCodes: string[];
-}
-
-export interface GetPlaceCatalogRequest {
-}
-
-export interface GetPlaceCatalogResponse {
-  /** Types de lieu actifs proposant au moins une prestation active, par ordre d'affichage puis code. */
-  placeTypes: PublicPlaceType[];
-  /** Prestations actives référencées par ces types de lieu, avec leur formulaire (sans prix). */
-  services: ServiceOffer[];
-}
-
-/** Une prestation d'une estimation : réponses au nouveau format seulement (ADR-033). */
-export interface EstimateItemRequest {
-  serviceCode: string;
-  answers?: AnswerSet | undefined;
-  optionSelections: OptionSelection[];
-  frequency: string;
-}
-
-export interface EstimateRequest {
-  /** Type de lieu actif ; chaque prestation doit être proposée par lui (CLEANING_SERVICE_NOT_OFFERED). */
-  placeType: string;
-  /** Facultative : vide, coefficient de commune neutre (10000) et commune_applied = false. */
-  commune: string;
-  /** 1 à 10 prestations distinctes ; erreurs de réponse : details.field préfixé par "items[i].". */
-  items: EstimateItemRequest[];
-}
-
-export interface EstimateItem {
-  serviceCode: string;
-  serviceName: string;
-  priced: boolean;
-  /** Voir PriceCalculation.reason ; vide si priced. */
-  reason: string;
-  /** Mention « estimation non contractuelle », ou raison de l'absence de prix. */
-  notice: string;
-  calculation?: PriceCalculation | undefined;
-}
-
-export interface EstimateResponse {
-  placeType: string;
-  /** Commune envoyée, vide si aucune. */
-  commune: string;
-  communeApplied: boolean;
-  /** Vrai si la commune est dans une zone desservie ; faux sans commune. */
-  covered: boolean;
-  /** "priced" (toutes les prestations ont un prix), "partially_priced" ou "unpriced". */
-  status: string;
-  /** Somme des prix des prestations, absente si une seule n'a pas de prix. */
-  total?: Money | undefined;
-  notice: string;
-  items: EstimateItem[];
-}
-
-export interface Page {
-  /** 20 par défaut, 100 au plus. */
-  limit: number;
-  cursor: string;
-}
-
-/** Mêmes deux formats que SimulateRequest (ADR-033), distingués par la présence de answers. */
-export interface RequestQuoteRequest {
-  idempotencyKey: string;
-  serviceCode: string;
-  /**
-   * Ancien format (déprécié).
-   *
-   * @deprecated
-   */
-  premisesType: string;
-  /**
-   * Ancien format (déprécié).
-   *
-   * @deprecated
-   */
-  quantity: number;
-  /**
-   * Ancien format (déprécié) : codes des options choisies.
-   *
-   * @deprecated
-   */
-  options: string[];
-  commune: string;
-  address: string;
-  /**
-   * 1 à 3 créneaux souhaités ; 0 à 3 avec un plan de passages (le premier passage sinon, durée
-   * indicative de 2 heures).
-   */
-  preferredSlots: TimeSlot[];
-  comment: string;
-  /**
-   * Déprécié (ADR-052) : remplacé par schedule ; traduit en plan quand c'est exact (un passage par
-   * semaine ou par mois, depuis le premier créneau), sinon gardé approximatif. Pas avec schedule.
-   *
-   * @deprecated
-   */
-  recurrence?: Recurrence | undefined;
-  requestedTeamSize: number;
-  /** Entreprise : jours d'intervention par semaine, si connus (1 à 7) ; 0 si non précisés. */
-  daysPerWeek: number;
-  /** Nouveau format : réponses au formulaire de la prestation. */
-  answers?:
-    | AnswerSet
+export interface SimulateRequest {
+  /** UUID. */
+  placeTypeId: string;
+  /** Types choisis (un pack masque ses types) UUID. */
+  cleaningTypeIds: string[];
+  /** Paramètres du lieu et des offres choisies. Clé : code du paramètre. */
+  values: { [key: string]: ParameterValue };
+  /** Programme, pour le nombre de séances et la remise de fréquence. */
+  schedule?:
+    | SchedulePlan
     | undefined;
-  /** Nouveau format : options choisies, avec leurs réponses. */
-  optionSelections: OptionSelection[];
-  /**
-   * Code de la fréquence (règles de SimulateRequest.frequency) ; vide si aucune. Indépendante de
-   * recurrence, qui décrit le contrat (passages par période, durée).
-   */
-  frequency: string;
-  /**
-   * Plan de passages (ADR-052) : dates exactes, estimation sur leur nombre. Jours par semaine
-   * (days_per_week) déduits d'un plan "weekly" s'ils ne sont pas indiqués.
-   */
-  schedule?: InterventionSchedule | undefined;
+  /** Commune, si connue. */
+  communeKey?: string | undefined;
 }
 
-export interface RequestQuoteResponse {
-  request?: QuoteRequest | undefined;
+export interface SimulateRequest_ValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+export interface SimulateResponse {
+  simulation?: Simulation | undefined;
+}
+
+export interface PreviewScheduleRequest {
+  schedule?: SchedulePlan | undefined;
+}
+
+export interface PreviewScheduleResponse {
+  schedulePreview?: SchedulePreview | undefined;
+}
+
+export interface ListMyPlacesRequest {
+  /** Lieux archivés aussi (défaut : non) */
+  archived?:
+    | boolean
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "-createdAt". Valeurs : "-createdAt", "name". */
+  sort?: string | undefined;
+}
+
+export interface ListMyPlacesResponse {
+  items: Place[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CreatePlaceRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Nom du lieu (« Maison de Calavi ») */
+  name: string;
+  /** UUID. */
+  placeTypeId: string;
+  /** Position GPS. */
+  latitude?: number | undefined;
+  longitude?:
+    | number
+    | undefined;
+  /** Point de repère. */
+  landmark: string;
+  /** Adresse en texte. */
+  address?:
+    | string
+    | undefined;
+  /** Paramètres déclarés du lieu. Clé : code du paramètre. */
+  declaredValues: { [key: string]: ParameterValue };
+  /** Précision annoncée par le téléphone ; 0 ou absent : inconnue. */
+  accuracyMeters?: number | undefined;
+}
+
+export interface CreatePlaceRequest_DeclaredValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+export interface CreatePlaceResponse {
+  place?: Place | undefined;
+}
+
+export interface GetMyPlaceRequest {
+  /** Lieu. UUID. */
+  placeId: string;
+}
+
+export interface GetMyPlaceResponse {
+  place?: Place | undefined;
+}
+
+export interface UpdatePlaceRequest {
+  /** Lieu. UUID. */
+  placeId: string;
+  /** Nom du lieu (« Maison de Calavi ») */
+  name?:
+    | string
+    | undefined;
+  /** Position GPS. */
+  latitude?: number | undefined;
+  longitude?:
+    | number
+    | undefined;
+  /** Point de repère. */
+  landmark?:
+    | string
+    | undefined;
+  /** Adresse en texte. */
+  address?:
+    | string
+    | undefined;
+  /** Paramètres déclarés du lieu. Clé : code du paramètre. Vide : inchangé. */
+  declaredValues: { [key: string]: ParameterValue };
+  /** Précision annoncée par le téléphone ; 0 ou absent : inconnue. */
+  accuracyMeters?: number | undefined;
+}
+
+export interface UpdatePlaceRequest_DeclaredValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+export interface UpdatePlaceResponse {
+  place?: Place | undefined;
+}
+
+export interface ArchivePlaceRequest {
+  /** Lieu. UUID. */
+  placeId: string;
+}
+
+export interface ArchivePlaceResponse {
+  place?: Place | undefined;
+}
+
+export interface LocatePointRequest {
+  latitude: number;
+  longitude: number;
+}
+
+export interface LocatePointResponse {
+  pointLocation?: PointLocation | undefined;
+}
+
+export interface SubmitRequestRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Lieu de « Mes lieux ». UUID. */
+  placeId: string;
+  /** Types choisis ; vide pour un lieu « Autre ». UUID. */
+  cleaningTypeIds: string[];
+  /**
+   * Paramètres du lieu et des offres (repris de la simulation, modifiables) Clé : code du
+   * paramètre.
+   */
+  values: { [key: string]: ParameterValue };
+  /** Lieu « Autre » : besoin décrit (R-CA-05) */
+  freeDescription?:
+    | string
+    | undefined;
+  /** Programme souhaité (partie 8) */
+  schedule?:
+    | SchedulePlan
+    | undefined;
+  /** 1 à 3 créneaux de disponibilité pour la visite, au plus tôt 24 h après la demande. */
+  visitSlots: TimeSlot[];
+  comment?:
+    | string
+    | undefined;
+  /** Photos du lieu (service file), 5 au plus. UUID. */
+  photoFileIds: string[];
+}
+
+export interface SubmitRequestRequest_ValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+export interface SubmitRequestResponse {
+  request?: Request | undefined;
 }
 
 export interface ListMyRequestsRequest {
-  page?: Page | undefined;
+  /**
+   * Valeurs : "awaiting_visit_fee", "visit_to_schedule", "visit_scheduled", "visit_missed",
+   * "visit_done", "quote_sent", "accepted", "declined", "expired", "cancelled", "rejected".
+   */
+  status?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "-createdAt". Valeurs : "-createdAt", "-updatedAt". */
+  sort?: string | undefined;
 }
 
 export interface ListMyRequestsResponse {
-  requests: QuoteRequest[];
+  items: RequestSummary[];
+  /** Vide : dernière page. */
   nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface GetMyRequestRequest {
+  /** Demande. UUID. */
+  requestId: string;
+}
+
+export interface GetMyRequestResponse {
+  request?: Request | undefined;
+}
+
+export interface PayVisitFeeRequest {
+  /** Demande. UUID. */
+  requestId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Valeurs : "wallet", "mobile_money". */
+  method: string;
+}
+
+export interface PayVisitFeeResponse {
+  paymentOutcome?: PaymentOutcome | undefined;
+}
+
+export interface ChangeVisitSlotRequest {
+  /** Demande. UUID. */
+  requestId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  visitSlots: TimeSlot[];
+}
+
+export interface ChangeVisitSlotResponse {
+  request?: Request | undefined;
+}
+
+export interface CancelRequestRequest {
+  /** Demande. UUID. */
+  requestId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Valeurs : "no_longer_needed", "found_other_provider", "visit_fee", "other". */
+  reasonCode?:
+    | string
+    | undefined;
+  /** Gardé dans le dossier, jamais publié. */
+  comment?: string | undefined;
+}
+
+export interface CancelRequestResponse {
+  request?: Request | undefined;
+}
+
+export interface RequestReactivationRequest {
+  /** Demande. UUID. */
+  requestId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface RequestReactivationResponse {
+  request?: Request | undefined;
+}
+
+export interface GetMyQuoteRequest {
+  /** Devis. UUID. */
+  quoteId: string;
+}
+
+export interface GetMyQuoteResponse {
+  quote?: Quote | undefined;
+}
+
+export interface AcceptQuoteRequest {
+  /** Devis. UUID. */
+  quoteId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Doit valoir true. */
+  acceptTerms: boolean;
+  /** Version des conditions générales acceptée. */
+  termsVersion: string;
+  /** Nouvelle date de début (facultative) AAAA-MM-JJ. */
+  startDate?: string | undefined;
+}
+
+export interface AcceptQuoteResponse {
+  acceptQuoteResult?: AcceptQuoteResult | undefined;
+}
+
+export interface DeclineQuoteRequest {
+  /** Devis. UUID. */
+  quoteId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /**
+   * Motif dans la liste (à valider : liste non fixée par le cahier des charges) Valeurs : "price",
+   * "schedule", "no_longer_needed", "other".
+   */
+  reasonCode?:
+    | string
+    | undefined;
+  /** Texte libre. */
+  comment?: string | undefined;
+}
+
+export interface DeclineQuoteResponse {
+  quote?: Quote | undefined;
+}
+
+export interface ForwardQuoteRequest {
+  /** Devis. UUID. */
+  quoteId: string;
+}
+
+export interface ForwardQuoteResponse {
+  quote?: Quote | undefined;
+}
+
+export interface ListMyProgramsRequest {
+  /** Valeurs : "confirmed", "in_progress", "suspended", "completed", "cancelled". */
+  status?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "-createdAt". Valeurs : "-createdAt", "nextSession". */
+  sort?: string | undefined;
+}
+
+export interface ListMyProgramsResponse {
+  items: Program[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface GetMyProgramRequest {
+  /** Programme. UUID. */
+  programId: string;
+}
+
+export interface GetMyProgramResponse {
+  program?: Program | undefined;
+}
+
+export interface ListMyProgramSessionsRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /**
+   * Valeurs : "to_assign", "assigned", "in_progress", "interrupted", "completed", "missed",
+   * "suspended", "cancelled".
+   */
+  status?:
+    | string
+    | undefined;
+  /** Séances qui commencent à partir de cette date (incluse) ISO 8601 UTC. */
+  from?:
+    | string
+    | undefined;
+  /** Séances qui commencent avant cette date (exclue) ISO 8601 UTC. */
+  to?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "scheduledStart". Valeurs : "scheduledStart", "-scheduledStart". */
+  sort?: string | undefined;
+}
+
+export interface ListMyProgramSessionsResponse {
+  items: Session[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface GetMySessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+}
+
+export interface GetMySessionResponse {
+  session?: Session | undefined;
+}
+
+export interface RescheduleSessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Nouvelle date et heure de début. ISO 8601 UTC. */
+  newStart: string;
+}
+
+export interface RescheduleSessionResponse {
+  session?: Session | undefined;
+}
+
+export interface CancelSessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface CancelSessionResponse {
+  session?: Session | undefined;
+}
+
+export interface StopProgramRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface StopProgramResponse {
+  program?: Program | undefined;
+}
+
+export interface PaySessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Valeurs : "wallet", "mobile_money". */
+  method: string;
+}
+
+export interface PaySessionResponse {
+  paymentOutcome?: PaymentOutcome | undefined;
+}
+
+export interface RateSessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  stars: number;
+  comment?: string | undefined;
+}
+
+export interface RateSessionResponse {
+  session?: Session | undefined;
+}
+
+export interface OpenClaimRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Valeurs : "incomplete_work", "damage", "behavior", "missing_item", "other". */
+  category: string;
+  text: string;
+  /** UUID. */
+  photoFileIds: string[];
+}
+
+export interface OpenClaimResponse {
+  claim?: Claim | undefined;
+}
+
+export interface ListMyClaimsRequest {
+  /** Valeurs : "open", "in_progress", "resolved", "rejected". */
+  status?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "-openedAt". Valeurs : "-openedAt". */
+  sort?: string | undefined;
+}
+
+export interface ListMyClaimsResponse {
+  items: Claim[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface GetMyClaimRequest {
+  /** Réclamation. UUID. */
+  claimId: string;
+}
+
+export interface GetMyClaimResponse {
+  claim?: Claim | undefined;
+}
+
+export interface AddClaimMessageRequest {
+  /** Réclamation. UUID. */
+  claimId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  text: string;
+}
+
+export interface AddClaimMessageResponse {
+  claim?: Claim | undefined;
+}
+
+export interface RenewProgramRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Début du nouveau programme ; absent : lendemain de la dernière séance. AAAA-MM-JJ. */
+  startDate?: string | undefined;
+}
+
+export interface RenewProgramResponse {
+  request?: Request | undefined;
+}
+
+export interface ReorderProgramRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Nouveau programme. */
+  schedule?: SchedulePlan | undefined;
+}
+
+export interface ReorderProgramResponse {
+  request?: Request | undefined;
+}
+
+export interface SubmitAgentApplicationRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  firstName: string;
+  lastName: string;
+  /** Photo (montrée au client), déposée par le service file. UUID. */
+  photoFileId: string;
+  /** Pièce d’identité, recto. UUID. */
+  idDocumentFrontFileId: string;
+  /** Pièce d’identité, verso. UUID. */
+  idDocumentBackFileId: string;
+  /** Commune de résidence. */
+  residenceCommuneKey: string;
+  /** Zones de travail souhaitées. */
+  zoneKeys: string[];
+  /** Compétences déclarées, validées une par une. */
+  skillCodes: string[];
+  /** Disponibilités hebdomadaires. */
+  weekly: AvailabilityRule[];
+  emergencyContact?:
+    | EmergencyContact
+    | undefined;
+  /** Valeurs : "employee", "independent". */
+  employmentKind: string;
+  /** Facultatif (rémunération hors module) */
+  mobileMoneyNumber?:
+    | string
+    | undefined;
+  /** Invitation reçue par SMS (R-AG-02) UUID. */
+  invitationId?: string | undefined;
+}
+
+export interface SubmitAgentApplicationResponse {
+  agent?: Agent | undefined;
+}
+
+export interface GetMyAgentProfileRequest {
+}
+
+export interface GetMyAgentProfileResponse {
+  agent?: Agent | undefined;
+}
+
+export interface GetMyActivityRequest {
+}
+
+export interface GetMyActivityResponse {
+  agentActivity?: AgentActivity | undefined;
+}
+
+export interface GetMyAvailabilityRequest {
+}
+
+export interface GetMyAvailabilityResponse {
+  availability?: Availability | undefined;
+}
+
+export interface SetMyAvailabilityRequest {
+  /** Modèle hebdomadaire complet (remplace le précédent) */
+  weekly: AvailabilityRule[];
+  /** Disponibilités exceptionnelles (remplacent les précédentes) */
+  extraAvailabilities: TimeSlot[];
+}
+
+export interface SetMyAvailabilityResponse {
+  availability?: Availability | undefined;
+}
+
+export interface DeclareMyUnavailabilityRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** ISO 8601 UTC. */
+  start: string;
+  /** ISO 8601 UTC. */
+  end: string;
+  /** Valeurs : "leave", "sickness", "other". */
+  kind: string;
+  note?: string | undefined;
+}
+
+export interface DeclareMyUnavailabilityResponse {
+  availability?: Availability | undefined;
+}
+
+export interface RemoveMyUnavailabilityRequest {
+  /** Indisponibilité. UUID. */
+  unavailabilityId: string;
+}
+
+export interface RemoveMyUnavailabilityResponse {
+  availability?: Availability | undefined;
+}
+
+export interface ListMyAssignmentsRequest {
+  /** Début de la période (incluse) ; défaut : début du jour. ISO 8601 UTC. */
+  from?:
+    | string
+    | undefined;
+  /** Fin de la période (exclue) ; défaut : 7 jours. ISO 8601 UTC. */
+  to?:
+    | string
+    | undefined;
+  /** Valeurs : "proposed", "pending_confirmation", "confirmed", "declined", "expired", "removed". */
+  status?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "start". Valeurs : "start". */
+  sort?: string | undefined;
+}
+
+export interface ListMyAssignmentsResponse {
+  items: AgentAssignmentView[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface AcceptAssignmentRequest {
+  /** Affectation. UUID. */
+  assignmentId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface AcceptAssignmentResponse {
+  agentAssignmentView?: AgentAssignmentView | undefined;
+}
+
+export interface DeclineAssignmentRequest {
+  /** Affectation. UUID. */
+  assignmentId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface DeclineAssignmentResponse {
+  agentAssignmentView?: AgentAssignmentView | undefined;
+}
+
+export interface GetAgentVisitRequest {
+  /** Visite. UUID. */
+  visitId: string;
+}
+
+export interface GetAgentVisitResponse {
+  agentVisitView?: AgentVisitView | undefined;
+}
+
+export interface ArriveAtVisitRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Absente : arrivée sans position (distance nulle) */
+  latitude?: number | undefined;
+  longitude?:
+    | number
+    | undefined;
+  /** Précision annoncée par le téléphone. */
+  accuracyMeters?:
+    | number
+    | undefined;
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface ArriveAtVisitResponse {
+  agentVisitView?: AgentVisitView | undefined;
+}
+
+export interface SaveVisitObservationsRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Clé : code du paramètre. */
+  values: { [key: string]: ParameterValue };
+  /** Remarque pour le superviseur. */
+  note?:
+    | string
+    | undefined;
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface SaveVisitObservationsRequest_ValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+export interface SaveVisitObservationsResponse {
+  agentVisitView?: AgentVisitView | undefined;
+}
+
+export interface AddVisitPhotoRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Photo déposée par le service file. UUID. */
+  fileId: string;
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface AddVisitPhotoResponse {
+  agentVisitView?: AgentVisitView | undefined;
+}
+
+export interface CompleteVisitRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface CompleteVisitResponse {
+  agentVisitView?: AgentVisitView | undefined;
+}
+
+export interface ReportVisitMissedRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Photo du lieu. UUID. */
+  photoFileId: string;
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface ReportVisitMissedResponse {
+  agentVisitView?: AgentVisitView | undefined;
+}
+
+export interface RemoveVisitPhotoRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Photo. UUID. */
+  fileId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface RemoveVisitPhotoResponse {
+  agentVisitView?: AgentVisitView | undefined;
+}
+
+export interface GetAgentSessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+}
+
+export interface GetAgentSessionResponse {
+  agentSessionView?: AgentSessionView | undefined;
+}
+
+export interface ArriveAtSessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Absente : arrivée sans position (distance nulle) */
+  latitude?: number | undefined;
+  longitude?: number | undefined;
+  accuracyMeters?:
+    | number
+    | undefined;
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface ArriveAtSessionResponse {
+  agentSessionView?: AgentSessionView | undefined;
+}
+
+export interface StartSessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface StartSessionResponse {
+  agentSessionView?: AgentSessionView | undefined;
+}
+
+export interface UpdateSessionChecklistRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Un point est désigné par son type et son code (R-EX-09) */
+  items: ChecklistTick[];
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface UpdateSessionChecklistResponse {
+  agentSessionView?: AgentSessionView | undefined;
+}
+
+export interface AddSessionPhotoRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Photo déposée par le service file. UUID. */
+  fileId: string;
+  /** Valeurs : "before", "after". */
+  kind: string;
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface AddSessionPhotoResponse {
+  agentSessionView?: AgentSessionView | undefined;
+}
+
+export interface ReportSessionIncidentRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Valeurs : "equipment", "access", "safety", "out_of_scope_request", "other". */
+  category: string;
+  note: string;
+  /** UUID. */
+  photoFileIds: string[];
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface ReportSessionIncidentResponse {
+  agentSessionView?: AgentSessionView | undefined;
+}
+
+export interface CompleteSessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Signature du client sur le téléphone de l’agent (facultative) UUID. */
+  signatureFileId?:
+    | string
+    | undefined;
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface CompleteSessionResponse {
+  agentSessionView?: AgentSessionView | undefined;
+}
+
+export interface ReportSessionMissedRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /**
+   * Client absent ou accès impossible (à valider : facturation d’un accès impossible) Valeurs :
+   * "customer_absent", "access_impossible".
+   */
+  cause: string;
+  /** Photo du lieu. UUID. */
+  photoFileId: string;
+  /** Début de l’attente. ISO 8601 UTC. */
+  waitStartedAt: string;
+  /** Appel du client (tracé) ISO 8601 UTC. */
+  calledAt: string;
+  /**
+   * Heure réelle de l’action sur le terrain (hors connexion, R-EX-05) ; absente : heure de
+   * réception. Une heure dans le futur ("CLEANING_VALIDATION_FAILED", reason "in_future") ou de
+   * plus de 72 h (reason "too_old") est refusée. ISO 8601 UTC.
+   */
+  occurredAt?: string | undefined;
+}
+
+export interface ReportSessionMissedResponse {
+  agentSessionView?: AgentSessionView | undefined;
+}
+
+export interface RemoveSessionPhotoRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Photo. UUID. */
+  fileId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface RemoveSessionPhotoResponse {
+  agentSessionView?: AgentSessionView | undefined;
+}
+
+export interface ListPlaceCategoriesRequest {
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "order". Valeurs : "order", "name". */
+  sort?: string | undefined;
+}
+
+export interface ListPlaceCategoriesResponse {
+  items: PlaceCategory[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CreatePlaceCategoryRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  code: string;
+  name: string;
+  icon?: string | undefined;
+  order?:
+    | number
+    | undefined;
+  /**
+   * Frais de visite de la catégorie (R-FV-01, décision du 18/11/2026) ; absent : valeur par défaut
+   * des réglages.
+   */
+  visitFee?: Money | undefined;
+}
+
+export interface CreatePlaceCategoryResponse {
+  placeCategory?: PlaceCategory | undefined;
+}
+
+export interface GetPlaceCategoryRequest {
+  /** Catégorie de lieu. UUID. */
+  id: string;
+}
+
+export interface GetPlaceCategoryResponse {
+  placeCategory?: PlaceCategory | undefined;
+}
+
+export interface UpdatePlaceCategoryRequest {
+  /** Catégorie de lieu. UUID. */
+  id: string;
+  name?: string | undefined;
+  icon?: string | undefined;
+  order?:
+    | number
+    | undefined;
+  /**
+   * Frais de visite de la catégorie (R-FV-01, décision du 18/11/2026) ; absent : valeur par défaut
+   * des réglages.
+   */
+  visitFee?: Money | undefined;
+  active?: boolean | undefined;
+}
+
+export interface UpdatePlaceCategoryResponse {
+  placeCategory?: PlaceCategory | undefined;
+}
+
+export interface ListPlaceTypesRequest {
+  /** UUID. */
+  categoryId?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "order". Valeurs : "order", "name". */
+  sort?: string | undefined;
+}
+
+export interface ListPlaceTypesResponse {
+  items: PlaceType[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CreatePlaceTypeRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  code: string;
+  /** UUID. */
+  categoryId: string;
+  name: string;
+  icon?:
+    | string
+    | undefined;
+  /** UUID. */
+  photoFileId?: string | undefined;
+  description?: string | undefined;
+  order?:
+    | number
+    | undefined;
+  /** Lieu « Autre » (R-CA-05) */
+  freeDescription?:
+    | boolean
+    | undefined;
+  /** Paramètres du lieu, dans l’ordre (superficie obligatoire sauf lieu « Autre », R-CA-01) UUID. */
+  parameterIds: string[];
+  /** Paramètre « superficie » du lieu (R-CA-14) ; absent seulement pour un lieu « Autre ». UUID. */
+  areaParameterId?:
+    | string
+    | undefined;
+  /** Absent : false (créé inactif, R-CA-12) */
+  active?: boolean | undefined;
+}
+
+export interface CreatePlaceTypeResponse {
+  placeType?: PlaceType | undefined;
+}
+
+export interface GetPlaceTypeRequest {
+  /** Lieu. UUID. */
+  id: string;
+}
+
+export interface GetPlaceTypeResponse {
+  placeType?: PlaceType | undefined;
+}
+
+export interface UpdatePlaceTypeRequest {
+  /** Lieu. UUID. */
+  id: string;
+  /** UUID. */
+  categoryId?: string | undefined;
+  name?: string | undefined;
+  icon?:
+    | string
+    | undefined;
+  /** UUID. */
+  photoFileId?: string | undefined;
+  description?: string | undefined;
+  order?:
+    | number
+    | undefined;
+  /** Lieu « Autre » (R-CA-05) */
+  freeDescription?:
+    | boolean
+    | undefined;
+  /**
+   * Paramètres du lieu, dans l’ordre (superficie obligatoire sauf lieu « Autre », R-CA-01) UUID.
+   * Présent : remplace la liste (vide : la vide) ; absent : inchangé.
+   */
+  parameterIds?:
+    | StringList
+    | undefined;
+  /** Paramètre « superficie » du lieu (R-CA-14) ; absent seulement pour un lieu « Autre ». UUID. */
+  areaParameterId?: string | undefined;
+  active?: boolean | undefined;
+}
+
+export interface UpdatePlaceTypeResponse {
+  placeType?: PlaceType | undefined;
+}
+
+export interface ListCleaningTypesRequest {
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "name". Valeurs : "name". */
+  sort?: string | undefined;
+}
+
+export interface ListCleaningTypesResponse {
+  items: CleaningType[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CreateCleaningTypeRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  code: string;
+  name: string;
+  description?: string | undefined;
+  icon?:
+    | string
+    | undefined;
+  /** Absent pour un pack. */
+  requiredSkillCode?: string | undefined;
+  referenceDurationMinutes: number;
+  checklist: ChecklistTemplateItem[];
+  isPack?:
+    | boolean
+    | undefined;
+  /** Types du pack. UUID. */
+  packItemIds: string[];
+}
+
+export interface CreateCleaningTypeResponse {
+  cleaningType?: CleaningType | undefined;
+}
+
+export interface GetCleaningTypeRequest {
+  /** Type de nettoyage. UUID. */
+  id: string;
+}
+
+export interface GetCleaningTypeResponse {
+  cleaningType?: CleaningType | undefined;
+}
+
+export interface UpdateCleaningTypeRequest {
+  /** Type de nettoyage. UUID. */
+  id: string;
+  name?: string | undefined;
+  description?: string | undefined;
+  icon?:
+    | string
+    | undefined;
+  /** Absent pour un pack. */
+  requiredSkillCode?: string | undefined;
+  referenceDurationMinutes?:
+    | number
+    | undefined;
+  /** Présent : remplace la liste (vide : la vide) ; absent : inchangé. */
+  checklist?: ChecklistTemplateItemList | undefined;
+  isPack?:
+    | boolean
+    | undefined;
+  /** Types du pack. UUID. Présent : remplace la liste (vide : la vide) ; absent : inchangé. */
+  packItemIds?: StringList | undefined;
+  active?: boolean | undefined;
+}
+
+export interface UpdateCleaningTypeResponse {
+  cleaningType?: CleaningType | undefined;
+}
+
+export interface ListParametersRequest {
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "code". Valeurs : "code". */
+  sort?: string | undefined;
+}
+
+export interface ListParametersResponse {
+  items: ParameterDefinition[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CreateParameterRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  code: string;
+  label: string;
+  /** Valeurs : "number", "choice", "boolean". */
+  kind: string;
+  /** Obligatoire pour un nombre (CLEANING_VALIDATION_FAILED, reason required) */
+  unit?: string | undefined;
+  min?: number | undefined;
+  max?: number | undefined;
+  choices: ParameterChoice[];
+  required: boolean;
+  help?: string | undefined;
+}
+
+export interface CreateParameterResponse {
+  parameterDefinition?: ParameterDefinition | undefined;
+}
+
+export interface GetParameterRequest {
+  /** Paramètre. UUID. */
+  id: string;
+}
+
+export interface GetParameterResponse {
+  parameterDefinition?: ParameterDefinition | undefined;
+}
+
+export interface UpdateParameterRequest {
+  /** Paramètre. UUID. */
+  id: string;
+  label?:
+    | string
+    | undefined;
+  /** Obligatoire pour un nombre (CLEANING_VALIDATION_FAILED, reason required) */
+  unit?: string | undefined;
+  min?: number | undefined;
+  max?:
+    | number
+    | undefined;
+  /** Présent : remplace la liste (vide : la vide) ; absent : inchangé. */
+  choices?: ParameterChoiceList | undefined;
+  required?: boolean | undefined;
+  help?: string | undefined;
+  active?: boolean | undefined;
+}
+
+export interface UpdateParameterResponse {
+  parameterDefinition?: ParameterDefinition | undefined;
+}
+
+export interface ListOffersRequest {
+  /** UUID. */
+  placeTypeId?:
+    | string
+    | undefined;
+  /** UUID. */
+  cleaningTypeId?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "createdAt". Valeurs : "createdAt". */
+  sort?: string | undefined;
+}
+
+export interface ListOffersResponse {
+  items: Offer[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CreateOfferRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** UUID. */
+  placeTypeId: string;
+  /** UUID. */
+  cleaningTypeId: string;
+  /** Paramètres propres à l’offre (R-CA-02) UUID. */
+  extraParameterIds: string[];
+  /** Taille d’équipe et durée (R-CA-10, R-CA-13) ; vide : 1 agent et durée de référence du type. */
+  teamRule: TeamRuleBracket[];
+  /** Ordre d’affichage. */
+  order?:
+    | number
+    | undefined;
+  /** Absent : false (créé inactif, R-CA-12) */
+  active?: boolean | undefined;
+}
+
+export interface CreateOfferResponse {
+  offer?: Offer | undefined;
+}
+
+export interface GetOfferRequest {
+  /** Offre. UUID. */
+  id: string;
+}
+
+export interface GetOfferResponse {
+  offer?: Offer | undefined;
+}
+
+export interface UpdateOfferRequest {
+  /** Offre. UUID. */
+  id: string;
+  /**
+   * Paramètres propres à l’offre (R-CA-02) UUID. Présent : remplace la liste (vide : la vide) ;
+   * absent : inchangé.
+   */
+  extraParameterIds?:
+    | StringList
+    | undefined;
+  /**
+   * Taille d’équipe et durée (R-CA-10, R-CA-13) ; vide : 1 agent et durée de référence du type.
+   * Présent : remplace la liste (vide : la vide) ; absent : inchangé.
+   */
+  teamRule?:
+    | TeamRuleBracketList
+    | undefined;
+  /** Ordre d’affichage. */
+  order?: number | undefined;
+  active?: boolean | undefined;
+}
+
+export interface UpdateOfferResponse {
+  offer?: Offer | undefined;
+}
+
+export interface ListTariffsRequest {
+  /** Offre. UUID. */
+  offerId: string;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "-version". Valeurs : "-version". */
+  sort?: string | undefined;
+}
+
+export interface ListTariffsResponse {
+  items: Tariff[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CreateTariffDraftRequest {
+  /** Offre. UUID. */
+  offerId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Paramètre de base (superficie par défaut) ; absent pour un pack à remise. */
+  baseParameterCode?:
+    | string
+    | undefined;
+  /** Vide pour un pack à remise. */
+  brackets: TariffBracketInput[];
+  supplements: TariffSupplementInput[];
+  minimum?:
+    | Money
+    | undefined;
+  /** Une entrée par clé de fréquence (clé en double : CLEANING_VALIDATION_FAILED, reason duplicate) */
+  frequencyCoefficients: FrequencyCoefficient[];
+  /** Pack seulement ; exclusif des tranches. */
+  packDiscountBps?: number | undefined;
+}
+
+export interface CreateTariffDraftResponse {
+  tariff?: Tariff | undefined;
+}
+
+export interface UpdateTariffDraftRequest {
+  /** Offre. UUID. */
+  offerId: string;
+  /** Version du tarif. */
+  version: number;
+  /** Paramètre de base (superficie par défaut) ; absent pour un pack à remise. */
+  baseParameterCode?:
+    | string
+    | undefined;
+  /** Vide pour un pack à remise. */
+  brackets: TariffBracketInput[];
+  supplements: TariffSupplementInput[];
+  minimum?:
+    | Money
+    | undefined;
+  /** Une entrée par clé de fréquence (clé en double : CLEANING_VALIDATION_FAILED, reason duplicate) */
+  frequencyCoefficients: FrequencyCoefficient[];
+  /** Pack seulement ; exclusif des tranches. */
+  packDiscountBps?: number | undefined;
+}
+
+export interface UpdateTariffDraftResponse {
+  tariff?: Tariff | undefined;
+}
+
+export interface PublishTariffRequest {
+  /** Offre. UUID. */
+  offerId: string;
+  /** Version du tarif. */
+  version: number;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface PublishTariffResponse {
+  tariff?: Tariff | undefined;
+}
+
+export interface SimulateWithDraftsRequest {
+  /** UUID. */
+  placeTypeId: string;
+  /** UUID. */
+  cleaningTypeIds: string[];
+  /** Clé : code du paramètre. */
+  values: { [key: string]: ParameterValue };
+  schedule?: SchedulePlan | undefined;
+  communeKey?:
+    | string
+    | undefined;
+  /** Brouillons à tester. UUID. */
+  draftTariffIds: string[];
+}
+
+export interface SimulateWithDraftsRequest_ValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+export interface SimulateWithDraftsResponse {
+  simulation?: Simulation | undefined;
+}
+
+export interface ListSkillsRequest {
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "name". Valeurs : "name". */
+  sort?: string | undefined;
+}
+
+export interface ListSkillsResponse {
+  items: Skill[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CreateSkillRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  code: string;
+  name: string;
+}
+
+export interface CreateSkillResponse {
+  skill?: Skill | undefined;
+}
+
+export interface UpdateSkillRequest {
+  /** Compétence. UUID. */
+  skillId: string;
+  name?: string | undefined;
+  active?: boolean | undefined;
+}
+
+export interface UpdateSkillResponse {
+  skill?: Skill | undefined;
+}
+
+export interface ListHolidaysRequest {
+  /** Année (défaut : année en cours) */
+  year?:
+    | number
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "date". Valeurs : "date". */
+  sort?: string | undefined;
+}
+
+export interface ListHolidaysResponse {
+  items: Holiday[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CreateHolidayRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** AAAA-MM-JJ. */
+  date: string;
+  name: string;
+}
+
+export interface CreateHolidayResponse {
+  holiday?: Holiday | undefined;
+}
+
+export interface DeleteHolidayRequest {
+  /** Jour férié. UUID. */
+  holidayId: string;
+}
+
+export interface DeleteHolidayResponse {
+}
+
+export interface ListZonesRequest {
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "name". Valeurs : "name". */
+  sort?: string | undefined;
+}
+
+export interface ListZonesResponse {
+  items: Zone[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CreateZoneRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Commune du référentiel de geo (R-ZN-03) */
+  communeKey: string;
+  /** Absent : nom officiel. */
+  name?:
+    | string
+    | undefined;
+  /** Défaut 10000. */
+  coefficientBps?:
+    | number
+    | undefined;
+  /** Majoration fixe des frais de visite dans cette commune (R-FV-01) */
+  visitFeeSurcharge?:
+    | Money
+    | undefined;
+  /** Absent : réglage général. Valeurs : "manual", "proposal", "automatic". */
+  planningMode?: string | undefined;
+}
+
+export interface CreateZoneResponse {
+  zone?: Zone | undefined;
+}
+
+export interface UpdateZoneRequest {
+  /** Zone. UUID. */
+  zoneId: string;
+  name?:
+    | string
+    | undefined;
+  /** Défaut 10000. */
+  coefficientBps?:
+    | number
+    | undefined;
+  /** Majoration fixe des frais de visite dans cette commune (R-FV-01) */
+  visitFeeSurcharge?:
+    | Money
+    | undefined;
+  /** Absent : réglage général. Valeurs : "manual", "proposal", "automatic". */
+  planningMode?: string | undefined;
+}
+
+export interface UpdateZoneResponse {
+  zone?: Zone | undefined;
+}
+
+export interface SetZoneActiveRequest {
+  /** Zone. UUID. */
+  zoneId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  active: boolean;
+  /** Confirmation malgré des dossiers en cours. */
+  confirm?: boolean | undefined;
+}
+
+export interface SetZoneActiveResponse {
+  zone?: Zone | undefined;
+}
+
+export interface ListCommunesRequest {
+}
+
+export interface ListCommunesResponse {
+  communes: CommuneOption[];
+}
+
+export interface ListRequestsRequest {
+  /**
+   * Valeurs : "awaiting_visit_fee", "visit_to_schedule", "visit_scheduled", "visit_missed",
+   * "visit_done", "quote_sent", "accepted", "declined", "expired", "cancelled", "rejected".
+   */
+  status?: string | undefined;
+  communeKey?:
+    | string
+    | undefined;
+  /** UUID. */
+  placeTypeId?:
+    | string
+    | undefined;
+  /** Créées à partir de (incluse) ISO 8601 UTC. */
+  from?:
+    | string
+    | undefined;
+  /** Créées avant (exclue) ISO 8601 UTC. */
+  to?:
+    | string
+    | undefined;
+  /** Recherche : numéro de dossier. */
+  q?:
+    | string
+    | undefined;
+  /** Valeurs : "individual", "organization". */
+  customerKind?:
+    | string
+    | undefined;
+  /** UUID. */
+  cleaningTypeId?:
+    | string
+    | undefined;
+  /** UUID. */
+  customerId?:
+    | string
+    | undefined;
+  /** UUID. */
+  organizationId?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "-createdAt". Valeurs : "-createdAt", "createdAt", "nextVisitAt". */
+  sort?: string | undefined;
+}
+
+export interface ListRequestsResponse {
+  items: RequestSummary[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
 }
 
 export interface GetRequestRequest {
+  /** Demande. UUID. */
   requestId: string;
 }
 
 export interface GetRequestResponse {
-  request?: QuoteRequest | undefined;
+  request?: Request | undefined;
 }
 
-export interface AcceptQuoteRequest {
+export interface RejectRequestRequest {
+  /** Demande. UUID. */
   requestId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
   idempotencyKey: string;
-  /** Début d'un des créneaux proposés dans le devis. */
-  slotStart: string;
-  /**
-   * Obligatoire pour un particulier (CLEANING_VALIDATION_FAILED, details.field = "paymentPlan",
-   * s'il manque). Ignoré pour une entreprise : elle règle par sa facture mensuelle (billing).
-   */
-  paymentPlan?: PaymentPlan | undefined;
-}
-
-export interface AcceptQuoteResponse {
-  request?: QuoteRequest | undefined;
-  mission?: Mission | undefined;
-}
-
-export interface DeclineQuoteRequest {
-  requestId: string;
+  /** Valeurs : "place_inaccessible", "service_impossible", "other". */
+  reasonCode: string;
+  /** Motif. */
   reason: string;
 }
 
-export interface DeclineQuoteResponse {
-  request?: QuoteRequest | undefined;
-}
-
-export interface CancelRequestRequest {
-  requestId: string;
-  reason: string;
-}
-
-export interface CancelRequestResponse {
-  request?: QuoteRequest | undefined;
-}
-
-export interface ResolveLocationRequest {
-  /** Degrés décimaux (WGS 84) : latitude entre -90 et 90, longitude entre -180 et 180. */
-  latitude: number;
-  longitude: number;
-}
-
-export interface ResolveLocationResponse {
-  latitude: number;
-  longitude: number;
-  /** Commune trouvée (nom de la zone desservie si elle l'est), vide si aucune. */
-  commune: string;
-  /** Code de la zone desservie, vide si la commune n'est pas desservie ou inconnue. */
-  zoneCode: string;
-  served: boolean;
-  /** Adresse lisible rendue par le fournisseur, vide si aucune. */
-  displayAddress: string;
-  /** "nominatim", "google", ou vide si aucun fournisseur n'a trouvé de commune. */
-  provider: string;
-}
-
-/** Une prestation d'un groupe : réponses au nouveau format seulement (ADR-033). */
-export interface QuoteGroupItem {
-  serviceCode: string;
-  answers?: AnswerSet | undefined;
-  optionSelections: OptionSelection[];
-  frequency: string;
-  /** 0 : taille recommandée par la règle de la prestation. */
-  requestedTeamSize: number;
-}
-
-export interface RequestQuoteGroupRequest {
-  idempotencyKey: string;
-  placeType: string;
-  location?:
-    | GeoLocation
-    | undefined;
-  /** Point de repère (obligatoire, 500 caractères au plus) : il sert aussi d'adresse d'intervention. */
-  landmark: string;
-  /**
-   * Repli : commune choisie par le client, utilisée seulement si aucun fournisseur de géocodage ne
-   * rattache la position à une commune. Ignorée sinon (le serveur ne lui fait pas confiance).
-   */
-  commune: string;
-  /** 1 à 10 prestations distinctes, toutes proposées par le type de lieu. */
-  items: QuoteGroupItem[];
-  /** Mêmes règles que RequestQuoteRequest (0 à 3 avec un plan de passages). */
-  preferredSlots: TimeSlot[];
-  comment: string;
-  /**
-   * Déprécié (ADR-052) : remplacé par schedule (mêmes règles que RequestQuoteRequest).
-   *
-   * @deprecated
-   */
-  recurrence?:
-    | Recurrence
-    | undefined;
-  /** Plan de passages commun à toutes les prestations du lieu (ADR-052). */
-  schedule?: InterventionSchedule | undefined;
-}
-
-/** Groupe de demandes créées ensemble pour un même lieu (ADR-034). */
-export interface QuoteRequestGroup {
-  id: string;
-  placeType: string;
-  /** Commune retenue (trouvée par géocodage, ou choisie par le client en repli). */
-  commune: string;
-  zoneCode: string;
-  createdAt: string;
-  /** Demandes du groupe, dans l'ordre des prestations envoyées. */
-  requests: QuoteRequest[];
-  /**
-   * Total des devis envoyés du groupe (devis en vigueur, encore valables ou acceptés), absent si aucun
-   * (ADR-035).
-   */
-  quotesTotal?:
-    | Money
-    | undefined;
-  /**
-   * Reste dû des missions du groupe (hors missions annulées), absent sans mission ou pour une
-   * entreprise (réglée par ses factures, ADR-035). Pas de paiement groupé.
-   */
-  remainingDue?: Money | undefined;
-}
-
-export interface RequestQuoteGroupResponse {
-  group?: QuoteRequestGroup | undefined;
-}
-
-export interface GetRequestGroupRequest {
-  groupId: string;
-}
-
-export interface GetRequestGroupResponse {
-  group?: QuoteRequestGroup | undefined;
-}
-
-/** Demande laissée de côté par une opération de groupe (ADR-035). */
-export interface SkippedRequest {
-  requestId: string;
-  /** État affiché de la demande (mêmes valeurs que QuoteRequest.status). */
-  status: string;
-  /**
-   * "not_open" (acceptée ou close), "transition_not_allowed" (état incompatible), "excluded",
-   * "own_visit" (visite propre à la demande), "visit_completed", "no_quote", "quote_expired",
-   * "slot_not_proposed".
-   */
-  reason: string;
-}
-
-/** Résultat d'une opération de groupe (ADR-035). */
-export interface RequestGroupOutcome {
-  groupId: string;
-  /** Demandes modifiées par l'opération (refusées, annulées, acceptées, visitées…). */
-  affectedRequestIds: string[];
-  skipped: SkippedRequest[];
-  /** Visite technique commune (planification, compte rendu) ; vide sinon. */
-  groupVisitId: string;
-  /** Missions créées (acceptation de groupe) ; vide sinon. */
-  missionIds: string[];
-}
-
-export interface CancelRequestGroupRequest {
-  groupId: string;
-  idempotencyKey: string;
-  reason: string;
-}
-
-export interface CancelRequestGroupResponse {
-  outcome?: RequestGroupOutcome | undefined;
-  group?: QuoteRequestGroup | undefined;
-}
-
-export interface AcceptGroupQuotesRequest {
-  groupId: string;
-  idempotencyKey: string;
-  /** Début d'un créneau proposé par les devis à accepter. */
-  slotStart: string;
-  /** Obligatoire pour un particulier, appliqué à chaque devis ; ignoré pour une entreprise. */
-  paymentPlan?: PaymentPlan | undefined;
-}
-
-export interface AcceptGroupQuotesResponse {
-  outcome?: RequestGroupOutcome | undefined;
-  group?: QuoteRequestGroup | undefined;
-}
-
-export interface ListMyMissionsRequest {
-  page?: Page | undefined;
-}
-
-export interface ListMyMissionsResponse {
-  missions: Mission[];
-  nextCursor: string;
-}
-
-export interface GetMissionRequest {
-  missionId: string;
-}
-
-export interface GetMissionResponse {
-  mission?: Mission | undefined;
-}
-
-export interface CancelMissionRequest {
-  missionId: string;
-  reason: string;
-}
-
-export interface CancelMissionResponse {
-  mission?: Mission | undefined;
-}
-
-export interface ListQuoteRequestsRequest {
-  page?:
-    | Page
-    | undefined;
-  /**
-   * Filtres facultatifs, cumulables, toujours paginés par curseur.
-   * État de la demande.
-   */
-  status: string;
-  /** Code de zone (commune normalisée, par exemple "abomey-calavi", voir Zone). */
-  commune: string;
-  /** "individual" ou "business". */
-  customerKind: string;
-  /** Groupe de demandes (ADR-034). */
-  groupId: string;
-  /** Code du type de lieu. */
-  placeType: string;
-  /** Code de la prestation. */
-  serviceCode: string;
-}
-
-export interface ListQuoteRequestsResponse {
-  requests: QuoteRequest[];
-  nextCursor: string;
-}
-
-export interface GetQuoteRequestRequest {
-  requestId: string;
-}
-
-export interface GetQuoteRequestResponse {
-  request?:
-    | QuoteRequest
-    | undefined;
-  /** Autres demandes du même groupe (ADR-034), vide pour une demande seule. */
-  groupRequests: GroupedRequestSummary[];
-}
-
-/** Demande sœur d'un groupe, vue du back-office. */
-export interface GroupedRequestSummary {
-  id: string;
-  serviceCode: string;
-  /** Même valeurs que QuoteRequest.status. */
-  status: string;
-  serviceName: string;
-  /** Date de la visite des lieux planifiée ou réalisée, vide si aucune. */
-  visitScheduledAt: string;
-  /** Total du devis en vigueur, absent sans devis. */
-  quoteTotal?:
-    | Money
-    | undefined;
-  /** Mission créée à l'acceptation, vide sinon. */
-  missionId: string;
-}
-
-export interface RejectQuoteRequestRequest {
-  requestId: string;
-  reason: string;
-}
-
-export interface RejectQuoteRequestResponse {
-  request?: QuoteRequest | undefined;
-}
-
-export interface ScheduleVisitRequest {
-  requestId: string;
-  scheduledAt: string;
-  agentId: string;
-}
-
-export interface ScheduleVisitResponse {
-  request?: QuoteRequest | undefined;
-}
-
-export interface CompleteVisitRequest {
-  visitId: string;
-  report: string;
-  /** Mesures constatées sur place (ADR-037), facultatives. */
-  measurements?: MeasurementInput | undefined;
-}
-
-export interface EstimateRequestPriceRequest {
-  requestId: string;
-  /** Réponses au nouveau format, validées comme celles du client (obligatoire, même vide). */
-  answers?: AnswerSet | undefined;
-  optionSelections: OptionSelection[];
-  frequency: string;
-}
-
-export interface EstimateRequestPriceResponse {
-  requestId: string;
-  serviceCode: string;
-  /** Commune de la demande, utilisée pour le coefficient. */
-  commune: string;
-  /** Même détail que la simulation : priced, reason, lignes, prix, taille d'équipe, prix manquants. */
-  calculation?: PriceCalculation | undefined;
-}
-
-export interface SaveRequestMeasurementsRequest {
-  requestId: string;
-  /** Réponses au nouveau format (obligatoire, même vide). */
-  answers?: AnswerSet | undefined;
-  optionSelections: OptionSelection[];
-  frequency: string;
-}
-
-export interface SaveRequestMeasurementsResponse {
-  request?: QuoteRequest | undefined;
-}
-
-export interface CompleteVisitResponse {
-  request?: QuoteRequest | undefined;
-}
-
-export interface SendQuoteRequest {
-  requestId: string;
-  /**
-   * Vide : lignes préremplies depuis le détail du calcul de la demande (ADR-033) : ses lignes, une
-   * ligne d'ajustement pour les coefficients et, s'il s'applique, une ligne pour le minimum de
-   * commande. Calcul sans prix : nouveau calcul avec la grille en vigueur et les réponses
-   * enregistrées ; toujours sans prix : CLEANING_PRICE_NOT_SET.
-   */
-  lines: PriceLine[];
-  /**
-   * 1 à 3 créneaux ; ignorés pour un devis avec un plan de passages : le créneau proposé est alors le
-   * premier passage, avec duration_minutes.
-   */
-  proposedSlots: TimeSlot[];
-  /** 0 : validité par défaut (réglages). */
-  validityDays: number;
-  /**
-   * Déprécié (ADR-052) : remplacé par schedule ; traduit en plan quand c'est exact.
-   *
-   * @deprecated
-   */
-  recurrence?:
-    | Recurrence
-    | undefined;
-  /** 0 : taille recommandée. */
-  teamSize: number;
-  durationMinutes: number;
-  /**
-   * Plan de passages ajusté après la visite (ADR-052) ; absent : celui de la demande, recontrôlé
-   * (premier passage au-delà du délai minimum). Total = prix d'un passage × nombre de dates.
-   */
-  schedule?: InterventionSchedule | undefined;
-}
-
-export interface SendQuoteResponse {
-  request?: QuoteRequest | undefined;
-}
-
-export interface ScheduleGroupVisitRequest {
-  groupId: string;
-  scheduledAt: string;
-  agentId: string;
-  /** Demandes laissées hors de la visite commune : détachées, elles gardent leur propre visite. */
-  excludeRequestIds: string[];
-  idempotencyKey: string;
-}
-
-export interface ScheduleGroupVisitResponse {
-  outcome?:
-    | RequestGroupOutcome
-    | undefined;
-  /** Toutes les demandes du groupe, après l'opération. */
-  requests: QuoteRequest[];
-}
-
-export interface CompleteGroupVisitRequest {
-  groupId: string;
-  report: string;
-  idempotencyKey: string;
-  /** Mesures constatées par demande (ADR-037), facultatives : demandes de cette visite commune. */
-  measurements: RequestMeasurementInput[];
-}
-
-export interface CompleteGroupVisitResponse {
-  outcome?: RequestGroupOutcome | undefined;
-  requests: QuoteRequest[];
-}
-
-export interface RejectRequestGroupRequest {
-  groupId: string;
-  reason: string;
-  idempotencyKey: string;
-}
-
-export interface RejectRequestGroupResponse {
-  outcome?: RequestGroupOutcome | undefined;
-  requests: QuoteRequest[];
-}
-
-/** Devis d'une demande du groupe : mêmes règles que SendQuoteRequest (lignes préremplies si vides). */
-export interface GroupQuoteItem {
-  requestId: string;
-  lines: PriceLine[];
-  /**
-   * Déprécié (ADR-052) : voir SendGroupQuotesRequest.schedule.
-   *
-   * @deprecated
-   */
-  recurrence?: Recurrence | undefined;
-  teamSize: number;
-  durationMinutes: number;
-}
-
-export interface SendGroupQuotesRequest {
-  groupId: string;
-  /**
-   * Créneaux communs proposés pour tous les devis (1 à 3) ; ignorés pour un devis avec un plan de
-   * passages (son créneau proposé est son premier passage).
-   */
-  proposedSlots: TimeSlot[];
-  /** 0 : validité par défaut (réglages). */
-  validityDays: number;
-  /** Une entrée par demande à chiffrer, chacune une seule fois. */
-  quotes: GroupQuoteItem[];
-  idempotencyKey: string;
-  /** Plan de passages commun à tous les devis (ADR-052) ; absent : celui de chaque demande. */
-  schedule?: InterventionSchedule | undefined;
-}
-
-export interface SendGroupQuotesResponse {
-  outcome?: RequestGroupOutcome | undefined;
-  requests: QuoteRequest[];
+export interface RejectRequestResponse {
+  request?: Request | undefined;
 }
 
 export interface CorrectRequestLocationRequest {
+  /** Demande. UUID. */
   requestId: string;
-  location?:
-    | GeoLocation
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  latitude: number;
+  longitude: number;
+  /** Précision annoncée. */
+  accuracyMeters?:
+    | number
     | undefined;
-  /** Facultatif : vide, le repère en vigueur est gardé. */
-  landmark: string;
-  /** Repli si le géocodage ne trouve pas la commune ; ignorée sinon. */
-  commune: string;
+  /** Absent : inchangé. */
+  landmark?:
+    | string
+    | undefined;
+  /** Absent : inchangée. */
+  address?:
+    | string
+    | undefined;
+  /** Motif. */
+  reason: string;
 }
 
 export interface CorrectRequestLocationResponse {
-  request?:
-    | QuoteRequest
-    | undefined;
-  /** Demandes (le groupe entier) et missions non terminées mises à jour. */
-  updatedRequestIds: string[];
-  updatedMissionIds: string[];
+  locationCorrection?: LocationCorrection | undefined;
+}
+
+export interface DecideReactivationRequest {
+  /** Demande. UUID. */
+  requestId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Valeurs : "accept", "refuse". */
+  decision: string;
+  reason?: string | undefined;
+}
+
+export interface DecideReactivationResponse {
+  request?: Request | undefined;
 }
 
 export interface ListVisitsRequest {
-  page?:
-    | Page
+  /** Visites prévues à partir de (incluse) ISO 8601 UTC. */
+  from?:
+    | string
     | undefined;
-  /** Filtres facultatifs, cumulables. agent_id : ignoré pour cleaning_agent (ses visites seulement). */
-  agentId: string;
-  /** Bornes de scheduled_at (ISO 8601), incluse et exclue. */
-  from: string;
-  to: string;
-  /** "scheduled", "completed" ou "cancelled". */
-  status: string;
-  groupId: string;
-}
-
-/** Demande concernée par une visite. */
-export interface VisitedRequest {
-  requestId: string;
-  /** Identifiant de la visite de cette demande (compte rendu par demande : CompleteVisit). */
-  visitId: string;
-  serviceCode: string;
-  serviceName: string;
-  /** Même valeurs que QuoteRequest.status. */
-  status: string;
-  /** Type de lieu de la demande et son libellé (ADR-034), vides pour une demande sans lieu. */
-  placeType: string;
-  placeTypeLabel: string;
-  /**
-   * Réponses du client au formulaire de la prestation (ADR-033), pour préremplir la saisie des
-   * mesures (ADR-037) : mêmes valeurs que QuoteRequest.answers, option_selections, frequency et
-   * pricing_version.
-   */
-  answers?: AnswerSet | undefined;
-  optionSelections: OptionSelection[];
-  frequency: string;
-  pricingVersion: number;
-  /** Réponses du client, lisibles (même règle que QuoteRequest.answer_summary). */
-  answerSummary?:
-    | AnswerSummary
+  /** Visites prévues avant (exclue) ISO 8601 UTC. */
+  to?:
+    | string
     | undefined;
-  /**
-   * Détail du calcul de la demande ; absent pour une demande antérieure et pour cleaning_agent
-   * (aucun montant de la demande montré à l'agent ; le recalcul EstimateRequestPrice reste ouvert).
-   */
-  calculation?:
-    | PriceCalculation
+  /** Valeurs : "scheduled", "in_progress", "completed", "missed", "cancelled". */
+  status?:
+    | string
     | undefined;
-  /** Mesures constatées (ADR-037), absentes sans mesure ; leur calcul est absent pour cleaning_agent. */
-  measurement?:
-    | RequestMeasurement
+  /** UUID. */
+  agentId?: string | undefined;
+  communeKey?:
+    | string
     | undefined;
-  /** Mesures constatées, lisibles ; absent sans mesure. */
-  measuredSummary?: AnswerSummary | undefined;
-}
-
-/** Visite technique telle qu'un agent la voit : une ligne par visite commune ou par visite seule. */
-export interface VisitSummary {
-  /** group_visit_id pour une visite commune, identifiant de la visite sinon. */
-  id: string;
-  groupVisitId: string;
-  groupId: string;
-  /** "scheduled", "completed" ou "cancelled". */
-  status: string;
-  scheduledAt: string;
-  completedAt: string;
-  report: string;
-  agentId: string;
-  agentName: string;
-  customerId: string;
-  customerName: string;
-  organizationName: string;
-  commune: string;
-  /** Position, repère, adresse : vides pour cleaning_agent quand la visite est terminée ou annulée. */
-  address: string;
-  location?: GeoLocation | undefined;
-  landmark: string;
-  geocodedAddress: string;
-  placeType: string;
-  placeTypeLabel: string;
-  requests: VisitedRequest[];
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "scheduledAt". Valeurs : "scheduledAt", "-scheduledAt". */
+  sort?: string | undefined;
 }
 
 export interface ListVisitsResponse {
-  visits: VisitSummary[];
+  items: Visit[];
+  /** Vide : dernière page. */
   nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
 }
 
-export interface ListMissionsRequest {
-  page?: Page | undefined;
-  status: string;
-  /** Filtres facultatifs, cumulables (ADR-034) : groupe de la demande d'origine, prestation. */
-  groupId: string;
-  serviceCode: string;
-}
-
-export interface ListMissionsResponse {
-  missions: Mission[];
-  nextCursor: string;
-}
-
-export interface GetMissionDetailRequest {
-  missionId: string;
-}
-
-export interface GetMissionDetailResponse {
-  mission?: Mission | undefined;
-}
-
-export interface ScheduleInterventionRequest {
-  missionId: string;
-  /**
-   * Vide (ADR-052) : prochaine date du plan de passages encore sans passage, à l'heure du plan
-   * (CLEANING_VALIDATION_FAILED, field "scheduledStart", si la mission n'a plus de date à venir).
-   */
-  scheduledStart: string;
-  durationMinutes: number;
-  agentIds: string[];
-  /** Facultatif : les membres de l'équipe s'ajoutent à agent_ids. */
-  teamId: string;
-}
-
-export interface ScheduleInterventionBatchRequest {
-  missionId: string;
-  /** Sous-ensemble des dates restantes du plan (AAAA-MM-JJ) ; vide : selon until. */
-  dates: string[];
-  /** Toutes les dates restantes jusqu'à cette date incluse ; vide (avec dates vide) : toutes. */
-  until: string;
-  /** HH:mm, heure locale ; vide : heure de début du plan. */
-  startTime: string;
-  durationMinutes: number;
-  agentIds: string[];
-  /** Facultatif : les membres de l'équipe s'ajoutent à agent_ids. */
-  teamId: string;
-  /** Vrai : planifier les dates libres et sauter les dates en conflit ; faux : tout ou rien. */
-  skipConflicts: boolean;
+export interface ScheduleVisitRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
   idempotencyKey: string;
-}
-
-/** Date sautée (ou en conflit) d'une planification en lot, avec ses agents déjà pris. */
-export interface BatchConflict {
-  date: string;
+  /** UUID. */
+  requestId: string;
+  /** ISO 8601 UTC. */
+  scheduledAt: string;
+  /** Absent : réglage (60 min) */
+  durationMinutes?:
+    | number
+    | undefined;
+  /** Agents ; vide avec "autoAssign". UUID. */
   agentIds: string[];
+  /** UUID. */
+  leadAgentId?:
+    | string
+    | undefined;
+  /** Laisser la planification automatique proposer l’agent (R-VI-01) */
+  autoAssign?:
+    | boolean
+    | undefined;
+  /** Contrôles contournés avec motif (9.4) */
+  overrides: CheckOverride[];
 }
 
-export interface ScheduleInterventionBatchResponse {
-  mission?: Mission | undefined;
-  interventionIds: string[];
-  scheduledDates: string[];
-  skipped: BatchConflict[];
+export interface ScheduleVisitResponse {
+  visit?: Visit | undefined;
 }
 
-export interface ScheduleInterventionResponse {
-  mission?: Mission | undefined;
-}
-
-export interface ScheduleGroupInterventionsRequest {
-  groupId: string;
-  /** Facultatif : missions du groupe à planifier ; vide, toutes celles qui ont un passage à planifier. */
-  missionIds: string[];
-  scheduledStart: string;
-  durationMinutes: number;
-  agentIds: string[];
-  teamId: string;
+export interface UpdateVisitRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
   idempotencyKey: string;
+  /** ISO 8601 UTC. */
+  scheduledAt?: string | undefined;
+  durationMinutes?:
+    | number
+    | undefined;
+  /** UUID. Présent : remplace la liste (vide : la vide) ; absent : inchangé. */
+  agentIds?:
+    | StringList
+    | undefined;
+  /** UUID. */
+  leadAgentId?:
+    | string
+    | undefined;
+  /** Présent : remplace la liste (vide : la vide) ; absent : inchangé. */
+  overrides?:
+    | CheckOverrideList
+    | undefined;
+  /** Motif du déplacement. */
+  reason?: string | undefined;
 }
 
-/** Mission laissée de côté par la planification de groupe (ADR-035). */
-export interface SkippedMission {
-  missionId: string;
-  /** Même valeurs que Mission.status. */
-  status: string;
-  /** "terminated", "suspended" ou "no_intervention_left". */
+export interface UpdateVisitResponse {
+  visit?: Visit | undefined;
+}
+
+export interface CancelVisitRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Valeurs : "ksp", "agent_no_show". */
+  cause: string;
+  /** Motif. */
   reason: string;
 }
 
-export interface ScheduleGroupInterventionsResponse {
-  groupId: string;
-  scheduledMissionIds: string[];
-  skipped: SkippedMission[];
-  /** Missions planifiées, après l'opération. */
-  missions: Mission[];
+export interface CancelVisitResponse {
+  visit?: Visit | undefined;
 }
 
-export interface StartInterventionRequest {
-  interventionId: string;
-}
-
-export interface StartInterventionResponse {
-  mission?: Mission | undefined;
-}
-
-export interface UpdateChecklistRequest {
-  interventionId: string;
-  /** Codes des éléments cochés ; les autres sont décochés. */
-  doneCodes: string[];
-}
-
-export interface UpdateChecklistResponse {
-  mission?: Mission | undefined;
-}
-
-export interface ReportIncidentRequest {
-  interventionId: string;
-  note: string;
-}
-
-export interface ReportIncidentResponse {
-  mission?: Mission | undefined;
-}
-
-export interface ResumeInterventionRequest {
-  interventionId: string;
-}
-
-export interface ResumeInterventionResponse {
-  mission?: Mission | undefined;
-}
-
-export interface CompleteInterventionRequest {
-  interventionId: string;
-}
-
-export interface CompleteInterventionResponse {
-  mission?: Mission | undefined;
-}
-
-export interface RecordPaymentRequest {
-  missionId: string;
-  amount?:
-    | Money
-    | undefined;
-  /** "cash" ou "mobile_money_offline". */
-  method: string;
-  reference: string;
-  /**
-   * Facultative (8 à 100 caractères : lettres, chiffres, "_" et "-") : un second envoi avec la
-   * même clé pour la même mission n'enregistre rien de plus. Vide : aucun contrôle de rejeu.
-   */
+export interface RequestNewVisitRequest {
+  /** Demande. UUID. */
+  requestId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
   idempotencyKey: string;
-}
-
-export interface RecordPaymentResponse {
-  mission?: Mission | undefined;
-}
-
-export interface CancelMissionAsSupervisorRequest {
-  missionId: string;
+  /** Motif. */
   reason: string;
 }
 
-export interface CancelMissionAsSupervisorResponse {
-  mission?: Mission | undefined;
+export interface RequestNewVisitResponse {
+  request?: Request | undefined;
 }
 
-export interface CommuneCoefficient {
-  commune: string;
-  coefficientBp: number;
-}
-
-export interface TeamSizeRule {
-  /** Une personne pour ce nombre d'unités (m², pièces…). */
-  unitsPerAgent: number;
-  minAgents: number;
-  maxAgents: number;
-  /**
-   * Champ "number" de la prestation (pas d'une option) qui porte la quantité : taille d'équipe,
-   * et cible de l'ancien champ quantity (ADR-033). Vide : taille minimale (ou celle demandée).
-   */
-  fieldCode: string;
-}
-
-/**
- * Grille d'une prestation. La version couvre la définition complète (champs, options, grille) :
- * chaque enregistrement en crée une nouvelle (ADR-033).
- */
-export interface PricingRule {
-  version: number;
-  /**
-   * Déprécié (ADR-033) : prix par unité du champ de la taille d'équipe, absent s'il n'est pas fixé.
-   *
-   * @deprecated
-   */
-  unitPrice?:
-    | Money
+export interface CompleteVisitOnBehalfRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+  /** ISO 8601 UTC. */
+  arrivedAt?:
+    | string
     | undefined;
-  /** Absent tant que non fixé (aucun minimum). */
-  minimumPrice?:
-    | Money
-    | undefined;
+  /** Jamais dans le futur. ISO 8601 UTC. */
+  completedAt: string;
   /**
-   * Déprécié (ADR-033) : options avec leur forfait ; lire ServiceDefinition.options.
-   *
-   * @deprecated
+   * Constat saisi au nom de l’agent ; obligatoire si aucun constat n’est enregistré. Clé : code du
+   * paramètre.
    */
-  options: CatalogOption[];
-  communeCoefficients: CommuneCoefficient[];
-  /** Coefficient d'une commune absente de la liste. */
-  defaultCoefficientBp: number;
-  teamSize?: TeamSizeRule | undefined;
-  checklist: ChecklistItem[];
-  updatedBy: string;
-  updatedAt: string;
-  /** Back-office : nom affiché de l'auteur de la version (ADR-029). */
-  updatedByName: string;
-  /** Fréquences propres à la prestation, dans l'ordre d'affichage (ADR-033). */
-  frequencies: ServiceFrequency[];
+  values: { [key: string]: ParameterValue };
+  /** UUID. */
+  photoFileIds: string[];
 }
 
-/**
- * Définition complète d'une prestation (back-office).
- *
- * À l'écriture (SaveService, PreviewService), nouveau format seulement (ADR-033) : fields non vide
- * (au moins un champ actif), options, pricing ; unit, pricing.unit_price et pricing.options sont
- * ignorés. fields vide (ancien corps) : CLEANING_VALIDATION_FAILED, details.field = "fields",
- * details.reason = "required".
- */
-export interface ServiceDefinition {
-  code: string;
-  name: string;
-  description: string;
-  /**
-   * Déprécié (ADR-033) : unité de l'ancien formulaire ("square_meter", "room", "septic_tank" ou
-   * "cubic_meter"). Ignoré à l'écriture : déduit de l'unité du champ de la taille d'équipe.
-   *
-   * @deprecated
-   */
-  unit: string;
-  active: boolean;
-  pricing?:
-    | PricingRule
-    | undefined;
-  /** Champs du formulaire, dans l'ordre d'affichage (ADR-033). */
-  fields: FieldDefinition[];
-  /** Options (prestations complémentaires), dans l'ordre d'affichage (ADR-033). */
-  options: OptionDefinition[];
+export interface CompleteVisitOnBehalfRequest_ValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
 }
 
-export interface Settings {
-  quoteValidityDays: number;
-  minimumLeadHours: number;
-  freeCancellationHours: number;
-  /**
-   * Déprécié : sans effet depuis la décision du 2026-10-23 (visite des lieux obligatoire pour toute
-   * demande). Toujours renvoyé ; à l'écriture, ignoré (0 accepté), la valeur enregistrée ne change pas
-   * (ADR-033).
-   *
-   * @deprecated
-   */
-  visitThresholdSquareMeters: number;
-  maxOpenRequests: number;
-  depositPercent: number;
-  updatedBy: string;
-  updatedAt: string;
-  /**
-   * Règles de paiement et de suspension (CDC Nettoyage, partie 10). À l'écriture, 0 laisse la
-   * valeur en vigueur inchangée (aucune n'accepte 0).
-   * Factures d'entreprise impayées à partir desquelles le client est averti (1 par défaut).
-   */
-  businessWarningUnpaidInvoices: number;
-  /** Factures d'entreprise impayées qui suspendent le contrat (2 par défaut). */
-  businessSuspensionUnpaidInvoices: number;
-  /** Passages impayés d'un particulier en récurrent qui suspendent le service (1 par défaut). */
-  individualSuspensionUnpaidInterventions: number;
-  /** Heures laissées après la fin d'un passage pour enregistrer son paiement (24 par défaut). */
-  individualPaymentGraceHours: number;
-  /** Back-office : nom affiché de l'auteur de la dernière modification (ADR-029), ignoré à l'écriture. */
-  updatedByName: string;
-  /**
-   * Mois de conservation de la position GPS (ADR-035) : coordonnées, précision, repère et adresse
-   * géocodée sont effacés des demandes et missions clôturées depuis plus longtemps (12 par défaut, 1 à
-   * 120). À l'écriture, 0 laisse la valeur en vigueur.
-   */
-  locationRetentionMonths: number;
-  /**
-   * Compléments du Nettoyage (ADR-053).
-   * Rappel au client N jours avant l'expiration d'un devis (2 par défaut, 0 à 30 ; 0 : aucun rappel).
-   * À l'écriture, absent laisse la valeur en vigueur (0 désactive le rappel).
-   */
-  quoteExpiryReminderDays?:
+export interface CompleteVisitOnBehalfResponse {
+  visit?: Visit | undefined;
+}
+
+export interface ReportVisitMissedOnBehalfRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+  /** ISO 8601 UTC. */
+  missedAt: string;
+  /** UUID. */
+  photoFileId?: string | undefined;
+}
+
+export interface ReportVisitMissedOnBehalfResponse {
+  visit?: Visit | undefined;
+}
+
+export interface RemoveVisitPhotoAsKspRequest {
+  /** Visite. UUID. */
+  visitId: string;
+  /** Photo. UUID. */
+  fileId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+}
+
+export interface RemoveVisitPhotoAsKspResponse {
+  visit?: Visit | undefined;
+}
+
+export interface SaveRetainedValuesRequest {
+  /** Demande. UUID. */
+  requestId: string;
+  /** Clé : code du paramètre. */
+  values: { [key: string]: ParameterValue };
+  /** Types retenus. UUID. */
+  cleaningTypeIds: string[];
+  /** Un motif par écart avec le constat. */
+  reasons: ValueReason[];
+  /** Obligatoire quand un devis est envoyé. */
+  reason?: string | undefined;
+}
+
+export interface SaveRetainedValuesRequest_ValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+export interface SaveRetainedValuesResponse {
+  request?: Request | undefined;
+}
+
+export interface EstimateRetainedValuesRequest {
+  /** Demande. UUID. */
+  requestId: string;
+  /** Clé : code du paramètre. */
+  values: { [key: string]: ParameterValue };
+  /** UUID. */
+  cleaningTypeIds: string[];
+}
+
+export interface EstimateRetainedValuesRequest_ValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+export interface EstimateRetainedValuesResponse {
+  pricing?: Pricing | undefined;
+}
+
+export interface CreateQuoteRequest {
+  /** Demande. UUID. */
+  requestId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Programme ajusté par le superviseur ; absent : celui de la demande. */
+  schedule?:
+    | SchedulePlan
+    | undefined;
+  /** Taille d’équipe ; absent : valeur proposée par le calcul retenu (R-CA-13) */
+  teamSize?:
+    | number
+    | undefined;
+  /** Durée d’une séance ; absent : valeur proposée par le calcul retenu (R-CA-13) */
+  durationMinutes?:
+    | number
+    | undefined;
+  /** Remises ou majorations manuelles (permission "cleaning.quote.adjust_price") */
+  adjustments: AdjustmentInput[];
+  /** Prix fixés pour les offres « sur devis ». */
+  onQuotePrices: OnQuotePrice[];
+  /** Validité ; absent : réglage (15 j) */
+  validityDays?: number | undefined;
+}
+
+export interface CreateQuoteResponse {
+  quote?: Quote | undefined;
+}
+
+export interface GetQuoteRequest {
+  /** Devis. UUID. */
+  quoteId: string;
+}
+
+export interface GetQuoteResponse {
+  quote?: Quote | undefined;
+}
+
+export interface UpdateQuoteDraftRequest {
+  /** Devis. UUID. */
+  quoteId: string;
+  /** Programme ajusté par le superviseur ; absent : celui de la demande. */
+  schedule?:
+    | SchedulePlan
+    | undefined;
+  /** Taille d’équipe ; absent : valeur proposée par le calcul retenu (R-CA-13) */
+  teamSize?:
+    | number
+    | undefined;
+  /** Durée d’une séance ; absent : valeur proposée par le calcul retenu (R-CA-13) */
+  durationMinutes?:
     | number
     | undefined;
   /**
-   * Photos au plus par type ("before", "after") et par passage (10 par défaut, 1 à 50). À
-   * l'écriture, 0 laisse la valeur en vigueur.
+   * Remises ou majorations manuelles (permission "cleaning.quote.adjust_price") Présent : remplace
+   * la liste (vide : la vide) ; absent : inchangé.
    */
-  maxInterventionPhotos: number;
-  /**
-   * Durée d'une visite technique dans l'agenda de l'agent, pour les conflits avec ses passages, ses
-   * autres visites et ses indisponibilités (60 minutes par défaut, 15 à 480). À l'écriture, 0 laisse
-   * la valeur en vigueur.
-   */
-  visitDurationMinutes: number;
-}
-
-export interface GetCatalogRequest {
-}
-
-export interface GetCatalogResponse {
-  services: ServiceDefinition[];
-  settings?:
-    | Settings
+  adjustments?:
+    | AdjustmentInputList
     | undefined;
   /**
-   * Prestations actives proposées par aucun type de lieu actif (ADR-034) : invisibles dans le
-   * parcours par lieu.
+   * Prix fixés pour les offres « sur devis ». Présent : remplace la liste (vide : la vide) ;
+   * absent : inchangé.
    */
-  unplacedServiceCodes: string[];
-}
-
-export interface SaveServiceRequest {
-  service?: ServiceDefinition | undefined;
-}
-
-export interface SaveServiceResponse {
-  service?:
-    | ServiceDefinition
+  onQuotePrices?:
+    | OnQuotePriceList
     | undefined;
-  /**
-   * Prestation enregistrée inactive (ADR-034) : types de lieu actifs qui la proposent encore (elle
-   * y est masquée côté public) ; vide sinon.
-   */
-  affectedPlaceTypes: PlaceTypeRef[];
+  /** Validité ; absent : réglage (15 j) */
+  validityDays?: number | undefined;
 }
 
-export interface PreviewServiceRequest {
-  serviceCode: string;
-  /**
-   * Définition à tester, au nouveau format seulement (fields non vide) ; elle n'est pas enregistrée.
-   * Absente : version en vigueur de la prestation (CLEANING_SERVICE_NOT_FOUND si elle n'existe pas ;
-   * une prestation inactive est acceptée).
-   */
-  definition?:
-    | ServiceDefinition
-    | undefined;
-  /** Réponses au nouveau format, validées comme celles du client (obligatoire, même vide). */
-  answers?: AnswerSet | undefined;
-  optionSelections: OptionSelection[];
-  commune: string;
-  frequency: string;
-  /** 0 : taille recommandée par la règle. */
-  requestedTeamSize: number;
+export interface UpdateQuoteDraftResponse {
+  quote?: Quote | undefined;
 }
 
-export interface PreviewServiceResponse {
-  serviceCode: string;
-  /** pricing_version : version en vigueur, ou 0 pour une définition envoyée. */
-  calculation?:
-    | PriceCalculation
-    | undefined;
-  /** Vrai si la commune est dans une zone desservie. */
-  covered: boolean;
+export interface ApproveQuoteAdjustmentRequest {
+  /** Devis. UUID. */
+  quoteId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
 }
 
-export interface UpdateSettingsRequest {
-  settings?: Settings | undefined;
+export interface ApproveQuoteAdjustmentResponse {
+  quote?: Quote | undefined;
 }
 
-export interface UpdateSettingsResponse {
-  settings?: Settings | undefined;
+export interface SendQuoteRequest {
+  /** Devis. UUID. */
+  quoteId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
 }
 
-/**
- * Zone desservie : une commune, identifiée par sa clé normalisée (minuscules, sans accents,
- * tirets), la même que celle des coefficients de commune de la grille tarifaire.
- */
-export interface Zone {
-  /** Clé normalisée, par exemple "abomey-calavi". */
-  code: string;
-  /** Nom affiché, par exemple "Abomey-Calavi". */
-  commune: string;
-  active: boolean;
-  updatedBy: string;
-  updatedAt: string;
-  /** Back-office : nom affiché de l'auteur de la dernière modification (ADR-029). */
-  updatedByName: string;
-  /**
-   * Autres noms de la commune (« Sèmè-Kpodji » pour « Sèmè-Podji »), utilisés pour rattacher une
-   * position géocodée à la zone (ADR-034).
-   */
-  aliases: string[];
-  /** Demandes ouvertes et missions actives dans la zone (ADR-035), au moment de la réponse. */
-  openRequests: number;
-  activeMissions: number;
-}
-
-/** Noms alternatifs d'une zone : message présent = liste remplacée ; absent = inchangée. */
-export interface ZoneAliases {
-  names: string[];
-}
-
-export interface ListZonesRequest {
-}
-
-export interface ListZonesResponse {
-  zones: Zone[];
-}
-
-export interface SaveZoneRequest {
-  commune: string;
-  /** Facultatif (ADR-034) : absent, les noms alternatifs en vigueur sont gardés. */
-  aliases?: ZoneAliases | undefined;
-}
-
-export interface SaveZoneResponse {
-  zone?: Zone | undefined;
-}
-
-export interface DeactivateZoneRequest {
-  code: string;
-  /**
-   * Obligatoire quand la zone a des demandes ouvertes ou des missions actives (ADR-035) ; sinon
-   * CLEANING_ZONE_HAS_ACTIVITY. Elles continuent : seules les nouvelles demandes sont refusées.
-   */
-  confirm: boolean;
-}
-
-export interface DeactivateZoneResponse {
-  zone?: Zone | undefined;
-}
-
-/** Type de lieu du parcours client (ADR-034), défini au back-office. */
-export interface PlaceType {
-  /** Code stable : ^[a-z][a-z0-9_]{1,49}$. */
-  code: string;
-  label: string;
-  description: string;
-  /** Nom d'icône libre (par exemple "house"), interprété par le front. */
-  icon: string;
-  /** Ordre d'affichage croissant. */
-  displayOrder: number;
-  active: boolean;
-  /**
-   * Codes des prestations proposées, dans l'ordre d'affichage ; une prestation inactive y reste
-   * mais est masquée côté public.
-   */
-  serviceCodes: string[];
-  updatedBy: string;
-  updatedAt: string;
-  /** Back-office : nom affiché de l'auteur de la dernière modification (ADR-029). */
-  updatedByName: string;
-  /**
-   * Cohérence du catalogue (back-office, ListPlaceTypes) : prestations proposées inconnues ou
-   * inactives, et visibilité publique du lieu.
-   */
-  unknownServiceCodes: string[];
-  inactiveServiceCodes: string[];
-  publiclyVisible: boolean;
-  /** Raison d'un lieu non visible : "inactive" ou "no_active_service" ; vide s'il est visible. */
-  visibilityReason: string;
-}
-
-/** Type de lieu cité dans une réponse (code et libellé). */
-export interface PlaceTypeRef {
-  code: string;
-  label: string;
-}
-
-export interface ListPlaceTypesRequest {
-}
-
-export interface ListPlaceTypesResponse {
-  placeTypes: PlaceType[];
-}
-
-export interface SavePlaceTypeRequest {
-  /** updated_by, updated_at et updated_by_name sont ignorés. */
-  placeType?: PlaceType | undefined;
-}
-
-export interface SavePlaceTypeResponse {
-  placeType?: PlaceType | undefined;
-}
-
-export interface Unavailability {
-  id: string;
-  start: string;
-  end: string;
-  reason: string;
-}
-
-export interface Agent {
-  /** Identifiant du compte KSP de l'agent (identity). */
-  agentId: string;
-  displayName: string;
-  active: boolean;
-  unavailabilities: Unavailability[];
-}
-
-export interface Team {
-  id: string;
-  name: string;
-  members: AgentRef[];
-  /** Équipe désactivée (ADR-053) : gardée, mais plus proposée à la planification. */
-  active: boolean;
+export interface SendQuoteResponse {
+  quote?: Quote | undefined;
 }
 
 export interface ListAgentsRequest {
+  /** Valeurs : "applicant", "under_review", "active", "suspended", "deactivated", "rejected". */
+  status?: string | undefined;
+  zoneKey?:
+    | string
+    | undefined;
+  /** Compétence validée. */
+  skillCode?:
+    | string
+    | undefined;
+  /** Recherche : nom ou téléphone. */
+  q?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "lastName". Valeurs : "lastName", "-createdAt", "-ratingAverage". */
+  sort?: string | undefined;
 }
 
 export interface ListAgentsResponse {
-  agents: Agent[];
+  items: Agent[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
 }
 
-export interface RegisterAgentRequest {
+export interface GetAgentRequest {
+  /** Agent. UUID. */
   agentId: string;
-  displayName: string;
 }
 
-export interface RegisterAgentResponse {
+export interface GetAgentResponse {
   agent?: Agent | undefined;
 }
 
-export interface DeclareUnavailabilityRequest {
+export interface GetAgentIdDocumentRequest {
+  /** Agent. UUID. */
   agentId: string;
-  start: string;
-  end: string;
-  reason: string;
-  /**
-   * ADR-053 : période qui chevauche des passages ou des visites déjà planifiés de l'agent. Sans
-   * force, refus CLEANING_UNAVAILABILITY_CONFLICT (details.assignments) ; avec force, elle est
-   * enregistrée et la liste est renvoyée en avertissement (à reporter ou réaffecter).
-   */
-  force: boolean;
 }
 
-export interface DeclareUnavailabilityResponse {
-  agent?:
-    | Agent
+export interface GetAgentIdDocumentResponse {
+  idDocument?: IdDocument | undefined;
+}
+
+export interface CreateAgentRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Téléphone du compte KSP. */
+  phone: string;
+  firstName: string;
+  lastName: string;
+  /** Photo (montrée au client), déposée par le service file. UUID. */
+  photoFileId: string;
+  /** Pièce d’identité, recto. UUID. */
+  idDocumentFrontFileId: string;
+  /** Pièce d’identité, verso. UUID. */
+  idDocumentBackFileId: string;
+  /** Commune de résidence. */
+  residenceCommuneKey: string;
+  /** Zones de travail souhaitées. */
+  zoneKeys: string[];
+  /** Compétences déclarées, validées une par une. */
+  skillCodes: string[];
+  /** Disponibilités hebdomadaires. */
+  weekly: AvailabilityRule[];
+  emergencyContact?:
+    | EmergencyContact
     | undefined;
-  /** Passages et visites planifiés qui chevauchent l'indisponibilité enregistrée (avec force) ; vide sinon. */
-  overlappingAssignments: AgentAssignment[];
+  /** Valeurs : "employee", "independent". */
+  employmentKind: string;
+  /** Facultatif (rémunération hors module) */
+  mobileMoneyNumber?: string | undefined;
+}
+
+export interface CreateAgentResponse {
+  agent?: Agent | undefined;
+}
+
+export interface InviteAgentRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  phone: string;
+}
+
+export interface InviteAgentResponse {
+  agentInvitation?: AgentInvitation | undefined;
+}
+
+export interface UpdateAgentRequest {
+  /** Agent. UUID. */
+  agentId: string;
+  /** Présent : remplace la liste (vide : la vide) ; absent : inchangé. */
+  zoneKeys?:
+    | StringList
+    | undefined;
+  /**
+   * Compétences validées (une compétence déclarée non validée ne compte pas) Présent : remplace la
+   * liste (vide : la vide) ; absent : inchangé.
+   */
+  validatedSkillCodes?: StringList | undefined;
+  maxHoursPerDay?: number | undefined;
+  maxHoursPerWeek?:
+    | number
+    | undefined;
+  /** Valeurs : "employee", "independent". */
+  employmentKind?: string | undefined;
+  residenceCommuneKey?: string | undefined;
+  emergencyContact?: EmergencyContact | undefined;
+}
+
+export interface UpdateAgentResponse {
+  agent?: Agent | undefined;
+}
+
+export interface StartAgentReviewRequest {
+  /** Agent. UUID. */
+  agentId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface StartAgentReviewResponse {
+  agent?: Agent | undefined;
+}
+
+export interface ApproveAgentRequest {
+  /** Agent. UUID. */
+  agentId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Compétences validées. */
+  validatedSkillCodes: string[];
+}
+
+export interface ApproveAgentResponse {
+  agent?: Agent | undefined;
+}
+
+export interface RejectAgentRequest {
+  /** Agent. UUID. */
+  agentId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+}
+
+export interface RejectAgentResponse {
+  agent?: Agent | undefined;
+}
+
+export interface SuspendAgentRequest {
+  /** Agent. UUID. */
+  agentId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+}
+
+export interface SuspendAgentResponse {
+  agent?: Agent | undefined;
+}
+
+export interface ReactivateAgentRequest {
+  /** Agent. UUID. */
+  agentId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface ReactivateAgentResponse {
+  agent?: Agent | undefined;
+}
+
+export interface DeactivateAgentRequest {
+  /** Agent. UUID. */
+  agentId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Réaffecter automatiquement ses affectations à venir. */
+  reassign: boolean;
+  /** Motif. */
+  reason: string;
+}
+
+export interface DeactivateAgentResponse {
+  agent?: Agent | undefined;
+}
+
+export interface GetAgentAvailabilityRequest {
+  /** Agent. UUID. */
+  agentId: string;
+}
+
+export interface GetAgentAvailabilityResponse {
+  availability?: Availability | undefined;
+}
+
+export interface SetAgentAvailabilityRequest {
+  /** Agent. UUID. */
+  agentId: string;
+  /** Modèle hebdomadaire complet (remplace le précédent) */
+  weekly: AvailabilityRule[];
+  /** Disponibilités exceptionnelles (remplacent les précédentes) */
+  extraAvailabilities: TimeSlot[];
+  maxHoursPerDay?: number | undefined;
+  maxHoursPerWeek?: number | undefined;
+  force?: boolean | undefined;
+}
+
+export interface SetAgentAvailabilityResponse {
+  availability?: Availability | undefined;
+}
+
+export interface DeclareAgentUnavailabilityRequest {
+  /** Agent. UUID. */
+  agentId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** ISO 8601 UTC. */
+  start: string;
+  /** ISO 8601 UTC. */
+  end: string;
+  /** Valeurs : "leave", "sickness", "other". */
+  kind: string;
+  note?: string | undefined;
+  force?: boolean | undefined;
+}
+
+export interface DeclareAgentUnavailabilityResponse {
+  availability?: Availability | undefined;
+}
+
+export interface RemoveAgentUnavailabilityRequest {
+  /** Agent. UUID. */
+  agentId: string;
+  /** Indisponibilité. UUID. */
+  unavailabilityId: string;
+}
+
+export interface RemoveAgentUnavailabilityResponse {
+  availability?: Availability | undefined;
 }
 
 export interface ListTeamsRequest {
+  active?:
+    | boolean
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "name". Valeurs : "name". */
+  sort?: string | undefined;
 }
 
 export interface ListTeamsResponse {
-  teams: Team[];
+  items: Team[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
 }
 
 export interface CreateTeamRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
   name: string;
+  /** Chef d’équipe, membre de l’équipe. UUID. */
+  leadAgentId: string;
+  /** UUID. */
   memberIds: string[];
 }
 
@@ -2158,261 +5032,882 @@ export interface CreateTeamResponse {
   team?: Team | undefined;
 }
 
-export interface UpdateTeamRequest {
+export interface GetTeamRequest {
+  /** Équipe. UUID. */
   teamId: string;
-  name: string;
-  memberIds: string[];
+}
+
+export interface GetTeamResponse {
+  team?: Team | undefined;
+}
+
+export interface UpdateTeamRequest {
+  /** Équipe. UUID. */
+  teamId: string;
+  name?:
+    | string
+    | undefined;
+  /** Chef d’équipe, membre de l’équipe. UUID. */
+  leadAgentId?:
+    | string
+    | undefined;
+  /** UUID. Présent : remplace la liste (vide : la vide) ; absent : inchangé. */
+  memberIds?: StringList | undefined;
+  active?: boolean | undefined;
 }
 
 export interface UpdateTeamResponse {
   team?: Team | undefined;
 }
 
-export interface GetMissionAmountDueRequest {
-  missionId: string;
+export interface GetPlanningRequest {
+  /** Début (inclus) ISO 8601 UTC. */
+  from: string;
+  /** Fin (exclue) ISO 8601 UTC. */
+  to: string;
+  /** UUID. */
+  agentId?:
+    | string
+    | undefined;
+  /** UUID. */
+  teamId?: string | undefined;
+  zoneKey?:
+    | string
+    | undefined;
+  /** UUID. */
+  programId?: string | undefined;
 }
 
-export interface GetMissionAmountDueResponse {
-  missionId: string;
-  customerId: string;
-  /** Vide pour un particulier ; une mission d'entreprise se règle par sa facture (billing). */
-  organizationId: string;
-  /** Statut de la mission ("to_schedule", …, "completed" ou "cancelled"). */
-  status: string;
-  /** Plan de paiement choisi à l'acceptation du devis. */
-  plan?: PaymentPlan | undefined;
-  total?: Money | undefined;
-  paid?:
+export interface GetPlanningResponse {
+  planning?: Planning | undefined;
+}
+
+export interface ListUnassignedRequest {
+  zoneKey?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "urgency". Valeurs : "urgency". */
+  sort?: string | undefined;
+}
+
+export interface ListUnassignedResponse {
+  items: PlanningItem[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface CheckAssignmentRequest {
+  /** Visite ou séances (mêmes agents sur toutes les séances d’un programme ou une sélection) */
+  targets: AssignmentTarget[];
+  /** Agents ; ou "teamId". UUID. */
+  agentIds: string[];
+  /** Équipe : ses membres actifs et disponibles (R-EQ-02) UUID. */
+  teamId?:
+    | string
+    | undefined;
+  /** Chef d’équipe (obligatoire au-delà d’un agent, R-EQ-03) UUID. */
+  leadAgentId?: string | undefined;
+  overrides: CheckOverride[];
+}
+
+export interface CheckAssignmentResponse {
+  assignmentCheckReport?: AssignmentCheckReport | undefined;
+}
+
+export interface CreateAssignmentsRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Visite ou séances (mêmes agents sur toutes les séances d’un programme ou une sélection) */
+  targets: AssignmentTarget[];
+  /** Agents ; ou "teamId". UUID. */
+  agentIds: string[];
+  /** Équipe : ses membres actifs et disponibles (R-EQ-02) UUID. */
+  teamId?:
+    | string
+    | undefined;
+  /** Chef d’équipe (obligatoire au-delà d’un agent, R-EQ-03) UUID. */
+  leadAgentId?: string | undefined;
+  overrides: CheckOverride[];
+  /** Écarter les cibles en échec au lieu de tout refuser ; absent : false. */
+  skipFailing?: boolean | undefined;
+}
+
+export interface CreateAssignmentsResponse {
+  assignmentBatch?: AssignmentBatch | undefined;
+}
+
+export interface UpdateAssignmentRequest {
+  /** Affectation. UUID. */
+  assignmentId: string;
+  /** Agent remplaçant. UUID. */
+  replaceWithAgentId?:
+    | string
+    | undefined;
+  /** Devient chef d’équipe. */
+  isLead?:
+    | boolean
+    | undefined;
+  /** Présent : remplace la liste (vide : la vide) ; absent : inchangé. */
+  overrides?:
+    | CheckOverrideList
+    | undefined;
+  /** Motif. */
+  reason: string;
+}
+
+export interface UpdateAssignmentResponse {
+  assignmentBatch?: AssignmentBatch | undefined;
+}
+
+export interface RemoveAssignmentRequest {
+  /** Affectation. UUID. */
+  assignmentId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+}
+
+export interface RemoveAssignmentResponse {
+}
+
+export interface RunAutoPlanningRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Défaut : maintenant. ISO 8601 UTC. */
+  from?:
+    | string
+    | undefined;
+  /** Défaut : horizon des réglages. ISO 8601 UTC. */
+  to?: string | undefined;
+  zoneKey?:
+    | string
+    | undefined;
+  /** UUID. */
+  programId?: string | undefined;
+}
+
+export interface RunAutoPlanningResponse {
+  autoPlanningRun?: AutoPlanningRun | undefined;
+}
+
+export interface ListProposalsRequest {
+  zoneKey?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "start". Valeurs : "start". */
+  sort?: string | undefined;
+}
+
+export interface ListProposalsResponse {
+  items: Assignment[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface ApproveProposalsRequest {
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** UUID. */
+  assignmentIds: string[];
+}
+
+export interface ApproveProposalsResponse {
+  assignmentBatch?: AssignmentBatch | undefined;
+}
+
+export interface ListProgramsRequest {
+  /** Valeurs : "confirmed", "in_progress", "suspended", "completed", "cancelled". */
+  status?: string | undefined;
+  communeKey?:
+    | string
+    | undefined;
+  /** Valeurs : "individual", "organization". */
+  payerKind?:
+    | string
+    | undefined;
+  /** Recherche : numéro de programme. */
+  q?:
+    | string
+    | undefined;
+  /** UUID. */
+  customerId?:
+    | string
+    | undefined;
+  /** UUID. */
+  organizationId?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "-createdAt". Valeurs : "-createdAt", "createdAt". */
+  sort?: string | undefined;
+}
+
+export interface ListProgramsResponse {
+  items: Program[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface GetProgramRequest {
+  /** Programme. UUID. */
+  programId: string;
+}
+
+export interface GetProgramResponse {
+  program?: Program | undefined;
+}
+
+export interface ListProgramSessionsRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /**
+   * Valeurs : "to_assign", "assigned", "in_progress", "interrupted", "completed", "missed",
+   * "suspended", "cancelled".
+   */
+  status?:
+    | string
+    | undefined;
+  /** Valeurs : "not_due", "due", "paid", "overdue", "waived". */
+  paymentStatus?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "scheduledStart". Valeurs : "scheduledStart". */
+  sort?: string | undefined;
+}
+
+export interface ListProgramSessionsResponse {
+  items: Session[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface GetSessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+}
+
+export interface GetSessionResponse {
+  session?: Session | undefined;
+}
+
+export interface ChangeProgramScheduleRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Séances à partir de cette date. AAAA-MM-JJ. */
+  effectiveFrom: string;
+  /** Nouveau plan pour ces séances. */
+  schedule?:
+    | SchedulePlan
+    | undefined;
+  /** Motif. */
+  reason: string;
+  /** Absent : durée inchangée. */
+  durationMinutes?: number | undefined;
+}
+
+export interface ChangeProgramScheduleResponse {
+  program?: Program | undefined;
+}
+
+export interface CreateAmendmentRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** UUID. */
+  addCleaningTypeIds: string[];
+  /** Séances ajoutées. */
+  addSchedule?:
+    | SchedulePlan
+    | undefined;
+  /** Valeurs complémentaires (paramètres des types ajoutés) Clé : code du paramètre. */
+  values: { [key: string]: ParameterValue };
+  /** Taille d’équipe ; absent : valeur proposée par le calcul retenu (R-CA-13) */
+  teamSize?:
+    | number
+    | undefined;
+  /** Durée d’une séance ; absent : valeur proposée par le calcul retenu (R-CA-13) */
+  durationMinutes?:
+    | number
+    | undefined;
+  /** Remises ou majorations manuelles (permission "cleaning.quote.adjust_price") */
+  adjustments: AdjustmentInput[];
+  /** Prix fixés pour les offres « sur devis ». */
+  onQuotePrices: OnQuotePrice[];
+  /** Validité ; absent : réglage (15 j) */
+  validityDays?: number | undefined;
+}
+
+export interface CreateAmendmentRequest_ValuesEntry {
+  key: string;
+  value?: ParameterValue | undefined;
+}
+
+export interface CreateAmendmentResponse {
+  quote?: Quote | undefined;
+}
+
+export interface SuspendProgramRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+}
+
+export interface SuspendProgramResponse {
+  program?: Program | undefined;
+}
+
+export interface ResumeProgramRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  reason?: string | undefined;
+}
+
+export interface ResumeProgramResponse {
+  programResumption?: ProgramResumption | undefined;
+}
+
+export interface CancelProgramRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+}
+
+export interface CancelProgramResponse {
+  program?: Program | undefined;
+}
+
+export interface ApproveProgramCancellationRequest {
+  /** Programme. UUID. */
+  programId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface ApproveProgramCancellationResponse {
+  program?: Program | undefined;
+}
+
+export interface RescheduleSessionAsKspRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** ISO 8601 UTC. */
+  newStart: string;
+  /** Motif. */
+  reason: string;
+  /** Absent : durée inchangée. */
+  durationMinutes?: number | undefined;
+}
+
+export interface RescheduleSessionAsKspResponse {
+  session?: Session | undefined;
+}
+
+export interface CancelSessionAsKspRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Valeurs : "ksp", "customer_late". */
+  initiatedBy: string;
+  /** Motif. */
+  reason: string;
+}
+
+export interface CancelSessionAsKspResponse {
+  session?: Session | undefined;
+}
+
+export interface ResumeSessionRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  reason?: string | undefined;
+}
+
+export interface ResumeSessionResponse {
+  session?: Session | undefined;
+}
+
+export interface CompleteSessionAsKspRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+  /** Début réel. ISO 8601 UTC. */
+  startedAt: string;
+  /** Fin réelle, jamais dans le futur. ISO 8601 UTC. */
+  completedAt: string;
+  /** Agents présents, parmi les affectés. UUID. */
+  presentAgentIds: string[];
+  /** UUID. */
+  beforePhotoFileIds: string[];
+  /** UUID. */
+  afterPhotoFileIds: string[];
+}
+
+export interface CompleteSessionAsKspResponse {
+  session?: Session | undefined;
+}
+
+export interface ReportSessionMissedAsKspRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+  /** Valeurs : "customer_absent", "access_impossible". */
+  cause: string;
+  /** ISO 8601 UTC. */
+  missedAt: string;
+  /** Agents présents, parmi les affectés. UUID. */
+  presentAgentIds: string[];
+  /** UUID. */
+  photoFileId?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. */
+  waitStartedAt?:
+    | string
+    | undefined;
+  /** ISO 8601 UTC. */
+  calledAt?: string | undefined;
+}
+
+export interface ReportSessionMissedAsKspResponse {
+  session?: Session | undefined;
+}
+
+export interface RemoveSessionPhotoAsKspRequest {
+  /** Séance. UUID. */
+  sessionId: string;
+  /** Photo. UUID. */
+  fileId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Motif. */
+  reason: string;
+  /** Obligatoire pour la dernière photo « avant » ou « après » d’une séance réalisée. UUID. */
+  replacementFileId?: string | undefined;
+}
+
+export interface RemoveSessionPhotoAsKspResponse {
+  session?: Session | undefined;
+}
+
+export interface ListClaimsRequest {
+  /** Valeurs : "open", "in_progress", "resolved", "rejected". */
+  status?:
+    | string
+    | undefined;
+  /** Agent de la séance. UUID. */
+  agentId?:
+    | string
+    | undefined;
+  /** UUID. */
+  customerId?:
+    | string
+    | undefined;
+  /** UUID. */
+  organizationId?:
+    | string
+    | undefined;
+  /** 20 par défaut, 100 au plus. */
+  limit?:
+    | number
+    | undefined;
+  /** Curseur opaque de la page précédente ; vide : première page. */
+  cursor?:
+    | string
+    | undefined;
+  /** Tri ; vide : "openedAt". Valeurs : "openedAt", "-openedAt". */
+  sort?: string | undefined;
+}
+
+export interface ListClaimsResponse {
+  items: Claim[];
+  /** Vide : dernière page. */
+  nextCursor: string;
+  /** Nombre d’éléments qui correspondent aux filtres. */
+  total: number;
+}
+
+export interface GetClaimRequest {
+  /** Réclamation. UUID. */
+  claimId: string;
+}
+
+export interface GetClaimResponse {
+  claim?: Claim | undefined;
+}
+
+export interface UpdateClaimRequest {
+  /** Réclamation. UUID. */
+  claimId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Valeurs : "in_progress". */
+  status?: string | undefined;
+  message?: string | undefined;
+}
+
+export interface UpdateClaimResponse {
+  claim?: Claim | undefined;
+}
+
+export interface DecideClaimRequest {
+  /** Réclamation. UUID. */
+  claimId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+  /** Valeurs : "free_redo", "wallet_credit", "rejected". */
+  outcome: string;
+  /** Crédit ("wallet_credit" seulement) */
+  creditAmount?:
     | Money
+    | undefined;
+  /** Décision motivée. */
+  reason: string;
+}
+
+export interface DecideClaimResponse {
+  claim?: Claim | undefined;
+}
+
+export interface ApproveClaimCreditRequest {
+  /** Réclamation. UUID. */
+  claimId: string;
+  /** Clé d’idempotence (8 à 100 caractères), en-tête Idempotency-Key. */
+  idempotencyKey: string;
+}
+
+export interface ApproveClaimCreditResponse {
+  claim?: Claim | undefined;
+}
+
+export interface GetSettingsRequest {
+}
+
+export interface GetSettingsResponse {
+  settings?: Settings | undefined;
+}
+
+export interface UpdateSettingsRequest {
+  /** Demandes ouvertes par compte (défaut 5, R-DM-04) */
+  maxOpenRequestsPerAccount?:
+    | number
+    | undefined;
+  /** Délai minimum avant une visite (défaut 24 h, R-DM-05) */
+  minVisitLeadHours?:
+    | number
+    | undefined;
+  /** Délai de paiement des frais de visite (défaut 72 h, R-FV-03) */
+  visitFeePaymentHours?:
+    | number
+    | undefined;
+  /** Objectif de délai de visite (défaut 72 h ouvrées, R-VI-01) */
+  visitTargetBusinessHours?:
+    | number
+    | undefined;
+  /** Durée d’une visite (défaut 60 min, R-VI-02) */
+  visitDurationMinutes?:
+    | number
+    | undefined;
+  /** Temps de trajet si OSRM est indisponible (défaut 30 min, R-ZN-02) */
+  defaultTravelMinutes?:
+    | number
     | undefined;
   /**
-   * Acompte encore dû : acompte attendu moins les paiements reçus ; 0 pour un plan « totalité »
-   * ou un acompte déjà reçu.
+   * Frais de visite par défaut (R-FV-01) Absent pour qui n’a pas le droit de voir les montants
+   * (agent ; personnel sans cleaning.amounts.read).
    */
-  depositDue?:
+  defaultVisitFee?:
     | Money
     | undefined;
-  /** Reste dû : total moins les paiements reçus. */
-  remainingDue?:
-    | Money
+  /** Déduction des frais de visite du premier paiement (défaut oui, R-FV-05) */
+  deductVisitFee?:
+    | boolean
+    | undefined;
+  /** Validité d’un devis (défaut 15 j, R-DV-04) */
+  quoteValidityDays?:
+    | number
+    | undefined;
+  /** Rappel avant expiration (défaut 2 j) */
+  quoteReminderDays?:
+    | number
+    | undefined;
+  /** Remise maximale sans validation d’un admin (défaut 20 %, R-DV-03) */
+  maxDiscountWithoutApprovalPercent?:
+    | number
+    | undefined;
+  /** Délai minimum avant la première séance (défaut 48 h, R-PG-03) */
+  firstSessionLeadHours?:
+    | number
+    | undefined;
+  /** Durée maximale d’un programme (défaut 24 mois) */
+  programMaxMonths?:
+    | number
+    | undefined;
+  /** Nombre maximum de séances (défaut 400) */
+  programMaxSessions?:
+    | number
+    | undefined;
+  /** Annulation ou report sans frais (défaut 24 h avant) */
+  freeCancellationHours?:
+    | number
+    | undefined;
+  /** Reports par mois (défaut 2) */
+  reschedulesPerMonth?:
+    | number
+    | undefined;
+  /** Frais d’annulation tardive / de client absent (défaut 50 %) */
+  lateCancellationFeePercent?:
+    | number
+    | undefined;
+  /** Délai de paiement d’une séance, particulier (défaut 24 h, R-PP-03) */
+  sessionPaymentGraceHours?:
+    | number
+    | undefined;
+  /** Séances en retard avant suspension (défaut 1, R-PP-04) */
+  overdueSessionsBeforeSuspension?:
+    | number
+    | undefined;
+  /** Garantie de solde avant une séance (défaut non, R-PP-05) */
+  balanceGuarantee?:
+    | boolean
+    | undefined;
+  /** Factures impayées avant avertissement (défaut 1, R-PE-06) */
+  unpaidInvoicesWarning?:
+    | number
+    | undefined;
+  /** Factures impayées avant suspension (défaut 2) ; plus grand que l’avertissement. */
+  unpaidInvoicesSuspension?:
+    | number
     | undefined;
   /**
-   * Paiements en ligne déjà enregistrés sur la mission (identifiants du service payment) : payment
-   * refuse un nouveau paiement tant qu'un paiement réussi n'y figure pas encore (ADR-032).
+   * Mode de planification par défaut (proposition, R-PL-05) Valeurs : "manual", "proposal",
+   * "automatic".
    */
-  onlinePaymentIds: string[];
+  defaultPlanningMode?:
+    | string
+    | undefined;
+  /** Horizon de planification automatique (défaut 14 j, R-PL-01) */
+  planningHorizonDays?:
+    | number
+    | undefined;
+  /** Poids du score (total 100, R-PL-03) */
+  scoreWeights?:
+    | ScoreWeights
+    | undefined;
+  /** Délai d’acceptation d’une affectation, indépendants (défaut 12 h, R-PL-08) */
+  assignmentResponseHours?:
+    | number
+    | undefined;
+  /** Charge maximale par défaut d’un agent (8 h / jour, R-DS-03) */
+  defaultMaxHoursPerDay?:
+    | number
+    | undefined;
+  /** Charge maximale par défaut d’un agent (48 h / semaine) */
+  defaultMaxHoursPerWeek?:
+    | number
+    | undefined;
+  /** Photos par type et par séance (défaut 10) */
+  maxPhotosPerKind?:
+    | number
+    | undefined;
+  /** Fenêtre de réclamation (défaut 48 h, R-RC-01) */
+  claimWindowHours?:
+    | number
+    | undefined;
+  /** Conservation des positions et des photos (défaut 12 mois) */
+  retentionMonths?:
+    | number
+    | undefined;
+  /**
+   * Points communs de toutes les séances (R-EX-09) Présent : remplace la liste (vide : la vide) ;
+   * absent : inchangé.
+   */
+  commonChecklist?:
+    | ChecklistTemplateItemList
+    | undefined;
+  /** Distance d’alerte à l’arrivée (défaut 300 m) */
+  arrivalAlertMeters?:
+    | number
+    | undefined;
+  /** Avance maximale à l’arrivée (défaut 30 min ; 0 = pas de contrôle) */
+  arrivalMaxAdvanceMinutes?:
+    | number
+    | undefined;
+  /** Attente avant de déclarer le client absent (défaut 30 min, R-EX-02) */
+  customerWaitMinutes?: number | undefined;
+}
+
+export interface UpdateSettingsResponse {
+  settings?: Settings | undefined;
+}
+
+export interface StringList {
+  items: string[];
+}
+
+export interface ChecklistTemplateItemList {
+  items: ChecklistTemplateItem[];
+}
+
+export interface ParameterChoiceList {
+  items: ParameterChoice[];
+}
+
+export interface TeamRuleBracketList {
+  items: TeamRuleBracket[];
+}
+
+export interface CheckOverrideList {
+  items: CheckOverride[];
+}
+
+export interface AdjustmentInputList {
+  items: AdjustmentInput[];
+}
+
+export interface OnQuotePriceList {
+  items: OnQuotePrice[];
 }
 
 export interface GetWalletDebitStatusRequest {
-  /** Mission payée (objet du débit). */
-  missionId: string;
-  /** Débit du portefeuille (identifiant de la transaction wallet), cité en référence du paiement. */
+  /**
+   * Recherche par object_type et object_id ; transaction_id : débit à vérifier.
+   * Objet du débit : "cleaning_visit_fee" (demande) ou "cleaning_session" (séance).
+   */
+  objectType: string;
+  /** Demande ou séance (UUID). */
+  objectId: string;
+  /** Débit du wallet (identifiant de la transaction wallet). */
   transactionId: string;
 }
 
 export interface GetWalletDebitStatusResponse {
   /**
-   * true : un paiement de la mission (moyen "wallet") cite ce débit, remboursé ou non ; false : aucun
-   * (mission inconnue comprise).
+   * true : l'objet cite ce débit (paiement enregistré), remboursé ou non ; false : aucun (objet
+   * inconnu compris). Égal à status = "recorded".
    */
   recorded: boolean;
-}
-
-export interface PayMissionFromWalletRequest {
-  missionId: string;
-  /** "deposit" (acompte encore dû) ou "balance" (reste dû). */
-  part: string;
-  /** En-tête Idempotency-Key (8 à 100 caractères : lettres, chiffres, "_" et "-"), obligatoire. */
-  idempotencyKey: string;
-}
-
-export interface PayMissionFromWalletResponse {
-  mission?: Mission | undefined;
-}
-
-/** Photo d'un passage : fichier du service file rattaché à l'objet "cleaning_intervention". */
-export interface InterventionPhoto {
-  fileId: string;
-  /** "before" ou "after". */
-  kind: string;
-  fileName: string;
-  contentType: string;
-  sizeBytes: number;
-  /** Envoi du fichier (déclaration chez file). */
-  uploadedAt: string;
-  /** Adresse de lecture de courte durée (secret : jamais journalisée) et son expiration. */
-  downloadUrl: string;
-  downloadExpiresAt: string;
-}
-
-/** Passage ou visite technique planifié d'un agent. */
-export interface AgentAssignment {
-  /** "intervention" ou "visit". */
-  kind: string;
-  /** Identifiant du passage ou de la visite. */
-  id: string;
-  /** Mission du passage ; vide pour une visite. */
-  missionId: string;
-  /** Demande de la visite ; vide pour un passage. */
-  requestId: string;
-  /** Début et fin (fin d'une visite : début plus la durée réglée d'une visite). */
-  start: string;
-  end: string;
-}
-
-export interface ListMyInterventionPhotosRequest {
-  interventionId: string;
-}
-
-export interface ListMyInterventionPhotosResponse {
-  /** Photos "before" puis "after", dans l'ordre d'ajout. */
-  photos: InterventionPhoto[];
-}
-
-export interface AddInterventionPhotoRequest {
-  interventionId: string;
-  /** Fichier disponible chez file, envoyé par le compte connecté. */
-  fileId: string;
-  /** "before" ou "after". */
-  kind: string;
-}
-
-export interface AddInterventionPhotoResponse {
-  mission?: Mission | undefined;
-}
-
-export interface RemoveInterventionPhotoRequest {
-  interventionId: string;
-  fileId: string;
-}
-
-export interface RemoveInterventionPhotoResponse {
-  mission?: Mission | undefined;
-}
-
-export interface ListInterventionPhotosRequest {
-  interventionId: string;
-}
-
-export interface ListInterventionPhotosResponse {
-  /** Photos "before" puis "after", dans l'ordre d'ajout. */
-  photos: InterventionPhoto[];
-}
-
-export interface RescheduleInterventionRequest {
-  interventionId: string;
-  /** Nouveau début, dans le futur. */
-  scheduledStart: string;
-  /** 0 : durée inchangée. */
-  durationMinutes: number;
-  /** Agents et/ou équipe active ; tous deux vides : agents du passage gardés. */
-  agentIds: string[];
-  teamId: string;
-  /** Motif (1 à 500 caractères), gardé sur le passage (change_reason) ; jamais dans les messages. */
-  reason: string;
-}
-
-export interface RescheduleInterventionResponse {
-  mission?: Mission | undefined;
-}
-
-export interface UnscheduleInterventionRequest {
-  interventionId: string;
-  /** Motif (1 à 500 caractères), gardé sur le passage (change_reason) ; jamais dans les messages. */
-  reason: string;
-}
-
-export interface UnscheduleInterventionResponse {
-  mission?: Mission | undefined;
-}
-
-export interface DeactivateAgentRequest {
-  agentId: string;
-}
-
-export interface DeactivateAgentResponse {
-  agent?: Agent | undefined;
-}
-
-export interface ReactivateAgentRequest {
-  agentId: string;
-}
-
-export interface ReactivateAgentResponse {
-  agent?: Agent | undefined;
-}
-
-export interface RemoveUnavailabilityRequest {
-  agentId: string;
-  unavailabilityId: string;
-}
-
-export interface RemoveUnavailabilityResponse {
-  agent?: Agent | undefined;
-}
-
-export interface DeactivateTeamRequest {
-  teamId: string;
-}
-
-export interface DeactivateTeamResponse {
-  team?: Team | undefined;
-}
-
-export interface ReactivateTeamRequest {
-  teamId: string;
-}
-
-export interface ReactivateTeamResponse {
-  team?: Team | undefined;
+  /**
+   * "recorded" : l'objet cite ce débit ; "not_recorded" : aucun débit enregistré pour cet objet ;
+   * "in_progress" : opération en cours chez cleaning, ne pas rembourser, redemander au passage
+   * suivant.
+   */
+  status: string;
 }
 
 /**
  * ---------------------------------------------------------------------------
- * Catalogue et simulateur — public (UC-CL-01).
+ * Catalogue, simulateur et aperçu des dates — public, sans compte (UC-NT-01, 02).
  * ---------------------------------------------------------------------------
  */
 
 export interface CatalogServiceClient {
   /**
-   * Prestations actives et leur formulaire (champs, options, fréquences), sans aucun prix
-   * (ServiceOffer.form, ADR-033) ; anciens champs (options avec prix, minimum) dépréciés.
+   * UC-NT-01 — R-CA-05, R-CA-06. Lieux proposés. REST : GET /api/v1/cleaning/catalog/place-types.
+   * Catégories et lieux actifs, dans l’ordre d’affichage, sans prix. Un lieu désactivé n’apparaît
+   * plus.
    */
 
-  listServices(request: ListServicesRequest, metadata?: Metadata): Observable<ListServicesResponse>;
+  listCatalog(request: ListCatalogRequest, metadata?: Metadata): Observable<ListCatalogResponse>;
 
   /**
-   * Estimation non contractuelle, sans donnée personnelle ; rien n'est enregistré.
-   * Une prestation sans prix répond priced = false, sans erreur.
+   * UC-NT-01 — R-CA-01, R-CA-02, R-CA-04, R-CA-05, R-FV-01. Paramètres et offres d’un lieu. REST :
+   * GET /api/v1/cleaning/catalog/place-types/{id}. Paramètres du lieu, types de nettoyage proposés
+   * (et leurs paramètres propres), packs, frais de visite à prévoir. Erreurs :
+   * CLEANING_PLACE_TYPE_NOT_FOUND.
    */
 
-  simulate(request: SimulateRequest, metadata?: Metadata): Observable<SimulateResponse>;
+  getCatalogPlaceType(
+    request: GetCatalogPlaceTypeRequest,
+    metadata?: Metadata,
+  ): Observable<GetCatalogPlaceTypeResponse>;
 
   /**
-   * Zones desservies actives, par nom de commune : seules les communes où une demande de devis
-   * est acceptée, sans les champs d'administration.
+   * UC-NT-01 — partie 4 (zones), R-ZN-01. Zones desservies. REST : GET
+   * /api/v1/cleaning/catalog/zones. Communes actives, par nom.
    */
 
   listServedZones(request: ListServedZonesRequest, metadata?: Metadata): Observable<ListServedZonesResponse>;
 
   /**
-   * Parcours par lieu (ADR-034) : types de lieu actifs, triés, avec les codes de leurs prestations
-   * actives, et ces prestations avec leur formulaire (comme ListServices), en un seul appel.
+   * UC-NT-01 — partie 5 (R-PX-01 à 07), R-CA-05. Simuler un prix. REST : POST
+   * /api/v1/cleaning/simulations. Même calcul que le devis, côté serveur. Estimation non
+   * contractuelle. Sans commune (visiteur), coefficient neutre (R-PX-05). Une valeur au-delà de la
+   * dernière tranche donne « sur devis » pour cette offre, les autres restent chiffrées (R-PX-03).
+   * Lieu « Autre » : pas de simulation ("CLEANING_OFFER_NOT_AVAILABLE"). Limité à 30 calculs par
+   * minute et par adresse. Erreurs : CLEANING_PLACE_TYPE_NOT_FOUND, CLEANING_OFFER_NOT_AVAILABLE,
+   * CLEANING_SCHEDULE_EMPTY, CLEANING_SCHEDULE_LIMIT_EXCEEDED, CLEANING_VALIDATION_FAILED.
    */
 
-  getPlaceCatalog(request: GetPlaceCatalogRequest, metadata?: Metadata): Observable<GetPlaceCatalogResponse>;
+  simulate(request: SimulateRequest, metadata?: Metadata): Observable<SimulateResponse>;
 
   /**
-   * Estimation de plusieurs prestations d'un même lieu (ADR-034), avec le simulateur de l'ADR-033 ;
-   * rien n'est enregistré. Commune facultative : sans elle, coefficient neutre.
-   */
-
-  estimate(request: EstimateRequest, metadata?: Metadata): Observable<EstimateResponse>;
-
-  /**
-   * Aperçu d'un plan de passages (ADR-052) : liste exacte des dates, nombre, premier et dernier
-   * passage, avertissements ; mêmes contrôles qu'à la demande de devis (plan bien formé, au plus le
-   * nombre de passages réglé, premier passage au-delà du délai minimum). Rien n'est enregistré.
+   * UC-NT-02 — R-PG-01 à 04. Aperçu des dates d’un programme. REST : POST
+   * /api/v1/cleaning/schedule-previews. Liste exacte des dates et leur nombre, fuseau
+   * Africa/Porto-Novo ; jour du mois absent → dernier jour du mois ; jours fériés proposés à
+   * l’exclusion. Erreurs : CLEANING_SCHEDULE_EMPTY, CLEANING_SCHEDULE_LIMIT_EXCEEDED,
+   * CLEANING_VALIDATION_FAILED.
    */
 
   previewSchedule(request: PreviewScheduleRequest, metadata?: Metadata): Observable<PreviewScheduleResponse>;
@@ -2420,34 +5915,37 @@ export interface CatalogServiceClient {
 
 /**
  * ---------------------------------------------------------------------------
- * Catalogue et simulateur — public (UC-CL-01).
+ * Catalogue, simulateur et aperçu des dates — public, sans compte (UC-NT-01, 02).
  * ---------------------------------------------------------------------------
  */
 
 export interface CatalogServiceController {
   /**
-   * Prestations actives et leur formulaire (champs, options, fréquences), sans aucun prix
-   * (ServiceOffer.form, ADR-033) ; anciens champs (options avec prix, minimum) dépréciés.
+   * UC-NT-01 — R-CA-05, R-CA-06. Lieux proposés. REST : GET /api/v1/cleaning/catalog/place-types.
+   * Catégories et lieux actifs, dans l’ordre d’affichage, sans prix. Un lieu désactivé n’apparaît
+   * plus.
    */
 
-  listServices(
-    request: ListServicesRequest,
+  listCatalog(
+    request: ListCatalogRequest,
     metadata?: Metadata,
-  ): Promise<ListServicesResponse> | Observable<ListServicesResponse> | ListServicesResponse;
+  ): Promise<ListCatalogResponse> | Observable<ListCatalogResponse> | ListCatalogResponse;
 
   /**
-   * Estimation non contractuelle, sans donnée personnelle ; rien n'est enregistré.
-   * Une prestation sans prix répond priced = false, sans erreur.
+   * UC-NT-01 — R-CA-01, R-CA-02, R-CA-04, R-CA-05, R-FV-01. Paramètres et offres d’un lieu. REST :
+   * GET /api/v1/cleaning/catalog/place-types/{id}. Paramètres du lieu, types de nettoyage proposés
+   * (et leurs paramètres propres), packs, frais de visite à prévoir. Erreurs :
+   * CLEANING_PLACE_TYPE_NOT_FOUND.
    */
 
-  simulate(
-    request: SimulateRequest,
+  getCatalogPlaceType(
+    request: GetCatalogPlaceTypeRequest,
     metadata?: Metadata,
-  ): Promise<SimulateResponse> | Observable<SimulateResponse> | SimulateResponse;
+  ): Promise<GetCatalogPlaceTypeResponse> | Observable<GetCatalogPlaceTypeResponse> | GetCatalogPlaceTypeResponse;
 
   /**
-   * Zones desservies actives, par nom de commune : seules les communes où une demande de devis
-   * est acceptée, sans les champs d'administration.
+   * UC-NT-01 — partie 4 (zones), R-ZN-01. Zones desservies. REST : GET
+   * /api/v1/cleaning/catalog/zones. Communes actives, par nom.
    */
 
   listServedZones(
@@ -2456,29 +5954,26 @@ export interface CatalogServiceController {
   ): Promise<ListServedZonesResponse> | Observable<ListServedZonesResponse> | ListServedZonesResponse;
 
   /**
-   * Parcours par lieu (ADR-034) : types de lieu actifs, triés, avec les codes de leurs prestations
-   * actives, et ces prestations avec leur formulaire (comme ListServices), en un seul appel.
+   * UC-NT-01 — partie 5 (R-PX-01 à 07), R-CA-05. Simuler un prix. REST : POST
+   * /api/v1/cleaning/simulations. Même calcul que le devis, côté serveur. Estimation non
+   * contractuelle. Sans commune (visiteur), coefficient neutre (R-PX-05). Une valeur au-delà de la
+   * dernière tranche donne « sur devis » pour cette offre, les autres restent chiffrées (R-PX-03).
+   * Lieu « Autre » : pas de simulation ("CLEANING_OFFER_NOT_AVAILABLE"). Limité à 30 calculs par
+   * minute et par adresse. Erreurs : CLEANING_PLACE_TYPE_NOT_FOUND, CLEANING_OFFER_NOT_AVAILABLE,
+   * CLEANING_SCHEDULE_EMPTY, CLEANING_SCHEDULE_LIMIT_EXCEEDED, CLEANING_VALIDATION_FAILED.
    */
 
-  getPlaceCatalog(
-    request: GetPlaceCatalogRequest,
+  simulate(
+    request: SimulateRequest,
     metadata?: Metadata,
-  ): Promise<GetPlaceCatalogResponse> | Observable<GetPlaceCatalogResponse> | GetPlaceCatalogResponse;
+  ): Promise<SimulateResponse> | Observable<SimulateResponse> | SimulateResponse;
 
   /**
-   * Estimation de plusieurs prestations d'un même lieu (ADR-034), avec le simulateur de l'ADR-033 ;
-   * rien n'est enregistré. Commune facultative : sans elle, coefficient neutre.
-   */
-
-  estimate(
-    request: EstimateRequest,
-    metadata?: Metadata,
-  ): Promise<EstimateResponse> | Observable<EstimateResponse> | EstimateResponse;
-
-  /**
-   * Aperçu d'un plan de passages (ADR-052) : liste exacte des dates, nombre, premier et dernier
-   * passage, avertissements ; mêmes contrôles qu'à la demande de devis (plan bien formé, au plus le
-   * nombre de passages réglé, premier passage au-delà du délai minimum). Rien n'est enregistré.
+   * UC-NT-02 — R-PG-01 à 04. Aperçu des dates d’un programme. REST : POST
+   * /api/v1/cleaning/schedule-previews. Liste exacte des dates et leur nombre, fuseau
+   * Africa/Porto-Novo ; jour du mois absent → dernier jour du mois ; jours fériés proposés à
+   * l’exclusion. Erreurs : CLEANING_SCHEDULE_EMPTY, CLEANING_SCHEDULE_LIMIT_EXCEEDED,
+   * CLEANING_VALIDATION_FAILED.
    */
 
   previewSchedule(
@@ -2490,11 +5985,10 @@ export interface CatalogServiceController {
 export function CatalogServiceControllerMethods() {
   return function (constructor: Function) {
     const grpcMethods: string[] = [
-      "listServices",
-      "simulate",
+      "listCatalog",
+      "getCatalogPlaceType",
       "listServedZones",
-      "getPlaceCatalog",
-      "estimate",
+      "simulate",
       "previewSchedule",
     ];
     for (const method of grpcMethods) {
@@ -2515,113 +6009,405 @@ export const CATALOG_SERVICE_NAME = "CatalogService";
 
 /**
  * ---------------------------------------------------------------------------
- * Demandes de devis — client connecté (UC-CL-02 à 05).
+ * Lieux du client, « Mes lieux » (UC-NT-03).
  * ---------------------------------------------------------------------------
  */
 
-export interface QuoteServiceClient {
+export interface PlaceServiceClient {
   /**
-   * Profil complet exigé : contrôlé par la gateway avant l'appel (IDENTITY_PROFILE_INCOMPLETE).
-   * Idempotent par idempotency_key et par client.
+   * UC-NT-03 — R-CP-04. Mes lieux. REST : GET /api/v1/cleaning/places. Lieux du contexte actif
+   * (personnel ou organisation).
    */
 
-  requestQuote(request: RequestQuoteRequest, metadata?: Metadata): Observable<RequestQuoteResponse>;
-
-  listMyRequests(request: ListMyRequestsRequest, metadata?: Metadata): Observable<ListMyRequestsResponse>;
-
-  getRequest(request: GetRequestRequest, metadata?: Metadata): Observable<GetRequestResponse>;
+  listMyPlaces(request: ListMyPlacesRequest, metadata?: Metadata): Observable<ListMyPlacesResponse>;
 
   /**
-   * Le client choisit un créneau proposé et, s'il est particulier, son option de paiement ;
-   * la mission est créée.
-   * Idempotent par idempotency_key.
+   * UC-NT-03 — R-DM-01, R-ZN-01. Enregistrer un lieu. REST : POST /api/v1/cleaning/places. La
+   * commune est celle dont le contour contient la position (geo) ; l’adresse lisible n’est qu’une
+   * information. Point hors de tout contour, ou commune non desservie : refusé. Vérifier la
+   * position avant : "POST /places/locate". Organisation : "org_member" au moins (R-CP-03).
+   * Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_PLACE_TYPE_NOT_FOUND,
+   * CLEANING_ZONE_NOT_COVERED, CLEANING_GEO_UNAVAILABLE, AUTH_FORBIDDEN.
    */
 
-  acceptQuote(request: AcceptQuoteRequest, metadata?: Metadata): Observable<AcceptQuoteResponse>;
-
-  declineQuote(request: DeclineQuoteRequest, metadata?: Metadata): Observable<DeclineQuoteResponse>;
-
-  cancelRequest(request: CancelRequestRequest, metadata?: Metadata): Observable<CancelRequestResponse>;
+  createPlace(request: CreatePlaceRequest, metadata?: Metadata): Observable<CreatePlaceResponse>;
 
   /**
-   * Commune d'un point GPS (géocodage inverse, ADR-034), rapprochée des zones desservies. Client
-   * connecté seulement (un des fournisseurs est payant). Aucun fournisseur ne répond : réponse vide
-   * (provider vide), le client choisit sa commune dans la liste des zones desservies.
+   * UC-NT-03. Détail d’un lieu. REST : GET /api/v1/cleaning/places/{id}. Erreurs :
+   * CLEANING_PLACE_NOT_FOUND.
    */
 
-  resolveLocation(request: ResolveLocationRequest, metadata?: Metadata): Observable<ResolveLocationResponse>;
+  getMyPlace(request: GetMyPlaceRequest, metadata?: Metadata): Observable<GetMyPlaceResponse>;
 
   /**
-   * Plusieurs prestations d'un même lieu : une demande de devis par prestation, liées par un groupe
-   * et créées dans une seule transaction (ADR-034). Profil complet exigé (contrôlé par la gateway).
-   * Idempotent par idempotency_key et par client : le rejeu rend le même groupe.
+   * UC-NT-03 — R-DM-01, R-ZN-01. Modifier un lieu. REST : PATCH /api/v1/cleaning/places/{id}.
+   * Champs absents inchangés. Une demande déjà envoyée garde son lieu tel qu’il était (version
+   * « déclaré »). Latitude et longitude vont ensemble ; une nouvelle position remet
+   * "locationErasedAt" à null. Organisation : "org_member" au moins (R-CP-03). Erreurs :
+   * CLEANING_PLACE_NOT_FOUND, CLEANING_ZONE_NOT_COVERED, CLEANING_GEO_UNAVAILABLE, AUTH_FORBIDDEN.
    */
 
-  requestQuoteGroup(request: RequestQuoteGroupRequest, metadata?: Metadata): Observable<RequestQuoteGroupResponse>;
-
-  /** Groupe du client et ses demandes ; celui d'un autre client : CLEANING_REQUEST_GROUP_NOT_FOUND. */
-
-  getRequestGroup(request: GetRequestGroupRequest, metadata?: Metadata): Observable<GetRequestGroupResponse>;
+  updatePlace(request: UpdatePlaceRequest, metadata?: Metadata): Observable<UpdatePlaceResponse>;
 
   /**
-   * Annule d'un coup les demandes encore ouvertes du groupe (ADR-035), mêmes règles et mêmes
-   * événements que CancelRequest pour chacune ; les demandes acceptées ou closes sont ignorées.
-   * Idempotent par idempotency_key (obligatoire).
+   * UC-NT-03 — R-CA-06. Archiver un lieu. REST : POST /api/v1/cleaning/places/{id}/archive. Le lieu
+   * n’est plus proposé ; les dossiers qui l’utilisent le gardent. Rejouable sans effet.
+   * Organisation : "org_member" au moins (R-CP-03). Erreurs : CLEANING_PLACE_NOT_FOUND,
+   * AUTH_FORBIDDEN.
    */
 
-  cancelRequestGroup(request: CancelRequestGroupRequest, metadata?: Metadata): Observable<CancelRequestGroupResponse>;
+  archivePlace(request: ArchivePlaceRequest, metadata?: Metadata): Observable<ArchivePlaceResponse>;
 
   /**
-   * Accepte d'un coup les devis envoyés du groupe qui proposent le créneau choisi (ADR-035) : un
-   * créneau et un plan de paiement communs, une mission par devis, dans une seule transaction.
-   * Idempotent par idempotency_key (obligatoire).
+   * UC-NT-03 — R-ZN-01. Vérifier une position. REST : POST /api/v1/cleaning/places/locate. Commune
+   * retrouvée par contour, puis adresse lisible seulement si la commune est desservie. Rien n’est
+   * enregistré. Erreurs : CLEANING_GEO_UNAVAILABLE.
    */
 
-  acceptGroupQuotes(request: AcceptGroupQuotesRequest, metadata?: Metadata): Observable<AcceptGroupQuotesResponse>;
+  locatePoint(request: LocatePointRequest, metadata?: Metadata): Observable<LocatePointResponse>;
 }
 
 /**
  * ---------------------------------------------------------------------------
- * Demandes de devis — client connecté (UC-CL-02 à 05).
+ * Lieux du client, « Mes lieux » (UC-NT-03).
  * ---------------------------------------------------------------------------
  */
 
-export interface QuoteServiceController {
+export interface PlaceServiceController {
   /**
-   * Profil complet exigé : contrôlé par la gateway avant l'appel (IDENTITY_PROFILE_INCOMPLETE).
-   * Idempotent par idempotency_key et par client.
+   * UC-NT-03 — R-CP-04. Mes lieux. REST : GET /api/v1/cleaning/places. Lieux du contexte actif
+   * (personnel ou organisation).
    */
 
-  requestQuote(
-    request: RequestQuoteRequest,
+  listMyPlaces(
+    request: ListMyPlacesRequest,
     metadata?: Metadata,
-  ): Promise<RequestQuoteResponse> | Observable<RequestQuoteResponse> | RequestQuoteResponse;
+  ): Promise<ListMyPlacesResponse> | Observable<ListMyPlacesResponse> | ListMyPlacesResponse;
+
+  /**
+   * UC-NT-03 — R-DM-01, R-ZN-01. Enregistrer un lieu. REST : POST /api/v1/cleaning/places. La
+   * commune est celle dont le contour contient la position (geo) ; l’adresse lisible n’est qu’une
+   * information. Point hors de tout contour, ou commune non desservie : refusé. Vérifier la
+   * position avant : "POST /places/locate". Organisation : "org_member" au moins (R-CP-03).
+   * Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_PLACE_TYPE_NOT_FOUND,
+   * CLEANING_ZONE_NOT_COVERED, CLEANING_GEO_UNAVAILABLE, AUTH_FORBIDDEN.
+   */
+
+  createPlace(
+    request: CreatePlaceRequest,
+    metadata?: Metadata,
+  ): Promise<CreatePlaceResponse> | Observable<CreatePlaceResponse> | CreatePlaceResponse;
+
+  /**
+   * UC-NT-03. Détail d’un lieu. REST : GET /api/v1/cleaning/places/{id}. Erreurs :
+   * CLEANING_PLACE_NOT_FOUND.
+   */
+
+  getMyPlace(
+    request: GetMyPlaceRequest,
+    metadata?: Metadata,
+  ): Promise<GetMyPlaceResponse> | Observable<GetMyPlaceResponse> | GetMyPlaceResponse;
+
+  /**
+   * UC-NT-03 — R-DM-01, R-ZN-01. Modifier un lieu. REST : PATCH /api/v1/cleaning/places/{id}.
+   * Champs absents inchangés. Une demande déjà envoyée garde son lieu tel qu’il était (version
+   * « déclaré »). Latitude et longitude vont ensemble ; une nouvelle position remet
+   * "locationErasedAt" à null. Organisation : "org_member" au moins (R-CP-03). Erreurs :
+   * CLEANING_PLACE_NOT_FOUND, CLEANING_ZONE_NOT_COVERED, CLEANING_GEO_UNAVAILABLE, AUTH_FORBIDDEN.
+   */
+
+  updatePlace(
+    request: UpdatePlaceRequest,
+    metadata?: Metadata,
+  ): Promise<UpdatePlaceResponse> | Observable<UpdatePlaceResponse> | UpdatePlaceResponse;
+
+  /**
+   * UC-NT-03 — R-CA-06. Archiver un lieu. REST : POST /api/v1/cleaning/places/{id}/archive. Le lieu
+   * n’est plus proposé ; les dossiers qui l’utilisent le gardent. Rejouable sans effet.
+   * Organisation : "org_member" au moins (R-CP-03). Erreurs : CLEANING_PLACE_NOT_FOUND,
+   * AUTH_FORBIDDEN.
+   */
+
+  archivePlace(
+    request: ArchivePlaceRequest,
+    metadata?: Metadata,
+  ): Promise<ArchivePlaceResponse> | Observable<ArchivePlaceResponse> | ArchivePlaceResponse;
+
+  /**
+   * UC-NT-03 — R-ZN-01. Vérifier une position. REST : POST /api/v1/cleaning/places/locate. Commune
+   * retrouvée par contour, puis adresse lisible seulement si la commune est desservie. Rien n’est
+   * enregistré. Erreurs : CLEANING_GEO_UNAVAILABLE.
+   */
+
+  locatePoint(
+    request: LocatePointRequest,
+    metadata?: Metadata,
+  ): Promise<LocatePointResponse> | Observable<LocatePointResponse> | LocatePointResponse;
+}
+
+export function PlaceServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = [
+      "listMyPlaces",
+      "createPlace",
+      "getMyPlace",
+      "updatePlace",
+      "archivePlace",
+      "locatePoint",
+    ];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("PlaceService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("PlaceService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const PLACE_SERVICE_NAME = "PlaceService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Demandes de devis, frais de visite, devis du client (UC-NT-04 à 10).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface RequestServiceClient {
+  /**
+   * UC-NT-04 — R-DM-01 à 06, R-FV-01, R-FV-02, R-CA-05, R-PG-03, R-PG-04, R-CP-02. Demander un
+   * devis. REST : POST /api/v1/cleaning/requests. Profil complet exigé
+   * ("IDENTITY_PROFILE_INCOMPLETE", vérifié par la gateway). Un dossier = un lieu : tous les types
+   * choisis sont dans la même demande. Prix recalculé côté serveur avec la commune du lieu ; la
+   * demande garde la version du tarif et le détail du calcul. Les frais de visite sont débités
+   * aussitôt du wallet du contexte actif ; solde insuffisant : statut "awaiting_visit_fee" (payer
+   * sous 72 h, "POST /requests/{id}/visit-fee/pay"). Le type de client vient du contexte actif.
+   * Lieu dont la position a été effacée : "CLEANING_PLACE_LOCATION_MISSING" ; lieu dont le type est
+   * désactivé : "CLEANING_PLACE_TYPE_NOT_FOUND". Organisation : "org_member" au moins (R-CP-03).
+   * Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_SLOT_INVALID,
+   * CLEANING_OFFER_NOT_AVAILABLE, CLEANING_PLACE_NOT_FOUND, CLEANING_ZONE_NOT_COVERED,
+   * CLEANING_TOO_MANY_OPEN_REQUESTS, CLEANING_LEAD_TIME_TOO_SHORT, CLEANING_SCHEDULE_EMPTY,
+   * CLEANING_SCHEDULE_LIMIT_EXCEEDED, CLEANING_ORGANIZATION_SUSPENDED, CLEANING_VALIDATION_FAILED,
+   * IDENTITY_PROFILE_INCOMPLETE, AUTH_FORBIDDEN, CLEANING_PLACE_LOCATION_MISSING,
+   * CLEANING_PLACE_TYPE_NOT_FOUND.
+   */
+
+  submitRequest(request: SubmitRequestRequest, metadata?: Metadata): Observable<SubmitRequestResponse>;
+
+  /**
+   * UC-NT-07 — R-CP-04. Mes demandes. REST : GET /api/v1/cleaning/requests. Demandes du contexte
+   * actif.
+   */
+
+  listMyRequests(request: ListMyRequestsRequest, metadata?: Metadata): Observable<ListMyRequestsResponse>;
+
+  /**
+   * UC-NT-07 — R-CS-01, R-CS-02. Détail d’une demande. REST : GET /api/v1/cleaning/requests/{id}.
+   * Étapes, visite et agent, constat avec écarts (déclaré, retenu, effet sur le prix, photos de la
+   * visite), devis en cours. Le constat brut de l’agent et les brouillons de devis ne sont pas
+   * montrés au client. Erreurs : CLEANING_REQUEST_NOT_FOUND.
+   */
+
+  getMyRequest(request: GetMyRequestRequest, metadata?: Metadata): Observable<GetMyRequestResponse>;
+
+  /**
+   * UC-NT-05 — R-FV-01 à 04, R-WL-05. Payer les frais de visite. REST : POST
+   * /api/v1/cleaning/requests/{id}/visit-fee/pay. "wallet" : débit du wallet du contexte actif.
+   * "mobile_money" : paiement par Mobile Money de ce qui manque au solde (montant dû − solde
+   * disponible), qui crédite le wallet ; le montant dû est aussitôt débité (un seul chemin, pas de
+   * double paiement) : cleaning débite à la réception de "wallet.prepaid.credited" dont "forObject"
+   * désigne la demande, jamais sur "payment.intent.succeeded" (suivi seulement). Un paiement Mobile
+   * Money déjà en cours pour cet objet est renvoyé tel quel (même "checkoutUrl") ; un paiement
+   * réussi pas encore débité répond "awaiting_payment" sans nouvelle page. Un reçu est émis au
+   * paiement (billing). Organisation : "org_member" au moins (R-CP-03). Idempotent par
+   * idempotency_key (obligatoire). Erreurs : CLEANING_REQUEST_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_NOTHING_TO_PAY, CLEANING_INSUFFICIENT_BALANCE,
+   * AUTH_FORBIDDEN, CLEANING_ORGANIZATION_SUSPENDED.
+   */
+
+  payVisitFee(request: PayVisitFeeRequest, metadata?: Metadata): Observable<PayVisitFeeResponse>;
+
+  /**
+   * UC-NT-06 — R-VI-03. Demander un autre créneau de visite. REST : POST
+   * /api/v1/cleaning/requests/{id}/visit-slot. Jusqu’à 24 h avant la visite : la visite est annulée
+   * (cause "slot_changed", R-VI-06), la demande repasse « visite à planifier » avec les nouveaux
+   * créneaux (partie 15.2). Organisation : "org_member" au moins (R-CP-03). Idempotent par
+   * idempotency_key (obligatoire). Erreurs : CLEANING_REQUEST_NOT_FOUND, CLEANING_SLOT_INVALID,
+   * CLEANING_INVALID_TRANSITION, CLEANING_CANCELLATION_TOO_LATE, CLEANING_LEAD_TIME_TOO_SHORT,
+   * AUTH_FORBIDDEN.
+   */
+
+  changeVisitSlot(request: ChangeVisitSlotRequest, metadata?: Metadata): Observable<ChangeVisitSlotResponse>;
+
+  /**
+   * UC-NT-10 — partie 12, R-FV-06. Annuler une demande. REST : POST
+   * /api/v1/cleaning/requests/{id}/cancel. Avant l’acceptation du devis. Avant la visite et plus de
+   * 24 h avant : frais de visite remboursés au wallet ; moins de 24 h avant, ou après la visite :
+   * conservés. Motif facultatif, gardé dans le dossier, jamais publié. Organisation : "org_member"
+   * au moins (R-CP-03). Idempotent par idempotency_key (obligatoire). Erreurs :
+   * CLEANING_REQUEST_NOT_FOUND, CLEANING_INVALID_TRANSITION, AUTH_FORBIDDEN.
+   */
+
+  cancelRequest(request: CancelRequestRequest, metadata?: Metadata): Observable<CancelRequestResponse>;
+
+  /**
+   * UC-NT-08 — R-AC-04. Demander la réactivation d’un devis expiré. REST : POST
+   * /api/v1/cleaning/requests/{id}/reactivation. Le superviseur accepte (nouveau devis aux tarifs
+   * du jour) ou refuse. Rejouable sans effet. Organisation : "org_member" au moins (R-CP-03).
+   * Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_REQUEST_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, AUTH_FORBIDDEN.
+   */
+
+  requestReactivation(
+    request: RequestReactivationRequest,
+    metadata?: Metadata,
+  ): Observable<RequestReactivationResponse>;
+
+  /**
+   * UC-NT-07 — R-DV-01, R-DV-06. Détail d’un devis. REST : GET /api/v1/cleaning/quotes/{id}. Devis
+   * envoyé (ou une version précédente), avec son PDF (service document). Erreurs :
+   * CLEANING_QUOTE_NOT_FOUND.
+   */
+
+  getMyQuote(request: GetMyQuoteRequest, metadata?: Metadata): Observable<GetMyQuoteResponse>;
+
+  /**
+   * UC-NT-08 — R-AC-01, R-AC-02, R-PG-03, R-PG-05. Accepter un devis. REST : POST
+   * /api/v1/cleaning/quotes/{id}/accept. Le client accepte les conditions générales et confirme le
+   * programme (date de début décalable dans la limite de la validité). Le programme est créé,
+   * toutes les séances sont générées avec leur prix, la planification démarre. Entreprise : seul un
+   * administrateur de l’organisation accepte ; refusé tant que ses factures impayées atteignent le
+   * seuil de suspension ("CLEANING_ORGANIZATION_UNPAID_INVOICES", R-AC-02). Devis périmé :
+   * "CLEANING_QUOTE_EXPIRED" ; devis retiré : "CLEANING_INVALID_TRANSITION". Organisation :
+   * "org_admin" seulement (R-CP-03). Idempotent par idempotency_key (obligatoire). Erreurs :
+   * CLEANING_QUOTE_NOT_FOUND, AUTH_FORBIDDEN, CLEANING_QUOTE_EXPIRED, CLEANING_INVALID_TRANSITION,
+   * CLEANING_LEAD_TIME_TOO_SHORT, CLEANING_ORGANIZATION_SUSPENDED,
+   * CLEANING_ORGANIZATION_UNPAID_INVOICES.
+   */
+
+  acceptQuote(request: AcceptQuoteRequest, metadata?: Metadata): Observable<AcceptQuoteResponse>;
+
+  /**
+   * UC-NT-09 — R-AC-03, R-FV-06. Refuser un devis. REST : POST
+   * /api/v1/cleaning/quotes/{id}/decline. Motif facultatif. Le dossier est clos ("declined"), les
+   * frais de visite sont conservés, le superviseur est prévenu. Devis périmé ou retiré :
+   * "CLEANING_INVALID_TRANSITION". Organisation : "org_admin" seulement (R-CP-03). Idempotent par
+   * idempotency_key (obligatoire). Erreurs : CLEANING_QUOTE_NOT_FOUND, AUTH_FORBIDDEN,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  declineQuote(request: DeclineQuoteRequest, metadata?: Metadata): Observable<DeclineQuoteResponse>;
+
+  /**
+   * UC-NT-08 — R-AC-02. Transmettre un devis pour accord. REST : POST
+   * /api/v1/cleaning/quotes/{id}/forward. Un membre de l’organisation transmet le devis aux
+   * administrateurs, qui sont prévenus. Rejouable sans effet. Devis périmé :
+   * "CLEANING_INVALID_TRANSITION". Organisation : "org_member" au moins (R-CP-03). Erreurs :
+   * CLEANING_QUOTE_NOT_FOUND, CLEANING_INVALID_TRANSITION, AUTH_FORBIDDEN.
+   */
+
+  forwardQuote(request: ForwardQuoteRequest, metadata?: Metadata): Observable<ForwardQuoteResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Demandes de devis, frais de visite, devis du client (UC-NT-04 à 10).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface RequestServiceController {
+  /**
+   * UC-NT-04 — R-DM-01 à 06, R-FV-01, R-FV-02, R-CA-05, R-PG-03, R-PG-04, R-CP-02. Demander un
+   * devis. REST : POST /api/v1/cleaning/requests. Profil complet exigé
+   * ("IDENTITY_PROFILE_INCOMPLETE", vérifié par la gateway). Un dossier = un lieu : tous les types
+   * choisis sont dans la même demande. Prix recalculé côté serveur avec la commune du lieu ; la
+   * demande garde la version du tarif et le détail du calcul. Les frais de visite sont débités
+   * aussitôt du wallet du contexte actif ; solde insuffisant : statut "awaiting_visit_fee" (payer
+   * sous 72 h, "POST /requests/{id}/visit-fee/pay"). Le type de client vient du contexte actif.
+   * Lieu dont la position a été effacée : "CLEANING_PLACE_LOCATION_MISSING" ; lieu dont le type est
+   * désactivé : "CLEANING_PLACE_TYPE_NOT_FOUND". Organisation : "org_member" au moins (R-CP-03).
+   * Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_SLOT_INVALID,
+   * CLEANING_OFFER_NOT_AVAILABLE, CLEANING_PLACE_NOT_FOUND, CLEANING_ZONE_NOT_COVERED,
+   * CLEANING_TOO_MANY_OPEN_REQUESTS, CLEANING_LEAD_TIME_TOO_SHORT, CLEANING_SCHEDULE_EMPTY,
+   * CLEANING_SCHEDULE_LIMIT_EXCEEDED, CLEANING_ORGANIZATION_SUSPENDED, CLEANING_VALIDATION_FAILED,
+   * IDENTITY_PROFILE_INCOMPLETE, AUTH_FORBIDDEN, CLEANING_PLACE_LOCATION_MISSING,
+   * CLEANING_PLACE_TYPE_NOT_FOUND.
+   */
+
+  submitRequest(
+    request: SubmitRequestRequest,
+    metadata?: Metadata,
+  ): Promise<SubmitRequestResponse> | Observable<SubmitRequestResponse> | SubmitRequestResponse;
+
+  /**
+   * UC-NT-07 — R-CP-04. Mes demandes. REST : GET /api/v1/cleaning/requests. Demandes du contexte
+   * actif.
+   */
 
   listMyRequests(
     request: ListMyRequestsRequest,
     metadata?: Metadata,
   ): Promise<ListMyRequestsResponse> | Observable<ListMyRequestsResponse> | ListMyRequestsResponse;
 
-  getRequest(
-    request: GetRequestRequest,
-    metadata?: Metadata,
-  ): Promise<GetRequestResponse> | Observable<GetRequestResponse> | GetRequestResponse;
-
   /**
-   * Le client choisit un créneau proposé et, s'il est particulier, son option de paiement ;
-   * la mission est créée.
-   * Idempotent par idempotency_key.
+   * UC-NT-07 — R-CS-01, R-CS-02. Détail d’une demande. REST : GET /api/v1/cleaning/requests/{id}.
+   * Étapes, visite et agent, constat avec écarts (déclaré, retenu, effet sur le prix, photos de la
+   * visite), devis en cours. Le constat brut de l’agent et les brouillons de devis ne sont pas
+   * montrés au client. Erreurs : CLEANING_REQUEST_NOT_FOUND.
    */
 
-  acceptQuote(
-    request: AcceptQuoteRequest,
+  getMyRequest(
+    request: GetMyRequestRequest,
     metadata?: Metadata,
-  ): Promise<AcceptQuoteResponse> | Observable<AcceptQuoteResponse> | AcceptQuoteResponse;
+  ): Promise<GetMyRequestResponse> | Observable<GetMyRequestResponse> | GetMyRequestResponse;
 
-  declineQuote(
-    request: DeclineQuoteRequest,
+  /**
+   * UC-NT-05 — R-FV-01 à 04, R-WL-05. Payer les frais de visite. REST : POST
+   * /api/v1/cleaning/requests/{id}/visit-fee/pay. "wallet" : débit du wallet du contexte actif.
+   * "mobile_money" : paiement par Mobile Money de ce qui manque au solde (montant dû − solde
+   * disponible), qui crédite le wallet ; le montant dû est aussitôt débité (un seul chemin, pas de
+   * double paiement) : cleaning débite à la réception de "wallet.prepaid.credited" dont "forObject"
+   * désigne la demande, jamais sur "payment.intent.succeeded" (suivi seulement). Un paiement Mobile
+   * Money déjà en cours pour cet objet est renvoyé tel quel (même "checkoutUrl") ; un paiement
+   * réussi pas encore débité répond "awaiting_payment" sans nouvelle page. Un reçu est émis au
+   * paiement (billing). Organisation : "org_member" au moins (R-CP-03). Idempotent par
+   * idempotency_key (obligatoire). Erreurs : CLEANING_REQUEST_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_NOTHING_TO_PAY, CLEANING_INSUFFICIENT_BALANCE,
+   * AUTH_FORBIDDEN, CLEANING_ORGANIZATION_SUSPENDED.
+   */
+
+  payVisitFee(
+    request: PayVisitFeeRequest,
     metadata?: Metadata,
-  ): Promise<DeclineQuoteResponse> | Observable<DeclineQuoteResponse> | DeclineQuoteResponse;
+  ): Promise<PayVisitFeeResponse> | Observable<PayVisitFeeResponse> | PayVisitFeeResponse;
+
+  /**
+   * UC-NT-06 — R-VI-03. Demander un autre créneau de visite. REST : POST
+   * /api/v1/cleaning/requests/{id}/visit-slot. Jusqu’à 24 h avant la visite : la visite est annulée
+   * (cause "slot_changed", R-VI-06), la demande repasse « visite à planifier » avec les nouveaux
+   * créneaux (partie 15.2). Organisation : "org_member" au moins (R-CP-03). Idempotent par
+   * idempotency_key (obligatoire). Erreurs : CLEANING_REQUEST_NOT_FOUND, CLEANING_SLOT_INVALID,
+   * CLEANING_INVALID_TRANSITION, CLEANING_CANCELLATION_TOO_LATE, CLEANING_LEAD_TIME_TOO_SHORT,
+   * AUTH_FORBIDDEN.
+   */
+
+  changeVisitSlot(
+    request: ChangeVisitSlotRequest,
+    metadata?: Metadata,
+  ): Promise<ChangeVisitSlotResponse> | Observable<ChangeVisitSlotResponse> | ChangeVisitSlotResponse;
+
+  /**
+   * UC-NT-10 — partie 12, R-FV-06. Annuler une demande. REST : POST
+   * /api/v1/cleaning/requests/{id}/cancel. Avant l’acceptation du devis. Avant la visite et plus de
+   * 24 h avant : frais de visite remboursés au wallet ; moins de 24 h avant, ou après la visite :
+   * conservés. Motif facultatif, gardé dans le dossier, jamais publié. Organisation : "org_member"
+   * au moins (R-CP-03). Idempotent par idempotency_key (obligatoire). Erreurs :
+   * CLEANING_REQUEST_NOT_FOUND, CLEANING_INVALID_TRANSITION, AUTH_FORBIDDEN.
+   */
 
   cancelRequest(
     request: CancelRequestRequest,
@@ -2629,538 +6415,987 @@ export interface QuoteServiceController {
   ): Promise<CancelRequestResponse> | Observable<CancelRequestResponse> | CancelRequestResponse;
 
   /**
-   * Commune d'un point GPS (géocodage inverse, ADR-034), rapprochée des zones desservies. Client
-   * connecté seulement (un des fournisseurs est payant). Aucun fournisseur ne répond : réponse vide
-   * (provider vide), le client choisit sa commune dans la liste des zones desservies.
+   * UC-NT-08 — R-AC-04. Demander la réactivation d’un devis expiré. REST : POST
+   * /api/v1/cleaning/requests/{id}/reactivation. Le superviseur accepte (nouveau devis aux tarifs
+   * du jour) ou refuse. Rejouable sans effet. Organisation : "org_member" au moins (R-CP-03).
+   * Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_REQUEST_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, AUTH_FORBIDDEN.
    */
 
-  resolveLocation(
-    request: ResolveLocationRequest,
+  requestReactivation(
+    request: RequestReactivationRequest,
     metadata?: Metadata,
-  ): Promise<ResolveLocationResponse> | Observable<ResolveLocationResponse> | ResolveLocationResponse;
+  ): Promise<RequestReactivationResponse> | Observable<RequestReactivationResponse> | RequestReactivationResponse;
 
   /**
-   * Plusieurs prestations d'un même lieu : une demande de devis par prestation, liées par un groupe
-   * et créées dans une seule transaction (ADR-034). Profil complet exigé (contrôlé par la gateway).
-   * Idempotent par idempotency_key et par client : le rejeu rend le même groupe.
+   * UC-NT-07 — R-DV-01, R-DV-06. Détail d’un devis. REST : GET /api/v1/cleaning/quotes/{id}. Devis
+   * envoyé (ou une version précédente), avec son PDF (service document). Erreurs :
+   * CLEANING_QUOTE_NOT_FOUND.
    */
 
-  requestQuoteGroup(
-    request: RequestQuoteGroupRequest,
+  getMyQuote(
+    request: GetMyQuoteRequest,
     metadata?: Metadata,
-  ): Promise<RequestQuoteGroupResponse> | Observable<RequestQuoteGroupResponse> | RequestQuoteGroupResponse;
-
-  /** Groupe du client et ses demandes ; celui d'un autre client : CLEANING_REQUEST_GROUP_NOT_FOUND. */
-
-  getRequestGroup(
-    request: GetRequestGroupRequest,
-    metadata?: Metadata,
-  ): Promise<GetRequestGroupResponse> | Observable<GetRequestGroupResponse> | GetRequestGroupResponse;
+  ): Promise<GetMyQuoteResponse> | Observable<GetMyQuoteResponse> | GetMyQuoteResponse;
 
   /**
-   * Annule d'un coup les demandes encore ouvertes du groupe (ADR-035), mêmes règles et mêmes
-   * événements que CancelRequest pour chacune ; les demandes acceptées ou closes sont ignorées.
-   * Idempotent par idempotency_key (obligatoire).
+   * UC-NT-08 — R-AC-01, R-AC-02, R-PG-03, R-PG-05. Accepter un devis. REST : POST
+   * /api/v1/cleaning/quotes/{id}/accept. Le client accepte les conditions générales et confirme le
+   * programme (date de début décalable dans la limite de la validité). Le programme est créé,
+   * toutes les séances sont générées avec leur prix, la planification démarre. Entreprise : seul un
+   * administrateur de l’organisation accepte ; refusé tant que ses factures impayées atteignent le
+   * seuil de suspension ("CLEANING_ORGANIZATION_UNPAID_INVOICES", R-AC-02). Devis périmé :
+   * "CLEANING_QUOTE_EXPIRED" ; devis retiré : "CLEANING_INVALID_TRANSITION". Organisation :
+   * "org_admin" seulement (R-CP-03). Idempotent par idempotency_key (obligatoire). Erreurs :
+   * CLEANING_QUOTE_NOT_FOUND, AUTH_FORBIDDEN, CLEANING_QUOTE_EXPIRED, CLEANING_INVALID_TRANSITION,
+   * CLEANING_LEAD_TIME_TOO_SHORT, CLEANING_ORGANIZATION_SUSPENDED,
+   * CLEANING_ORGANIZATION_UNPAID_INVOICES.
    */
 
-  cancelRequestGroup(
-    request: CancelRequestGroupRequest,
+  acceptQuote(
+    request: AcceptQuoteRequest,
     metadata?: Metadata,
-  ): Promise<CancelRequestGroupResponse> | Observable<CancelRequestGroupResponse> | CancelRequestGroupResponse;
+  ): Promise<AcceptQuoteResponse> | Observable<AcceptQuoteResponse> | AcceptQuoteResponse;
 
   /**
-   * Accepte d'un coup les devis envoyés du groupe qui proposent le créneau choisi (ADR-035) : un
-   * créneau et un plan de paiement communs, une mission par devis, dans une seule transaction.
-   * Idempotent par idempotency_key (obligatoire).
+   * UC-NT-09 — R-AC-03, R-FV-06. Refuser un devis. REST : POST
+   * /api/v1/cleaning/quotes/{id}/decline. Motif facultatif. Le dossier est clos ("declined"), les
+   * frais de visite sont conservés, le superviseur est prévenu. Devis périmé ou retiré :
+   * "CLEANING_INVALID_TRANSITION". Organisation : "org_admin" seulement (R-CP-03). Idempotent par
+   * idempotency_key (obligatoire). Erreurs : CLEANING_QUOTE_NOT_FOUND, AUTH_FORBIDDEN,
+   * CLEANING_INVALID_TRANSITION.
    */
 
-  acceptGroupQuotes(
-    request: AcceptGroupQuotesRequest,
+  declineQuote(
+    request: DeclineQuoteRequest,
     metadata?: Metadata,
-  ): Promise<AcceptGroupQuotesResponse> | Observable<AcceptGroupQuotesResponse> | AcceptGroupQuotesResponse;
+  ): Promise<DeclineQuoteResponse> | Observable<DeclineQuoteResponse> | DeclineQuoteResponse;
+
+  /**
+   * UC-NT-08 — R-AC-02. Transmettre un devis pour accord. REST : POST
+   * /api/v1/cleaning/quotes/{id}/forward. Un membre de l’organisation transmet le devis aux
+   * administrateurs, qui sont prévenus. Rejouable sans effet. Devis périmé :
+   * "CLEANING_INVALID_TRANSITION". Organisation : "org_member" au moins (R-CP-03). Erreurs :
+   * CLEANING_QUOTE_NOT_FOUND, CLEANING_INVALID_TRANSITION, AUTH_FORBIDDEN.
+   */
+
+  forwardQuote(
+    request: ForwardQuoteRequest,
+    metadata?: Metadata,
+  ): Promise<ForwardQuoteResponse> | Observable<ForwardQuoteResponse> | ForwardQuoteResponse;
 }
 
-export function QuoteServiceControllerMethods() {
+export function RequestServiceControllerMethods() {
   return function (constructor: Function) {
     const grpcMethods: string[] = [
-      "requestQuote",
+      "submitRequest",
       "listMyRequests",
-      "getRequest",
+      "getMyRequest",
+      "payVisitFee",
+      "changeVisitSlot",
+      "cancelRequest",
+      "requestReactivation",
+      "getMyQuote",
       "acceptQuote",
       "declineQuote",
-      "cancelRequest",
-      "resolveLocation",
-      "requestQuoteGroup",
-      "getRequestGroup",
-      "cancelRequestGroup",
-      "acceptGroupQuotes",
+      "forwardQuote",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcMethod("QuoteService", method)(constructor.prototype[method], method, descriptor);
+      GrpcMethod("RequestService", method)(constructor.prototype[method], method, descriptor);
       Object.defineProperty(constructor.prototype, method, descriptor);
     }
     const grpcStreamMethods: string[] = [];
     for (const method of grpcStreamMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcStreamMethod("QuoteService", method)(constructor.prototype[method], method, descriptor);
+      GrpcStreamMethod("RequestService", method)(constructor.prototype[method], method, descriptor);
       Object.defineProperty(constructor.prototype, method, descriptor);
     }
   };
 }
 
-export const QUOTE_SERVICE_NAME = "QuoteService";
+export const REQUEST_SERVICE_NAME = "RequestService";
 
 /**
  * ---------------------------------------------------------------------------
- * Missions — client connecté (UC-CL-03, 05).
+ * Programmes, séances, paiements, notes et réclamations du client (UC-NT-11 à 18).
  * ---------------------------------------------------------------------------
  */
 
-export interface MissionServiceClient {
-  listMyMissions(request: ListMyMissionsRequest, metadata?: Metadata): Observable<ListMyMissionsResponse>;
-
-  getMission(request: GetMissionRequest, metadata?: Metadata): Observable<GetMissionResponse>;
-
+export interface ProgramServiceClient {
   /**
-   * Sans frais jusqu'au délai limite avant le premier passage ; au-delà, refus (support). Les
-   * paiements par portefeuille d'une mission sans passage commencé sont remboursés dans le
-   * portefeuille (ADR-046).
+   * UC-NT-11 — partie 8. Mes programmes. REST : GET /api/v1/cleaning/programs. Programmes du
+   * contexte actif.
    */
 
-  cancelMission(request: CancelMissionRequest, metadata?: Metadata): Observable<CancelMissionResponse>;
+  listMyPrograms(request: ListMyProgramsRequest, metadata?: Metadata): Observable<ListMyProgramsResponse>;
 
   /**
-   * Acompte ou solde payé depuis le portefeuille prépayé du client (ADR-046) : débit du montant dû
-   * (jamais partiel) puis paiement enregistré sur la mission (moyen "wallet"), avec les mêmes effets
-   * qu'un paiement enregistré (reste dû, statut, levée d'une suspension). Idempotent par clé.
-   * Solde insuffisant : WALLET_INSUFFICIENT_FUNDS (details.missing : montant manquant).
+   * UC-NT-11 — partie 8. Détail d’un programme. REST : GET /api/v1/cleaning/programs/{id}.
+   * Erreurs : CLEANING_PROGRAM_NOT_FOUND.
    */
 
-  payMissionFromWallet(
-    request: PayMissionFromWalletRequest,
+  getMyProgram(request: GetMyProgramRequest, metadata?: Metadata): Observable<GetMyProgramResponse>;
+
+  /**
+   * UC-NT-11 — partie 8. Séances d’un programme. REST : GET
+   * /api/v1/cleaning/programs/{id}/sessions. Calendrier des séances, équipe prévue, statut en
+   * direct, statut de paiement. Erreurs : CLEANING_PROGRAM_NOT_FOUND.
+   */
+
+  listMyProgramSessions(
+    request: ListMyProgramSessionsRequest,
     metadata?: Metadata,
-  ): Observable<PayMissionFromWalletResponse>;
+  ): Observable<ListMyProgramSessionsResponse>;
 
   /**
-   * Photos avant et après d'un passage d'une mission du client (ADR-053), avec des adresses de
-   * lecture de courte durée. Passage d'une autre mission : CLEANING_INTERVENTION_NOT_FOUND.
+   * UC-NT-11 — partie 10, R-EX-07. Détail d’une séance. REST : GET /api/v1/cleaning/sessions/{id}.
+   * Horaires réels, équipe, liste de contrôle, photos avant/après (liens temporaires), facture,
+   * note, réclamations. Erreurs : CLEANING_SESSION_NOT_FOUND.
    */
 
-  listMyInterventionPhotos(
-    request: ListMyInterventionPhotosRequest,
-    metadata?: Metadata,
-  ): Observable<ListMyInterventionPhotosResponse>;
+  getMySession(request: GetMySessionRequest, metadata?: Metadata): Observable<GetMySessionResponse>;
+
+  /**
+   * UC-NT-12 — partie 12. Reporter une séance. REST : POST
+   * /api/v1/cleaning/sessions/{id}/reschedule. Plus de 24 h avant, vers une date du même programme
+   * ou une nouvelle date ; 2 reports par mois au plus. Le nouveau créneau ne chevauche aucune autre
+   * séance non annulée du programme ; aucun report tant que le programme est suspendu (R-RP-01). La
+   * séance garde son statut, ses dates précédentes restent dans son historique ; ses agents sont
+   * recontrôlés au nouveau créneau, gardés s’ils passent, retirés sinon. Organisation :
+   * "org_member" au moins (R-CP-03). Idempotent par idempotency_key (obligatoire). Erreurs :
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_CANCELLATION_TOO_LATE,
+   * CLEANING_RESCHEDULE_LIMIT_REACHED, CLEANING_LEAD_TIME_TOO_SHORT, AUTH_FORBIDDEN,
+   * CLEANING_RESCHEDULE_OVERLAP, CLEANING_PROGRAM_SUSPENDED.
+   */
+
+  rescheduleSession(request: RescheduleSessionRequest, metadata?: Metadata): Observable<RescheduleSessionResponse>;
+
+  /**
+   * UC-NT-12 — partie 12. Annuler une séance. REST : POST /api/v1/cleaning/sessions/{id}/cancel.
+   * Plus de 24 h avant : rien à payer. Moins de 24 h avant : par le support seulement (50 % du
+   * prix). Organisation : "org_member" au moins (R-CP-03). Idempotent par idempotency_key
+   * (obligatoire). Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_CANCELLATION_TOO_LATE, AUTH_FORBIDDEN.
+   */
+
+  cancelSession(request: CancelSessionRequest, metadata?: Metadata): Observable<CancelSessionResponse>;
+
+  /**
+   * UC-NT-13 — partie 12. Arrêter un programme. REST : POST /api/v1/cleaning/programs/{id}/stop.
+   * Les séances réalisées restent dues ; les séances à venir sont annulées (règle des 24 h pour la
+   * plus proche : si elle est à moins de 24 h, elle est maintenue). Un programme suspendu peut
+   * aussi être arrêté (partie 15.2). Organisation : "org_admin" seulement (R-CP-03). Idempotent par
+   * idempotency_key (obligatoire). Erreurs : CLEANING_PROGRAM_NOT_FOUND, AUTH_FORBIDDEN,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  stopProgram(request: StopProgramRequest, metadata?: Metadata): Observable<StopProgramResponse>;
+
+  /**
+   * UC-NT-14 — R-PP-03, R-PP-04, R-WL-05. Payer une séance. REST : POST
+   * /api/v1/cleaning/sessions/{id}/pay. Séance « à payer » ou « en retard » d’un particulier.
+   * "mobile_money" : paiement de ce qui manque au solde (montant dû − solde disponible), crédité au
+   * wallet ; le montant dû est débité à la réception de "wallet.prepaid.credited" dont "forObject"
+   * désigne la séance ("payment.intent.succeeded" : suivi seulement). Un paiement Mobile Money déjà
+   * en cours pour cet objet est renvoyé tel quel (même "checkoutUrl") ; un paiement réussi pas
+   * encore débité répond "awaiting_payment" sans nouvelle page. Le paiement d’un retard reprend le
+   * programme si c’était la dernière cause de suspension. Facture de séance émise au paiement
+   * (R-PP-06). Organisation : "org_member" au moins (R-CP-03). Idempotent par idempotency_key
+   * (obligatoire). Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_PAYMENT_VIA_INVOICE,
+   * CLEANING_NOTHING_TO_PAY, CLEANING_INSUFFICIENT_BALANCE, AUTH_FORBIDDEN.
+   */
+
+  paySession(request: PaySessionRequest, metadata?: Metadata): Observable<PaySessionResponse>;
+
+  /**
+   * UC-NT-16 — partie 10, R-RC-05. Noter une séance. REST : POST
+   * /api/v1/cleaning/sessions/{id}/rating. Séance réalisée : 1 à 5 étoiles et un commentaire. La
+   * note alimente la fiche de l’agent. Organisation : "org_member" au moins (R-CP-03). Idempotent
+   * par idempotency_key (obligatoire). Erreurs : CLEANING_SESSION_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_RATING_ALREADY_GIVEN, AUTH_FORBIDDEN.
+   */
+
+  rateSession(request: RateSessionRequest, metadata?: Metadata): Observable<RateSessionResponse>;
+
+  /**
+   * UC-NT-17 — R-RC-01, R-RC-04. Déposer une réclamation. REST : POST
+   * /api/v1/cleaning/sessions/{id}/claims. Séance réalisée, pendant 48 h. Une réclamation ouverte
+   * ne suspend pas le paiement de la séance. Organisation : "org_member" au moins (R-CP-03).
+   * Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_SESSION_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_CLAIM_WINDOW_CLOSED, AUTH_FORBIDDEN.
+   */
+
+  openClaim(request: OpenClaimRequest, metadata?: Metadata): Observable<OpenClaimResponse>;
+
+  /** UC-NT-17 — R-RC-02. Mes réclamations. REST : GET /api/v1/cleaning/claims. */
+
+  listMyClaims(request: ListMyClaimsRequest, metadata?: Metadata): Observable<ListMyClaimsResponse>;
+
+  /**
+   * UC-NT-17 — R-RC-02. Suivre une réclamation. REST : GET /api/v1/cleaning/claims/{id}. Erreurs :
+   * CLEANING_CLAIM_NOT_FOUND.
+   */
+
+  getMyClaim(request: GetMyClaimRequest, metadata?: Metadata): Observable<GetMyClaimResponse>;
+
+  /**
+   * UC-NT-17 — R-RC-02. Répondre sur une réclamation. REST : POST
+   * /api/v1/cleaning/claims/{id}/messages. Réclamation ouverte ou en cours. Organisation :
+   * "org_member" au moins (R-CP-03). Idempotent par idempotency_key (obligatoire). Erreurs :
+   * CLEANING_CLAIM_NOT_FOUND, CLEANING_INVALID_TRANSITION, AUTH_FORBIDDEN.
+   */
+
+  addClaimMessage(request: AddClaimMessageRequest, metadata?: Metadata): Observable<AddClaimMessageResponse>;
+
+  /**
+   * UC-NT-18 — R-PG-07. Renouveler un programme. REST : POST /api/v1/cleaning/programs/{id}/renew.
+   * Programme récurrent dans ses 14 derniers jours : devis de renouvellement aux mêmes conditions
+   * (tarifs du jour s’ils ont changé), sans nouvelle visite si la dernière date de moins de 12
+   * mois ; sinon une nouvelle demande avec visite est créée. Organisation : "org_admin" seulement
+   * (R-CP-03). Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * AUTH_FORBIDDEN, CLEANING_RENEWAL_NOT_ALLOWED, IDENTITY_PROFILE_INCOMPLETE,
+   * CLEANING_PLACE_LOCATION_MISSING.
+   */
+
+  renewProgram(request: RenewProgramRequest, metadata?: Metadata): Observable<RenewProgramResponse>;
+
+  /**
+   * UC-NT-18 — R-PG-08. Commander à nouveau. REST : POST /api/v1/cleaning/programs/{id}/reorder.
+   * Programme ponctuel terminé : nouvelle demande pour le même lieu ; devis sans visite si les
+   * informations retenues ont moins de 12 mois. Organisation : "org_member" au moins (R-CP-03).
+   * Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * CLEANING_RENEWAL_NOT_ALLOWED, CLEANING_SCHEDULE_EMPTY, CLEANING_SCHEDULE_LIMIT_EXCEEDED,
+   * CLEANING_TOO_MANY_OPEN_REQUESTS, AUTH_FORBIDDEN, IDENTITY_PROFILE_INCOMPLETE,
+   * CLEANING_PLACE_LOCATION_MISSING, CLEANING_VALIDATION_FAILED.
+   */
+
+  reorderProgram(request: ReorderProgramRequest, metadata?: Metadata): Observable<ReorderProgramResponse>;
 }
 
 /**
  * ---------------------------------------------------------------------------
- * Missions — client connecté (UC-CL-03, 05).
+ * Programmes, séances, paiements, notes et réclamations du client (UC-NT-11 à 18).
  * ---------------------------------------------------------------------------
  */
 
-export interface MissionServiceController {
-  listMyMissions(
-    request: ListMyMissionsRequest,
-    metadata?: Metadata,
-  ): Promise<ListMyMissionsResponse> | Observable<ListMyMissionsResponse> | ListMyMissionsResponse;
-
-  getMission(
-    request: GetMissionRequest,
-    metadata?: Metadata,
-  ): Promise<GetMissionResponse> | Observable<GetMissionResponse> | GetMissionResponse;
-
+export interface ProgramServiceController {
   /**
-   * Sans frais jusqu'au délai limite avant le premier passage ; au-delà, refus (support). Les
-   * paiements par portefeuille d'une mission sans passage commencé sont remboursés dans le
-   * portefeuille (ADR-046).
+   * UC-NT-11 — partie 8. Mes programmes. REST : GET /api/v1/cleaning/programs. Programmes du
+   * contexte actif.
    */
 
-  cancelMission(
-    request: CancelMissionRequest,
+  listMyPrograms(
+    request: ListMyProgramsRequest,
     metadata?: Metadata,
-  ): Promise<CancelMissionResponse> | Observable<CancelMissionResponse> | CancelMissionResponse;
+  ): Promise<ListMyProgramsResponse> | Observable<ListMyProgramsResponse> | ListMyProgramsResponse;
 
   /**
-   * Acompte ou solde payé depuis le portefeuille prépayé du client (ADR-046) : débit du montant dû
-   * (jamais partiel) puis paiement enregistré sur la mission (moyen "wallet"), avec les mêmes effets
-   * qu'un paiement enregistré (reste dû, statut, levée d'une suspension). Idempotent par clé.
-   * Solde insuffisant : WALLET_INSUFFICIENT_FUNDS (details.missing : montant manquant).
+   * UC-NT-11 — partie 8. Détail d’un programme. REST : GET /api/v1/cleaning/programs/{id}.
+   * Erreurs : CLEANING_PROGRAM_NOT_FOUND.
    */
 
-  payMissionFromWallet(
-    request: PayMissionFromWalletRequest,
+  getMyProgram(
+    request: GetMyProgramRequest,
     metadata?: Metadata,
-  ): Promise<PayMissionFromWalletResponse> | Observable<PayMissionFromWalletResponse> | PayMissionFromWalletResponse;
+  ): Promise<GetMyProgramResponse> | Observable<GetMyProgramResponse> | GetMyProgramResponse;
 
   /**
-   * Photos avant et après d'un passage d'une mission du client (ADR-053), avec des adresses de
-   * lecture de courte durée. Passage d'une autre mission : CLEANING_INTERVENTION_NOT_FOUND.
+   * UC-NT-11 — partie 8. Séances d’un programme. REST : GET
+   * /api/v1/cleaning/programs/{id}/sessions. Calendrier des séances, équipe prévue, statut en
+   * direct, statut de paiement. Erreurs : CLEANING_PROGRAM_NOT_FOUND.
    */
 
-  listMyInterventionPhotos(
-    request: ListMyInterventionPhotosRequest,
+  listMyProgramSessions(
+    request: ListMyProgramSessionsRequest,
     metadata?: Metadata,
-  ):
-    | Promise<ListMyInterventionPhotosResponse>
-    | Observable<ListMyInterventionPhotosResponse>
-    | ListMyInterventionPhotosResponse;
+  ): Promise<ListMyProgramSessionsResponse> | Observable<ListMyProgramSessionsResponse> | ListMyProgramSessionsResponse;
+
+  /**
+   * UC-NT-11 — partie 10, R-EX-07. Détail d’une séance. REST : GET /api/v1/cleaning/sessions/{id}.
+   * Horaires réels, équipe, liste de contrôle, photos avant/après (liens temporaires), facture,
+   * note, réclamations. Erreurs : CLEANING_SESSION_NOT_FOUND.
+   */
+
+  getMySession(
+    request: GetMySessionRequest,
+    metadata?: Metadata,
+  ): Promise<GetMySessionResponse> | Observable<GetMySessionResponse> | GetMySessionResponse;
+
+  /**
+   * UC-NT-12 — partie 12. Reporter une séance. REST : POST
+   * /api/v1/cleaning/sessions/{id}/reschedule. Plus de 24 h avant, vers une date du même programme
+   * ou une nouvelle date ; 2 reports par mois au plus. Le nouveau créneau ne chevauche aucune autre
+   * séance non annulée du programme ; aucun report tant que le programme est suspendu (R-RP-01). La
+   * séance garde son statut, ses dates précédentes restent dans son historique ; ses agents sont
+   * recontrôlés au nouveau créneau, gardés s’ils passent, retirés sinon. Organisation :
+   * "org_member" au moins (R-CP-03). Idempotent par idempotency_key (obligatoire). Erreurs :
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_CANCELLATION_TOO_LATE,
+   * CLEANING_RESCHEDULE_LIMIT_REACHED, CLEANING_LEAD_TIME_TOO_SHORT, AUTH_FORBIDDEN,
+   * CLEANING_RESCHEDULE_OVERLAP, CLEANING_PROGRAM_SUSPENDED.
+   */
+
+  rescheduleSession(
+    request: RescheduleSessionRequest,
+    metadata?: Metadata,
+  ): Promise<RescheduleSessionResponse> | Observable<RescheduleSessionResponse> | RescheduleSessionResponse;
+
+  /**
+   * UC-NT-12 — partie 12. Annuler une séance. REST : POST /api/v1/cleaning/sessions/{id}/cancel.
+   * Plus de 24 h avant : rien à payer. Moins de 24 h avant : par le support seulement (50 % du
+   * prix). Organisation : "org_member" au moins (R-CP-03). Idempotent par idempotency_key
+   * (obligatoire). Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_CANCELLATION_TOO_LATE, AUTH_FORBIDDEN.
+   */
+
+  cancelSession(
+    request: CancelSessionRequest,
+    metadata?: Metadata,
+  ): Promise<CancelSessionResponse> | Observable<CancelSessionResponse> | CancelSessionResponse;
+
+  /**
+   * UC-NT-13 — partie 12. Arrêter un programme. REST : POST /api/v1/cleaning/programs/{id}/stop.
+   * Les séances réalisées restent dues ; les séances à venir sont annulées (règle des 24 h pour la
+   * plus proche : si elle est à moins de 24 h, elle est maintenue). Un programme suspendu peut
+   * aussi être arrêté (partie 15.2). Organisation : "org_admin" seulement (R-CP-03). Idempotent par
+   * idempotency_key (obligatoire). Erreurs : CLEANING_PROGRAM_NOT_FOUND, AUTH_FORBIDDEN,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  stopProgram(
+    request: StopProgramRequest,
+    metadata?: Metadata,
+  ): Promise<StopProgramResponse> | Observable<StopProgramResponse> | StopProgramResponse;
+
+  /**
+   * UC-NT-14 — R-PP-03, R-PP-04, R-WL-05. Payer une séance. REST : POST
+   * /api/v1/cleaning/sessions/{id}/pay. Séance « à payer » ou « en retard » d’un particulier.
+   * "mobile_money" : paiement de ce qui manque au solde (montant dû − solde disponible), crédité au
+   * wallet ; le montant dû est débité à la réception de "wallet.prepaid.credited" dont "forObject"
+   * désigne la séance ("payment.intent.succeeded" : suivi seulement). Un paiement Mobile Money déjà
+   * en cours pour cet objet est renvoyé tel quel (même "checkoutUrl") ; un paiement réussi pas
+   * encore débité répond "awaiting_payment" sans nouvelle page. Le paiement d’un retard reprend le
+   * programme si c’était la dernière cause de suspension. Facture de séance émise au paiement
+   * (R-PP-06). Organisation : "org_member" au moins (R-CP-03). Idempotent par idempotency_key
+   * (obligatoire). Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_PAYMENT_VIA_INVOICE,
+   * CLEANING_NOTHING_TO_PAY, CLEANING_INSUFFICIENT_BALANCE, AUTH_FORBIDDEN.
+   */
+
+  paySession(
+    request: PaySessionRequest,
+    metadata?: Metadata,
+  ): Promise<PaySessionResponse> | Observable<PaySessionResponse> | PaySessionResponse;
+
+  /**
+   * UC-NT-16 — partie 10, R-RC-05. Noter une séance. REST : POST
+   * /api/v1/cleaning/sessions/{id}/rating. Séance réalisée : 1 à 5 étoiles et un commentaire. La
+   * note alimente la fiche de l’agent. Organisation : "org_member" au moins (R-CP-03). Idempotent
+   * par idempotency_key (obligatoire). Erreurs : CLEANING_SESSION_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_RATING_ALREADY_GIVEN, AUTH_FORBIDDEN.
+   */
+
+  rateSession(
+    request: RateSessionRequest,
+    metadata?: Metadata,
+  ): Promise<RateSessionResponse> | Observable<RateSessionResponse> | RateSessionResponse;
+
+  /**
+   * UC-NT-17 — R-RC-01, R-RC-04. Déposer une réclamation. REST : POST
+   * /api/v1/cleaning/sessions/{id}/claims. Séance réalisée, pendant 48 h. Une réclamation ouverte
+   * ne suspend pas le paiement de la séance. Organisation : "org_member" au moins (R-CP-03).
+   * Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_SESSION_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_CLAIM_WINDOW_CLOSED, AUTH_FORBIDDEN.
+   */
+
+  openClaim(
+    request: OpenClaimRequest,
+    metadata?: Metadata,
+  ): Promise<OpenClaimResponse> | Observable<OpenClaimResponse> | OpenClaimResponse;
+
+  /** UC-NT-17 — R-RC-02. Mes réclamations. REST : GET /api/v1/cleaning/claims. */
+
+  listMyClaims(
+    request: ListMyClaimsRequest,
+    metadata?: Metadata,
+  ): Promise<ListMyClaimsResponse> | Observable<ListMyClaimsResponse> | ListMyClaimsResponse;
+
+  /**
+   * UC-NT-17 — R-RC-02. Suivre une réclamation. REST : GET /api/v1/cleaning/claims/{id}. Erreurs :
+   * CLEANING_CLAIM_NOT_FOUND.
+   */
+
+  getMyClaim(
+    request: GetMyClaimRequest,
+    metadata?: Metadata,
+  ): Promise<GetMyClaimResponse> | Observable<GetMyClaimResponse> | GetMyClaimResponse;
+
+  /**
+   * UC-NT-17 — R-RC-02. Répondre sur une réclamation. REST : POST
+   * /api/v1/cleaning/claims/{id}/messages. Réclamation ouverte ou en cours. Organisation :
+   * "org_member" au moins (R-CP-03). Idempotent par idempotency_key (obligatoire). Erreurs :
+   * CLEANING_CLAIM_NOT_FOUND, CLEANING_INVALID_TRANSITION, AUTH_FORBIDDEN.
+   */
+
+  addClaimMessage(
+    request: AddClaimMessageRequest,
+    metadata?: Metadata,
+  ): Promise<AddClaimMessageResponse> | Observable<AddClaimMessageResponse> | AddClaimMessageResponse;
+
+  /**
+   * UC-NT-18 — R-PG-07. Renouveler un programme. REST : POST /api/v1/cleaning/programs/{id}/renew.
+   * Programme récurrent dans ses 14 derniers jours : devis de renouvellement aux mêmes conditions
+   * (tarifs du jour s’ils ont changé), sans nouvelle visite si la dernière date de moins de 12
+   * mois ; sinon une nouvelle demande avec visite est créée. Organisation : "org_admin" seulement
+   * (R-CP-03). Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * AUTH_FORBIDDEN, CLEANING_RENEWAL_NOT_ALLOWED, IDENTITY_PROFILE_INCOMPLETE,
+   * CLEANING_PLACE_LOCATION_MISSING.
+   */
+
+  renewProgram(
+    request: RenewProgramRequest,
+    metadata?: Metadata,
+  ): Promise<RenewProgramResponse> | Observable<RenewProgramResponse> | RenewProgramResponse;
+
+  /**
+   * UC-NT-18 — R-PG-08. Commander à nouveau. REST : POST /api/v1/cleaning/programs/{id}/reorder.
+   * Programme ponctuel terminé : nouvelle demande pour le même lieu ; devis sans visite si les
+   * informations retenues ont moins de 12 mois. Organisation : "org_member" au moins (R-CP-03).
+   * Idempotent par idempotency_key (obligatoire). Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * CLEANING_RENEWAL_NOT_ALLOWED, CLEANING_SCHEDULE_EMPTY, CLEANING_SCHEDULE_LIMIT_EXCEEDED,
+   * CLEANING_TOO_MANY_OPEN_REQUESTS, AUTH_FORBIDDEN, IDENTITY_PROFILE_INCOMPLETE,
+   * CLEANING_PLACE_LOCATION_MISSING, CLEANING_VALIDATION_FAILED.
+   */
+
+  reorderProgram(
+    request: ReorderProgramRequest,
+    metadata?: Metadata,
+  ): Promise<ReorderProgramResponse> | Observable<ReorderProgramResponse> | ReorderProgramResponse;
 }
 
-export function MissionServiceControllerMethods() {
+export function ProgramServiceControllerMethods() {
   return function (constructor: Function) {
     const grpcMethods: string[] = [
-      "listMyMissions",
-      "getMission",
-      "cancelMission",
-      "payMissionFromWallet",
-      "listMyInterventionPhotos",
+      "listMyPrograms",
+      "getMyProgram",
+      "listMyProgramSessions",
+      "getMySession",
+      "rescheduleSession",
+      "cancelSession",
+      "stopProgram",
+      "paySession",
+      "rateSession",
+      "openClaim",
+      "listMyClaims",
+      "getMyClaim",
+      "addClaimMessage",
+      "renewProgram",
+      "reorderProgram",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcMethod("MissionService", method)(constructor.prototype[method], method, descriptor);
+      GrpcMethod("ProgramService", method)(constructor.prototype[method], method, descriptor);
       Object.defineProperty(constructor.prototype, method, descriptor);
     }
     const grpcStreamMethods: string[] = [];
     for (const method of grpcStreamMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcStreamMethod("MissionService", method)(constructor.prototype[method], method, descriptor);
+      GrpcStreamMethod("ProgramService", method)(constructor.prototype[method], method, descriptor);
       Object.defineProperty(constructor.prototype, method, descriptor);
     }
   };
 }
 
-export const MISSION_SERVICE_NAME = "MissionService";
+export const PROGRAM_SERVICE_NAME = "ProgramService";
 
 /**
  * ---------------------------------------------------------------------------
- * Back-office (UC-CL-06 à 12). Rôles : cleaning_supervisor, cleaning_agent (ses passages
- * uniquement), cleaning_admin ; super_admin a partout la portée de cleaning_admin.
- * Double authentification exigée.
- *
- * Noms affichés (champs *_name) : lus dans identity au moment de la réponse (ADR-029), pour le
- * back-office seulement ; vides dans l'espace client, pour un compte sans nom, ou si identity
- * est indisponible (la réponse n'échoue jamais pour un nom manquant).
+ * Application agent : inscription, disponibilités, planning, visites et séances (UC-NT-19 à 24).
  * ---------------------------------------------------------------------------
  */
 
-export interface CleaningAdminServiceClient {
-  /** Demandes, visites, devis (cleaning_supervisor, cleaning_admin, super_admin). */
+export interface AgentServiceClient {
+  /**
+   * UC-NT-19 — partie 9.1. S’inscrire comme agent. REST : POST /api/v1/cleaning/agent/applications.
+   * Compte KSP connecté (téléphone vérifié). L’agent devient « candidat » ; l’admin Nettoyage
+   * valide. Idempotent par idempotency_key (obligatoire). Erreurs :
+   * CLEANING_AGENT_ALREADY_REGISTERED, CLEANING_SKILL_NOT_FOUND, CLEANING_ZONE_NOT_FOUND,
+   * CLEANING_VALIDATION_FAILED, CLEANING_GEO_UNAVAILABLE.
+   */
 
-  listQuoteRequests(request: ListQuoteRequestsRequest, metadata?: Metadata): Observable<ListQuoteRequestsResponse>;
-
-  getQuoteRequest(request: GetQuoteRequestRequest, metadata?: Metadata): Observable<GetQuoteRequestResponse>;
-
-  rejectQuoteRequest(request: RejectQuoteRequestRequest, metadata?: Metadata): Observable<RejectQuoteRequestResponse>;
-
-  scheduleVisit(request: ScheduleVisitRequest, metadata?: Metadata): Observable<ScheduleVisitResponse>;
+  submitAgentApplication(
+    request: SubmitAgentApplicationRequest,
+    metadata?: Metadata,
+  ): Observable<SubmitAgentApplicationResponse>;
 
   /**
-   * Aussi ouvert à cleaning_agent pour les visites qui lui sont affectées (ADR-035).
-   * Mesures constatées facultatives (ADR-037) : validées comme une simulation, enregistrées à
-   * part des réponses du client.
+   * UC-NT-19 — partie 9.1, 13.2. Mon profil d’agent. REST : GET /api/v1/cleaning/agent/me. Suivi de
+   * la candidature, compétences validées, zones. Erreurs : CLEANING_AGENT_NOT_FOUND.
+   */
+
+  getMyAgentProfile(request: GetMyAgentProfileRequest, metadata?: Metadata): Observable<GetMyAgentProfileResponse>;
+
+  /**
+   * UC-NT-21 — R-EX-04, 13.2. Mon activité. REST : GET /api/v1/cleaning/agent/me/activity. Séances
+   * réalisées, heures par semaine et par mois, note moyenne, sans montants. Permission :
+   * cleaning.session.perform. Erreurs : CLEANING_AGENT_NOT_FOUND.
+   */
+
+  getMyActivity(request: GetMyActivityRequest, metadata?: Metadata): Observable<GetMyActivityResponse>;
+
+  /**
+   * UC-NT-20 — R-DS-01 à 03. Mes disponibilités. REST : GET /api/v1/cleaning/agent/me/availability.
+   * Charge maximale en lecture. Permission : cleaning.session.perform. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND.
+   */
+
+  getMyAvailability(request: GetMyAvailabilityRequest, metadata?: Metadata): Observable<GetMyAvailabilityResponse>;
+
+  /**
+   * UC-NT-20 — R-DS-01, R-DS-02, R-DS-05. Modifier mes disponibilités. REST : PUT
+   * /api/v1/cleaning/agent/me/availability. Remplace le modèle hebdomadaire et les disponibilités
+   * exceptionnelles. Retirer une plage déjà occupée par une affectation passe par le superviseur.
+   * Permission : cleaning.session.perform. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_AVAILABILITY_IN_USE.
+   */
+
+  setMyAvailability(request: SetMyAvailabilityRequest, metadata?: Metadata): Observable<SetMyAvailabilityResponse>;
+
+  /**
+   * UC-NT-20 — R-DS-02, R-DS-04. Déclarer une indisponibilité. REST : POST
+   * /api/v1/cleaning/agent/me/unavailabilities. Une indisponibilité qui chevauche une affectation
+   * est refusée avec la liste des affectations touchées ; seul le superviseur peut la forcer.
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.session.perform. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_UNAVAILABILITY_CONFLICT.
+   */
+
+  declareMyUnavailability(
+    request: DeclareMyUnavailabilityRequest,
+    metadata?: Metadata,
+  ): Observable<DeclareMyUnavailabilityResponse>;
+
+  /**
+   * UC-NT-20 — R-DS-02. Retirer une indisponibilité. REST : DELETE
+   * /api/v1/cleaning/agent/me/unavailabilities/{id}. Permission : cleaning.session.perform.
+   * Erreurs : CLEANING_UNAVAILABILITY_NOT_FOUND.
+   */
+
+  removeMyUnavailability(
+    request: RemoveMyUnavailabilityRequest,
+    metadata?: Metadata,
+  ): Observable<RemoveMyUnavailabilityResponse>;
+
+  /**
+   * UC-NT-21 — R-PL-08, R-EX-04. Mon planning. REST : GET /api/v1/cleaning/agent/me/assignments.
+   * « Aujourd’hui », semaine et mois : visites et séances affectées, sans montants ; aucune
+   * position dans la liste. Permission : cleaning.session.perform.
+   */
+
+  listMyAssignments(request: ListMyAssignmentsRequest, metadata?: Metadata): Observable<ListMyAssignmentsResponse>;
+
+  /**
+   * UC-NT-21 — R-PL-08. Accepter une affectation. REST : POST
+   * /api/v1/cleaning/agent/assignments/{id}/accept. Indépendant : sous 12 h, sinon le système
+   * cherche un autre agent. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.session.perform. Erreurs : CLEANING_ASSIGNMENT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  acceptAssignment(request: AcceptAssignmentRequest, metadata?: Metadata): Observable<AcceptAssignmentResponse>;
+
+  /**
+   * UC-NT-21 — R-PL-08, R-PL-01. Refuser une affectation. REST : POST
+   * /api/v1/cleaning/agent/assignments/{id}/decline. Indépendant seulement ; la planification
+   * cherche un autre agent. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.session.perform. Erreurs : CLEANING_ASSIGNMENT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  declineAssignment(request: DeclineAssignmentRequest, metadata?: Metadata): Observable<DeclineAssignmentResponse>;
+
+  /**
+   * UC-NT-22 — R-VI-04, R-EX-04. Visite (agent). REST : GET /api/v1/cleaning/agent/visits/{id}.
+   * Constat prérempli avec le déclaré, sans montants. Agent désaffecté : CLEANING_VISIT_NOT_FOUND.
+   * Position et adresses visibles seulement pendant la visite en cours (R-EX-06). Permission :
+   * cleaning.visit.perform. Erreurs : CLEANING_VISIT_NOT_FOUND.
+   */
+
+  getAgentVisit(request: GetAgentVisitRequest, metadata?: Metadata): Observable<GetAgentVisitResponse>;
+
+  /**
+   * UC-NT-22 — R-VI-04. Marquer l’arrivée (visite). REST : POST
+   * /api/v1/cleaning/visits/{id}/arrive. Position GPS comparée à celle du lieu (alerte au
+   * superviseur au-delà de "arrivalAlertMeters", sans blocage). Latitude et longitude vont
+   * ensemble ; arrivée sans position possible. Action de terrain rejouable hors connexion
+   * (R-EX-05) : idempotency_key obligatoire, occurred_at facultatif. Permission :
+   * cleaning.visit.perform. Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  arriveAtVisit(request: ArriveAtVisitRequest, metadata?: Metadata): Observable<ArriveAtVisitResponse>;
+
+  /**
+   * UC-NT-22 — R-VI-04, partie 7.4. Saisir le constat. REST : PUT
+   * /api/v1/cleaning/visits/{id}/observations. Mesures réelles (version « constaté »), préremplies
+   * avec le déclaré ; l’agent ne voit que les valeurs. Accepté à partir de l’heure prévue incluse ;
+   * "occurredAt" entre l’arrivée et maintenant (sinon CLEANING_VALIDATION_FAILED, field occurredAt,
+   * reason out_of_range). Remplace le constat précédent tant que la visite n’est pas clôturée.
+   * Action de terrain rejouable hors connexion (R-EX-05) : idempotency_key obligatoire, occurred_at
+   * facultatif. Permission : cleaning.visit.perform. Erreurs : CLEANING_VISIT_NOT_FOUND,
+   * CLEANING_VISIT_TOO_EARLY, CLEANING_INVALID_TRANSITION, CLEANING_VALIDATION_FAILED.
+   */
+
+  saveVisitObservations(
+    request: SaveVisitObservationsRequest,
+    metadata?: Metadata,
+  ): Observable<SaveVisitObservationsResponse>;
+
+  /**
+   * UC-NT-22 — R-VI-04. Ajouter une photo (visite). REST : POST
+   * /api/v1/cleaning/visits/{id}/photos. 10 photos au plus. Action de terrain rejouable hors
+   * connexion (R-EX-05) : idempotency_key obligatoire, occurred_at facultatif. Permission :
+   * cleaning.visit.perform. Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_PHOTO_LIMIT_REACHED, CLEANING_VALIDATION_FAILED.
+   */
+
+  addVisitPhoto(request: AddVisitPhotoRequest, metadata?: Metadata): Observable<AddVisitPhotoResponse>;
+
+  /**
+   * UC-NT-22 — R-VI-04. Clôturer la visite. REST : POST /api/v1/cleaning/visits/{id}/complete.
+   * Constat saisi exigé ; la demande passe « visite faite ». Accepté à partir de l’heure prévue
+   * incluse ; "occurredAt" entre l’arrivée et maintenant (sinon CLEANING_VALIDATION_FAILED, field
+   * occurredAt, reason out_of_range). Action de terrain rejouable hors connexion (R-EX-05) :
+   * idempotency_key obligatoire, occurred_at facultatif. Permission : cleaning.visit.perform.
+   * Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_VISIT_TOO_EARLY,
+   * CLEANING_VALIDATION_FAILED.
    */
 
   completeVisit(request: CompleteVisitRequest, metadata?: Metadata): Observable<CompleteVisitResponse>;
 
   /**
-   * Sans lignes : préremplies depuis le calcul des mesures constatées s'il existe (ADR-037), sinon
-   * depuis celui de la demande.
+   * UC-NT-22 — R-VI-05. Client absent (visite). REST : POST /api/v1/cleaning/visits/{id}/missed.
+   * Avec une photo du lieu ; la visite est « manquée » ; de nouveaux frais sont créés et la demande
+   * attend leur paiement (R-VI-05). Action de terrain rejouable hors connexion (R-EX-05) :
+   * idempotency_key obligatoire, occurred_at facultatif. Permission : cleaning.visit.perform.
+   * Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_VISIT_TOO_EARLY.
    */
 
-  sendQuote(request: SendQuoteRequest, metadata?: Metadata): Observable<SendQuoteResponse>;
+  reportVisitMissed(request: ReportVisitMissedRequest, metadata?: Metadata): Observable<ReportVisitMissedResponse>;
 
   /**
-   * Mesures constatées et recalcul (ADR-037). Supervision, ou cleaning_agent affecté à la visite de
-   * la demande (sinon CLEANING_REQUEST_NOT_FOUND).
-   * Recalcul du prix avec d'autres réponses, sans rien enregistrer : commune de la demande, grille
-   * en vigueur (même calcul que la simulation).
+   * UC-NT-22 — R-EX-10. Retirer une photo (visite). REST : DELETE
+   * /api/v1/cleaning/visits/{id}/photos/{fileId}. Agent affecté, tant que la visite n’est ni
+   * réalisée ni annulée. La photo est supprimée chez file, puis sa référence ; l’action est tracée.
+   * Action de terrain rejouable hors connexion (R-EX-05) : idempotency_key obligatoire.
+   * Permission : cleaning.visit.perform. Erreurs : CLEANING_VISIT_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
    */
 
-  estimateRequestPrice(
-    request: EstimateRequestPriceRequest,
+  removeVisitPhoto(request: RemoveVisitPhotoRequest, metadata?: Metadata): Observable<RemoveVisitPhotoResponse>;
+
+  /**
+   * UC-NT-23 — R-EX-01, R-EX-04, R-EX-06. Séance (agent). REST : GET
+   * /api/v1/cleaning/agent/sessions/{id}. Seuls les agents affectés la voient ; agent désaffecté :
+   * CLEANING_SESSION_NOT_FOUND. Position et adresses visibles seulement pendant la séance en cours
+   * (R-EX-06). Permission : cleaning.session.perform. Erreurs : CLEANING_SESSION_NOT_FOUND.
+   */
+
+  getAgentSession(request: GetAgentSessionRequest, metadata?: Metadata): Observable<GetAgentSessionResponse>;
+
+  /**
+   * UC-NT-23 — partie 10, R-EQ-03. Marquer l’arrivée (séance). REST : POST
+   * /api/v1/cleaning/sessions/{id}/arrive. Chef d’équipe. Position comparée à celle du lieu (alerte
+   * au-delà de "arrivalAlertMeters", sans blocage) ; pas plus de "arrivalMaxAdvanceMinutes" avant
+   * l’heure prévue. Latitude et longitude vont ensemble ; arrivée sans position possible. Action de
+   * terrain rejouable hors connexion (R-EX-05) : idempotency_key obligatoire, occurred_at
+   * facultatif. Permission : cleaning.session.perform. Erreurs : CLEANING_SESSION_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_TEAM_LEAD_ONLY, CLEANING_SESSION_TOO_EARLY.
+   */
+
+  arriveAtSession(request: ArriveAtSessionRequest, metadata?: Metadata): Observable<ArriveAtSessionResponse>;
+
+  /**
+   * UC-NT-23 — partie 10, R-EQ-03, R-PP-04, R-PP-05. Démarrer la séance. REST : POST
+   * /api/v1/cleaning/sessions/{id}/start. Chef d’équipe, après au moins une photo « avant ». La
+   * séance passe « en cours », le client est prévenu. Refusé si une séance précédente est en retard
+   * de paiement, ou si la garantie de solde est activée et non tenue. Action de terrain rejouable
+   * hors connexion (R-EX-05) : idempotency_key obligatoire, occurred_at facultatif. Permission :
+   * cleaning.session.perform. Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_TEAM_LEAD_ONLY, CLEANING_PHOTOS_MISSING, CLEANING_SESSION_OVERDUE_PAYMENT,
+   * CLEANING_BALANCE_GUARANTEE_NOT_MET.
+   */
+
+  startSession(request: StartSessionRequest, metadata?: Metadata): Observable<StartSessionResponse>;
+
+  /**
+   * UC-NT-23 — partie 10, R-EX-05. Cocher la liste de contrôle. REST : PATCH
+   * /api/v1/cleaning/sessions/{id}/checklist. Cases cochées au fur et à mesure ; chaque case garde
+   * son heure réelle ("occurredAt"). Action de terrain rejouable hors connexion (R-EX-05) :
+   * idempotency_key obligatoire, occurred_at facultatif. Permission : cleaning.session.perform.
+   * Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_VALIDATION_FAILED.
+   */
+
+  updateSessionChecklist(
+    request: UpdateSessionChecklistRequest,
     metadata?: Metadata,
-  ): Observable<EstimateRequestPriceResponse>;
+  ): Observable<UpdateSessionChecklistResponse>;
 
   /**
-   * Enregistre (ou remplace) les mesures après la visite, avant l'envoi du devis
-   * (CLEANING_MEASUREMENTS_LOCKED sinon) ; les réponses du client restent intactes.
+   * UC-NT-23 — partie 10, R-EX-07. Ajouter une photo (séance). REST : POST
+   * /api/v1/cleaning/sessions/{id}/photos. Photos « avant » (avant le démarrage) et « après » : au
+   * moins 1, au plus 10 de chaque. Action de terrain rejouable hors connexion (R-EX-05) :
+   * idempotency_key obligatoire, occurred_at facultatif. Permission : cleaning.session.perform.
+   * Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_PHOTO_LIMIT_REACHED, CLEANING_VALIDATION_FAILED.
    */
 
-  saveRequestMeasurements(
-    request: SaveRequestMeasurementsRequest,
+  addSessionPhoto(request: AddSessionPhotoRequest, metadata?: Metadata): Observable<AddSessionPhotoResponse>;
+
+  /**
+   * UC-NT-24 — partie 10, R-EX-03. Signaler un incident. REST : POST
+   * /api/v1/cleaning/sessions/{id}/incident. Interrompt la séance (matériel, accès, sécurité,
+   * demande du client hors devis) ; le superviseur est alerté et décide : reprise, report ou
+   * annulation. Une demande hors devis donne lieu à un avenant, jamais à un paiement en main
+   * propre. Action de terrain rejouable hors connexion (R-EX-05) : idempotency_key obligatoire,
+   * occurred_at facultatif. Permission : cleaning.session.perform. Erreurs :
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  reportSessionIncident(
+    request: ReportSessionIncidentRequest,
     metadata?: Metadata,
-  ): Observable<SaveRequestMeasurementsResponse>;
+  ): Observable<ReportSessionIncidentResponse>;
 
   /**
-   * Demandes groupées (ADR-035). idempotency_key facultative : un second envoi avec la même clé
-   * rend le résultat du premier sans rien réécrire.
-   * Visite technique commune : toutes les demandes ouvertes du groupe, même heure, même agent, un
-   * seul événement cleaning.visit.scheduled (request_ids). Une demande exclue est détachée.
+   * UC-NT-23 — partie 10, R-EQ-03, R-PP-01. Clôturer la séance. REST : POST
+   * /api/v1/cleaning/sessions/{id}/complete. Chef d’équipe. Refusée tant que la liste n’est pas
+   * complète et sans photo « après ». La séance passe « réalisée » ; son prix devient dû (débit
+   * automatique du wallet, particulier). Action de terrain rejouable hors connexion (R-EX-05) :
+   * idempotency_key obligatoire, occurred_at facultatif. Permission : cleaning.session.perform.
+   * Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_TEAM_LEAD_ONLY,
+   * CLEANING_CHECKLIST_INCOMPLETE, CLEANING_PHOTOS_MISSING.
    */
 
-  scheduleGroupVisit(request: ScheduleGroupVisitRequest, metadata?: Metadata): Observable<ScheduleGroupVisitResponse>;
+  completeSession(request: CompleteSessionRequest, metadata?: Metadata): Observable<CompleteSessionResponse>;
 
   /**
-   * Compte rendu commun : complète toutes les visites encore planifiées de la visite de groupe
-   * (cleaning_agent : seulement s'il en est l'agent).
+   * UC-NT-24 — R-EX-02. Client absent (séance). REST : POST /api/v1/cleaning/sessions/{id}/missed.
+   * Après "customerWaitMinutes" d’attente (30 min par défaut) et un appel tracé, avec une photo du
+   * lieu. Séance manquée par absence du client : 50 % du prix dû. Action de terrain rejouable hors
+   * connexion (R-EX-05) : idempotency_key obligatoire, occurred_at facultatif. Permission :
+   * cleaning.session.perform. Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_TEAM_LEAD_ONLY, CLEANING_WAIT_TIME_NOT_ELAPSED.
    */
 
-  completeGroupVisit(request: CompleteGroupVisitRequest, metadata?: Metadata): Observable<CompleteGroupVisitResponse>;
-
-  /** Refus du groupe : demandes encore refusables ; les autres sont ignorées. */
-
-  rejectRequestGroup(request: RejectRequestGroupRequest, metadata?: Metadata): Observable<RejectRequestGroupResponse>;
-
-  /** Devis du groupe envoyés ensemble, chiffrés séparément, avec les mêmes créneaux proposés. */
-
-  sendGroupQuotes(request: SendGroupQuotesRequest, metadata?: Metadata): Observable<SendGroupQuotesResponse>;
-
-  /**
-   * Correction de la position d'une demande (supervision, ou agent de la visite planifiée) :
-   * commune recalculée, appliquée à tout le groupe et aux missions non terminées.
-   */
-
-  correctRequestLocation(
-    request: CorrectRequestLocationRequest,
+  reportSessionMissed(
+    request: ReportSessionMissedRequest,
     metadata?: Metadata,
-  ): Observable<CorrectRequestLocationResponse>;
-
-  /** Visites techniques (cleaning_agent : les siennes seulement). */
-
-  listVisits(request: ListVisitsRequest, metadata?: Metadata): Observable<ListVisitsResponse>;
-
-  /** Missions et passages (cleaning_supervisor, cleaning_admin, super_admin ; cleaning_agent : ses passages). */
-
-  listMissions(request: ListMissionsRequest, metadata?: Metadata): Observable<ListMissionsResponse>;
-
-  getMissionDetail(request: GetMissionDetailRequest, metadata?: Metadata): Observable<GetMissionDetailResponse>;
+  ): Observable<ReportSessionMissedResponse>;
 
   /**
-   * Planifie un passage avec ses agents ; un passage d'une mission récurrente peut avoir
-   * d'autres agents que le précédent.
+   * UC-NT-23 — R-EX-10. Retirer une photo (séance). REST : DELETE
+   * /api/v1/cleaning/sessions/{id}/photos/{fileId}. Agent affecté, tant que la séance n’est ni
+   * réalisée ni annulée. La photo est supprimée chez file, puis sa référence ; l’action est tracée.
+   * Action de terrain rejouable hors connexion (R-EX-05) : idempotency_key obligatoire.
+   * Permission : cleaning.session.perform. Erreurs : CLEANING_SESSION_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
    */
 
-  scheduleIntervention(
-    request: ScheduleInterventionRequest,
-    metadata?: Metadata,
-  ): Observable<ScheduleInterventionResponse>;
-
-  /**
-   * Planifie ensemble un passage de chaque mission d'un groupe (ADR-035), dans une transaction : la
-   * même équipe sur des créneaux qui se chevauchent dans un même groupe n'est pas un conflit.
-   */
-
-  scheduleGroupInterventions(
-    request: ScheduleGroupInterventionsRequest,
-    metadata?: Metadata,
-  ): Observable<ScheduleGroupInterventionsResponse>;
-
-  /**
-   * Planification en lot des dates restantes du plan de passages (ADR-052) : un passage par date,
-   * mêmes agents, même heure, même durée, contrôlés date par date dans une transaction (agents
-   * verrouillés). Tout ou rien par défaut : CLEANING_TEAM_UNAVAILABLE avec details.conflicts (date et
-   * agents de chaque date en conflit) ; skip_conflicts planifie le reste et rend les dates sautées.
-   * Un seul événement cleaning.interventions.batch_scheduled. Idempotent par idempotency_key
-   * (obligatoire) et par mission. Plafond par appel réglable (400 par défaut).
-   */
-
-  scheduleInterventionBatch(
-    request: ScheduleInterventionBatchRequest,
-    metadata?: Metadata,
-  ): Observable<ScheduleInterventionBatchResponse>;
-
-  startIntervention(request: StartInterventionRequest, metadata?: Metadata): Observable<StartInterventionResponse>;
-
-  updateChecklist(request: UpdateChecklistRequest, metadata?: Metadata): Observable<UpdateChecklistResponse>;
-
-  reportIncident(request: ReportIncidentRequest, metadata?: Metadata): Observable<ReportIncidentResponse>;
-
-  resumeIntervention(request: ResumeInterventionRequest, metadata?: Metadata): Observable<ResumeInterventionResponse>;
-
-  completeIntervention(
-    request: CompleteInterventionRequest,
-    metadata?: Metadata,
-  ): Observable<CompleteInterventionResponse>;
-
-  /**
-   * Paiement manuel coché par le superviseur (espèces, Mobile Money hors ligne).
-   * Idempotent par idempotency_key (facultative) : un second envoi avec la même clé renvoie la
-   * mission sans enregistrer un second paiement.
-   */
-
-  recordPayment(request: RecordPaymentRequest, metadata?: Metadata): Observable<RecordPaymentResponse>;
-
-  cancelMissionAsSupervisor(
-    request: CancelMissionAsSupervisorRequest,
-    metadata?: Metadata,
-  ): Observable<CancelMissionAsSupervisorResponse>;
-
-  /**
-   * Catalogue, grille tarifaire et réglages (cleaning_admin, super_admin). Chaque modification de prix
-   * crée une nouvelle version datée, avec son auteur ; un devis envoyé garde son prix.
-   */
-
-  getCatalog(request: GetCatalogRequest, metadata?: Metadata): Observable<GetCatalogResponse>;
-
-  /** Crée ou remplace une prestation complète (champs, options, grille) : une nouvelle version (ADR-033). */
-
-  saveService(request: SaveServiceRequest, metadata?: Metadata): Observable<SaveServiceResponse>;
-
-  /**
-   * Calcule un prix avec une définition envoyée (ou la version en vigueur) et des réponses, pour
-   * tester une grille avant de l'enregistrer. Rien n'est enregistré (ADR-033).
-   */
-
-  previewService(request: PreviewServiceRequest, metadata?: Metadata): Observable<PreviewServiceResponse>;
-
-  updateSettings(request: UpdateSettingsRequest, metadata?: Metadata): Observable<UpdateSettingsResponse>;
-
-  /** Zones desservies (cleaning_admin, super_admin) : une demande de devis hors zone est refusée. */
-
-  listZones(request: ListZonesRequest, metadata?: Metadata): Observable<ListZonesResponse>;
-
-  /** Ajoute la commune, ou la réactive si elle existe déjà. */
-
-  saveZone(request: SaveZoneRequest, metadata?: Metadata): Observable<SaveZoneResponse>;
-
-  deactivateZone(request: DeactivateZoneRequest, metadata?: Metadata): Observable<DeactivateZoneResponse>;
-
-  /** Types de lieu du parcours client (cleaning_admin, super_admin ; ADR-034) : tous, actifs ou non. */
-
-  listPlaceTypes(request: ListPlaceTypesRequest, metadata?: Metadata): Observable<ListPlaceTypesResponse>;
-
-  /**
-   * Crée ou modifie un type de lieu (pas de suppression : active = false). Une prestation inconnue
-   * est refusée ; une prestation inactive est acceptée mais masquée côté public.
-   */
-
-  savePlaceType(request: SavePlaceTypeRequest, metadata?: Metadata): Observable<SavePlaceTypeResponse>;
-
-  /** Agents et équipes (cleaning_admin, super_admin ; listes : aussi cleaning_supervisor). */
-
-  listAgents(request: ListAgentsRequest, metadata?: Metadata): Observable<ListAgentsResponse>;
-
-  registerAgent(request: RegisterAgentRequest, metadata?: Metadata): Observable<RegisterAgentResponse>;
-
-  declareUnavailability(
-    request: DeclareUnavailabilityRequest,
-    metadata?: Metadata,
-  ): Observable<DeclareUnavailabilityResponse>;
-
-  listTeams(request: ListTeamsRequest, metadata?: Metadata): Observable<ListTeamsResponse>;
-
-  createTeam(request: CreateTeamRequest, metadata?: Metadata): Observable<CreateTeamResponse>;
-
-  updateTeam(request: UpdateTeamRequest, metadata?: Metadata): Observable<UpdateTeamResponse>;
-
-  /**
-   * Compléments du Nettoyage (ADR-053).
-   * Photos avant et après d'un passage non clos : agent du passage, ou supervision. Le fichier est
-   * d'abord envoyé au service file (finalité cleaning_intervention_photo) par le compte qui le
-   * rattache ensuite ici. Ajout idempotent pour un fichier déjà rattaché au passage.
-   */
-
-  addInterventionPhoto(
-    request: AddInterventionPhotoRequest,
-    metadata?: Metadata,
-  ): Observable<AddInterventionPhotoResponse>;
-
-  /** Retrait idempotent (fichier supprimé chez file) ; passage non clos seulement. */
-
-  removeInterventionPhoto(
-    request: RemoveInterventionPhotoRequest,
-    metadata?: Metadata,
-  ): Observable<RemoveInterventionPhotoResponse>;
-
-  /** Photos d'un passage, avec des adresses de lecture de courte durée (agent du passage, supervision). */
-
-  listInterventionPhotos(
-    request: ListInterventionPhotosRequest,
-    metadata?: Metadata,
-  ): Observable<ListInterventionPhotosResponse>;
-
-  /**
-   * Reporter un passage planifié (supervision) : nouveau début dans le futur, mêmes contrôles de
-   * conflit que la planification (CLEANING_TEAM_UNAVAILABLE), agents gardés ou changés, motif.
-   */
-
-  rescheduleIntervention(
-    request: RescheduleInterventionRequest,
-    metadata?: Metadata,
-  ): Observable<RescheduleInterventionResponse>;
-
-  /**
-   * Annuler un passage planifié pour le replanifier (supervision, motif) : le passage est annulé
-   * (cause "unscheduled") et la mission a de nouveau un passage à planifier ; le nombre de passages
-   * prévus et l'argent ne changent pas.
-   */
-
-  unscheduleIntervention(
-    request: UnscheduleInterventionRequest,
-    metadata?: Metadata,
-  ): Observable<UnscheduleInterventionResponse>;
-
-  /**
-   * Désactiver un agent (cleaning_admin, super_admin) : refus s'il a des passages ou des visites à
-   * venir (CLEANING_AGENT_HAS_ASSIGNMENTS, avec la liste) ; les reporter ou les réaffecter d'abord.
-   */
-
-  deactivateAgent(request: DeactivateAgentRequest, metadata?: Metadata): Observable<DeactivateAgentResponse>;
-
-  reactivateAgent(request: ReactivateAgentRequest, metadata?: Metadata): Observable<ReactivateAgentResponse>;
-
-  removeUnavailability(
-    request: RemoveUnavailabilityRequest,
-    metadata?: Metadata,
-  ): Observable<RemoveUnavailabilityResponse>;
-
-  /** Désactiver une équipe (jamais de suppression) : elle n'est plus proposée à la planification. */
-
-  deactivateTeam(request: DeactivateTeamRequest, metadata?: Metadata): Observable<DeactivateTeamResponse>;
-
-  reactivateTeam(request: ReactivateTeamRequest, metadata?: Metadata): Observable<ReactivateTeamResponse>;
+  removeSessionPhoto(request: RemoveSessionPhotoRequest, metadata?: Metadata): Observable<RemoveSessionPhotoResponse>;
 }
 
 /**
  * ---------------------------------------------------------------------------
- * Back-office (UC-CL-06 à 12). Rôles : cleaning_supervisor, cleaning_agent (ses passages
- * uniquement), cleaning_admin ; super_admin a partout la portée de cleaning_admin.
- * Double authentification exigée.
- *
- * Noms affichés (champs *_name) : lus dans identity au moment de la réponse (ADR-029), pour le
- * back-office seulement ; vides dans l'espace client, pour un compte sans nom, ou si identity
- * est indisponible (la réponse n'échoue jamais pour un nom manquant).
+ * Application agent : inscription, disponibilités, planning, visites et séances (UC-NT-19 à 24).
  * ---------------------------------------------------------------------------
  */
 
-export interface CleaningAdminServiceController {
-  /** Demandes, visites, devis (cleaning_supervisor, cleaning_admin, super_admin). */
+export interface AgentServiceController {
+  /**
+   * UC-NT-19 — partie 9.1. S’inscrire comme agent. REST : POST /api/v1/cleaning/agent/applications.
+   * Compte KSP connecté (téléphone vérifié). L’agent devient « candidat » ; l’admin Nettoyage
+   * valide. Idempotent par idempotency_key (obligatoire). Erreurs :
+   * CLEANING_AGENT_ALREADY_REGISTERED, CLEANING_SKILL_NOT_FOUND, CLEANING_ZONE_NOT_FOUND,
+   * CLEANING_VALIDATION_FAILED, CLEANING_GEO_UNAVAILABLE.
+   */
 
-  listQuoteRequests(
-    request: ListQuoteRequestsRequest,
+  submitAgentApplication(
+    request: SubmitAgentApplicationRequest,
     metadata?: Metadata,
-  ): Promise<ListQuoteRequestsResponse> | Observable<ListQuoteRequestsResponse> | ListQuoteRequestsResponse;
-
-  getQuoteRequest(
-    request: GetQuoteRequestRequest,
-    metadata?: Metadata,
-  ): Promise<GetQuoteRequestResponse> | Observable<GetQuoteRequestResponse> | GetQuoteRequestResponse;
-
-  rejectQuoteRequest(
-    request: RejectQuoteRequestRequest,
-    metadata?: Metadata,
-  ): Promise<RejectQuoteRequestResponse> | Observable<RejectQuoteRequestResponse> | RejectQuoteRequestResponse;
-
-  scheduleVisit(
-    request: ScheduleVisitRequest,
-    metadata?: Metadata,
-  ): Promise<ScheduleVisitResponse> | Observable<ScheduleVisitResponse> | ScheduleVisitResponse;
+  ):
+    | Promise<SubmitAgentApplicationResponse>
+    | Observable<SubmitAgentApplicationResponse>
+    | SubmitAgentApplicationResponse;
 
   /**
-   * Aussi ouvert à cleaning_agent pour les visites qui lui sont affectées (ADR-035).
-   * Mesures constatées facultatives (ADR-037) : validées comme une simulation, enregistrées à
-   * part des réponses du client.
+   * UC-NT-19 — partie 9.1, 13.2. Mon profil d’agent. REST : GET /api/v1/cleaning/agent/me. Suivi de
+   * la candidature, compétences validées, zones. Erreurs : CLEANING_AGENT_NOT_FOUND.
+   */
+
+  getMyAgentProfile(
+    request: GetMyAgentProfileRequest,
+    metadata?: Metadata,
+  ): Promise<GetMyAgentProfileResponse> | Observable<GetMyAgentProfileResponse> | GetMyAgentProfileResponse;
+
+  /**
+   * UC-NT-21 — R-EX-04, 13.2. Mon activité. REST : GET /api/v1/cleaning/agent/me/activity. Séances
+   * réalisées, heures par semaine et par mois, note moyenne, sans montants. Permission :
+   * cleaning.session.perform. Erreurs : CLEANING_AGENT_NOT_FOUND.
+   */
+
+  getMyActivity(
+    request: GetMyActivityRequest,
+    metadata?: Metadata,
+  ): Promise<GetMyActivityResponse> | Observable<GetMyActivityResponse> | GetMyActivityResponse;
+
+  /**
+   * UC-NT-20 — R-DS-01 à 03. Mes disponibilités. REST : GET /api/v1/cleaning/agent/me/availability.
+   * Charge maximale en lecture. Permission : cleaning.session.perform. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND.
+   */
+
+  getMyAvailability(
+    request: GetMyAvailabilityRequest,
+    metadata?: Metadata,
+  ): Promise<GetMyAvailabilityResponse> | Observable<GetMyAvailabilityResponse> | GetMyAvailabilityResponse;
+
+  /**
+   * UC-NT-20 — R-DS-01, R-DS-02, R-DS-05. Modifier mes disponibilités. REST : PUT
+   * /api/v1/cleaning/agent/me/availability. Remplace le modèle hebdomadaire et les disponibilités
+   * exceptionnelles. Retirer une plage déjà occupée par une affectation passe par le superviseur.
+   * Permission : cleaning.session.perform. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_AVAILABILITY_IN_USE.
+   */
+
+  setMyAvailability(
+    request: SetMyAvailabilityRequest,
+    metadata?: Metadata,
+  ): Promise<SetMyAvailabilityResponse> | Observable<SetMyAvailabilityResponse> | SetMyAvailabilityResponse;
+
+  /**
+   * UC-NT-20 — R-DS-02, R-DS-04. Déclarer une indisponibilité. REST : POST
+   * /api/v1/cleaning/agent/me/unavailabilities. Une indisponibilité qui chevauche une affectation
+   * est refusée avec la liste des affectations touchées ; seul le superviseur peut la forcer.
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.session.perform. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_UNAVAILABILITY_CONFLICT.
+   */
+
+  declareMyUnavailability(
+    request: DeclareMyUnavailabilityRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<DeclareMyUnavailabilityResponse>
+    | Observable<DeclareMyUnavailabilityResponse>
+    | DeclareMyUnavailabilityResponse;
+
+  /**
+   * UC-NT-20 — R-DS-02. Retirer une indisponibilité. REST : DELETE
+   * /api/v1/cleaning/agent/me/unavailabilities/{id}. Permission : cleaning.session.perform.
+   * Erreurs : CLEANING_UNAVAILABILITY_NOT_FOUND.
+   */
+
+  removeMyUnavailability(
+    request: RemoveMyUnavailabilityRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<RemoveMyUnavailabilityResponse>
+    | Observable<RemoveMyUnavailabilityResponse>
+    | RemoveMyUnavailabilityResponse;
+
+  /**
+   * UC-NT-21 — R-PL-08, R-EX-04. Mon planning. REST : GET /api/v1/cleaning/agent/me/assignments.
+   * « Aujourd’hui », semaine et mois : visites et séances affectées, sans montants ; aucune
+   * position dans la liste. Permission : cleaning.session.perform.
+   */
+
+  listMyAssignments(
+    request: ListMyAssignmentsRequest,
+    metadata?: Metadata,
+  ): Promise<ListMyAssignmentsResponse> | Observable<ListMyAssignmentsResponse> | ListMyAssignmentsResponse;
+
+  /**
+   * UC-NT-21 — R-PL-08. Accepter une affectation. REST : POST
+   * /api/v1/cleaning/agent/assignments/{id}/accept. Indépendant : sous 12 h, sinon le système
+   * cherche un autre agent. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.session.perform. Erreurs : CLEANING_ASSIGNMENT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  acceptAssignment(
+    request: AcceptAssignmentRequest,
+    metadata?: Metadata,
+  ): Promise<AcceptAssignmentResponse> | Observable<AcceptAssignmentResponse> | AcceptAssignmentResponse;
+
+  /**
+   * UC-NT-21 — R-PL-08, R-PL-01. Refuser une affectation. REST : POST
+   * /api/v1/cleaning/agent/assignments/{id}/decline. Indépendant seulement ; la planification
+   * cherche un autre agent. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.session.perform. Erreurs : CLEANING_ASSIGNMENT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  declineAssignment(
+    request: DeclineAssignmentRequest,
+    metadata?: Metadata,
+  ): Promise<DeclineAssignmentResponse> | Observable<DeclineAssignmentResponse> | DeclineAssignmentResponse;
+
+  /**
+   * UC-NT-22 — R-VI-04, R-EX-04. Visite (agent). REST : GET /api/v1/cleaning/agent/visits/{id}.
+   * Constat prérempli avec le déclaré, sans montants. Agent désaffecté : CLEANING_VISIT_NOT_FOUND.
+   * Position et adresses visibles seulement pendant la visite en cours (R-EX-06). Permission :
+   * cleaning.visit.perform. Erreurs : CLEANING_VISIT_NOT_FOUND.
+   */
+
+  getAgentVisit(
+    request: GetAgentVisitRequest,
+    metadata?: Metadata,
+  ): Promise<GetAgentVisitResponse> | Observable<GetAgentVisitResponse> | GetAgentVisitResponse;
+
+  /**
+   * UC-NT-22 — R-VI-04. Marquer l’arrivée (visite). REST : POST
+   * /api/v1/cleaning/visits/{id}/arrive. Position GPS comparée à celle du lieu (alerte au
+   * superviseur au-delà de "arrivalAlertMeters", sans blocage). Latitude et longitude vont
+   * ensemble ; arrivée sans position possible. Action de terrain rejouable hors connexion
+   * (R-EX-05) : idempotency_key obligatoire, occurred_at facultatif. Permission :
+   * cleaning.visit.perform. Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  arriveAtVisit(
+    request: ArriveAtVisitRequest,
+    metadata?: Metadata,
+  ): Promise<ArriveAtVisitResponse> | Observable<ArriveAtVisitResponse> | ArriveAtVisitResponse;
+
+  /**
+   * UC-NT-22 — R-VI-04, partie 7.4. Saisir le constat. REST : PUT
+   * /api/v1/cleaning/visits/{id}/observations. Mesures réelles (version « constaté »), préremplies
+   * avec le déclaré ; l’agent ne voit que les valeurs. Accepté à partir de l’heure prévue incluse ;
+   * "occurredAt" entre l’arrivée et maintenant (sinon CLEANING_VALIDATION_FAILED, field occurredAt,
+   * reason out_of_range). Remplace le constat précédent tant que la visite n’est pas clôturée.
+   * Action de terrain rejouable hors connexion (R-EX-05) : idempotency_key obligatoire, occurred_at
+   * facultatif. Permission : cleaning.visit.perform. Erreurs : CLEANING_VISIT_NOT_FOUND,
+   * CLEANING_VISIT_TOO_EARLY, CLEANING_INVALID_TRANSITION, CLEANING_VALIDATION_FAILED.
+   */
+
+  saveVisitObservations(
+    request: SaveVisitObservationsRequest,
+    metadata?: Metadata,
+  ): Promise<SaveVisitObservationsResponse> | Observable<SaveVisitObservationsResponse> | SaveVisitObservationsResponse;
+
+  /**
+   * UC-NT-22 — R-VI-04. Ajouter une photo (visite). REST : POST
+   * /api/v1/cleaning/visits/{id}/photos. 10 photos au plus. Action de terrain rejouable hors
+   * connexion (R-EX-05) : idempotency_key obligatoire, occurred_at facultatif. Permission :
+   * cleaning.visit.perform. Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_PHOTO_LIMIT_REACHED, CLEANING_VALIDATION_FAILED.
+   */
+
+  addVisitPhoto(
+    request: AddVisitPhotoRequest,
+    metadata?: Metadata,
+  ): Promise<AddVisitPhotoResponse> | Observable<AddVisitPhotoResponse> | AddVisitPhotoResponse;
+
+  /**
+   * UC-NT-22 — R-VI-04. Clôturer la visite. REST : POST /api/v1/cleaning/visits/{id}/complete.
+   * Constat saisi exigé ; la demande passe « visite faite ». Accepté à partir de l’heure prévue
+   * incluse ; "occurredAt" entre l’arrivée et maintenant (sinon CLEANING_VALIDATION_FAILED, field
+   * occurredAt, reason out_of_range). Action de terrain rejouable hors connexion (R-EX-05) :
+   * idempotency_key obligatoire, occurred_at facultatif. Permission : cleaning.visit.perform.
+   * Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_VISIT_TOO_EARLY,
+   * CLEANING_VALIDATION_FAILED.
    */
 
   completeVisit(
@@ -3169,79 +7404,1358 @@ export interface CleaningAdminServiceController {
   ): Promise<CompleteVisitResponse> | Observable<CompleteVisitResponse> | CompleteVisitResponse;
 
   /**
-   * Sans lignes : préremplies depuis le calcul des mesures constatées s'il existe (ADR-037), sinon
-   * depuis celui de la demande.
+   * UC-NT-22 — R-VI-05. Client absent (visite). REST : POST /api/v1/cleaning/visits/{id}/missed.
+   * Avec une photo du lieu ; la visite est « manquée » ; de nouveaux frais sont créés et la demande
+   * attend leur paiement (R-VI-05). Action de terrain rejouable hors connexion (R-EX-05) :
+   * idempotency_key obligatoire, occurred_at facultatif. Permission : cleaning.visit.perform.
+   * Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_VISIT_TOO_EARLY.
    */
 
-  sendQuote(
-    request: SendQuoteRequest,
+  reportVisitMissed(
+    request: ReportVisitMissedRequest,
     metadata?: Metadata,
-  ): Promise<SendQuoteResponse> | Observable<SendQuoteResponse> | SendQuoteResponse;
+  ): Promise<ReportVisitMissedResponse> | Observable<ReportVisitMissedResponse> | ReportVisitMissedResponse;
 
   /**
-   * Mesures constatées et recalcul (ADR-037). Supervision, ou cleaning_agent affecté à la visite de
-   * la demande (sinon CLEANING_REQUEST_NOT_FOUND).
-   * Recalcul du prix avec d'autres réponses, sans rien enregistrer : commune de la demande, grille
-   * en vigueur (même calcul que la simulation).
+   * UC-NT-22 — R-EX-10. Retirer une photo (visite). REST : DELETE
+   * /api/v1/cleaning/visits/{id}/photos/{fileId}. Agent affecté, tant que la visite n’est ni
+   * réalisée ni annulée. La photo est supprimée chez file, puis sa référence ; l’action est tracée.
+   * Action de terrain rejouable hors connexion (R-EX-05) : idempotency_key obligatoire.
+   * Permission : cleaning.visit.perform. Erreurs : CLEANING_VISIT_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
    */
 
-  estimateRequestPrice(
-    request: EstimateRequestPriceRequest,
+  removeVisitPhoto(
+    request: RemoveVisitPhotoRequest,
     metadata?: Metadata,
-  ): Promise<EstimateRequestPriceResponse> | Observable<EstimateRequestPriceResponse> | EstimateRequestPriceResponse;
+  ): Promise<RemoveVisitPhotoResponse> | Observable<RemoveVisitPhotoResponse> | RemoveVisitPhotoResponse;
 
   /**
-   * Enregistre (ou remplace) les mesures après la visite, avant l'envoi du devis
-   * (CLEANING_MEASUREMENTS_LOCKED sinon) ; les réponses du client restent intactes.
+   * UC-NT-23 — R-EX-01, R-EX-04, R-EX-06. Séance (agent). REST : GET
+   * /api/v1/cleaning/agent/sessions/{id}. Seuls les agents affectés la voient ; agent désaffecté :
+   * CLEANING_SESSION_NOT_FOUND. Position et adresses visibles seulement pendant la séance en cours
+   * (R-EX-06). Permission : cleaning.session.perform. Erreurs : CLEANING_SESSION_NOT_FOUND.
    */
 
-  saveRequestMeasurements(
-    request: SaveRequestMeasurementsRequest,
+  getAgentSession(
+    request: GetAgentSessionRequest,
+    metadata?: Metadata,
+  ): Promise<GetAgentSessionResponse> | Observable<GetAgentSessionResponse> | GetAgentSessionResponse;
+
+  /**
+   * UC-NT-23 — partie 10, R-EQ-03. Marquer l’arrivée (séance). REST : POST
+   * /api/v1/cleaning/sessions/{id}/arrive. Chef d’équipe. Position comparée à celle du lieu (alerte
+   * au-delà de "arrivalAlertMeters", sans blocage) ; pas plus de "arrivalMaxAdvanceMinutes" avant
+   * l’heure prévue. Latitude et longitude vont ensemble ; arrivée sans position possible. Action de
+   * terrain rejouable hors connexion (R-EX-05) : idempotency_key obligatoire, occurred_at
+   * facultatif. Permission : cleaning.session.perform. Erreurs : CLEANING_SESSION_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_TEAM_LEAD_ONLY, CLEANING_SESSION_TOO_EARLY.
+   */
+
+  arriveAtSession(
+    request: ArriveAtSessionRequest,
+    metadata?: Metadata,
+  ): Promise<ArriveAtSessionResponse> | Observable<ArriveAtSessionResponse> | ArriveAtSessionResponse;
+
+  /**
+   * UC-NT-23 — partie 10, R-EQ-03, R-PP-04, R-PP-05. Démarrer la séance. REST : POST
+   * /api/v1/cleaning/sessions/{id}/start. Chef d’équipe, après au moins une photo « avant ». La
+   * séance passe « en cours », le client est prévenu. Refusé si une séance précédente est en retard
+   * de paiement, ou si la garantie de solde est activée et non tenue. Action de terrain rejouable
+   * hors connexion (R-EX-05) : idempotency_key obligatoire, occurred_at facultatif. Permission :
+   * cleaning.session.perform. Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_TEAM_LEAD_ONLY, CLEANING_PHOTOS_MISSING, CLEANING_SESSION_OVERDUE_PAYMENT,
+   * CLEANING_BALANCE_GUARANTEE_NOT_MET.
+   */
+
+  startSession(
+    request: StartSessionRequest,
+    metadata?: Metadata,
+  ): Promise<StartSessionResponse> | Observable<StartSessionResponse> | StartSessionResponse;
+
+  /**
+   * UC-NT-23 — partie 10, R-EX-05. Cocher la liste de contrôle. REST : PATCH
+   * /api/v1/cleaning/sessions/{id}/checklist. Cases cochées au fur et à mesure ; chaque case garde
+   * son heure réelle ("occurredAt"). Action de terrain rejouable hors connexion (R-EX-05) :
+   * idempotency_key obligatoire, occurred_at facultatif. Permission : cleaning.session.perform.
+   * Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_VALIDATION_FAILED.
+   */
+
+  updateSessionChecklist(
+    request: UpdateSessionChecklistRequest,
     metadata?: Metadata,
   ):
-    | Promise<SaveRequestMeasurementsResponse>
-    | Observable<SaveRequestMeasurementsResponse>
-    | SaveRequestMeasurementsResponse;
+    | Promise<UpdateSessionChecklistResponse>
+    | Observable<UpdateSessionChecklistResponse>
+    | UpdateSessionChecklistResponse;
 
   /**
-   * Demandes groupées (ADR-035). idempotency_key facultative : un second envoi avec la même clé
-   * rend le résultat du premier sans rien réécrire.
-   * Visite technique commune : toutes les demandes ouvertes du groupe, même heure, même agent, un
-   * seul événement cleaning.visit.scheduled (request_ids). Une demande exclue est détachée.
+   * UC-NT-23 — partie 10, R-EX-07. Ajouter une photo (séance). REST : POST
+   * /api/v1/cleaning/sessions/{id}/photos. Photos « avant » (avant le démarrage) et « après » : au
+   * moins 1, au plus 10 de chaque. Action de terrain rejouable hors connexion (R-EX-05) :
+   * idempotency_key obligatoire, occurred_at facultatif. Permission : cleaning.session.perform.
+   * Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_PHOTO_LIMIT_REACHED, CLEANING_VALIDATION_FAILED.
    */
 
-  scheduleGroupVisit(
-    request: ScheduleGroupVisitRequest,
+  addSessionPhoto(
+    request: AddSessionPhotoRequest,
     metadata?: Metadata,
-  ): Promise<ScheduleGroupVisitResponse> | Observable<ScheduleGroupVisitResponse> | ScheduleGroupVisitResponse;
+  ): Promise<AddSessionPhotoResponse> | Observable<AddSessionPhotoResponse> | AddSessionPhotoResponse;
 
   /**
-   * Compte rendu commun : complète toutes les visites encore planifiées de la visite de groupe
-   * (cleaning_agent : seulement s'il en est l'agent).
+   * UC-NT-24 — partie 10, R-EX-03. Signaler un incident. REST : POST
+   * /api/v1/cleaning/sessions/{id}/incident. Interrompt la séance (matériel, accès, sécurité,
+   * demande du client hors devis) ; le superviseur est alerté et décide : reprise, report ou
+   * annulation. Une demande hors devis donne lieu à un avenant, jamais à un paiement en main
+   * propre. Action de terrain rejouable hors connexion (R-EX-05) : idempotency_key obligatoire,
+   * occurred_at facultatif. Permission : cleaning.session.perform. Erreurs :
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION.
    */
 
-  completeGroupVisit(
-    request: CompleteGroupVisitRequest,
+  reportSessionIncident(
+    request: ReportSessionIncidentRequest,
     metadata?: Metadata,
-  ): Promise<CompleteGroupVisitResponse> | Observable<CompleteGroupVisitResponse> | CompleteGroupVisitResponse;
-
-  /** Refus du groupe : demandes encore refusables ; les autres sont ignorées. */
-
-  rejectRequestGroup(
-    request: RejectRequestGroupRequest,
-    metadata?: Metadata,
-  ): Promise<RejectRequestGroupResponse> | Observable<RejectRequestGroupResponse> | RejectRequestGroupResponse;
-
-  /** Devis du groupe envoyés ensemble, chiffrés séparément, avec les mêmes créneaux proposés. */
-
-  sendGroupQuotes(
-    request: SendGroupQuotesRequest,
-    metadata?: Metadata,
-  ): Promise<SendGroupQuotesResponse> | Observable<SendGroupQuotesResponse> | SendGroupQuotesResponse;
+  ): Promise<ReportSessionIncidentResponse> | Observable<ReportSessionIncidentResponse> | ReportSessionIncidentResponse;
 
   /**
-   * Correction de la position d'une demande (supervision, ou agent de la visite planifiée) :
-   * commune recalculée, appliquée à tout le groupe et aux missions non terminées.
+   * UC-NT-23 — partie 10, R-EQ-03, R-PP-01. Clôturer la séance. REST : POST
+   * /api/v1/cleaning/sessions/{id}/complete. Chef d’équipe. Refusée tant que la liste n’est pas
+   * complète et sans photo « après ». La séance passe « réalisée » ; son prix devient dû (débit
+   * automatique du wallet, particulier). Action de terrain rejouable hors connexion (R-EX-05) :
+   * idempotency_key obligatoire, occurred_at facultatif. Permission : cleaning.session.perform.
+   * Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_TEAM_LEAD_ONLY,
+   * CLEANING_CHECKLIST_INCOMPLETE, CLEANING_PHOTOS_MISSING.
+   */
+
+  completeSession(
+    request: CompleteSessionRequest,
+    metadata?: Metadata,
+  ): Promise<CompleteSessionResponse> | Observable<CompleteSessionResponse> | CompleteSessionResponse;
+
+  /**
+   * UC-NT-24 — R-EX-02. Client absent (séance). REST : POST /api/v1/cleaning/sessions/{id}/missed.
+   * Après "customerWaitMinutes" d’attente (30 min par défaut) et un appel tracé, avec une photo du
+   * lieu. Séance manquée par absence du client : 50 % du prix dû. Action de terrain rejouable hors
+   * connexion (R-EX-05) : idempotency_key obligatoire, occurred_at facultatif. Permission :
+   * cleaning.session.perform. Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_TEAM_LEAD_ONLY, CLEANING_WAIT_TIME_NOT_ELAPSED.
+   */
+
+  reportSessionMissed(
+    request: ReportSessionMissedRequest,
+    metadata?: Metadata,
+  ): Promise<ReportSessionMissedResponse> | Observable<ReportSessionMissedResponse> | ReportSessionMissedResponse;
+
+  /**
+   * UC-NT-23 — R-EX-10. Retirer une photo (séance). REST : DELETE
+   * /api/v1/cleaning/sessions/{id}/photos/{fileId}. Agent affecté, tant que la séance n’est ni
+   * réalisée ni annulée. La photo est supprimée chez file, puis sa référence ; l’action est tracée.
+   * Action de terrain rejouable hors connexion (R-EX-05) : idempotency_key obligatoire.
+   * Permission : cleaning.session.perform. Erreurs : CLEANING_SESSION_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  removeSessionPhoto(
+    request: RemoveSessionPhotoRequest,
+    metadata?: Metadata,
+  ): Promise<RemoveSessionPhotoResponse> | Observable<RemoveSessionPhotoResponse> | RemoveSessionPhotoResponse;
+}
+
+export function AgentServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = [
+      "submitAgentApplication",
+      "getMyAgentProfile",
+      "getMyActivity",
+      "getMyAvailability",
+      "setMyAvailability",
+      "declareMyUnavailability",
+      "removeMyUnavailability",
+      "listMyAssignments",
+      "acceptAssignment",
+      "declineAssignment",
+      "getAgentVisit",
+      "arriveAtVisit",
+      "saveVisitObservations",
+      "addVisitPhoto",
+      "completeVisit",
+      "reportVisitMissed",
+      "removeVisitPhoto",
+      "getAgentSession",
+      "arriveAtSession",
+      "startSession",
+      "updateSessionChecklist",
+      "addSessionPhoto",
+      "reportSessionIncident",
+      "completeSession",
+      "reportSessionMissed",
+      "removeSessionPhoto",
+    ];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("AgentService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("AgentService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const AGENT_SERVICE_NAME = "AgentService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : catalogue, tarifs, compétences, jours fériés, zones (UC-NT-25 à 29).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface CatalogAdminServiceClient {
+  /**
+   * UC-NT-25 — partie 4. Catégorie de lieu (liste). REST : GET
+   * /api/v1/admin/cleaning/place-categories. Actifs et désactivés. Permission :
+   * cleaning.catalog.read.
+   */
+
+  listPlaceCategories(
+    request: ListPlaceCategoriesRequest,
+    metadata?: Metadata,
+  ): Observable<ListPlaceCategoriesResponse>;
+
+  /**
+   * UC-NT-25 — partie 4. Catégorie de lieu : créer. REST : POST
+   * /api/v1/admin/cleaning/place-categories. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.catalog.manage. Erreurs : CLEANING_CODE_ALREADY_USED.
+   */
+
+  createPlaceCategory(
+    request: CreatePlaceCategoryRequest,
+    metadata?: Metadata,
+  ): Observable<CreatePlaceCategoryResponse>;
+
+  /**
+   * UC-NT-25 — partie 4. Catégorie de lieu : détail. REST : GET
+   * /api/v1/admin/cleaning/place-categories/{id}. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_PLACE_CATEGORY_NOT_FOUND.
+   */
+
+  getPlaceCategory(request: GetPlaceCategoryRequest, metadata?: Metadata): Observable<GetPlaceCategoryResponse>;
+
+  /**
+   * UC-NT-25 — partie 4, R-CA-06. Catégorie de lieu : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/place-categories/{id}. Champs absents inchangés. Jamais de suppression :
+   * "active: false" désactive (disparaît du portail, les dossiers gardent un instantané des
+   * libellés). Permission : cleaning.catalog.manage. Erreurs : CLEANING_PLACE_CATEGORY_NOT_FOUND.
+   */
+
+  updatePlaceCategory(
+    request: UpdatePlaceCategoryRequest,
+    metadata?: Metadata,
+  ): Observable<UpdatePlaceCategoryResponse>;
+
+  /**
+   * UC-NT-25 — R-CA-01, R-CA-05, R-FV-01. Lieu (liste). REST : GET
+   * /api/v1/admin/cleaning/place-types. Actifs et désactivés. Permission : cleaning.catalog.read.
+   */
+
+  listPlaceTypes(request: ListPlaceTypesRequest, metadata?: Metadata): Observable<ListPlaceTypesResponse>;
+
+  /**
+   * UC-NT-25 — R-CA-01, R-CA-05, R-FV-01. Lieu : créer. REST : POST
+   * /api/v1/admin/cleaning/place-types. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.catalog.manage. Erreurs : CLEANING_CODE_ALREADY_USED,
+   * CLEANING_PLACE_CATEGORY_NOT_FOUND, CLEANING_PARAMETER_NOT_FOUND, CLEANING_VALIDATION_FAILED.
+   */
+
+  createPlaceType(request: CreatePlaceTypeRequest, metadata?: Metadata): Observable<CreatePlaceTypeResponse>;
+
+  /**
+   * UC-NT-25 — R-CA-01, R-CA-05, R-FV-01. Lieu : détail. REST : GET
+   * /api/v1/admin/cleaning/place-types/{id}. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_PLACE_TYPE_NOT_FOUND.
+   */
+
+  getPlaceType(request: GetPlaceTypeRequest, metadata?: Metadata): Observable<GetPlaceTypeResponse>;
+
+  /**
+   * UC-NT-25 — R-CA-01, R-CA-05, R-FV-01, R-CA-06. Lieu : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/place-types/{id}. Champs absents inchangés. Jamais de suppression :
+   * "active: false" désactive (disparaît du portail, les dossiers gardent un instantané des
+   * libellés). Permission : cleaning.catalog.manage. Erreurs : CLEANING_PLACE_TYPE_NOT_FOUND,
+   * CLEANING_PLACE_CATEGORY_NOT_FOUND, CLEANING_PARAMETER_NOT_FOUND, CLEANING_VALIDATION_FAILED.
+   */
+
+  updatePlaceType(request: UpdatePlaceTypeRequest, metadata?: Metadata): Observable<UpdatePlaceTypeResponse>;
+
+  /**
+   * UC-NT-26 — R-CA-04, R-CA-09. Type de nettoyage (liste). REST : GET
+   * /api/v1/admin/cleaning/cleaning-types. Actifs et désactivés. Permission :
+   * cleaning.catalog.read.
+   */
+
+  listCleaningTypes(request: ListCleaningTypesRequest, metadata?: Metadata): Observable<ListCleaningTypesResponse>;
+
+  /**
+   * UC-NT-26 — R-CA-04, R-CA-09. Type de nettoyage : créer. REST : POST
+   * /api/v1/admin/cleaning/cleaning-types. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.catalog.manage. Erreurs : CLEANING_CODE_ALREADY_USED,
+   * CLEANING_SKILL_NOT_FOUND, CLEANING_VALIDATION_FAILED.
+   */
+
+  createCleaningType(request: CreateCleaningTypeRequest, metadata?: Metadata): Observable<CreateCleaningTypeResponse>;
+
+  /**
+   * UC-NT-26 — R-CA-04, R-CA-09. Type de nettoyage : détail. REST : GET
+   * /api/v1/admin/cleaning/cleaning-types/{id}. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_TYPE_NOT_FOUND.
+   */
+
+  getCleaningType(request: GetCleaningTypeRequest, metadata?: Metadata): Observable<GetCleaningTypeResponse>;
+
+  /**
+   * UC-NT-26 — R-CA-04, R-CA-09, R-CA-06. Type de nettoyage : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/cleaning-types/{id}. Champs absents inchangés. Jamais de suppression :
+   * "active: false" désactive (disparaît du portail, les dossiers gardent un instantané des
+   * libellés). Permission : cleaning.catalog.manage. Erreurs : CLEANING_TYPE_NOT_FOUND,
+   * CLEANING_SKILL_NOT_FOUND, CLEANING_VALIDATION_FAILED.
+   */
+
+  updateCleaningType(request: UpdateCleaningTypeRequest, metadata?: Metadata): Observable<UpdateCleaningTypeResponse>;
+
+  /**
+   * UC-NT-27 — R-CA-01, R-CA-02. Paramètre (liste). REST : GET /api/v1/admin/cleaning/parameters.
+   * Actifs et désactivés. Permission : cleaning.catalog.read.
+   */
+
+  listParameters(request: ListParametersRequest, metadata?: Metadata): Observable<ListParametersResponse>;
+
+  /**
+   * UC-NT-27 — R-CA-01, R-CA-02. Paramètre : créer. REST : POST /api/v1/admin/cleaning/parameters.
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.catalog.manage. Erreurs :
+   * CLEANING_CODE_ALREADY_USED, CLEANING_VALIDATION_FAILED.
+   */
+
+  createParameter(request: CreateParameterRequest, metadata?: Metadata): Observable<CreateParameterResponse>;
+
+  /**
+   * UC-NT-27 — R-CA-01, R-CA-02. Paramètre : détail. REST : GET
+   * /api/v1/admin/cleaning/parameters/{id}. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_PARAMETER_NOT_FOUND.
+   */
+
+  getParameter(request: GetParameterRequest, metadata?: Metadata): Observable<GetParameterResponse>;
+
+  /**
+   * UC-NT-27 — R-CA-01, R-CA-02, R-CA-06. Paramètre : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/parameters/{id}. Champs absents inchangés. Jamais de suppression :
+   * "active: false" désactive (disparaît du portail, les dossiers gardent un instantané des
+   * libellés). La nature ne se modifie pas. Un paramètre utilisé par un tarif publié ou un lieu
+   * actif ne peut être ni resserré, ni privé d’une valeur de choix, ni désactivé
+   * ("CLEANING_PARAMETER_IN_USE", R-CA-11) ; une valeur de choix se désactive ("active: false") au
+   * lieu d’être retirée. Permission : cleaning.catalog.manage. Erreurs :
+   * CLEANING_PARAMETER_NOT_FOUND, CLEANING_VALIDATION_FAILED, CLEANING_PARAMETER_IN_USE.
+   */
+
+  updateParameter(request: UpdateParameterRequest, metadata?: Metadata): Observable<UpdateParameterResponse>;
+
+  /**
+   * UC-NT-28 — R-CA-03, R-CA-10. Offre (liste). REST : GET /api/v1/admin/cleaning/offers. Actifs et
+   * désactivés. Permission : cleaning.catalog.read.
+   */
+
+  listOffers(request: ListOffersRequest, metadata?: Metadata): Observable<ListOffersResponse>;
+
+  /**
+   * UC-NT-28 — R-CA-03, R-CA-10. Offre : créer. REST : POST /api/v1/admin/cleaning/offers. Une
+   * seule offre par lieu et type ("CLEANING_CODE_ALREADY_USED"). Sans tarif publié, l’offre reste
+   * « sur devis ». Règle d’équipe : tranches de superficie contiguës, la première à 0, la dernière
+   * ouverte (sinon "CLEANING_VALIDATION_FAILED", field teamRule, reason team_rule_gap) ; vide : 1
+   * agent et durée de référence du type (R-CA-13). Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.catalog.manage. Erreurs : CLEANING_PLACE_TYPE_NOT_FOUND,
+   * CLEANING_TYPE_NOT_FOUND, CLEANING_PARAMETER_NOT_FOUND, CLEANING_CODE_ALREADY_USED,
+   * CLEANING_VALIDATION_FAILED.
+   */
+
+  createOffer(request: CreateOfferRequest, metadata?: Metadata): Observable<CreateOfferResponse>;
+
+  /**
+   * UC-NT-28 — R-CA-03, R-CA-10. Offre : détail. REST : GET /api/v1/admin/cleaning/offers/{id}.
+   * Permission : cleaning.catalog.read. Erreurs : CLEANING_OFFER_NOT_FOUND.
+   */
+
+  getOffer(request: GetOfferRequest, metadata?: Metadata): Observable<GetOfferResponse>;
+
+  /**
+   * UC-NT-28 — R-CA-03, R-CA-10, R-CA-06. Offre : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/offers/{id}. Champs absents inchangés. Jamais de suppression : "active:
+   * false" désactive (disparaît du portail, les dossiers gardent un instantané des libellés). Le
+   * lieu et le type d’une offre ne se modifient pas : désactiver l’offre et en créer une autre.
+   * Permission : cleaning.catalog.manage. Erreurs : CLEANING_OFFER_NOT_FOUND,
+   * CLEANING_PARAMETER_NOT_FOUND, CLEANING_VALIDATION_FAILED.
+   */
+
+  updateOffer(request: UpdateOfferRequest, metadata?: Metadata): Observable<UpdateOfferResponse>;
+
+  /**
+   * UC-NT-28 — R-CA-07. Versions de tarif d’une offre. REST : GET
+   * /api/v1/admin/cleaning/offers/{id}/tariffs. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_OFFER_NOT_FOUND.
+   */
+
+  listTariffs(request: ListTariffsRequest, metadata?: Metadata): Observable<ListTariffsResponse>;
+
+  /**
+   * UC-NT-28 — R-CA-07, R-CA-08. Préparer un tarif (brouillon). REST : POST
+   * /api/v1/admin/cleaning/offers/{id}/tariffs. Crée la version suivante en brouillon. Un brouillon
+   * existant est remplacé par "PUT". Toute modification d’un tarif publié passe par une nouvelle
+   * version. Idempotent par idempotency_key (obligatoire). Permission : cleaning.catalog.manage.
+   * Erreurs : CLEANING_OFFER_NOT_FOUND, CLEANING_PARAMETER_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_TARIFF_INCOMPLETE, CLEANING_VALIDATION_FAILED.
+   */
+
+  createTariffDraft(request: CreateTariffDraftRequest, metadata?: Metadata): Observable<CreateTariffDraftResponse>;
+
+  /**
+   * UC-NT-28 — R-CA-08. Modifier un brouillon de tarif. REST : PUT
+   * /api/v1/admin/cleaning/offers/{id}/tariffs/{version}. Brouillon seulement. Permission :
+   * cleaning.catalog.manage. Erreurs : CLEANING_TARIFF_NOT_FOUND, CLEANING_PARAMETER_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_TARIFF_INCOMPLETE, CLEANING_VALIDATION_FAILED.
+   */
+
+  updateTariffDraft(request: UpdateTariffDraftRequest, metadata?: Metadata): Observable<UpdateTariffDraftResponse>;
+
+  /**
+   * UC-NT-28 — R-CA-07, R-CA-08. Publier un tarif. REST : POST
+   * /api/v1/admin/cleaning/offers/{id}/tariffs/{version}/publish. Tranches contiguës, sans
+   * chevauchement ni trou ; la version publiée précédente est archivée. Une demande garde la
+   * version de sa création ; un devis est figé à son envoi. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.catalog.manage. Erreurs : CLEANING_TARIFF_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_TARIFF_INCOMPLETE.
+   */
+
+  publishTariff(request: PublishTariffRequest, metadata?: Metadata): Observable<PublishTariffResponse>;
+
+  /**
+   * UC-NT-28 — R-CA-08, partie 5. Tester un tarif dans le simulateur. REST : POST
+   * /api/v1/admin/cleaning/simulations. Même calcul que le simulateur public, avec les brouillons
+   * demandés à la place des versions publiées. Accepte les éléments inactifs (R-CA-08) ; un calcul
+   * de test n’est jamais enregistré. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_PLACE_TYPE_NOT_FOUND, CLEANING_TARIFF_NOT_FOUND, CLEANING_OFFER_NOT_AVAILABLE,
+   * CLEANING_VALIDATION_FAILED.
+   */
+
+  simulateWithDrafts(request: SimulateWithDraftsRequest, metadata?: Metadata): Observable<SimulateWithDraftsResponse>;
+
+  /**
+   * UC-NT-26 — R-CA-09. Compétences. REST : GET /api/v1/admin/cleaning/skills. Permission :
+   * cleaning.catalog.read.
+   */
+
+  listSkills(request: ListSkillsRequest, metadata?: Metadata): Observable<ListSkillsResponse>;
+
+  /**
+   * UC-NT-26 — R-CA-09. Compétence : créer. REST : POST /api/v1/admin/cleaning/skills. Idempotent
+   * par idempotency_key (obligatoire). Permission : cleaning.catalog.manage. Erreurs :
+   * CLEANING_CODE_ALREADY_USED.
+   */
+
+  createSkill(request: CreateSkillRequest, metadata?: Metadata): Observable<CreateSkillResponse>;
+
+  /**
+   * UC-NT-26 — R-CA-06, R-CA-09. Compétence : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/skills/{id}. Jamais de suppression. Permission :
+   * cleaning.catalog.manage. Erreurs : CLEANING_SKILL_NOT_FOUND.
+   */
+
+  updateSkill(request: UpdateSkillRequest, metadata?: Metadata): Observable<UpdateSkillResponse>;
+
+  /**
+   * UC-NT-25 — R-PG-02. Jours fériés. REST : GET /api/v1/admin/cleaning/holidays. Permission :
+   * cleaning.catalog.read.
+   */
+
+  listHolidays(request: ListHolidaysRequest, metadata?: Metadata): Observable<ListHolidaysResponse>;
+
+  /**
+   * UC-NT-25 — R-PG-02. Jour férié : ajouter. REST : POST /api/v1/admin/cleaning/holidays. Proposé
+   * à l’exclusion des programmes ; les séances déjà créées ne changent pas. Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.catalog.manage. Erreurs :
+   * CLEANING_CODE_ALREADY_USED.
+   */
+
+  createHoliday(request: CreateHolidayRequest, metadata?: Metadata): Observable<CreateHolidayResponse>;
+
+  /**
+   * UC-NT-25 — R-PG-02. Jour férié : retirer. REST : DELETE /api/v1/admin/cleaning/holidays/{id}.
+   * Les séances déjà créées ne changent pas. Permission : cleaning.catalog.manage. Erreurs :
+   * CLEANING_HOLIDAY_NOT_FOUND.
+   */
+
+  deleteHoliday(request: DeleteHolidayRequest, metadata?: Metadata): Observable<DeleteHolidayResponse>;
+
+  /**
+   * UC-NT-29 — partie 4, R-ZN-01. Zones desservies. REST : GET /api/v1/admin/cleaning/zones.
+   * Actives et désactivées. Permission : cleaning.catalog.read.
+   */
+
+  listZones(request: ListZonesRequest, metadata?: Metadata): Observable<ListZonesResponse>;
+
+  /**
+   * UC-NT-29 — partie 4, R-FV-01, R-PL-05, R-ZN-03. Zone : ouvrir une commune. REST : POST
+   * /api/v1/admin/cleaning/zones. La commune est vérifiée auprès de geo : clé inconnue refusée
+   * ("CLEANING_VALIDATION_FAILED", reason unknown_commune) ; geo indisponible : refus, jamais
+   * d’enregistrement sans contrôle. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.zone.manage. Erreurs : CLEANING_CODE_ALREADY_USED, CLEANING_VALIDATION_FAILED,
+   * CLEANING_GEO_UNAVAILABLE.
+   */
+
+  createZone(request: CreateZoneRequest, metadata?: Metadata): Observable<CreateZoneResponse>;
+
+  /**
+   * UC-NT-29 — partie 4, R-FV-01. Zone : modifier. REST : PATCH /api/v1/admin/cleaning/zones/{id}.
+   * Champs absents inchangés ; un nouveau coefficient s’applique aux nouvelles demandes.
+   * Permission : cleaning.zone.manage. Erreurs : CLEANING_ZONE_NOT_FOUND.
+   */
+
+  updateZone(request: UpdateZoneRequest, metadata?: Metadata): Observable<UpdateZoneResponse>;
+
+  /**
+   * UC-NT-29 — partie 4. Zone : activer ou désactiver. REST : POST
+   * /api/v1/admin/cleaning/zones/{id}/activation. Désactiver une zone qui a des dossiers en cours
+   * demande "confirm: true" ; les dossiers en cours vont à leur terme, aucune nouvelle demande
+   * n’est acceptée. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.zone.manage. Erreurs : CLEANING_ZONE_NOT_FOUND, CLEANING_ZONE_HAS_ACTIVITY.
+   */
+
+  setZoneActive(request: SetZoneActiveRequest, metadata?: Metadata): Observable<SetZoneActiveResponse>;
+
+  /**
+   * UC-NT-29 — R-ZN-03. Communes du référentiel. REST : GET /api/v1/admin/cleaning/communes. Relaie
+   * geo.ListCommunes et indique, pour chaque commune, si elle a une zone et si celle-ci est active.
+   * Permission : cleaning.catalog.read. Erreurs : CLEANING_GEO_UNAVAILABLE.
+   */
+
+  listCommunes(request: ListCommunesRequest, metadata?: Metadata): Observable<ListCommunesResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : catalogue, tarifs, compétences, jours fériés, zones (UC-NT-25 à 29).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface CatalogAdminServiceController {
+  /**
+   * UC-NT-25 — partie 4. Catégorie de lieu (liste). REST : GET
+   * /api/v1/admin/cleaning/place-categories. Actifs et désactivés. Permission :
+   * cleaning.catalog.read.
+   */
+
+  listPlaceCategories(
+    request: ListPlaceCategoriesRequest,
+    metadata?: Metadata,
+  ): Promise<ListPlaceCategoriesResponse> | Observable<ListPlaceCategoriesResponse> | ListPlaceCategoriesResponse;
+
+  /**
+   * UC-NT-25 — partie 4. Catégorie de lieu : créer. REST : POST
+   * /api/v1/admin/cleaning/place-categories. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.catalog.manage. Erreurs : CLEANING_CODE_ALREADY_USED.
+   */
+
+  createPlaceCategory(
+    request: CreatePlaceCategoryRequest,
+    metadata?: Metadata,
+  ): Promise<CreatePlaceCategoryResponse> | Observable<CreatePlaceCategoryResponse> | CreatePlaceCategoryResponse;
+
+  /**
+   * UC-NT-25 — partie 4. Catégorie de lieu : détail. REST : GET
+   * /api/v1/admin/cleaning/place-categories/{id}. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_PLACE_CATEGORY_NOT_FOUND.
+   */
+
+  getPlaceCategory(
+    request: GetPlaceCategoryRequest,
+    metadata?: Metadata,
+  ): Promise<GetPlaceCategoryResponse> | Observable<GetPlaceCategoryResponse> | GetPlaceCategoryResponse;
+
+  /**
+   * UC-NT-25 — partie 4, R-CA-06. Catégorie de lieu : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/place-categories/{id}. Champs absents inchangés. Jamais de suppression :
+   * "active: false" désactive (disparaît du portail, les dossiers gardent un instantané des
+   * libellés). Permission : cleaning.catalog.manage. Erreurs : CLEANING_PLACE_CATEGORY_NOT_FOUND.
+   */
+
+  updatePlaceCategory(
+    request: UpdatePlaceCategoryRequest,
+    metadata?: Metadata,
+  ): Promise<UpdatePlaceCategoryResponse> | Observable<UpdatePlaceCategoryResponse> | UpdatePlaceCategoryResponse;
+
+  /**
+   * UC-NT-25 — R-CA-01, R-CA-05, R-FV-01. Lieu (liste). REST : GET
+   * /api/v1/admin/cleaning/place-types. Actifs et désactivés. Permission : cleaning.catalog.read.
+   */
+
+  listPlaceTypes(
+    request: ListPlaceTypesRequest,
+    metadata?: Metadata,
+  ): Promise<ListPlaceTypesResponse> | Observable<ListPlaceTypesResponse> | ListPlaceTypesResponse;
+
+  /**
+   * UC-NT-25 — R-CA-01, R-CA-05, R-FV-01. Lieu : créer. REST : POST
+   * /api/v1/admin/cleaning/place-types. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.catalog.manage. Erreurs : CLEANING_CODE_ALREADY_USED,
+   * CLEANING_PLACE_CATEGORY_NOT_FOUND, CLEANING_PARAMETER_NOT_FOUND, CLEANING_VALIDATION_FAILED.
+   */
+
+  createPlaceType(
+    request: CreatePlaceTypeRequest,
+    metadata?: Metadata,
+  ): Promise<CreatePlaceTypeResponse> | Observable<CreatePlaceTypeResponse> | CreatePlaceTypeResponse;
+
+  /**
+   * UC-NT-25 — R-CA-01, R-CA-05, R-FV-01. Lieu : détail. REST : GET
+   * /api/v1/admin/cleaning/place-types/{id}. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_PLACE_TYPE_NOT_FOUND.
+   */
+
+  getPlaceType(
+    request: GetPlaceTypeRequest,
+    metadata?: Metadata,
+  ): Promise<GetPlaceTypeResponse> | Observable<GetPlaceTypeResponse> | GetPlaceTypeResponse;
+
+  /**
+   * UC-NT-25 — R-CA-01, R-CA-05, R-FV-01, R-CA-06. Lieu : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/place-types/{id}. Champs absents inchangés. Jamais de suppression :
+   * "active: false" désactive (disparaît du portail, les dossiers gardent un instantané des
+   * libellés). Permission : cleaning.catalog.manage. Erreurs : CLEANING_PLACE_TYPE_NOT_FOUND,
+   * CLEANING_PLACE_CATEGORY_NOT_FOUND, CLEANING_PARAMETER_NOT_FOUND, CLEANING_VALIDATION_FAILED.
+   */
+
+  updatePlaceType(
+    request: UpdatePlaceTypeRequest,
+    metadata?: Metadata,
+  ): Promise<UpdatePlaceTypeResponse> | Observable<UpdatePlaceTypeResponse> | UpdatePlaceTypeResponse;
+
+  /**
+   * UC-NT-26 — R-CA-04, R-CA-09. Type de nettoyage (liste). REST : GET
+   * /api/v1/admin/cleaning/cleaning-types. Actifs et désactivés. Permission :
+   * cleaning.catalog.read.
+   */
+
+  listCleaningTypes(
+    request: ListCleaningTypesRequest,
+    metadata?: Metadata,
+  ): Promise<ListCleaningTypesResponse> | Observable<ListCleaningTypesResponse> | ListCleaningTypesResponse;
+
+  /**
+   * UC-NT-26 — R-CA-04, R-CA-09. Type de nettoyage : créer. REST : POST
+   * /api/v1/admin/cleaning/cleaning-types. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.catalog.manage. Erreurs : CLEANING_CODE_ALREADY_USED,
+   * CLEANING_SKILL_NOT_FOUND, CLEANING_VALIDATION_FAILED.
+   */
+
+  createCleaningType(
+    request: CreateCleaningTypeRequest,
+    metadata?: Metadata,
+  ): Promise<CreateCleaningTypeResponse> | Observable<CreateCleaningTypeResponse> | CreateCleaningTypeResponse;
+
+  /**
+   * UC-NT-26 — R-CA-04, R-CA-09. Type de nettoyage : détail. REST : GET
+   * /api/v1/admin/cleaning/cleaning-types/{id}. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_TYPE_NOT_FOUND.
+   */
+
+  getCleaningType(
+    request: GetCleaningTypeRequest,
+    metadata?: Metadata,
+  ): Promise<GetCleaningTypeResponse> | Observable<GetCleaningTypeResponse> | GetCleaningTypeResponse;
+
+  /**
+   * UC-NT-26 — R-CA-04, R-CA-09, R-CA-06. Type de nettoyage : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/cleaning-types/{id}. Champs absents inchangés. Jamais de suppression :
+   * "active: false" désactive (disparaît du portail, les dossiers gardent un instantané des
+   * libellés). Permission : cleaning.catalog.manage. Erreurs : CLEANING_TYPE_NOT_FOUND,
+   * CLEANING_SKILL_NOT_FOUND, CLEANING_VALIDATION_FAILED.
+   */
+
+  updateCleaningType(
+    request: UpdateCleaningTypeRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateCleaningTypeResponse> | Observable<UpdateCleaningTypeResponse> | UpdateCleaningTypeResponse;
+
+  /**
+   * UC-NT-27 — R-CA-01, R-CA-02. Paramètre (liste). REST : GET /api/v1/admin/cleaning/parameters.
+   * Actifs et désactivés. Permission : cleaning.catalog.read.
+   */
+
+  listParameters(
+    request: ListParametersRequest,
+    metadata?: Metadata,
+  ): Promise<ListParametersResponse> | Observable<ListParametersResponse> | ListParametersResponse;
+
+  /**
+   * UC-NT-27 — R-CA-01, R-CA-02. Paramètre : créer. REST : POST /api/v1/admin/cleaning/parameters.
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.catalog.manage. Erreurs :
+   * CLEANING_CODE_ALREADY_USED, CLEANING_VALIDATION_FAILED.
+   */
+
+  createParameter(
+    request: CreateParameterRequest,
+    metadata?: Metadata,
+  ): Promise<CreateParameterResponse> | Observable<CreateParameterResponse> | CreateParameterResponse;
+
+  /**
+   * UC-NT-27 — R-CA-01, R-CA-02. Paramètre : détail. REST : GET
+   * /api/v1/admin/cleaning/parameters/{id}. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_PARAMETER_NOT_FOUND.
+   */
+
+  getParameter(
+    request: GetParameterRequest,
+    metadata?: Metadata,
+  ): Promise<GetParameterResponse> | Observable<GetParameterResponse> | GetParameterResponse;
+
+  /**
+   * UC-NT-27 — R-CA-01, R-CA-02, R-CA-06. Paramètre : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/parameters/{id}. Champs absents inchangés. Jamais de suppression :
+   * "active: false" désactive (disparaît du portail, les dossiers gardent un instantané des
+   * libellés). La nature ne se modifie pas. Un paramètre utilisé par un tarif publié ou un lieu
+   * actif ne peut être ni resserré, ni privé d’une valeur de choix, ni désactivé
+   * ("CLEANING_PARAMETER_IN_USE", R-CA-11) ; une valeur de choix se désactive ("active: false") au
+   * lieu d’être retirée. Permission : cleaning.catalog.manage. Erreurs :
+   * CLEANING_PARAMETER_NOT_FOUND, CLEANING_VALIDATION_FAILED, CLEANING_PARAMETER_IN_USE.
+   */
+
+  updateParameter(
+    request: UpdateParameterRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateParameterResponse> | Observable<UpdateParameterResponse> | UpdateParameterResponse;
+
+  /**
+   * UC-NT-28 — R-CA-03, R-CA-10. Offre (liste). REST : GET /api/v1/admin/cleaning/offers. Actifs et
+   * désactivés. Permission : cleaning.catalog.read.
+   */
+
+  listOffers(
+    request: ListOffersRequest,
+    metadata?: Metadata,
+  ): Promise<ListOffersResponse> | Observable<ListOffersResponse> | ListOffersResponse;
+
+  /**
+   * UC-NT-28 — R-CA-03, R-CA-10. Offre : créer. REST : POST /api/v1/admin/cleaning/offers. Une
+   * seule offre par lieu et type ("CLEANING_CODE_ALREADY_USED"). Sans tarif publié, l’offre reste
+   * « sur devis ». Règle d’équipe : tranches de superficie contiguës, la première à 0, la dernière
+   * ouverte (sinon "CLEANING_VALIDATION_FAILED", field teamRule, reason team_rule_gap) ; vide : 1
+   * agent et durée de référence du type (R-CA-13). Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.catalog.manage. Erreurs : CLEANING_PLACE_TYPE_NOT_FOUND,
+   * CLEANING_TYPE_NOT_FOUND, CLEANING_PARAMETER_NOT_FOUND, CLEANING_CODE_ALREADY_USED,
+   * CLEANING_VALIDATION_FAILED.
+   */
+
+  createOffer(
+    request: CreateOfferRequest,
+    metadata?: Metadata,
+  ): Promise<CreateOfferResponse> | Observable<CreateOfferResponse> | CreateOfferResponse;
+
+  /**
+   * UC-NT-28 — R-CA-03, R-CA-10. Offre : détail. REST : GET /api/v1/admin/cleaning/offers/{id}.
+   * Permission : cleaning.catalog.read. Erreurs : CLEANING_OFFER_NOT_FOUND.
+   */
+
+  getOffer(
+    request: GetOfferRequest,
+    metadata?: Metadata,
+  ): Promise<GetOfferResponse> | Observable<GetOfferResponse> | GetOfferResponse;
+
+  /**
+   * UC-NT-28 — R-CA-03, R-CA-10, R-CA-06. Offre : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/offers/{id}. Champs absents inchangés. Jamais de suppression : "active:
+   * false" désactive (disparaît du portail, les dossiers gardent un instantané des libellés). Le
+   * lieu et le type d’une offre ne se modifient pas : désactiver l’offre et en créer une autre.
+   * Permission : cleaning.catalog.manage. Erreurs : CLEANING_OFFER_NOT_FOUND,
+   * CLEANING_PARAMETER_NOT_FOUND, CLEANING_VALIDATION_FAILED.
+   */
+
+  updateOffer(
+    request: UpdateOfferRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateOfferResponse> | Observable<UpdateOfferResponse> | UpdateOfferResponse;
+
+  /**
+   * UC-NT-28 — R-CA-07. Versions de tarif d’une offre. REST : GET
+   * /api/v1/admin/cleaning/offers/{id}/tariffs. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_OFFER_NOT_FOUND.
+   */
+
+  listTariffs(
+    request: ListTariffsRequest,
+    metadata?: Metadata,
+  ): Promise<ListTariffsResponse> | Observable<ListTariffsResponse> | ListTariffsResponse;
+
+  /**
+   * UC-NT-28 — R-CA-07, R-CA-08. Préparer un tarif (brouillon). REST : POST
+   * /api/v1/admin/cleaning/offers/{id}/tariffs. Crée la version suivante en brouillon. Un brouillon
+   * existant est remplacé par "PUT". Toute modification d’un tarif publié passe par une nouvelle
+   * version. Idempotent par idempotency_key (obligatoire). Permission : cleaning.catalog.manage.
+   * Erreurs : CLEANING_OFFER_NOT_FOUND, CLEANING_PARAMETER_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_TARIFF_INCOMPLETE, CLEANING_VALIDATION_FAILED.
+   */
+
+  createTariffDraft(
+    request: CreateTariffDraftRequest,
+    metadata?: Metadata,
+  ): Promise<CreateTariffDraftResponse> | Observable<CreateTariffDraftResponse> | CreateTariffDraftResponse;
+
+  /**
+   * UC-NT-28 — R-CA-08. Modifier un brouillon de tarif. REST : PUT
+   * /api/v1/admin/cleaning/offers/{id}/tariffs/{version}. Brouillon seulement. Permission :
+   * cleaning.catalog.manage. Erreurs : CLEANING_TARIFF_NOT_FOUND, CLEANING_PARAMETER_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_TARIFF_INCOMPLETE, CLEANING_VALIDATION_FAILED.
+   */
+
+  updateTariffDraft(
+    request: UpdateTariffDraftRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateTariffDraftResponse> | Observable<UpdateTariffDraftResponse> | UpdateTariffDraftResponse;
+
+  /**
+   * UC-NT-28 — R-CA-07, R-CA-08. Publier un tarif. REST : POST
+   * /api/v1/admin/cleaning/offers/{id}/tariffs/{version}/publish. Tranches contiguës, sans
+   * chevauchement ni trou ; la version publiée précédente est archivée. Une demande garde la
+   * version de sa création ; un devis est figé à son envoi. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.catalog.manage. Erreurs : CLEANING_TARIFF_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_TARIFF_INCOMPLETE.
+   */
+
+  publishTariff(
+    request: PublishTariffRequest,
+    metadata?: Metadata,
+  ): Promise<PublishTariffResponse> | Observable<PublishTariffResponse> | PublishTariffResponse;
+
+  /**
+   * UC-NT-28 — R-CA-08, partie 5. Tester un tarif dans le simulateur. REST : POST
+   * /api/v1/admin/cleaning/simulations. Même calcul que le simulateur public, avec les brouillons
+   * demandés à la place des versions publiées. Accepte les éléments inactifs (R-CA-08) ; un calcul
+   * de test n’est jamais enregistré. Permission : cleaning.catalog.read. Erreurs :
+   * CLEANING_PLACE_TYPE_NOT_FOUND, CLEANING_TARIFF_NOT_FOUND, CLEANING_OFFER_NOT_AVAILABLE,
+   * CLEANING_VALIDATION_FAILED.
+   */
+
+  simulateWithDrafts(
+    request: SimulateWithDraftsRequest,
+    metadata?: Metadata,
+  ): Promise<SimulateWithDraftsResponse> | Observable<SimulateWithDraftsResponse> | SimulateWithDraftsResponse;
+
+  /**
+   * UC-NT-26 — R-CA-09. Compétences. REST : GET /api/v1/admin/cleaning/skills. Permission :
+   * cleaning.catalog.read.
+   */
+
+  listSkills(
+    request: ListSkillsRequest,
+    metadata?: Metadata,
+  ): Promise<ListSkillsResponse> | Observable<ListSkillsResponse> | ListSkillsResponse;
+
+  /**
+   * UC-NT-26 — R-CA-09. Compétence : créer. REST : POST /api/v1/admin/cleaning/skills. Idempotent
+   * par idempotency_key (obligatoire). Permission : cleaning.catalog.manage. Erreurs :
+   * CLEANING_CODE_ALREADY_USED.
+   */
+
+  createSkill(
+    request: CreateSkillRequest,
+    metadata?: Metadata,
+  ): Promise<CreateSkillResponse> | Observable<CreateSkillResponse> | CreateSkillResponse;
+
+  /**
+   * UC-NT-26 — R-CA-06, R-CA-09. Compétence : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/skills/{id}. Jamais de suppression. Permission :
+   * cleaning.catalog.manage. Erreurs : CLEANING_SKILL_NOT_FOUND.
+   */
+
+  updateSkill(
+    request: UpdateSkillRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateSkillResponse> | Observable<UpdateSkillResponse> | UpdateSkillResponse;
+
+  /**
+   * UC-NT-25 — R-PG-02. Jours fériés. REST : GET /api/v1/admin/cleaning/holidays. Permission :
+   * cleaning.catalog.read.
+   */
+
+  listHolidays(
+    request: ListHolidaysRequest,
+    metadata?: Metadata,
+  ): Promise<ListHolidaysResponse> | Observable<ListHolidaysResponse> | ListHolidaysResponse;
+
+  /**
+   * UC-NT-25 — R-PG-02. Jour férié : ajouter. REST : POST /api/v1/admin/cleaning/holidays. Proposé
+   * à l’exclusion des programmes ; les séances déjà créées ne changent pas. Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.catalog.manage. Erreurs :
+   * CLEANING_CODE_ALREADY_USED.
+   */
+
+  createHoliday(
+    request: CreateHolidayRequest,
+    metadata?: Metadata,
+  ): Promise<CreateHolidayResponse> | Observable<CreateHolidayResponse> | CreateHolidayResponse;
+
+  /**
+   * UC-NT-25 — R-PG-02. Jour férié : retirer. REST : DELETE /api/v1/admin/cleaning/holidays/{id}.
+   * Les séances déjà créées ne changent pas. Permission : cleaning.catalog.manage. Erreurs :
+   * CLEANING_HOLIDAY_NOT_FOUND.
+   */
+
+  deleteHoliday(
+    request: DeleteHolidayRequest,
+    metadata?: Metadata,
+  ): Promise<DeleteHolidayResponse> | Observable<DeleteHolidayResponse> | DeleteHolidayResponse;
+
+  /**
+   * UC-NT-29 — partie 4, R-ZN-01. Zones desservies. REST : GET /api/v1/admin/cleaning/zones.
+   * Actives et désactivées. Permission : cleaning.catalog.read.
+   */
+
+  listZones(
+    request: ListZonesRequest,
+    metadata?: Metadata,
+  ): Promise<ListZonesResponse> | Observable<ListZonesResponse> | ListZonesResponse;
+
+  /**
+   * UC-NT-29 — partie 4, R-FV-01, R-PL-05, R-ZN-03. Zone : ouvrir une commune. REST : POST
+   * /api/v1/admin/cleaning/zones. La commune est vérifiée auprès de geo : clé inconnue refusée
+   * ("CLEANING_VALIDATION_FAILED", reason unknown_commune) ; geo indisponible : refus, jamais
+   * d’enregistrement sans contrôle. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.zone.manage. Erreurs : CLEANING_CODE_ALREADY_USED, CLEANING_VALIDATION_FAILED,
+   * CLEANING_GEO_UNAVAILABLE.
+   */
+
+  createZone(
+    request: CreateZoneRequest,
+    metadata?: Metadata,
+  ): Promise<CreateZoneResponse> | Observable<CreateZoneResponse> | CreateZoneResponse;
+
+  /**
+   * UC-NT-29 — partie 4, R-FV-01. Zone : modifier. REST : PATCH /api/v1/admin/cleaning/zones/{id}.
+   * Champs absents inchangés ; un nouveau coefficient s’applique aux nouvelles demandes.
+   * Permission : cleaning.zone.manage. Erreurs : CLEANING_ZONE_NOT_FOUND.
+   */
+
+  updateZone(
+    request: UpdateZoneRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateZoneResponse> | Observable<UpdateZoneResponse> | UpdateZoneResponse;
+
+  /**
+   * UC-NT-29 — partie 4. Zone : activer ou désactiver. REST : POST
+   * /api/v1/admin/cleaning/zones/{id}/activation. Désactiver une zone qui a des dossiers en cours
+   * demande "confirm: true" ; les dossiers en cours vont à leur terme, aucune nouvelle demande
+   * n’est acceptée. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.zone.manage. Erreurs : CLEANING_ZONE_NOT_FOUND, CLEANING_ZONE_HAS_ACTIVITY.
+   */
+
+  setZoneActive(
+    request: SetZoneActiveRequest,
+    metadata?: Metadata,
+  ): Promise<SetZoneActiveResponse> | Observable<SetZoneActiveResponse> | SetZoneActiveResponse;
+
+  /**
+   * UC-NT-29 — R-ZN-03. Communes du référentiel. REST : GET /api/v1/admin/cleaning/communes. Relaie
+   * geo.ListCommunes et indique, pour chaque commune, si elle a une zone et si celle-ci est active.
+   * Permission : cleaning.catalog.read. Erreurs : CLEANING_GEO_UNAVAILABLE.
+   */
+
+  listCommunes(
+    request: ListCommunesRequest,
+    metadata?: Metadata,
+  ): Promise<ListCommunesResponse> | Observable<ListCommunesResponse> | ListCommunesResponse;
+}
+
+export function CatalogAdminServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = [
+      "listPlaceCategories",
+      "createPlaceCategory",
+      "getPlaceCategory",
+      "updatePlaceCategory",
+      "listPlaceTypes",
+      "createPlaceType",
+      "getPlaceType",
+      "updatePlaceType",
+      "listCleaningTypes",
+      "createCleaningType",
+      "getCleaningType",
+      "updateCleaningType",
+      "listParameters",
+      "createParameter",
+      "getParameter",
+      "updateParameter",
+      "listOffers",
+      "createOffer",
+      "getOffer",
+      "updateOffer",
+      "listTariffs",
+      "createTariffDraft",
+      "updateTariffDraft",
+      "publishTariff",
+      "simulateWithDrafts",
+      "listSkills",
+      "createSkill",
+      "updateSkill",
+      "listHolidays",
+      "createHoliday",
+      "deleteHoliday",
+      "listZones",
+      "createZone",
+      "updateZone",
+      "setZoneActive",
+      "listCommunes",
+    ];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("CatalogAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("CatalogAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const CATALOG_ADMIN_SERVICE_NAME = "CatalogAdminService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : demandes, visites, constat retenu, devis (UC-NT-30 à 33).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface RequestAdminServiceClient {
+  /**
+   * UC-NT-30 — R-RB-03 (portée par zone). Demandes (back-office). REST : GET
+   * /api/v1/admin/cleaning/requests. Filtrées par la portée « zone » de l’appelant. Permission :
+   * cleaning.request.read. Erreurs : CLEANING_VALIDATION_FAILED.
+   */
+
+  listRequests(request: ListRequestsRequest, metadata?: Metadata): Observable<ListRequestsResponse>;
+
+  /**
+   * UC-NT-30 — partie 7.4. Fiche dossier. REST : GET /api/v1/admin/cleaning/requests/{id}. Étapes,
+   * visites, constat de l’agent, version retenue et comparaison, devis et leurs versions
+   * (brouillons compris). Permission : cleaning.request.read. Erreurs : CLEANING_REQUEST_NOT_FOUND.
+   */
+
+  getRequest(request: GetRequestRequest, metadata?: Metadata): Observable<GetRequestResponse>;
+
+  /**
+   * UC-NT-30 — R-AC-05, R-FV-06. Refuser une demande. REST : POST
+   * /api/v1/admin/cleaning/requests/{id}/reject. À toute étape avant l’acceptation. Frais de visite
+   * remboursés au wallet s’il n’y a pas eu de visite. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.request.process. Erreurs : CLEANING_REQUEST_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  rejectRequest(request: RejectRequestRequest, metadata?: Metadata): Observable<RejectRequestResponse>;
+
+  /**
+   * UC-NT-30 — R-DM-07, R-DM-08, R-ZN-01. Corriger la position d’un dossier. REST : PUT
+   * /api/v1/admin/cleaning/requests/{id}/location ; PUT
+   * /api/v1/cleaning/agent/requests/{id}/location (agent sur place). Tant que le dossier n’est pas
+   * clos ou que son programme n’est pas terminé ; motif obligatoire. La commune est recalculée par
+   * son contour : hors contour ou commune non desservie, refus. Si la commune change alors qu’un
+   * devis est envoyé ou qu’un programme est en cours, refus ("CLEANING_INVALID_TRANSITION", reason
+   * commune_change_locked) : le prix en dépend. La correction s’applique, en une transaction, à la
+   * copie de la position dans la demande (R-DM-08), donc à la visite et aux séances à venir, et au
+   * lieu de « Mes lieux » (position corrigée par KSP) s’il n’a pas été modifié depuis l’envoi.
+   * Tracée sans coordonnées ni repère. L’agent sur place (« utiliser ma position ») passe par "PUT
+   * /api/v1/cleaning/agent/requests/{id}/location". Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.request.process. Route de l’agent sur place : agent affecté à la visite
+   * en cours (cleaning.visit.perform) ou chef d’équipe de la séance en cours
+   * (cleaning.session.perform) ; le service vérifie l’affectation et la permission du jeton
+   * (R-DM-07). Erreurs : CLEANING_REQUEST_NOT_FOUND, CLEANING_VALIDATION_FAILED,
+   * CLEANING_REASON_REQUIRED, CLEANING_ZONE_NOT_COVERED, CLEANING_GEO_UNAVAILABLE,
+   * CLEANING_INVALID_TRANSITION, CLEANING_CONCURRENT_UPDATE.
+   */
+
+  correctRequestLocation(
+    request: CorrectRequestLocationRequest,
+    metadata?: Metadata,
+  ): Observable<CorrectRequestLocationResponse>;
+
+  /**
+   * UC-NT-33 — R-AC-04. Accepter ou refuser une réactivation. REST : POST
+   * /api/v1/admin/cleaning/requests/{id}/reactivation. Accepter : le dossier repasse « visite
+   * faite » et un nouveau devis est émis aux tarifs du jour. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.quote.manage. Erreurs : CLEANING_REQUEST_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  decideReactivation(request: DecideReactivationRequest, metadata?: Metadata): Observable<DecideReactivationResponse>;
+
+  /**
+   * UC-NT-31 — R-VI-01. Calendrier des visites. REST : GET /api/v1/admin/cleaning/visits.
+   * Permission : cleaning.request.read.
+   */
+
+  listVisits(request: ListVisitsRequest, metadata?: Metadata): Observable<ListVisitsResponse>;
+
+  /**
+   * UC-NT-31 — R-VI-01, R-VI-02, R-DM-05, 9.4. Planifier une visite. REST : POST
+   * /api/v1/admin/cleaning/visits. Date, heure et agent, en tenant compte des créneaux du client ;
+   * frais de visite payés. La visite occupe l’agenda pendant sa durée (60 min par défaut) plus le
+   * trajet depuis l’affectation précédente (OSRM). Contrôles de 9.4 sous verrou de l’agenda.
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.request.process. Erreurs :
+   * CLEANING_REQUEST_NOT_FOUND, CLEANING_AGENT_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_VISIT_FEE_UNPAID, CLEANING_LEAD_TIME_TOO_SHORT, CLEANING_SCHEDULE_CONFLICT,
+   * CLEANING_AGENT_NOT_ACTIVE, CLEANING_SKILL_MISSING, CLEANING_AGENT_OUT_OF_ZONE,
+   * CLEANING_AGENT_UNAVAILABLE, CLEANING_AGENT_OVERLOADED, CLEANING_CONCURRENT_UPDATE,
+   * CLEANING_SLOT_INVALID, CLEANING_AGENT_ON_LEAVE.
+   */
+
+  scheduleVisit(request: ScheduleVisitRequest, metadata?: Metadata): Observable<ScheduleVisitResponse>;
+
+  /**
+   * UC-NT-31 — R-VI-01, R-VI-02, 9.4. Déplacer une visite ou changer d’agent. REST : PATCH
+   * /api/v1/admin/cleaning/visits/{id}. Le client et l’agent sont prévenus. Jamais avant maintenant
+   * ni avant le délai minimum ("CLEANING_SLOT_INVALID", reason in_past ;
+   * "CLEANING_LEAD_TIME_TOO_SHORT"). Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.request.process. Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_SCHEDULE_CONFLICT, CLEANING_AGENT_NOT_ACTIVE, CLEANING_SKILL_MISSING,
+   * CLEANING_AGENT_OUT_OF_ZONE, CLEANING_AGENT_UNAVAILABLE, CLEANING_AGENT_OVERLOADED,
+   * CLEANING_CONCURRENT_UPDATE, CLEANING_SLOT_INVALID, CLEANING_LEAD_TIME_TOO_SHORT,
+   * CLEANING_AGENT_ON_LEAVE.
+   */
+
+  updateVisit(request: UpdateVisitRequest, metadata?: Metadata): Observable<UpdateVisitResponse>;
+
+  /**
+   * UC-NT-31 — R-FV-06, R-VI-06. Annuler une visite. REST : POST
+   * /api/v1/admin/cleaning/visits/{id}/cancel. KSP annule la visite ("ksp") ou constate l’absence
+   * de son agent ("agent_no_show") : frais remboursés en intégralité au wallet (R-FV-06), la
+   * demande repasse « visite à planifier », la visite suivante est gratuite. Pour déplacer une
+   * visite sans l’annuler : "PATCH /admin/visits/{id}". Transitions : partie 15.2. Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.request.process. Erreurs :
+   * CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  cancelVisit(request: CancelVisitRequest, metadata?: Metadata): Observable<CancelVisitResponse>;
+
+  /**
+   * UC-NT-31 — R-VI-07. Demander une nouvelle visite. REST : POST
+   * /api/v1/admin/cleaning/requests/{id}/new-visit. Depuis « visite faite » ou « devis envoyé »,
+   * avec un motif. Le devis envoyé est retiré ("withdrawn") : il ne peut plus être accepté ni
+   * refusé, et le client est prévenu. La demande repasse « visite à planifier » ; la visite est
+   * gratuite (rattachée aux derniers frais payés) et ouvre une nouvelle version retenue (R-CS-03).
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.request.process. Erreurs :
+   * CLEANING_REQUEST_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_REASON_REQUIRED.
+   */
+
+  requestNewVisit(request: RequestNewVisitRequest, metadata?: Metadata): Observable<RequestNewVisitResponse>;
+
+  /**
+   * UC-NT-31 — R-VI-08. Clôturer une visite pour l’agent (KSP). REST : POST
+   * /api/v1/admin/cleaning/visits/{id}/complete. Quand l’agent ne peut pas agir depuis
+   * l’application : constat saisi à partir de ses photos ou de son appel, heure réelle, motif
+   * obligatoire ; photos facultatives. L’action est tracée ; "cleaning.visit.completed" porte
+   * "completedBy: ksp". Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.request.process. Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_REASON_REQUIRED, CLEANING_VALIDATION_FAILED, CLEANING_VISIT_TOO_EARLY,
+   * CLEANING_CONCURRENT_UPDATE.
+   */
+
+  completeVisitOnBehalf(
+    request: CompleteVisitOnBehalfRequest,
+    metadata?: Metadata,
+  ): Observable<CompleteVisitOnBehalfResponse>;
+
+  /**
+   * UC-NT-31 — R-VI-08, R-VI-05. Client absent : visite manquée (KSP). REST : POST
+   * /api/v1/admin/cleaning/visits/{id}/missed. Absence du client signalée pour l’agent, avec un
+   * motif ; la photo du lieu devient facultative. De nouveaux frais sont créés et la demande attend
+   * leur paiement (R-VI-05). L’action est tracée ; "cleaning.visit.missed" porte "reportedBy: ksp".
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.request.process. Erreurs :
+   * CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_REASON_REQUIRED,
+   * CLEANING_VALIDATION_FAILED, CLEANING_VISIT_TOO_EARLY, CLEANING_CONCURRENT_UPDATE.
+   */
+
+  reportVisitMissedOnBehalf(
+    request: ReportVisitMissedOnBehalfRequest,
+    metadata?: Metadata,
+  ): Observable<ReportVisitMissedOnBehalfResponse>;
+
+  /**
+   * UC-NT-31 — R-EX-10. Retirer une photo de visite (KSP). REST : POST
+   * /api/v1/admin/cleaning/visits/{id}/photos/{fileId}/remove. À tout moment, aussi après la
+   * clôture (photo confidentielle), avec un motif. La photo est supprimée chez file, puis sa
+   * référence ; l’action est tracée. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.request.process. Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_REASON_REQUIRED.
+   */
+
+  removeVisitPhotoAsKsp(
+    request: RemoveVisitPhotoAsKspRequest,
+    metadata?: Metadata,
+  ): Observable<RemoveVisitPhotoAsKspResponse>;
+
+  /**
+   * UC-NT-32 — R-CS-01 à 03, partie 7.4. Ajuster le constat (version retenue). REST : PUT
+   * /api/v1/admin/cleaning/requests/{id}/retained-values. Valeurs finales du devis : corriger le
+   * constat, ajouter ou retirer un type, changer le niveau de saleté ; motif obligatoire pour
+   * chaque écart avec le constat. Recalcul aux tarifs publiés. "visit_done" : modifie la révision
+   * ouverte ; "quote_sent" : crée une nouvelle révision (motif obligatoire), puis "CreateQuote"
+   * prépare la révision du devis. Un type déjà présent dans la demande reste chiffrable même si son
+   * offre a été désactivée : avec la version publiée en vigueur de l’offre, ou à défaut celle de la
+   * demande ; un type ajouté par la supervision doit avoir une offre active
+   * ("CLEANING_OFFER_NOT_AVAILABLE" ne vise qu’un type ajouté par la supervision, R-CS-04).
+   * Permission : cleaning.quote.manage. Erreurs : CLEANING_REQUEST_NOT_FOUND,
+   * CLEANING_OFFER_NOT_AVAILABLE, CLEANING_REASON_REQUIRED, CLEANING_INVALID_TRANSITION,
+   * CLEANING_VALIDATION_FAILED.
+   */
+
+  saveRetainedValues(request: SaveRetainedValuesRequest, metadata?: Metadata): Observable<SaveRetainedValuesResponse>;
+
+  /**
+   * UC-NT-32 — R-CS-04. Estimer un retenu. REST : POST
+   * /api/v1/admin/cleaning/requests/{id}/retained-values/estimate. Calcul à blanc, rien n’est
+   * enregistré ; montants absents sans cleaning.amounts.read. Permission : cleaning.quote.manage.
+   * Erreurs : CLEANING_REQUEST_NOT_FOUND, CLEANING_OFFER_NOT_AVAILABLE, CLEANING_VALIDATION_FAILED.
+   */
+
+  estimateRetainedValues(
+    request: EstimateRetainedValuesRequest,
+    metadata?: Metadata,
+  ): Observable<EstimateRetainedValuesResponse>;
+
+  /**
+   * UC-NT-33 — R-DV-01, R-DV-03, R-DV-05, R-PG-03, R-FV-05. Composer un devis (brouillon) ou le
+   * réviser. REST : POST /api/v1/admin/cleaning/requests/{id}/quotes. Part de la version retenue.
+   * Après envoi et sans réponse du client, un nouveau devis est une révision : il remplacera
+   * l’ancien à son envoi (l’ancien reste dans l’historique, statut "superseded"). Une remise ou
+   * majoration exige la permission "cleaning.quote.adjust_price" ("AUTH_FORBIDDEN" sinon).
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.quote.manage. Erreurs :
+   * CLEANING_REQUEST_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_SCHEDULE_EMPTY,
+   * CLEANING_SCHEDULE_LIMIT_EXCEEDED, CLEANING_PRICE_NOT_POSITIVE, CLEANING_LEAD_TIME_TOO_SHORT,
+   * CLEANING_VALIDATION_FAILED.
+   */
+
+  createQuote(request: CreateQuoteRequest, metadata?: Metadata): Observable<CreateQuoteResponse>;
+
+  /**
+   * UC-NT-33 — R-DV-01. Détail d’un devis (back-office). REST : GET
+   * /api/v1/admin/cleaning/quotes/{id}. Permission : cleaning.request.read. Erreurs :
+   * CLEANING_QUOTE_NOT_FOUND.
+   */
+
+  getQuote(request: GetQuoteRequest, metadata?: Metadata): Observable<GetQuoteResponse>;
+
+  /**
+   * UC-NT-33 — R-DV-01, R-DV-03. Modifier un brouillon de devis. REST : PATCH
+   * /api/v1/admin/cleaning/quotes/{id}. Brouillon seulement ; champs absents inchangés.
+   * Permission : cleaning.quote.manage. Erreurs : CLEANING_QUOTE_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_SCHEDULE_EMPTY, CLEANING_SCHEDULE_LIMIT_EXCEEDED,
+   * CLEANING_PRICE_NOT_POSITIVE, CLEANING_LEAD_TIME_TOO_SHORT, CLEANING_VALIDATION_FAILED.
+   */
+
+  updateQuoteDraft(request: UpdateQuoteDraftRequest, metadata?: Metadata): Observable<UpdateQuoteDraftResponse>;
+
+  /**
+   * UC-NT-33 — R-DV-03, 16.3. Valider une remise au-delà du seuil. REST : POST
+   * /api/v1/admin/cleaning/quotes/{id}/approve-adjustment. Remise de plus de 20 % : « validation
+   * d’un admin » (R-DV-03), c’est-à-dire une personne qui a la permission
+   * "cleaning.quote.adjust_price", autre que l’auteur du devis (à valider) ; double
+   * authentification de moins de 10 minutes. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.quote.adjust_price. Erreurs : CLEANING_QUOTE_NOT_FOUND,
+   * CLEANING_SECOND_APPROVER_REQUIRED, CLEANING_INVALID_TRANSITION.
+   */
+
+  approveQuoteAdjustment(
+    request: ApproveQuoteAdjustmentRequest,
+    metadata?: Metadata,
+  ): Observable<ApproveQuoteAdjustmentResponse>;
+
+  /**
+   * UC-NT-33 — R-DV-02, R-DV-04, R-DV-05, R-DV-06, R-CS-03. Envoyer un devis. REST : POST
+   * /api/v1/admin/cleaning/quotes/{id}/send. Prix figé ; validité 15 jours ; révision retenue figée
+   * (R-CS-03) ; envoi dans l’espace client, par WhatsApp et par e-mail avec un PDF. Une révision
+   * remplace le devis envoyé précédent. Les dates du programme sont recalculées, la première séance
+   * au moins "firstSessionLeadHours" après maintenant ; la somme des lignes et des ajustements doit
+   * égaler le prix d’une séance ("CLEANING_VALIDATION_FAILED", field lines, reason
+   * lines_total_mismatch, R-DV-07). Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.quote.manage. Erreurs : CLEANING_QUOTE_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_QUOTE_APPROVAL_REQUIRED, CLEANING_PRICE_NOT_SET, CLEANING_PRICE_NOT_POSITIVE,
+   * CLEANING_VALIDATION_FAILED, CLEANING_LEAD_TIME_TOO_SHORT.
+   */
+
+  sendQuote(request: SendQuoteRequest, metadata?: Metadata): Observable<SendQuoteResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : demandes, visites, constat retenu, devis (UC-NT-30 à 33).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface RequestAdminServiceController {
+  /**
+   * UC-NT-30 — R-RB-03 (portée par zone). Demandes (back-office). REST : GET
+   * /api/v1/admin/cleaning/requests. Filtrées par la portée « zone » de l’appelant. Permission :
+   * cleaning.request.read. Erreurs : CLEANING_VALIDATION_FAILED.
+   */
+
+  listRequests(
+    request: ListRequestsRequest,
+    metadata?: Metadata,
+  ): Promise<ListRequestsResponse> | Observable<ListRequestsResponse> | ListRequestsResponse;
+
+  /**
+   * UC-NT-30 — partie 7.4. Fiche dossier. REST : GET /api/v1/admin/cleaning/requests/{id}. Étapes,
+   * visites, constat de l’agent, version retenue et comparaison, devis et leurs versions
+   * (brouillons compris). Permission : cleaning.request.read. Erreurs : CLEANING_REQUEST_NOT_FOUND.
+   */
+
+  getRequest(
+    request: GetRequestRequest,
+    metadata?: Metadata,
+  ): Promise<GetRequestResponse> | Observable<GetRequestResponse> | GetRequestResponse;
+
+  /**
+   * UC-NT-30 — R-AC-05, R-FV-06. Refuser une demande. REST : POST
+   * /api/v1/admin/cleaning/requests/{id}/reject. À toute étape avant l’acceptation. Frais de visite
+   * remboursés au wallet s’il n’y a pas eu de visite. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.request.process. Erreurs : CLEANING_REQUEST_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  rejectRequest(
+    request: RejectRequestRequest,
+    metadata?: Metadata,
+  ): Promise<RejectRequestResponse> | Observable<RejectRequestResponse> | RejectRequestResponse;
+
+  /**
+   * UC-NT-30 — R-DM-07, R-DM-08, R-ZN-01. Corriger la position d’un dossier. REST : PUT
+   * /api/v1/admin/cleaning/requests/{id}/location ; PUT
+   * /api/v1/cleaning/agent/requests/{id}/location (agent sur place). Tant que le dossier n’est pas
+   * clos ou que son programme n’est pas terminé ; motif obligatoire. La commune est recalculée par
+   * son contour : hors contour ou commune non desservie, refus. Si la commune change alors qu’un
+   * devis est envoyé ou qu’un programme est en cours, refus ("CLEANING_INVALID_TRANSITION", reason
+   * commune_change_locked) : le prix en dépend. La correction s’applique, en une transaction, à la
+   * copie de la position dans la demande (R-DM-08), donc à la visite et aux séances à venir, et au
+   * lieu de « Mes lieux » (position corrigée par KSP) s’il n’a pas été modifié depuis l’envoi.
+   * Tracée sans coordonnées ni repère. L’agent sur place (« utiliser ma position ») passe par "PUT
+   * /api/v1/cleaning/agent/requests/{id}/location". Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.request.process. Route de l’agent sur place : agent affecté à la visite
+   * en cours (cleaning.visit.perform) ou chef d’équipe de la séance en cours
+   * (cleaning.session.perform) ; le service vérifie l’affectation et la permission du jeton
+   * (R-DM-07). Erreurs : CLEANING_REQUEST_NOT_FOUND, CLEANING_VALIDATION_FAILED,
+   * CLEANING_REASON_REQUIRED, CLEANING_ZONE_NOT_COVERED, CLEANING_GEO_UNAVAILABLE,
+   * CLEANING_INVALID_TRANSITION, CLEANING_CONCURRENT_UPDATE.
    */
 
   correctRequestLocation(
@@ -3252,271 +8766,645 @@ export interface CleaningAdminServiceController {
     | Observable<CorrectRequestLocationResponse>
     | CorrectRequestLocationResponse;
 
-  /** Visites techniques (cleaning_agent : les siennes seulement). */
+  /**
+   * UC-NT-33 — R-AC-04. Accepter ou refuser une réactivation. REST : POST
+   * /api/v1/admin/cleaning/requests/{id}/reactivation. Accepter : le dossier repasse « visite
+   * faite » et un nouveau devis est émis aux tarifs du jour. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.quote.manage. Erreurs : CLEANING_REQUEST_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  decideReactivation(
+    request: DecideReactivationRequest,
+    metadata?: Metadata,
+  ): Promise<DecideReactivationResponse> | Observable<DecideReactivationResponse> | DecideReactivationResponse;
+
+  /**
+   * UC-NT-31 — R-VI-01. Calendrier des visites. REST : GET /api/v1/admin/cleaning/visits.
+   * Permission : cleaning.request.read.
+   */
 
   listVisits(
     request: ListVisitsRequest,
     metadata?: Metadata,
   ): Promise<ListVisitsResponse> | Observable<ListVisitsResponse> | ListVisitsResponse;
 
-  /** Missions et passages (cleaning_supervisor, cleaning_admin, super_admin ; cleaning_agent : ses passages). */
-
-  listMissions(
-    request: ListMissionsRequest,
-    metadata?: Metadata,
-  ): Promise<ListMissionsResponse> | Observable<ListMissionsResponse> | ListMissionsResponse;
-
-  getMissionDetail(
-    request: GetMissionDetailRequest,
-    metadata?: Metadata,
-  ): Promise<GetMissionDetailResponse> | Observable<GetMissionDetailResponse> | GetMissionDetailResponse;
-
   /**
-   * Planifie un passage avec ses agents ; un passage d'une mission récurrente peut avoir
-   * d'autres agents que le précédent.
+   * UC-NT-31 — R-VI-01, R-VI-02, R-DM-05, 9.4. Planifier une visite. REST : POST
+   * /api/v1/admin/cleaning/visits. Date, heure et agent, en tenant compte des créneaux du client ;
+   * frais de visite payés. La visite occupe l’agenda pendant sa durée (60 min par défaut) plus le
+   * trajet depuis l’affectation précédente (OSRM). Contrôles de 9.4 sous verrou de l’agenda.
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.request.process. Erreurs :
+   * CLEANING_REQUEST_NOT_FOUND, CLEANING_AGENT_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_VISIT_FEE_UNPAID, CLEANING_LEAD_TIME_TOO_SHORT, CLEANING_SCHEDULE_CONFLICT,
+   * CLEANING_AGENT_NOT_ACTIVE, CLEANING_SKILL_MISSING, CLEANING_AGENT_OUT_OF_ZONE,
+   * CLEANING_AGENT_UNAVAILABLE, CLEANING_AGENT_OVERLOADED, CLEANING_CONCURRENT_UPDATE,
+   * CLEANING_SLOT_INVALID, CLEANING_AGENT_ON_LEAVE.
    */
 
-  scheduleIntervention(
-    request: ScheduleInterventionRequest,
+  scheduleVisit(
+    request: ScheduleVisitRequest,
     metadata?: Metadata,
-  ): Promise<ScheduleInterventionResponse> | Observable<ScheduleInterventionResponse> | ScheduleInterventionResponse;
+  ): Promise<ScheduleVisitResponse> | Observable<ScheduleVisitResponse> | ScheduleVisitResponse;
 
   /**
-   * Planifie ensemble un passage de chaque mission d'un groupe (ADR-035), dans une transaction : la
-   * même équipe sur des créneaux qui se chevauchent dans un même groupe n'est pas un conflit.
+   * UC-NT-31 — R-VI-01, R-VI-02, 9.4. Déplacer une visite ou changer d’agent. REST : PATCH
+   * /api/v1/admin/cleaning/visits/{id}. Le client et l’agent sont prévenus. Jamais avant maintenant
+   * ni avant le délai minimum ("CLEANING_SLOT_INVALID", reason in_past ;
+   * "CLEANING_LEAD_TIME_TOO_SHORT"). Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.request.process. Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_SCHEDULE_CONFLICT, CLEANING_AGENT_NOT_ACTIVE, CLEANING_SKILL_MISSING,
+   * CLEANING_AGENT_OUT_OF_ZONE, CLEANING_AGENT_UNAVAILABLE, CLEANING_AGENT_OVERLOADED,
+   * CLEANING_CONCURRENT_UPDATE, CLEANING_SLOT_INVALID, CLEANING_LEAD_TIME_TOO_SHORT,
+   * CLEANING_AGENT_ON_LEAVE.
    */
 
-  scheduleGroupInterventions(
-    request: ScheduleGroupInterventionsRequest,
+  updateVisit(
+    request: UpdateVisitRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateVisitResponse> | Observable<UpdateVisitResponse> | UpdateVisitResponse;
+
+  /**
+   * UC-NT-31 — R-FV-06, R-VI-06. Annuler une visite. REST : POST
+   * /api/v1/admin/cleaning/visits/{id}/cancel. KSP annule la visite ("ksp") ou constate l’absence
+   * de son agent ("agent_no_show") : frais remboursés en intégralité au wallet (R-FV-06), la
+   * demande repasse « visite à planifier », la visite suivante est gratuite. Pour déplacer une
+   * visite sans l’annuler : "PATCH /admin/visits/{id}". Transitions : partie 15.2. Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.request.process. Erreurs :
+   * CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  cancelVisit(
+    request: CancelVisitRequest,
+    metadata?: Metadata,
+  ): Promise<CancelVisitResponse> | Observable<CancelVisitResponse> | CancelVisitResponse;
+
+  /**
+   * UC-NT-31 — R-VI-07. Demander une nouvelle visite. REST : POST
+   * /api/v1/admin/cleaning/requests/{id}/new-visit. Depuis « visite faite » ou « devis envoyé »,
+   * avec un motif. Le devis envoyé est retiré ("withdrawn") : il ne peut plus être accepté ni
+   * refusé, et le client est prévenu. La demande repasse « visite à planifier » ; la visite est
+   * gratuite (rattachée aux derniers frais payés) et ouvre une nouvelle version retenue (R-CS-03).
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.request.process. Erreurs :
+   * CLEANING_REQUEST_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_REASON_REQUIRED.
+   */
+
+  requestNewVisit(
+    request: RequestNewVisitRequest,
+    metadata?: Metadata,
+  ): Promise<RequestNewVisitResponse> | Observable<RequestNewVisitResponse> | RequestNewVisitResponse;
+
+  /**
+   * UC-NT-31 — R-VI-08. Clôturer une visite pour l’agent (KSP). REST : POST
+   * /api/v1/admin/cleaning/visits/{id}/complete. Quand l’agent ne peut pas agir depuis
+   * l’application : constat saisi à partir de ses photos ou de son appel, heure réelle, motif
+   * obligatoire ; photos facultatives. L’action est tracée ; "cleaning.visit.completed" porte
+   * "completedBy: ksp". Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.request.process. Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_REASON_REQUIRED, CLEANING_VALIDATION_FAILED, CLEANING_VISIT_TOO_EARLY,
+   * CLEANING_CONCURRENT_UPDATE.
+   */
+
+  completeVisitOnBehalf(
+    request: CompleteVisitOnBehalfRequest,
+    metadata?: Metadata,
+  ): Promise<CompleteVisitOnBehalfResponse> | Observable<CompleteVisitOnBehalfResponse> | CompleteVisitOnBehalfResponse;
+
+  /**
+   * UC-NT-31 — R-VI-08, R-VI-05. Client absent : visite manquée (KSP). REST : POST
+   * /api/v1/admin/cleaning/visits/{id}/missed. Absence du client signalée pour l’agent, avec un
+   * motif ; la photo du lieu devient facultative. De nouveaux frais sont créés et la demande attend
+   * leur paiement (R-VI-05). L’action est tracée ; "cleaning.visit.missed" porte "reportedBy: ksp".
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.request.process. Erreurs :
+   * CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_REASON_REQUIRED,
+   * CLEANING_VALIDATION_FAILED, CLEANING_VISIT_TOO_EARLY, CLEANING_CONCURRENT_UPDATE.
+   */
+
+  reportVisitMissedOnBehalf(
+    request: ReportVisitMissedOnBehalfRequest,
     metadata?: Metadata,
   ):
-    | Promise<ScheduleGroupInterventionsResponse>
-    | Observable<ScheduleGroupInterventionsResponse>
-    | ScheduleGroupInterventionsResponse;
+    | Promise<ReportVisitMissedOnBehalfResponse>
+    | Observable<ReportVisitMissedOnBehalfResponse>
+    | ReportVisitMissedOnBehalfResponse;
 
   /**
-   * Planification en lot des dates restantes du plan de passages (ADR-052) : un passage par date,
-   * mêmes agents, même heure, même durée, contrôlés date par date dans une transaction (agents
-   * verrouillés). Tout ou rien par défaut : CLEANING_TEAM_UNAVAILABLE avec details.conflicts (date et
-   * agents de chaque date en conflit) ; skip_conflicts planifie le reste et rend les dates sautées.
-   * Un seul événement cleaning.interventions.batch_scheduled. Idempotent par idempotency_key
-   * (obligatoire) et par mission. Plafond par appel réglable (400 par défaut).
+   * UC-NT-31 — R-EX-10. Retirer une photo de visite (KSP). REST : POST
+   * /api/v1/admin/cleaning/visits/{id}/photos/{fileId}/remove. À tout moment, aussi après la
+   * clôture (photo confidentielle), avec un motif. La photo est supprimée chez file, puis sa
+   * référence ; l’action est tracée. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.request.process. Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_REASON_REQUIRED.
    */
 
-  scheduleInterventionBatch(
-    request: ScheduleInterventionBatchRequest,
+  removeVisitPhotoAsKsp(
+    request: RemoveVisitPhotoAsKspRequest,
+    metadata?: Metadata,
+  ): Promise<RemoveVisitPhotoAsKspResponse> | Observable<RemoveVisitPhotoAsKspResponse> | RemoveVisitPhotoAsKspResponse;
+
+  /**
+   * UC-NT-32 — R-CS-01 à 03, partie 7.4. Ajuster le constat (version retenue). REST : PUT
+   * /api/v1/admin/cleaning/requests/{id}/retained-values. Valeurs finales du devis : corriger le
+   * constat, ajouter ou retirer un type, changer le niveau de saleté ; motif obligatoire pour
+   * chaque écart avec le constat. Recalcul aux tarifs publiés. "visit_done" : modifie la révision
+   * ouverte ; "quote_sent" : crée une nouvelle révision (motif obligatoire), puis "CreateQuote"
+   * prépare la révision du devis. Un type déjà présent dans la demande reste chiffrable même si son
+   * offre a été désactivée : avec la version publiée en vigueur de l’offre, ou à défaut celle de la
+   * demande ; un type ajouté par la supervision doit avoir une offre active
+   * ("CLEANING_OFFER_NOT_AVAILABLE" ne vise qu’un type ajouté par la supervision, R-CS-04).
+   * Permission : cleaning.quote.manage. Erreurs : CLEANING_REQUEST_NOT_FOUND,
+   * CLEANING_OFFER_NOT_AVAILABLE, CLEANING_REASON_REQUIRED, CLEANING_INVALID_TRANSITION,
+   * CLEANING_VALIDATION_FAILED.
+   */
+
+  saveRetainedValues(
+    request: SaveRetainedValuesRequest,
+    metadata?: Metadata,
+  ): Promise<SaveRetainedValuesResponse> | Observable<SaveRetainedValuesResponse> | SaveRetainedValuesResponse;
+
+  /**
+   * UC-NT-32 — R-CS-04. Estimer un retenu. REST : POST
+   * /api/v1/admin/cleaning/requests/{id}/retained-values/estimate. Calcul à blanc, rien n’est
+   * enregistré ; montants absents sans cleaning.amounts.read. Permission : cleaning.quote.manage.
+   * Erreurs : CLEANING_REQUEST_NOT_FOUND, CLEANING_OFFER_NOT_AVAILABLE, CLEANING_VALIDATION_FAILED.
+   */
+
+  estimateRetainedValues(
+    request: EstimateRetainedValuesRequest,
     metadata?: Metadata,
   ):
-    | Promise<ScheduleInterventionBatchResponse>
-    | Observable<ScheduleInterventionBatchResponse>
-    | ScheduleInterventionBatchResponse;
-
-  startIntervention(
-    request: StartInterventionRequest,
-    metadata?: Metadata,
-  ): Promise<StartInterventionResponse> | Observable<StartInterventionResponse> | StartInterventionResponse;
-
-  updateChecklist(
-    request: UpdateChecklistRequest,
-    metadata?: Metadata,
-  ): Promise<UpdateChecklistResponse> | Observable<UpdateChecklistResponse> | UpdateChecklistResponse;
-
-  reportIncident(
-    request: ReportIncidentRequest,
-    metadata?: Metadata,
-  ): Promise<ReportIncidentResponse> | Observable<ReportIncidentResponse> | ReportIncidentResponse;
-
-  resumeIntervention(
-    request: ResumeInterventionRequest,
-    metadata?: Metadata,
-  ): Promise<ResumeInterventionResponse> | Observable<ResumeInterventionResponse> | ResumeInterventionResponse;
-
-  completeIntervention(
-    request: CompleteInterventionRequest,
-    metadata?: Metadata,
-  ): Promise<CompleteInterventionResponse> | Observable<CompleteInterventionResponse> | CompleteInterventionResponse;
+    | Promise<EstimateRetainedValuesResponse>
+    | Observable<EstimateRetainedValuesResponse>
+    | EstimateRetainedValuesResponse;
 
   /**
-   * Paiement manuel coché par le superviseur (espèces, Mobile Money hors ligne).
-   * Idempotent par idempotency_key (facultative) : un second envoi avec la même clé renvoie la
-   * mission sans enregistrer un second paiement.
+   * UC-NT-33 — R-DV-01, R-DV-03, R-DV-05, R-PG-03, R-FV-05. Composer un devis (brouillon) ou le
+   * réviser. REST : POST /api/v1/admin/cleaning/requests/{id}/quotes. Part de la version retenue.
+   * Après envoi et sans réponse du client, un nouveau devis est une révision : il remplacera
+   * l’ancien à son envoi (l’ancien reste dans l’historique, statut "superseded"). Une remise ou
+   * majoration exige la permission "cleaning.quote.adjust_price" ("AUTH_FORBIDDEN" sinon).
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.quote.manage. Erreurs :
+   * CLEANING_REQUEST_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_SCHEDULE_EMPTY,
+   * CLEANING_SCHEDULE_LIMIT_EXCEEDED, CLEANING_PRICE_NOT_POSITIVE, CLEANING_LEAD_TIME_TOO_SHORT,
+   * CLEANING_VALIDATION_FAILED.
    */
 
-  recordPayment(
-    request: RecordPaymentRequest,
+  createQuote(
+    request: CreateQuoteRequest,
     metadata?: Metadata,
-  ): Promise<RecordPaymentResponse> | Observable<RecordPaymentResponse> | RecordPaymentResponse;
+  ): Promise<CreateQuoteResponse> | Observable<CreateQuoteResponse> | CreateQuoteResponse;
 
-  cancelMissionAsSupervisor(
-    request: CancelMissionAsSupervisorRequest,
+  /**
+   * UC-NT-33 — R-DV-01. Détail d’un devis (back-office). REST : GET
+   * /api/v1/admin/cleaning/quotes/{id}. Permission : cleaning.request.read. Erreurs :
+   * CLEANING_QUOTE_NOT_FOUND.
+   */
+
+  getQuote(
+    request: GetQuoteRequest,
+    metadata?: Metadata,
+  ): Promise<GetQuoteResponse> | Observable<GetQuoteResponse> | GetQuoteResponse;
+
+  /**
+   * UC-NT-33 — R-DV-01, R-DV-03. Modifier un brouillon de devis. REST : PATCH
+   * /api/v1/admin/cleaning/quotes/{id}. Brouillon seulement ; champs absents inchangés.
+   * Permission : cleaning.quote.manage. Erreurs : CLEANING_QUOTE_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_SCHEDULE_EMPTY, CLEANING_SCHEDULE_LIMIT_EXCEEDED,
+   * CLEANING_PRICE_NOT_POSITIVE, CLEANING_LEAD_TIME_TOO_SHORT, CLEANING_VALIDATION_FAILED.
+   */
+
+  updateQuoteDraft(
+    request: UpdateQuoteDraftRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateQuoteDraftResponse> | Observable<UpdateQuoteDraftResponse> | UpdateQuoteDraftResponse;
+
+  /**
+   * UC-NT-33 — R-DV-03, 16.3. Valider une remise au-delà du seuil. REST : POST
+   * /api/v1/admin/cleaning/quotes/{id}/approve-adjustment. Remise de plus de 20 % : « validation
+   * d’un admin » (R-DV-03), c’est-à-dire une personne qui a la permission
+   * "cleaning.quote.adjust_price", autre que l’auteur du devis (à valider) ; double
+   * authentification de moins de 10 minutes. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.quote.adjust_price. Erreurs : CLEANING_QUOTE_NOT_FOUND,
+   * CLEANING_SECOND_APPROVER_REQUIRED, CLEANING_INVALID_TRANSITION.
+   */
+
+  approveQuoteAdjustment(
+    request: ApproveQuoteAdjustmentRequest,
     metadata?: Metadata,
   ):
-    | Promise<CancelMissionAsSupervisorResponse>
-    | Observable<CancelMissionAsSupervisorResponse>
-    | CancelMissionAsSupervisorResponse;
+    | Promise<ApproveQuoteAdjustmentResponse>
+    | Observable<ApproveQuoteAdjustmentResponse>
+    | ApproveQuoteAdjustmentResponse;
 
   /**
-   * Catalogue, grille tarifaire et réglages (cleaning_admin, super_admin). Chaque modification de prix
-   * crée une nouvelle version datée, avec son auteur ; un devis envoyé garde son prix.
+   * UC-NT-33 — R-DV-02, R-DV-04, R-DV-05, R-DV-06, R-CS-03. Envoyer un devis. REST : POST
+   * /api/v1/admin/cleaning/quotes/{id}/send. Prix figé ; validité 15 jours ; révision retenue figée
+   * (R-CS-03) ; envoi dans l’espace client, par WhatsApp et par e-mail avec un PDF. Une révision
+   * remplace le devis envoyé précédent. Les dates du programme sont recalculées, la première séance
+   * au moins "firstSessionLeadHours" après maintenant ; la somme des lignes et des ajustements doit
+   * égaler le prix d’une séance ("CLEANING_VALIDATION_FAILED", field lines, reason
+   * lines_total_mismatch, R-DV-07). Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.quote.manage. Erreurs : CLEANING_QUOTE_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_QUOTE_APPROVAL_REQUIRED, CLEANING_PRICE_NOT_SET, CLEANING_PRICE_NOT_POSITIVE,
+   * CLEANING_VALIDATION_FAILED, CLEANING_LEAD_TIME_TOO_SHORT.
    */
 
-  getCatalog(
-    request: GetCatalogRequest,
+  sendQuote(
+    request: SendQuoteRequest,
     metadata?: Metadata,
-  ): Promise<GetCatalogResponse> | Observable<GetCatalogResponse> | GetCatalogResponse;
+  ): Promise<SendQuoteResponse> | Observable<SendQuoteResponse> | SendQuoteResponse;
+}
 
-  /** Crée ou remplace une prestation complète (champs, options, grille) : une nouvelle version (ADR-033). */
+export function RequestAdminServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = [
+      "listRequests",
+      "getRequest",
+      "rejectRequest",
+      "correctRequestLocation",
+      "decideReactivation",
+      "listVisits",
+      "scheduleVisit",
+      "updateVisit",
+      "cancelVisit",
+      "requestNewVisit",
+      "completeVisitOnBehalf",
+      "reportVisitMissedOnBehalf",
+      "removeVisitPhotoAsKsp",
+      "saveRetainedValues",
+      "estimateRetainedValues",
+      "createQuote",
+      "getQuote",
+      "updateQuoteDraft",
+      "approveQuoteAdjustment",
+      "sendQuote",
+    ];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("RequestAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("RequestAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
 
-  saveService(
-    request: SaveServiceRequest,
-    metadata?: Metadata,
-  ): Promise<SaveServiceResponse> | Observable<SaveServiceResponse> | SaveServiceResponse;
+export const REQUEST_ADMIN_SERVICE_NAME = "RequestAdminService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : agents, disponibilités, équipes (UC-NT-34 à 36).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface AgentAdminServiceClient {
+  /**
+   * UC-NT-35 — R-AG-04. Agents et candidatures. REST : GET /api/v1/admin/cleaning/agents. Lecture
+   * aussi pour la supervision (planning). Permission : cleaning.planning.manage.
+   */
+
+  listAgents(request: ListAgentsRequest, metadata?: Metadata): Observable<ListAgentsResponse>;
 
   /**
-   * Calcule un prix avec une définition envoyée (ou la version en vigueur) et des réponses, pour
-   * tester une grille avant de l'enregistrer. Rien n'est enregistré (ADR-033).
+   * UC-NT-35 — R-AG-04. Fiche agent. REST : GET /api/v1/admin/cleaning/agents/{id}. Informations,
+   * compétences, zones, statistiques (heures, note, réclamations). Planning : "GET
+   * /admin/planning?agentId=". Permission : cleaning.planning.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND.
    */
 
-  previewService(
-    request: PreviewServiceRequest,
-    metadata?: Metadata,
-  ): Promise<PreviewServiceResponse> | Observable<PreviewServiceResponse> | PreviewServiceResponse;
-
-  updateSettings(
-    request: UpdateSettingsRequest,
-    metadata?: Metadata,
-  ): Promise<UpdateSettingsResponse> | Observable<UpdateSettingsResponse> | UpdateSettingsResponse;
-
-  /** Zones desservies (cleaning_admin, super_admin) : une demande de devis hors zone est refusée. */
-
-  listZones(
-    request: ListZonesRequest,
-    metadata?: Metadata,
-  ): Promise<ListZonesResponse> | Observable<ListZonesResponse> | ListZonesResponse;
-
-  /** Ajoute la commune, ou la réactive si elle existe déjà. */
-
-  saveZone(
-    request: SaveZoneRequest,
-    metadata?: Metadata,
-  ): Promise<SaveZoneResponse> | Observable<SaveZoneResponse> | SaveZoneResponse;
-
-  deactivateZone(
-    request: DeactivateZoneRequest,
-    metadata?: Metadata,
-  ): Promise<DeactivateZoneResponse> | Observable<DeactivateZoneResponse> | DeactivateZoneResponse;
-
-  /** Types de lieu du parcours client (cleaning_admin, super_admin ; ADR-034) : tous, actifs ou non. */
-
-  listPlaceTypes(
-    request: ListPlaceTypesRequest,
-    metadata?: Metadata,
-  ): Promise<ListPlaceTypesResponse> | Observable<ListPlaceTypesResponse> | ListPlaceTypesResponse;
+  getAgent(request: GetAgentRequest, metadata?: Metadata): Observable<GetAgentResponse>;
 
   /**
-   * Crée ou modifie un type de lieu (pas de suppression : active = false). Une prestation inconnue
-   * est refusée ; une prestation inactive est acceptée mais masquée côté public.
+   * UC-NT-34 — partie 9.1, 16.3. Pièce d’identité d’un agent. REST : GET
+   * /api/v1/admin/cleaning/agents/{id}/id-document. Admin Nettoyage seulement ; liens temporaires ;
+   * consultation tracée au journal d’audit. Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND.
    */
 
-  savePlaceType(
-    request: SavePlaceTypeRequest,
-    metadata?: Metadata,
-  ): Promise<SavePlaceTypeResponse> | Observable<SavePlaceTypeResponse> | SavePlaceTypeResponse;
+  getAgentIdDocument(request: GetAgentIdDocumentRequest, metadata?: Metadata): Observable<GetAgentIdDocumentResponse>;
 
-  /** Agents et équipes (cleaning_admin, super_admin ; listes : aussi cleaning_supervisor). */
+  /**
+   * UC-NT-35 — R-AG-02. Créer un agent. REST : POST /api/v1/admin/cleaning/agents. Mêmes
+   * informations que l’inscription ; le compte KSP est trouvé ou créé par son téléphone (identity).
+   * L’agent est créé « en vérification ». Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.agent.manage. Erreurs : CLEANING_AGENT_ALREADY_REGISTERED,
+   * CLEANING_SKILL_NOT_FOUND, CLEANING_ZONE_NOT_FOUND, CLEANING_VALIDATION_FAILED,
+   * CLEANING_GEO_UNAVAILABLE.
+   */
+
+  createAgent(request: CreateAgentRequest, metadata?: Metadata): Observable<CreateAgentResponse>;
+
+  /**
+   * UC-NT-35 — R-AG-02. Inviter un agent par SMS. REST : POST
+   * /api/v1/admin/cleaning/agents/invitations. Lien d’inscription envoyé par SMS. Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_ALREADY_REGISTERED.
+   */
+
+  inviteAgent(request: InviteAgentRequest, metadata?: Metadata): Observable<InviteAgentResponse>;
+
+  /**
+   * UC-NT-35 — R-AG-01, R-DS-03. Modifier un agent. REST : PATCH
+   * /api/v1/admin/cleaning/agents/{id}. Champs absents inchangés. Retirer une compétence validée ou
+   * une zone ne désaffecte rien : les affectations à venir sont signalées au superviseur.
+   * Permission : cleaning.agent.manage. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_SKILL_NOT_FOUND, CLEANING_ZONE_NOT_FOUND, CLEANING_VALIDATION_FAILED,
+   * CLEANING_GEO_UNAVAILABLE.
+   */
+
+  updateAgent(request: UpdateAgentRequest, metadata?: Metadata): Observable<UpdateAgentResponse>;
+
+  /**
+   * UC-NT-34 — partie 9.1. Passer une candidature en vérification. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/review. Candidat → en vérification. Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  startAgentReview(request: StartAgentReviewRequest, metadata?: Metadata): Observable<StartAgentReviewResponse>;
+
+  /**
+   * UC-NT-34 — R-AG-01. Valider une candidature. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/approve. L’agent devient actif ; identity lui donne le rôle
+   * "cleaning_agent" ; seules les compétences validées comptent. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.agent.manage. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_SKILL_NOT_FOUND.
+   */
+
+  approveAgent(request: ApproveAgentRequest, metadata?: Metadata): Observable<ApproveAgentResponse>;
+
+  /**
+   * UC-NT-34 — partie 9.1. Refuser une candidature. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/reject. Motif obligatoire. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.agent.manage. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  rejectAgent(request: RejectAgentRequest, metadata?: Metadata): Observable<RejectAgentResponse>;
+
+  /**
+   * UC-NT-35 — R-AG-03, R-PL-01. Suspendre un agent. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/suspend. Ses affectations à venir sont retirées et la
+   * planification relance la recherche (à valider : même règle que la désactivation). Idempotent
+   * par idempotency_key (obligatoire). Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  suspendAgent(request: SuspendAgentRequest, metadata?: Metadata): Observable<SuspendAgentResponse>;
+
+  /**
+   * UC-NT-35 — partie 9.1. Réactiver un agent. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/reactivate. Suspendu → actif. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.agent.manage. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  reactivateAgent(request: ReactivateAgentRequest, metadata?: Metadata): Observable<ReactivateAgentResponse>;
+
+  /**
+   * UC-NT-35 — R-AG-03, R-PL-01. Désactiver un agent. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/deactivate. Jamais de suppression. Refusée tant qu’il a des
+   * affectations à venir, sauf "reassign: true" (réaffectation automatique). Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_AGENT_HAS_ASSIGNMENTS.
+   */
+
+  deactivateAgent(request: DeactivateAgentRequest, metadata?: Metadata): Observable<DeactivateAgentResponse>;
+
+  /**
+   * UC-NT-35 — R-DS-01 à 03. Disponibilités d’un agent. REST : GET
+   * /api/v1/admin/cleaning/agents/{id}/availability. Permission : cleaning.planning.manage.
+   * Erreurs : CLEANING_AGENT_NOT_FOUND.
+   */
+
+  getAgentAvailability(
+    request: GetAgentAvailabilityRequest,
+    metadata?: Metadata,
+  ): Observable<GetAgentAvailabilityResponse>;
+
+  /**
+   * UC-NT-35 — R-DS-01, R-DS-03, R-DS-05. Modifier les disponibilités d’un agent. REST : PUT
+   * /api/v1/admin/cleaning/agents/{id}/availability. Modèle hebdomadaire modifiable par le
+   * superviseur. Retirer une plage occupée demande "force: true" : les affectations touchées sont
+   * retirées et replanifiées. Permission : cleaning.planning.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_AVAILABILITY_IN_USE.
+   */
+
+  setAgentAvailability(
+    request: SetAgentAvailabilityRequest,
+    metadata?: Metadata,
+  ): Observable<SetAgentAvailabilityResponse>;
+
+  /**
+   * UC-NT-35 — R-DS-02, R-DS-04. Déclarer une indisponibilité pour un agent. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/unavailabilities. Chevauchement avec des affectations :
+   * refusé avec la liste, sauf "force: true" (l’agent est désaffecté, la planification relance ces
+   * séances). Idempotent par idempotency_key (obligatoire). Permission : cleaning.planning.manage.
+   * Erreurs : CLEANING_AGENT_NOT_FOUND, CLEANING_UNAVAILABILITY_CONFLICT.
+   */
+
+  declareAgentUnavailability(
+    request: DeclareAgentUnavailabilityRequest,
+    metadata?: Metadata,
+  ): Observable<DeclareAgentUnavailabilityResponse>;
+
+  /**
+   * UC-NT-35 — R-DS-02. Retirer une indisponibilité d’un agent. REST : DELETE
+   * /api/v1/admin/cleaning/agents/{id}/unavailabilities/{unavailabilityId}. Permission :
+   * cleaning.planning.manage. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_UNAVAILABILITY_NOT_FOUND.
+   */
+
+  removeAgentUnavailability(
+    request: RemoveAgentUnavailabilityRequest,
+    metadata?: Metadata,
+  ): Observable<RemoveAgentUnavailabilityResponse>;
+
+  /**
+   * UC-NT-36 — R-EQ-01. Équipes. REST : GET /api/v1/admin/cleaning/teams. Actives et désactivées.
+   * Permission : cleaning.planning.manage.
+   */
+
+  listTeams(request: ListTeamsRequest, metadata?: Metadata): Observable<ListTeamsResponse>;
+
+  /**
+   * UC-NT-36 — R-EQ-01, R-EQ-03. Équipe : créer. REST : POST /api/v1/admin/cleaning/teams.
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND.
+   */
+
+  createTeam(request: CreateTeamRequest, metadata?: Metadata): Observable<CreateTeamResponse>;
+
+  /**
+   * UC-NT-36 — R-EQ-01. Équipe : détail. REST : GET /api/v1/admin/cleaning/teams/{id}. Permission :
+   * cleaning.planning.manage. Erreurs : CLEANING_TEAM_NOT_FOUND.
+   */
+
+  getTeam(request: GetTeamRequest, metadata?: Metadata): Observable<GetTeamResponse>;
+
+  /**
+   * UC-NT-36 — R-EQ-01. Équipe : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/teams/{id}. Champs absents inchangés ; désactivation sans suppression
+   * ("active: false"), les affectations faites restent. Permission : cleaning.agent.manage.
+   * Erreurs : CLEANING_TEAM_NOT_FOUND, CLEANING_AGENT_NOT_FOUND.
+   */
+
+  updateTeam(request: UpdateTeamRequest, metadata?: Metadata): Observable<UpdateTeamResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : agents, disponibilités, équipes (UC-NT-34 à 36).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface AgentAdminServiceController {
+  /**
+   * UC-NT-35 — R-AG-04. Agents et candidatures. REST : GET /api/v1/admin/cleaning/agents. Lecture
+   * aussi pour la supervision (planning). Permission : cleaning.planning.manage.
+   */
 
   listAgents(
     request: ListAgentsRequest,
     metadata?: Metadata,
   ): Promise<ListAgentsResponse> | Observable<ListAgentsResponse> | ListAgentsResponse;
 
-  registerAgent(
-    request: RegisterAgentRequest,
-    metadata?: Metadata,
-  ): Promise<RegisterAgentResponse> | Observable<RegisterAgentResponse> | RegisterAgentResponse;
-
-  declareUnavailability(
-    request: DeclareUnavailabilityRequest,
-    metadata?: Metadata,
-  ): Promise<DeclareUnavailabilityResponse> | Observable<DeclareUnavailabilityResponse> | DeclareUnavailabilityResponse;
-
-  listTeams(
-    request: ListTeamsRequest,
-    metadata?: Metadata,
-  ): Promise<ListTeamsResponse> | Observable<ListTeamsResponse> | ListTeamsResponse;
-
-  createTeam(
-    request: CreateTeamRequest,
-    metadata?: Metadata,
-  ): Promise<CreateTeamResponse> | Observable<CreateTeamResponse> | CreateTeamResponse;
-
-  updateTeam(
-    request: UpdateTeamRequest,
-    metadata?: Metadata,
-  ): Promise<UpdateTeamResponse> | Observable<UpdateTeamResponse> | UpdateTeamResponse;
-
   /**
-   * Compléments du Nettoyage (ADR-053).
-   * Photos avant et après d'un passage non clos : agent du passage, ou supervision. Le fichier est
-   * d'abord envoyé au service file (finalité cleaning_intervention_photo) par le compte qui le
-   * rattache ensuite ici. Ajout idempotent pour un fichier déjà rattaché au passage.
+   * UC-NT-35 — R-AG-04. Fiche agent. REST : GET /api/v1/admin/cleaning/agents/{id}. Informations,
+   * compétences, zones, statistiques (heures, note, réclamations). Planning : "GET
+   * /admin/planning?agentId=". Permission : cleaning.planning.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND.
    */
 
-  addInterventionPhoto(
-    request: AddInterventionPhotoRequest,
+  getAgent(
+    request: GetAgentRequest,
     metadata?: Metadata,
-  ): Promise<AddInterventionPhotoResponse> | Observable<AddInterventionPhotoResponse> | AddInterventionPhotoResponse;
-
-  /** Retrait idempotent (fichier supprimé chez file) ; passage non clos seulement. */
-
-  removeInterventionPhoto(
-    request: RemoveInterventionPhotoRequest,
-    metadata?: Metadata,
-  ):
-    | Promise<RemoveInterventionPhotoResponse>
-    | Observable<RemoveInterventionPhotoResponse>
-    | RemoveInterventionPhotoResponse;
-
-  /** Photos d'un passage, avec des adresses de lecture de courte durée (agent du passage, supervision). */
-
-  listInterventionPhotos(
-    request: ListInterventionPhotosRequest,
-    metadata?: Metadata,
-  ):
-    | Promise<ListInterventionPhotosResponse>
-    | Observable<ListInterventionPhotosResponse>
-    | ListInterventionPhotosResponse;
+  ): Promise<GetAgentResponse> | Observable<GetAgentResponse> | GetAgentResponse;
 
   /**
-   * Reporter un passage planifié (supervision) : nouveau début dans le futur, mêmes contrôles de
-   * conflit que la planification (CLEANING_TEAM_UNAVAILABLE), agents gardés ou changés, motif.
+   * UC-NT-34 — partie 9.1, 16.3. Pièce d’identité d’un agent. REST : GET
+   * /api/v1/admin/cleaning/agents/{id}/id-document. Admin Nettoyage seulement ; liens temporaires ;
+   * consultation tracée au journal d’audit. Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND.
    */
 
-  rescheduleIntervention(
-    request: RescheduleInterventionRequest,
+  getAgentIdDocument(
+    request: GetAgentIdDocumentRequest,
     metadata?: Metadata,
-  ):
-    | Promise<RescheduleInterventionResponse>
-    | Observable<RescheduleInterventionResponse>
-    | RescheduleInterventionResponse;
+  ): Promise<GetAgentIdDocumentResponse> | Observable<GetAgentIdDocumentResponse> | GetAgentIdDocumentResponse;
 
   /**
-   * Annuler un passage planifié pour le replanifier (supervision, motif) : le passage est annulé
-   * (cause "unscheduled") et la mission a de nouveau un passage à planifier ; le nombre de passages
-   * prévus et l'argent ne changent pas.
+   * UC-NT-35 — R-AG-02. Créer un agent. REST : POST /api/v1/admin/cleaning/agents. Mêmes
+   * informations que l’inscription ; le compte KSP est trouvé ou créé par son téléphone (identity).
+   * L’agent est créé « en vérification ». Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.agent.manage. Erreurs : CLEANING_AGENT_ALREADY_REGISTERED,
+   * CLEANING_SKILL_NOT_FOUND, CLEANING_ZONE_NOT_FOUND, CLEANING_VALIDATION_FAILED,
+   * CLEANING_GEO_UNAVAILABLE.
    */
 
-  unscheduleIntervention(
-    request: UnscheduleInterventionRequest,
+  createAgent(
+    request: CreateAgentRequest,
     metadata?: Metadata,
-  ):
-    | Promise<UnscheduleInterventionResponse>
-    | Observable<UnscheduleInterventionResponse>
-    | UnscheduleInterventionResponse;
+  ): Promise<CreateAgentResponse> | Observable<CreateAgentResponse> | CreateAgentResponse;
 
   /**
-   * Désactiver un agent (cleaning_admin, super_admin) : refus s'il a des passages ou des visites à
-   * venir (CLEANING_AGENT_HAS_ASSIGNMENTS, avec la liste) ; les reporter ou les réaffecter d'abord.
+   * UC-NT-35 — R-AG-02. Inviter un agent par SMS. REST : POST
+   * /api/v1/admin/cleaning/agents/invitations. Lien d’inscription envoyé par SMS. Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_ALREADY_REGISTERED.
+   */
+
+  inviteAgent(
+    request: InviteAgentRequest,
+    metadata?: Metadata,
+  ): Promise<InviteAgentResponse> | Observable<InviteAgentResponse> | InviteAgentResponse;
+
+  /**
+   * UC-NT-35 — R-AG-01, R-DS-03. Modifier un agent. REST : PATCH
+   * /api/v1/admin/cleaning/agents/{id}. Champs absents inchangés. Retirer une compétence validée ou
+   * une zone ne désaffecte rien : les affectations à venir sont signalées au superviseur.
+   * Permission : cleaning.agent.manage. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_SKILL_NOT_FOUND, CLEANING_ZONE_NOT_FOUND, CLEANING_VALIDATION_FAILED,
+   * CLEANING_GEO_UNAVAILABLE.
+   */
+
+  updateAgent(
+    request: UpdateAgentRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateAgentResponse> | Observable<UpdateAgentResponse> | UpdateAgentResponse;
+
+  /**
+   * UC-NT-34 — partie 9.1. Passer une candidature en vérification. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/review. Candidat → en vérification. Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  startAgentReview(
+    request: StartAgentReviewRequest,
+    metadata?: Metadata,
+  ): Promise<StartAgentReviewResponse> | Observable<StartAgentReviewResponse> | StartAgentReviewResponse;
+
+  /**
+   * UC-NT-34 — R-AG-01. Valider une candidature. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/approve. L’agent devient actif ; identity lui donne le rôle
+   * "cleaning_agent" ; seules les compétences validées comptent. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.agent.manage. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_SKILL_NOT_FOUND.
+   */
+
+  approveAgent(
+    request: ApproveAgentRequest,
+    metadata?: Metadata,
+  ): Promise<ApproveAgentResponse> | Observable<ApproveAgentResponse> | ApproveAgentResponse;
+
+  /**
+   * UC-NT-34 — partie 9.1. Refuser une candidature. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/reject. Motif obligatoire. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.agent.manage. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  rejectAgent(
+    request: RejectAgentRequest,
+    metadata?: Metadata,
+  ): Promise<RejectAgentResponse> | Observable<RejectAgentResponse> | RejectAgentResponse;
+
+  /**
+   * UC-NT-35 — R-AG-03, R-PL-01. Suspendre un agent. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/suspend. Ses affectations à venir sont retirées et la
+   * planification relance la recherche (à valider : même règle que la désactivation). Idempotent
+   * par idempotency_key (obligatoire). Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  suspendAgent(
+    request: SuspendAgentRequest,
+    metadata?: Metadata,
+  ): Promise<SuspendAgentResponse> | Observable<SuspendAgentResponse> | SuspendAgentResponse;
+
+  /**
+   * UC-NT-35 — partie 9.1. Réactiver un agent. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/reactivate. Suspendu → actif. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.agent.manage. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  reactivateAgent(
+    request: ReactivateAgentRequest,
+    metadata?: Metadata,
+  ): Promise<ReactivateAgentResponse> | Observable<ReactivateAgentResponse> | ReactivateAgentResponse;
+
+  /**
+   * UC-NT-35 — R-AG-03, R-PL-01. Désactiver un agent. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/deactivate. Jamais de suppression. Refusée tant qu’il a des
+   * affectations à venir, sauf "reassign: true" (réaffectation automatique). Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_AGENT_HAS_ASSIGNMENTS.
    */
 
   deactivateAgent(
@@ -3524,158 +9412,1150 @@ export interface CleaningAdminServiceController {
     metadata?: Metadata,
   ): Promise<DeactivateAgentResponse> | Observable<DeactivateAgentResponse> | DeactivateAgentResponse;
 
-  reactivateAgent(
-    request: ReactivateAgentRequest,
-    metadata?: Metadata,
-  ): Promise<ReactivateAgentResponse> | Observable<ReactivateAgentResponse> | ReactivateAgentResponse;
+  /**
+   * UC-NT-35 — R-DS-01 à 03. Disponibilités d’un agent. REST : GET
+   * /api/v1/admin/cleaning/agents/{id}/availability. Permission : cleaning.planning.manage.
+   * Erreurs : CLEANING_AGENT_NOT_FOUND.
+   */
 
-  removeUnavailability(
-    request: RemoveUnavailabilityRequest,
+  getAgentAvailability(
+    request: GetAgentAvailabilityRequest,
     metadata?: Metadata,
-  ): Promise<RemoveUnavailabilityResponse> | Observable<RemoveUnavailabilityResponse> | RemoveUnavailabilityResponse;
+  ): Promise<GetAgentAvailabilityResponse> | Observable<GetAgentAvailabilityResponse> | GetAgentAvailabilityResponse;
 
-  /** Désactiver une équipe (jamais de suppression) : elle n'est plus proposée à la planification. */
+  /**
+   * UC-NT-35 — R-DS-01, R-DS-03, R-DS-05. Modifier les disponibilités d’un agent. REST : PUT
+   * /api/v1/admin/cleaning/agents/{id}/availability. Modèle hebdomadaire modifiable par le
+   * superviseur. Retirer une plage occupée demande "force: true" : les affectations touchées sont
+   * retirées et replanifiées. Permission : cleaning.planning.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_AVAILABILITY_IN_USE.
+   */
 
-  deactivateTeam(
-    request: DeactivateTeamRequest,
+  setAgentAvailability(
+    request: SetAgentAvailabilityRequest,
     metadata?: Metadata,
-  ): Promise<DeactivateTeamResponse> | Observable<DeactivateTeamResponse> | DeactivateTeamResponse;
+  ): Promise<SetAgentAvailabilityResponse> | Observable<SetAgentAvailabilityResponse> | SetAgentAvailabilityResponse;
 
-  reactivateTeam(
-    request: ReactivateTeamRequest,
+  /**
+   * UC-NT-35 — R-DS-02, R-DS-04. Déclarer une indisponibilité pour un agent. REST : POST
+   * /api/v1/admin/cleaning/agents/{id}/unavailabilities. Chevauchement avec des affectations :
+   * refusé avec la liste, sauf "force: true" (l’agent est désaffecté, la planification relance ces
+   * séances). Idempotent par idempotency_key (obligatoire). Permission : cleaning.planning.manage.
+   * Erreurs : CLEANING_AGENT_NOT_FOUND, CLEANING_UNAVAILABILITY_CONFLICT.
+   */
+
+  declareAgentUnavailability(
+    request: DeclareAgentUnavailabilityRequest,
     metadata?: Metadata,
-  ): Promise<ReactivateTeamResponse> | Observable<ReactivateTeamResponse> | ReactivateTeamResponse;
+  ):
+    | Promise<DeclareAgentUnavailabilityResponse>
+    | Observable<DeclareAgentUnavailabilityResponse>
+    | DeclareAgentUnavailabilityResponse;
+
+  /**
+   * UC-NT-35 — R-DS-02. Retirer une indisponibilité d’un agent. REST : DELETE
+   * /api/v1/admin/cleaning/agents/{id}/unavailabilities/{unavailabilityId}. Permission :
+   * cleaning.planning.manage. Erreurs : CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_UNAVAILABILITY_NOT_FOUND.
+   */
+
+  removeAgentUnavailability(
+    request: RemoveAgentUnavailabilityRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<RemoveAgentUnavailabilityResponse>
+    | Observable<RemoveAgentUnavailabilityResponse>
+    | RemoveAgentUnavailabilityResponse;
+
+  /**
+   * UC-NT-36 — R-EQ-01. Équipes. REST : GET /api/v1/admin/cleaning/teams. Actives et désactivées.
+   * Permission : cleaning.planning.manage.
+   */
+
+  listTeams(
+    request: ListTeamsRequest,
+    metadata?: Metadata,
+  ): Promise<ListTeamsResponse> | Observable<ListTeamsResponse> | ListTeamsResponse;
+
+  /**
+   * UC-NT-36 — R-EQ-01, R-EQ-03. Équipe : créer. REST : POST /api/v1/admin/cleaning/teams.
+   * Idempotent par idempotency_key (obligatoire). Permission : cleaning.agent.manage. Erreurs :
+   * CLEANING_AGENT_NOT_FOUND.
+   */
+
+  createTeam(
+    request: CreateTeamRequest,
+    metadata?: Metadata,
+  ): Promise<CreateTeamResponse> | Observable<CreateTeamResponse> | CreateTeamResponse;
+
+  /**
+   * UC-NT-36 — R-EQ-01. Équipe : détail. REST : GET /api/v1/admin/cleaning/teams/{id}. Permission :
+   * cleaning.planning.manage. Erreurs : CLEANING_TEAM_NOT_FOUND.
+   */
+
+  getTeam(
+    request: GetTeamRequest,
+    metadata?: Metadata,
+  ): Promise<GetTeamResponse> | Observable<GetTeamResponse> | GetTeamResponse;
+
+  /**
+   * UC-NT-36 — R-EQ-01. Équipe : modifier ou désactiver. REST : PATCH
+   * /api/v1/admin/cleaning/teams/{id}. Champs absents inchangés ; désactivation sans suppression
+   * ("active: false"), les affectations faites restent. Permission : cleaning.agent.manage.
+   * Erreurs : CLEANING_TEAM_NOT_FOUND, CLEANING_AGENT_NOT_FOUND.
+   */
+
+  updateTeam(
+    request: UpdateTeamRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateTeamResponse> | Observable<UpdateTeamResponse> | UpdateTeamResponse;
 }
 
-export function CleaningAdminServiceControllerMethods() {
+export function AgentAdminServiceControllerMethods() {
   return function (constructor: Function) {
     const grpcMethods: string[] = [
-      "listQuoteRequests",
-      "getQuoteRequest",
-      "rejectQuoteRequest",
-      "scheduleVisit",
-      "completeVisit",
-      "sendQuote",
-      "estimateRequestPrice",
-      "saveRequestMeasurements",
-      "scheduleGroupVisit",
-      "completeGroupVisit",
-      "rejectRequestGroup",
-      "sendGroupQuotes",
-      "correctRequestLocation",
-      "listVisits",
-      "listMissions",
-      "getMissionDetail",
-      "scheduleIntervention",
-      "scheduleGroupInterventions",
-      "scheduleInterventionBatch",
-      "startIntervention",
-      "updateChecklist",
-      "reportIncident",
-      "resumeIntervention",
-      "completeIntervention",
-      "recordPayment",
-      "cancelMissionAsSupervisor",
-      "getCatalog",
-      "saveService",
-      "previewService",
-      "updateSettings",
-      "listZones",
-      "saveZone",
-      "deactivateZone",
-      "listPlaceTypes",
-      "savePlaceType",
       "listAgents",
-      "registerAgent",
-      "declareUnavailability",
+      "getAgent",
+      "getAgentIdDocument",
+      "createAgent",
+      "inviteAgent",
+      "updateAgent",
+      "startAgentReview",
+      "approveAgent",
+      "rejectAgent",
+      "suspendAgent",
+      "reactivateAgent",
+      "deactivateAgent",
+      "getAgentAvailability",
+      "setAgentAvailability",
+      "declareAgentUnavailability",
+      "removeAgentUnavailability",
       "listTeams",
       "createTeam",
+      "getTeam",
       "updateTeam",
-      "addInterventionPhoto",
-      "removeInterventionPhoto",
-      "listInterventionPhotos",
-      "rescheduleIntervention",
-      "unscheduleIntervention",
-      "deactivateAgent",
-      "reactivateAgent",
-      "removeUnavailability",
-      "deactivateTeam",
-      "reactivateTeam",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcMethod("CleaningAdminService", method)(constructor.prototype[method], method, descriptor);
+      GrpcMethod("AgentAdminService", method)(constructor.prototype[method], method, descriptor);
       Object.defineProperty(constructor.prototype, method, descriptor);
     }
     const grpcStreamMethods: string[] = [];
     for (const method of grpcStreamMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcStreamMethod("CleaningAdminService", method)(constructor.prototype[method], method, descriptor);
+      GrpcStreamMethod("AgentAdminService", method)(constructor.prototype[method], method, descriptor);
       Object.defineProperty(constructor.prototype, method, descriptor);
     }
   };
 }
 
-export const CLEANING_ADMIN_SERVICE_NAME = "CleaningAdminService";
+export const AGENT_ADMIN_SERVICE_NAME = "AgentAdminService";
 
 /**
  * ---------------------------------------------------------------------------
- * Montant dû d'une mission — réservé au service payment (ADR-031).
+ * Back-office : planning, affectations, planification automatique (UC-NT-37, 38).
  * ---------------------------------------------------------------------------
- * payment ne recalcule rien : il lit ici l'acompte encore dû et le reste dû, puis vérifie
- * lui-même que le payeur est le client de la mission. Appel d'un autre service :
- * CLEANING_CALLER_FORBIDDEN. Mission inconnue : CLEANING_MISSION_NOT_FOUND.
  */
 
-export interface MissionPaymentDueServiceClient {
-  getMissionAmountDue(
-    request: GetMissionAmountDueRequest,
-    metadata?: Metadata,
-  ): Observable<GetMissionAmountDueResponse>;
+export interface PlanningAdminServiceClient {
+  /**
+   * UC-NT-37 — partie 9.6. Planning. REST : GET /api/v1/admin/cleaning/planning. Vues par agent,
+   * équipe, zone ou programme, sur 62 jours au plus (à valider) ; charge de chaque agent ; carte du
+   * jour (positions des lieux pour le personnel). Export PDF et tableur : non contractualisé ici
+   * (question ouverte). Permission : cleaning.planning.manage.
+   */
+
+  getPlanning(request: GetPlanningRequest, metadata?: Metadata): Observable<GetPlanningResponse>;
+
+  /**
+   * UC-NT-37 — R-PL-06, partie 9.6. Colonne « à affecter ». REST : GET
+   * /api/v1/admin/cleaning/planning/unassigned. Visites à planifier et séances sans équipe
+   * complète. Permission : cleaning.planning.manage.
+   */
+
+  listUnassigned(request: ListUnassignedRequest, metadata?: Metadata): Observable<ListUnassignedResponse>;
+
+  /**
+   * UC-NT-37 — partie 9.4, 9.6. Contrôler une affectation (sans l’enregistrer). REST : POST
+   * /api/v1/admin/cleaning/assignments/check. Contrôles en direct du glisser-déposer ; rien n’est
+   * enregistré. Cible dont le début est passé : "CLEANING_INVALID_TRANSITION" (reason
+   * target_in_past) ; au moins un agent effectif ("CLEANING_VALIDATION_FAILED", field agentIds,
+   * reason required). Permission : cleaning.planning.manage. Erreurs : CLEANING_VISIT_NOT_FOUND,
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_AGENT_NOT_FOUND, CLEANING_TEAM_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_VALIDATION_FAILED.
+   */
+
+  checkAssignment(request: CheckAssignmentRequest, metadata?: Metadata): Observable<CheckAssignmentResponse>;
+
+  /**
+   * UC-NT-37 — partie 9.4, 9.5, R-EQ-02, R-EQ-03, R-PL-08. Affecter des agents. REST : POST
+   * /api/v1/admin/cleaning/assignments. Tout ou rien, sauf "skipFailing" (cibles en échec
+   * écartées), sous verrou de l’agenda des agents (deux superviseurs ne peuvent pas affecter le
+   * même agent au même moment). Les cibles sont contrôlées dans l’ordre chronologique, chacune
+   * occupant l’agenda pour les suivantes (R-PL-11). Contrôles non contournables : actif,
+   * compétences, aucun conflit (trajet compris), aucune indisponibilité déclarée
+   * ("CLEANING_AGENT_ON_LEAVE"). Contournables avec motif : zone, disponibilité, charge, taille
+   * d’équipe. Cible dont le début est passé : "CLEANING_INVALID_TRANSITION" (reason
+   * target_in_past). Indépendant : affectation en attente de sa réponse (12 h). Chaque action est
+   * tracée. Idempotent par idempotency_key (obligatoire). Permission : cleaning.planning.manage.
+   * Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_SESSION_NOT_FOUND, CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_TEAM_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_TEAM_INACTIVE,
+   * CLEANING_TEAM_SIZE_MISMATCH, CLEANING_SCHEDULE_CONFLICT, CLEANING_AGENT_NOT_ACTIVE,
+   * CLEANING_SKILL_MISSING, CLEANING_AGENT_OUT_OF_ZONE, CLEANING_AGENT_UNAVAILABLE,
+   * CLEANING_AGENT_OVERLOADED, CLEANING_CONCURRENT_UPDATE, CLEANING_VALIDATION_FAILED,
+   * CLEANING_AGENT_ON_LEAVE, CLEANING_PROGRAM_SUSPENDED.
+   */
+
+  createAssignments(request: CreateAssignmentsRequest, metadata?: Metadata): Observable<CreateAssignmentsResponse>;
+
+  /**
+   * UC-NT-37 — partie 9.4, 9.5, R-EQ-03. Remplacer un agent ou changer le chef d’équipe. REST :
+   * PATCH /api/v1/admin/cleaning/assignments/{id}. Mêmes contrôles qu’à l’affectation pour le
+   * remplaçant. Permission : cleaning.planning.manage. Erreurs : CLEANING_ASSIGNMENT_NOT_FOUND,
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_SCHEDULE_CONFLICT,
+   * CLEANING_AGENT_NOT_ACTIVE, CLEANING_SKILL_MISSING, CLEANING_AGENT_OUT_OF_ZONE,
+   * CLEANING_AGENT_UNAVAILABLE, CLEANING_AGENT_OVERLOADED, CLEANING_CONCURRENT_UPDATE,
+   * CLEANING_AGENT_ON_LEAVE.
+   */
+
+  updateAssignment(request: UpdateAssignmentRequest, metadata?: Metadata): Observable<UpdateAssignmentResponse>;
+
+  /**
+   * UC-NT-37 — partie 9.5, R-PL-01. Désaffecter un agent. REST : POST
+   * /api/v1/admin/cleaning/assignments/{id}/remove. La séance repasse « à affecter » si son équipe
+   * devient incomplète ; la planification automatique est relancée. Motif obligatoire. Idempotent
+   * par idempotency_key (obligatoire). Permission : cleaning.planning.manage. Erreurs :
+   * CLEANING_ASSIGNMENT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  removeAssignment(request: RemoveAssignmentRequest, metadata?: Metadata): Observable<RemoveAssignmentResponse>;
+
+  /**
+   * UC-NT-38 — R-PL-01 à 07. Planifier automatiquement. REST : POST
+   * /api/v1/admin/cleaning/planning/auto. Cherche des agents pour les séances « à affecter » de la
+   * période (horizon de 14 jours par défaut). Filtre : tous les contrôles passent, l’automatique ne
+   * force jamais ; score réglable ; ne déplace jamais une affectation faite. Mode de la zone :
+   * proposition (à valider par le superviseur) ou automatique ; mode manuel : rien. Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.planning.manage. Erreurs :
+   * CLEANING_PROGRAM_NOT_FOUND.
+   */
+
+  runAutoPlanning(request: RunAutoPlanningRequest, metadata?: Metadata): Observable<RunAutoPlanningResponse>;
+
+  /**
+   * UC-NT-38 — R-PL-05. Propositions de la planification. REST : GET
+   * /api/v1/admin/cleaning/planning/proposals. Affectations au statut "proposed". Permission :
+   * cleaning.planning.manage.
+   */
+
+  listProposals(request: ListProposalsRequest, metadata?: Metadata): Observable<ListProposalsResponse>;
+
+  /**
+   * UC-NT-38 — R-PL-05, 9.4. Valider des propositions. REST : POST
+   * /api/v1/admin/cleaning/planning/proposals/approve. Validation en un clic ; contrôles refaits
+   * sous verrou ; une proposition devenue impossible est signalée et ignorée. Cible dont le début
+   * est passé : "CLEANING_INVALID_TRANSITION" (reason target_in_past). Pour modifier : retirer la
+   * proposition et affecter à la main. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.planning.manage. Erreurs : CLEANING_ASSIGNMENT_NOT_FOUND, CLEANING_CONCURRENT_UPDATE,
+   * CLEANING_INVALID_TRANSITION, CLEANING_AGENT_ON_LEAVE.
+   */
+
+  approveProposals(request: ApproveProposalsRequest, metadata?: Metadata): Observable<ApproveProposalsResponse>;
 }
 
 /**
  * ---------------------------------------------------------------------------
- * Montant dû d'une mission — réservé au service payment (ADR-031).
+ * Back-office : planning, affectations, planification automatique (UC-NT-37, 38).
  * ---------------------------------------------------------------------------
- * payment ne recalcule rien : il lit ici l'acompte encore dû et le reste dû, puis vérifie
- * lui-même que le payeur est le client de la mission. Appel d'un autre service :
- * CLEANING_CALLER_FORBIDDEN. Mission inconnue : CLEANING_MISSION_NOT_FOUND.
  */
 
-export interface MissionPaymentDueServiceController {
-  getMissionAmountDue(
-    request: GetMissionAmountDueRequest,
+export interface PlanningAdminServiceController {
+  /**
+   * UC-NT-37 — partie 9.6. Planning. REST : GET /api/v1/admin/cleaning/planning. Vues par agent,
+   * équipe, zone ou programme, sur 62 jours au plus (à valider) ; charge de chaque agent ; carte du
+   * jour (positions des lieux pour le personnel). Export PDF et tableur : non contractualisé ici
+   * (question ouverte). Permission : cleaning.planning.manage.
+   */
+
+  getPlanning(
+    request: GetPlanningRequest,
     metadata?: Metadata,
-  ): Promise<GetMissionAmountDueResponse> | Observable<GetMissionAmountDueResponse> | GetMissionAmountDueResponse;
+  ): Promise<GetPlanningResponse> | Observable<GetPlanningResponse> | GetPlanningResponse;
+
+  /**
+   * UC-NT-37 — R-PL-06, partie 9.6. Colonne « à affecter ». REST : GET
+   * /api/v1/admin/cleaning/planning/unassigned. Visites à planifier et séances sans équipe
+   * complète. Permission : cleaning.planning.manage.
+   */
+
+  listUnassigned(
+    request: ListUnassignedRequest,
+    metadata?: Metadata,
+  ): Promise<ListUnassignedResponse> | Observable<ListUnassignedResponse> | ListUnassignedResponse;
+
+  /**
+   * UC-NT-37 — partie 9.4, 9.6. Contrôler une affectation (sans l’enregistrer). REST : POST
+   * /api/v1/admin/cleaning/assignments/check. Contrôles en direct du glisser-déposer ; rien n’est
+   * enregistré. Cible dont le début est passé : "CLEANING_INVALID_TRANSITION" (reason
+   * target_in_past) ; au moins un agent effectif ("CLEANING_VALIDATION_FAILED", field agentIds,
+   * reason required). Permission : cleaning.planning.manage. Erreurs : CLEANING_VISIT_NOT_FOUND,
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_AGENT_NOT_FOUND, CLEANING_TEAM_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_VALIDATION_FAILED.
+   */
+
+  checkAssignment(
+    request: CheckAssignmentRequest,
+    metadata?: Metadata,
+  ): Promise<CheckAssignmentResponse> | Observable<CheckAssignmentResponse> | CheckAssignmentResponse;
+
+  /**
+   * UC-NT-37 — partie 9.4, 9.5, R-EQ-02, R-EQ-03, R-PL-08. Affecter des agents. REST : POST
+   * /api/v1/admin/cleaning/assignments. Tout ou rien, sauf "skipFailing" (cibles en échec
+   * écartées), sous verrou de l’agenda des agents (deux superviseurs ne peuvent pas affecter le
+   * même agent au même moment). Les cibles sont contrôlées dans l’ordre chronologique, chacune
+   * occupant l’agenda pour les suivantes (R-PL-11). Contrôles non contournables : actif,
+   * compétences, aucun conflit (trajet compris), aucune indisponibilité déclarée
+   * ("CLEANING_AGENT_ON_LEAVE"). Contournables avec motif : zone, disponibilité, charge, taille
+   * d’équipe. Cible dont le début est passé : "CLEANING_INVALID_TRANSITION" (reason
+   * target_in_past). Indépendant : affectation en attente de sa réponse (12 h). Chaque action est
+   * tracée. Idempotent par idempotency_key (obligatoire). Permission : cleaning.planning.manage.
+   * Erreurs : CLEANING_VISIT_NOT_FOUND, CLEANING_SESSION_NOT_FOUND, CLEANING_AGENT_NOT_FOUND,
+   * CLEANING_TEAM_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_TEAM_INACTIVE,
+   * CLEANING_TEAM_SIZE_MISMATCH, CLEANING_SCHEDULE_CONFLICT, CLEANING_AGENT_NOT_ACTIVE,
+   * CLEANING_SKILL_MISSING, CLEANING_AGENT_OUT_OF_ZONE, CLEANING_AGENT_UNAVAILABLE,
+   * CLEANING_AGENT_OVERLOADED, CLEANING_CONCURRENT_UPDATE, CLEANING_VALIDATION_FAILED,
+   * CLEANING_AGENT_ON_LEAVE, CLEANING_PROGRAM_SUSPENDED.
+   */
+
+  createAssignments(
+    request: CreateAssignmentsRequest,
+    metadata?: Metadata,
+  ): Promise<CreateAssignmentsResponse> | Observable<CreateAssignmentsResponse> | CreateAssignmentsResponse;
+
+  /**
+   * UC-NT-37 — partie 9.4, 9.5, R-EQ-03. Remplacer un agent ou changer le chef d’équipe. REST :
+   * PATCH /api/v1/admin/cleaning/assignments/{id}. Mêmes contrôles qu’à l’affectation pour le
+   * remplaçant. Permission : cleaning.planning.manage. Erreurs : CLEANING_ASSIGNMENT_NOT_FOUND,
+   * CLEANING_AGENT_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_SCHEDULE_CONFLICT,
+   * CLEANING_AGENT_NOT_ACTIVE, CLEANING_SKILL_MISSING, CLEANING_AGENT_OUT_OF_ZONE,
+   * CLEANING_AGENT_UNAVAILABLE, CLEANING_AGENT_OVERLOADED, CLEANING_CONCURRENT_UPDATE,
+   * CLEANING_AGENT_ON_LEAVE.
+   */
+
+  updateAssignment(
+    request: UpdateAssignmentRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateAssignmentResponse> | Observable<UpdateAssignmentResponse> | UpdateAssignmentResponse;
+
+  /**
+   * UC-NT-37 — partie 9.5, R-PL-01. Désaffecter un agent. REST : POST
+   * /api/v1/admin/cleaning/assignments/{id}/remove. La séance repasse « à affecter » si son équipe
+   * devient incomplète ; la planification automatique est relancée. Motif obligatoire. Idempotent
+   * par idempotency_key (obligatoire). Permission : cleaning.planning.manage. Erreurs :
+   * CLEANING_ASSIGNMENT_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  removeAssignment(
+    request: RemoveAssignmentRequest,
+    metadata?: Metadata,
+  ): Promise<RemoveAssignmentResponse> | Observable<RemoveAssignmentResponse> | RemoveAssignmentResponse;
+
+  /**
+   * UC-NT-38 — R-PL-01 à 07. Planifier automatiquement. REST : POST
+   * /api/v1/admin/cleaning/planning/auto. Cherche des agents pour les séances « à affecter » de la
+   * période (horizon de 14 jours par défaut). Filtre : tous les contrôles passent, l’automatique ne
+   * force jamais ; score réglable ; ne déplace jamais une affectation faite. Mode de la zone :
+   * proposition (à valider par le superviseur) ou automatique ; mode manuel : rien. Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.planning.manage. Erreurs :
+   * CLEANING_PROGRAM_NOT_FOUND.
+   */
+
+  runAutoPlanning(
+    request: RunAutoPlanningRequest,
+    metadata?: Metadata,
+  ): Promise<RunAutoPlanningResponse> | Observable<RunAutoPlanningResponse> | RunAutoPlanningResponse;
+
+  /**
+   * UC-NT-38 — R-PL-05. Propositions de la planification. REST : GET
+   * /api/v1/admin/cleaning/planning/proposals. Affectations au statut "proposed". Permission :
+   * cleaning.planning.manage.
+   */
+
+  listProposals(
+    request: ListProposalsRequest,
+    metadata?: Metadata,
+  ): Promise<ListProposalsResponse> | Observable<ListProposalsResponse> | ListProposalsResponse;
+
+  /**
+   * UC-NT-38 — R-PL-05, 9.4. Valider des propositions. REST : POST
+   * /api/v1/admin/cleaning/planning/proposals/approve. Validation en un clic ; contrôles refaits
+   * sous verrou ; une proposition devenue impossible est signalée et ignorée. Cible dont le début
+   * est passé : "CLEANING_INVALID_TRANSITION" (reason target_in_past). Pour modifier : retirer la
+   * proposition et affecter à la main. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.planning.manage. Erreurs : CLEANING_ASSIGNMENT_NOT_FOUND, CLEANING_CONCURRENT_UPDATE,
+   * CLEANING_INVALID_TRANSITION, CLEANING_AGENT_ON_LEAVE.
+   */
+
+  approveProposals(
+    request: ApproveProposalsRequest,
+    metadata?: Metadata,
+  ): Promise<ApproveProposalsResponse> | Observable<ApproveProposalsResponse> | ApproveProposalsResponse;
 }
 
-export function MissionPaymentDueServiceControllerMethods() {
+export function PlanningAdminServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["getMissionAmountDue"];
+    const grpcMethods: string[] = [
+      "getPlanning",
+      "listUnassigned",
+      "checkAssignment",
+      "createAssignments",
+      "updateAssignment",
+      "removeAssignment",
+      "runAutoPlanning",
+      "listProposals",
+      "approveProposals",
+    ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcMethod("MissionPaymentDueService", method)(constructor.prototype[method], method, descriptor);
+      GrpcMethod("PlanningAdminService", method)(constructor.prototype[method], method, descriptor);
       Object.defineProperty(constructor.prototype, method, descriptor);
     }
     const grpcStreamMethods: string[] = [];
     for (const method of grpcStreamMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcStreamMethod("MissionPaymentDueService", method)(constructor.prototype[method], method, descriptor);
+      GrpcStreamMethod("PlanningAdminService", method)(constructor.prototype[method], method, descriptor);
       Object.defineProperty(constructor.prototype, method, descriptor);
     }
   };
 }
 
-export const MISSION_PAYMENT_DUE_SERVICE_NAME = "MissionPaymentDueService";
+export const PLANNING_ADMIN_SERVICE_NAME = "PlanningAdminService";
 
 /**
  * ---------------------------------------------------------------------------
- * Débit du portefeuille enregistré ? — réservé au service wallet (ADR-048).
+ * Back-office : programmes et séances (UC-NT-39).
  * ---------------------------------------------------------------------------
- * wallet rapproche les débits du portefeuille prépayé faits pour une mission dont l'enregistrement a
- * pu échouer (panne entre le débit et l'enregistrement du paiement) : un débit qu'aucun paiement de
- * la mission ne cite est remboursé. Appel d'un autre service : CLEANING_CALLER_FORBIDDEN.
+ */
+
+export interface ProgramAdminServiceClient {
+  /**
+   * UC-NT-39 — partie 8. Programmes. REST : GET /api/v1/admin/cleaning/programs. Permission :
+   * cleaning.program.read.
+   */
+
+  listPrograms(request: ListProgramsRequest, metadata?: Metadata): Observable<ListProgramsResponse>;
+
+  /**
+   * UC-NT-39 — partie 8. Fiche programme. REST : GET /api/v1/admin/cleaning/programs/{id}.
+   * Permission : cleaning.program.read. Erreurs : CLEANING_PROGRAM_NOT_FOUND.
+   */
+
+  getProgram(request: GetProgramRequest, metadata?: Metadata): Observable<GetProgramResponse>;
+
+  /**
+   * UC-NT-39 — partie 8, partie 11. Séances et paiements d’un programme. REST : GET
+   * /api/v1/admin/cleaning/programs/{id}/sessions. Permission : cleaning.program.read. Erreurs :
+   * CLEANING_PROGRAM_NOT_FOUND.
+   */
+
+  listProgramSessions(
+    request: ListProgramSessionsRequest,
+    metadata?: Metadata,
+  ): Observable<ListProgramSessionsResponse>;
+
+  /**
+   * UC-NT-39 — partie 10. Détail d’une séance (back-office). REST : GET
+   * /api/v1/admin/cleaning/sessions/{id}. Permission : cleaning.program.read. Erreurs :
+   * CLEANING_SESSION_NOT_FOUND.
+   */
+
+  getSession(request: GetSessionRequest, metadata?: Metadata): Observable<GetSessionResponse>;
+
+  /**
+   * UC-NT-39 — R-PG-06, R-RP-01. Changer le jour ou l’heure des séances à venir. REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/schedule-change. Sur demande du client, sans nouveau devis
+   * si le prix ne change pas (même nombre de séances) ; sinon passer par un avenant. La durée des
+   * séances peut changer sans changer leur prix. Les séances concernées sont réaffectées. Refusé
+   * tant que le programme est suspendu. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.program.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_AMENDMENT_REQUIRED, CLEANING_SCHEDULE_EMPTY, CLEANING_PROGRAM_SUSPENDED,
+   * CLEANING_CONCURRENT_UPDATE, CLEANING_VALIDATION_FAILED.
+   */
+
+  changeProgramSchedule(
+    request: ChangeProgramScheduleRequest,
+    metadata?: Metadata,
+  ): Observable<ChangeProgramScheduleResponse>;
+
+  /**
+   * UC-NT-39 — R-PG-06, R-EX-03. Préparer un avenant. REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/amendments. Devis complémentaire (brouillon, "kind:
+   * amendment") pour ajouter un type de nettoyage ou des séances, sans nouvelle visite si le lieu
+   * n’a pas changé ; envoyé puis accepté comme un devis. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.quote.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_OFFER_NOT_AVAILABLE, CLEANING_PRICE_NOT_POSITIVE,
+   * CLEANING_VALIDATION_FAILED, CLEANING_PROGRAM_SUSPENDED.
+   */
+
+  createAmendment(request: CreateAmendmentRequest, metadata?: Metadata): Observable<CreateAmendmentResponse>;
+
+  /**
+   * UC-NT-39 — R-SU-01, R-SU-02. Suspendre un programme (décision de KSP). REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/suspend. Cause « décision de KSP », cumulable avec les
+   * autres. Les séances à venir passent « suspendues », leurs agents sont libérés ; une séance en
+   * cours n’est pas interrompue. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.program.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  suspendProgram(request: SuspendProgramRequest, metadata?: Metadata): Observable<SuspendProgramResponse>;
+
+  /**
+   * UC-NT-39 — R-SU-01, R-SU-03. Lever la suspension décidée par KSP. REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/resume. Lève la cause « décision de KSP » ; le programme
+   * ne reprend que si aucune autre cause ne reste. À la reprise (R-SU-03), les séances dont le
+   * début est après maintenant plus le délai minimum ("firstSessionLeadHours") repassent « à
+   * affecter » ; les autres reçoivent une date de rattrapage proposée ("catchUp"), que le
+   * superviseur confirme par un report ("POST /admin/sessions/{id}/reschedule") ou annule
+   * ("/cancel"). Transitions : partie 15.2. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.program.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  resumeProgram(request: ResumeProgramRequest, metadata?: Metadata): Observable<ResumeProgramResponse>;
+
+  /**
+   * UC-NT-39 — partie 12, R-RB-02. Demander l’arrêt d’un programme (KSP). REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/cancel. Motif obligatoire. L’arrêt est « validé par un
+   * admin » (partie 12) : à valider, proposition : il ne prend effet qu’à la validation d’une
+   * deuxième personne qui a aussi la permission "cleaning.program.manage" ("POST
+   * /admin/programs/{id}/cancel/approve"), aucun rôle n’étant codé en dur (R-RB-02). En attendant,
+   * le programme garde son statut et "pendingCancellation" est renseigné. Rejouable : une demande
+   * déjà en attente est renvoyée telle quelle. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.program.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  cancelProgram(request: CancelProgramRequest, metadata?: Metadata): Observable<CancelProgramResponse>;
+
+  /**
+   * UC-NT-39 — partie 12, R-RB-02. Valider l’arrêt d’un programme (KSP). REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/cancel/approve. Deuxième personne, autre que l’auteur de
+   * la demande d’arrêt (à valider, voir "POST /admin/programs/{id}/cancel"). Le programme passe
+   * « annulé », même suspendu : les séances réalisées restent dues ; les séances à venir sont
+   * annulées sans frais. Transitions : partie 15.2. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.program.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * CLEANING_SECOND_APPROVER_REQUIRED, CLEANING_INVALID_TRANSITION.
+   */
+
+  approveProgramCancellation(
+    request: ApproveProgramCancellationRequest,
+    metadata?: Metadata,
+  ): Observable<ApproveProgramCancellationResponse>;
+
+  /**
+   * UC-NT-39 — partie 12, R-SU-03, R-RP-01. Déplacer une séance (KSP). REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/reschedule. Motif obligatoire ; le client est prévenu ;
+   * rien à payer. Sert aussi au rattrapage des dates passées pendant une suspension et au report
+   * après un incident : une séance « interrompue » ou « suspendue » reportée repasse « à affecter »
+   * (partie 15.2). Nouveau début dans le futur, sans chevaucher une autre séance non annulée du
+   * programme ; agents recontrôlés au nouveau créneau, gardés s’ils passent, retirés sinon. La
+   * durée peut changer (15 min à 24 h) sans changer le prix. Refusé tant que le programme est
+   * suspendu (hors rattrapage après la reprise). Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.program.manage. Erreurs : CLEANING_SESSION_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_SLOT_INVALID, CLEANING_RESCHEDULE_OVERLAP,
+   * CLEANING_PROGRAM_SUSPENDED, CLEANING_AGENT_ON_LEAVE, CLEANING_CONCURRENT_UPDATE.
+   */
+
+  rescheduleSessionAsKsp(
+    request: RescheduleSessionAsKspRequest,
+    metadata?: Metadata,
+  ): Observable<RescheduleSessionAsKspResponse>;
+
+  /**
+   * UC-NT-39 — partie 12. Annuler une séance (KSP ou support). REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/cancel. "ksp" : rien à payer. "customer_late" : annulation
+   * du client moins de 24 h avant, via le support : 50 % du prix dû. Une séance « interrompue »
+   * (décision après incident) ou « suspendue » peut être annulée (partie 15.2). Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.program.manage. Erreurs :
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  cancelSessionAsKsp(request: CancelSessionAsKspRequest, metadata?: Metadata): Observable<CancelSessionAsKspResponse>;
+
+  /**
+   * UC-NT-39 — partie 10. Reprendre une séance interrompue. REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/resume. Décision du superviseur après un incident : la
+   * séance repasse « en cours ». Report : "/reschedule" ; annulation : "/cancel". Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.program.manage. Erreurs :
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  resumeSession(request: ResumeSessionRequest, metadata?: Metadata): Observable<ResumeSessionResponse>;
+
+  /**
+   * UC-NT-39 — R-EX-08. Clôturer une séance pour l’équipe (KSP). REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/complete. Quand l’équipe ne peut pas agir depuis
+   * l’application : début et fin réels (jamais dans le futur), agents présents, motif obligatoire ;
+   * photos et liste de contrôle dispensées. La séance passe « réalisée » depuis « planifiée », « en
+   * cours » ou « interrompue » ; paiement et facture comme une clôture par l’équipe ; la fenêtre de
+   * réclamation part de l’enregistrement. L’action est tracée ; "cleaning.session.completed" porte
+   * "completedBy: ksp". Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.program.manage. Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_REASON_REQUIRED, CLEANING_VALIDATION_FAILED, CLEANING_CONCURRENT_UPDATE.
+   */
+
+  completeSessionAsKsp(
+    request: CompleteSessionAsKspRequest,
+    metadata?: Metadata,
+  ): Observable<CompleteSessionAsKspResponse>;
+
+  /**
+   * UC-NT-39 — R-EX-08. Client absent : séance manquée (KSP). REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/missed. Absence du client ou accès impossible enregistré
+   * pour l’équipe, avec un motif et les agents présents ; photo, attente et appel facultatifs.
+   * L’action est tracée ; "cleaning.session.missed" porte "reportedBy: ksp". Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.program.manage. Erreurs :
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_REASON_REQUIRED,
+   * CLEANING_VALIDATION_FAILED, CLEANING_CONCURRENT_UPDATE.
+   */
+
+  reportSessionMissedAsKsp(
+    request: ReportSessionMissedAsKspRequest,
+    metadata?: Metadata,
+  ): Observable<ReportSessionMissedAsKspResponse>;
+
+  /**
+   * UC-NT-39 — R-EX-10. Retirer une photo de séance (KSP). REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/photos/{fileId}/remove. À tout moment, aussi après la
+   * clôture (photo confidentielle), avec un motif ; jamais sur une séance visée par une réclamation
+   * ouverte ("CLEANING_INVALID_TRANSITION", reason claim_open). Après la clôture, retirer la
+   * dernière photo « avant » ou « après » exige une photo de remplacement
+   * ("CLEANING_PHOTOS_MISSING"). La photo est supprimée chez file, puis sa référence ; l’action est
+   * tracée. Idempotent par idempotency_key (obligatoire). Permission : cleaning.program.manage.
+   * Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_PHOTOS_MISSING,
+   * CLEANING_REASON_REQUIRED.
+   */
+
+  removeSessionPhotoAsKsp(
+    request: RemoveSessionPhotoAsKspRequest,
+    metadata?: Metadata,
+  ): Observable<RemoveSessionPhotoAsKspResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : programmes et séances (UC-NT-39).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface ProgramAdminServiceController {
+  /**
+   * UC-NT-39 — partie 8. Programmes. REST : GET /api/v1/admin/cleaning/programs. Permission :
+   * cleaning.program.read.
+   */
+
+  listPrograms(
+    request: ListProgramsRequest,
+    metadata?: Metadata,
+  ): Promise<ListProgramsResponse> | Observable<ListProgramsResponse> | ListProgramsResponse;
+
+  /**
+   * UC-NT-39 — partie 8. Fiche programme. REST : GET /api/v1/admin/cleaning/programs/{id}.
+   * Permission : cleaning.program.read. Erreurs : CLEANING_PROGRAM_NOT_FOUND.
+   */
+
+  getProgram(
+    request: GetProgramRequest,
+    metadata?: Metadata,
+  ): Promise<GetProgramResponse> | Observable<GetProgramResponse> | GetProgramResponse;
+
+  /**
+   * UC-NT-39 — partie 8, partie 11. Séances et paiements d’un programme. REST : GET
+   * /api/v1/admin/cleaning/programs/{id}/sessions. Permission : cleaning.program.read. Erreurs :
+   * CLEANING_PROGRAM_NOT_FOUND.
+   */
+
+  listProgramSessions(
+    request: ListProgramSessionsRequest,
+    metadata?: Metadata,
+  ): Promise<ListProgramSessionsResponse> | Observable<ListProgramSessionsResponse> | ListProgramSessionsResponse;
+
+  /**
+   * UC-NT-39 — partie 10. Détail d’une séance (back-office). REST : GET
+   * /api/v1/admin/cleaning/sessions/{id}. Permission : cleaning.program.read. Erreurs :
+   * CLEANING_SESSION_NOT_FOUND.
+   */
+
+  getSession(
+    request: GetSessionRequest,
+    metadata?: Metadata,
+  ): Promise<GetSessionResponse> | Observable<GetSessionResponse> | GetSessionResponse;
+
+  /**
+   * UC-NT-39 — R-PG-06, R-RP-01. Changer le jour ou l’heure des séances à venir. REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/schedule-change. Sur demande du client, sans nouveau devis
+   * si le prix ne change pas (même nombre de séances) ; sinon passer par un avenant. La durée des
+   * séances peut changer sans changer leur prix. Les séances concernées sont réaffectées. Refusé
+   * tant que le programme est suspendu. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.program.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_AMENDMENT_REQUIRED, CLEANING_SCHEDULE_EMPTY, CLEANING_PROGRAM_SUSPENDED,
+   * CLEANING_CONCURRENT_UPDATE, CLEANING_VALIDATION_FAILED.
+   */
+
+  changeProgramSchedule(
+    request: ChangeProgramScheduleRequest,
+    metadata?: Metadata,
+  ): Promise<ChangeProgramScheduleResponse> | Observable<ChangeProgramScheduleResponse> | ChangeProgramScheduleResponse;
+
+  /**
+   * UC-NT-39 — R-PG-06, R-EX-03. Préparer un avenant. REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/amendments. Devis complémentaire (brouillon, "kind:
+   * amendment") pour ajouter un type de nettoyage ou des séances, sans nouvelle visite si le lieu
+   * n’a pas changé ; envoyé puis accepté comme un devis. Idempotent par idempotency_key
+   * (obligatoire). Permission : cleaning.quote.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_OFFER_NOT_AVAILABLE, CLEANING_PRICE_NOT_POSITIVE,
+   * CLEANING_VALIDATION_FAILED, CLEANING_PROGRAM_SUSPENDED.
+   */
+
+  createAmendment(
+    request: CreateAmendmentRequest,
+    metadata?: Metadata,
+  ): Promise<CreateAmendmentResponse> | Observable<CreateAmendmentResponse> | CreateAmendmentResponse;
+
+  /**
+   * UC-NT-39 — R-SU-01, R-SU-02. Suspendre un programme (décision de KSP). REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/suspend. Cause « décision de KSP », cumulable avec les
+   * autres. Les séances à venir passent « suspendues », leurs agents sont libérés ; une séance en
+   * cours n’est pas interrompue. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.program.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  suspendProgram(
+    request: SuspendProgramRequest,
+    metadata?: Metadata,
+  ): Promise<SuspendProgramResponse> | Observable<SuspendProgramResponse> | SuspendProgramResponse;
+
+  /**
+   * UC-NT-39 — R-SU-01, R-SU-03. Lever la suspension décidée par KSP. REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/resume. Lève la cause « décision de KSP » ; le programme
+   * ne reprend que si aucune autre cause ne reste. À la reprise (R-SU-03), les séances dont le
+   * début est après maintenant plus le délai minimum ("firstSessionLeadHours") repassent « à
+   * affecter » ; les autres reçoivent une date de rattrapage proposée ("catchUp"), que le
+   * superviseur confirme par un report ("POST /admin/sessions/{id}/reschedule") ou annule
+   * ("/cancel"). Transitions : partie 15.2. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.program.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  resumeProgram(
+    request: ResumeProgramRequest,
+    metadata?: Metadata,
+  ): Promise<ResumeProgramResponse> | Observable<ResumeProgramResponse> | ResumeProgramResponse;
+
+  /**
+   * UC-NT-39 — partie 12, R-RB-02. Demander l’arrêt d’un programme (KSP). REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/cancel. Motif obligatoire. L’arrêt est « validé par un
+   * admin » (partie 12) : à valider, proposition : il ne prend effet qu’à la validation d’une
+   * deuxième personne qui a aussi la permission "cleaning.program.manage" ("POST
+   * /admin/programs/{id}/cancel/approve"), aucun rôle n’étant codé en dur (R-RB-02). En attendant,
+   * le programme garde son statut et "pendingCancellation" est renseigné. Rejouable : une demande
+   * déjà en attente est renvoyée telle quelle. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.program.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  cancelProgram(
+    request: CancelProgramRequest,
+    metadata?: Metadata,
+  ): Promise<CancelProgramResponse> | Observable<CancelProgramResponse> | CancelProgramResponse;
+
+  /**
+   * UC-NT-39 — partie 12, R-RB-02. Valider l’arrêt d’un programme (KSP). REST : POST
+   * /api/v1/admin/cleaning/programs/{id}/cancel/approve. Deuxième personne, autre que l’auteur de
+   * la demande d’arrêt (à valider, voir "POST /admin/programs/{id}/cancel"). Le programme passe
+   * « annulé », même suspendu : les séances réalisées restent dues ; les séances à venir sont
+   * annulées sans frais. Transitions : partie 15.2. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.program.manage. Erreurs : CLEANING_PROGRAM_NOT_FOUND,
+   * CLEANING_SECOND_APPROVER_REQUIRED, CLEANING_INVALID_TRANSITION.
+   */
+
+  approveProgramCancellation(
+    request: ApproveProgramCancellationRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ApproveProgramCancellationResponse>
+    | Observable<ApproveProgramCancellationResponse>
+    | ApproveProgramCancellationResponse;
+
+  /**
+   * UC-NT-39 — partie 12, R-SU-03, R-RP-01. Déplacer une séance (KSP). REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/reschedule. Motif obligatoire ; le client est prévenu ;
+   * rien à payer. Sert aussi au rattrapage des dates passées pendant une suspension et au report
+   * après un incident : une séance « interrompue » ou « suspendue » reportée repasse « à affecter »
+   * (partie 15.2). Nouveau début dans le futur, sans chevaucher une autre séance non annulée du
+   * programme ; agents recontrôlés au nouveau créneau, gardés s’ils passent, retirés sinon. La
+   * durée peut changer (15 min à 24 h) sans changer le prix. Refusé tant que le programme est
+   * suspendu (hors rattrapage après la reprise). Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.program.manage. Erreurs : CLEANING_SESSION_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION, CLEANING_SLOT_INVALID, CLEANING_RESCHEDULE_OVERLAP,
+   * CLEANING_PROGRAM_SUSPENDED, CLEANING_AGENT_ON_LEAVE, CLEANING_CONCURRENT_UPDATE.
+   */
+
+  rescheduleSessionAsKsp(
+    request: RescheduleSessionAsKspRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<RescheduleSessionAsKspResponse>
+    | Observable<RescheduleSessionAsKspResponse>
+    | RescheduleSessionAsKspResponse;
+
+  /**
+   * UC-NT-39 — partie 12. Annuler une séance (KSP ou support). REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/cancel. "ksp" : rien à payer. "customer_late" : annulation
+   * du client moins de 24 h avant, via le support : 50 % du prix dû. Une séance « interrompue »
+   * (décision après incident) ou « suspendue » peut être annulée (partie 15.2). Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.program.manage. Erreurs :
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  cancelSessionAsKsp(
+    request: CancelSessionAsKspRequest,
+    metadata?: Metadata,
+  ): Promise<CancelSessionAsKspResponse> | Observable<CancelSessionAsKspResponse> | CancelSessionAsKspResponse;
+
+  /**
+   * UC-NT-39 — partie 10. Reprendre une séance interrompue. REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/resume. Décision du superviseur après un incident : la
+   * séance repasse « en cours ». Report : "/reschedule" ; annulation : "/cancel". Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.program.manage. Erreurs :
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  resumeSession(
+    request: ResumeSessionRequest,
+    metadata?: Metadata,
+  ): Promise<ResumeSessionResponse> | Observable<ResumeSessionResponse> | ResumeSessionResponse;
+
+  /**
+   * UC-NT-39 — R-EX-08. Clôturer une séance pour l’équipe (KSP). REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/complete. Quand l’équipe ne peut pas agir depuis
+   * l’application : début et fin réels (jamais dans le futur), agents présents, motif obligatoire ;
+   * photos et liste de contrôle dispensées. La séance passe « réalisée » depuis « planifiée », « en
+   * cours » ou « interrompue » ; paiement et facture comme une clôture par l’équipe ; la fenêtre de
+   * réclamation part de l’enregistrement. L’action est tracée ; "cleaning.session.completed" porte
+   * "completedBy: ksp". Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.program.manage. Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION,
+   * CLEANING_REASON_REQUIRED, CLEANING_VALIDATION_FAILED, CLEANING_CONCURRENT_UPDATE.
+   */
+
+  completeSessionAsKsp(
+    request: CompleteSessionAsKspRequest,
+    metadata?: Metadata,
+  ): Promise<CompleteSessionAsKspResponse> | Observable<CompleteSessionAsKspResponse> | CompleteSessionAsKspResponse;
+
+  /**
+   * UC-NT-39 — R-EX-08. Client absent : séance manquée (KSP). REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/missed. Absence du client ou accès impossible enregistré
+   * pour l’équipe, avec un motif et les agents présents ; photo, attente et appel facultatifs.
+   * L’action est tracée ; "cleaning.session.missed" porte "reportedBy: ksp". Idempotent par
+   * idempotency_key (obligatoire). Permission : cleaning.program.manage. Erreurs :
+   * CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_REASON_REQUIRED,
+   * CLEANING_VALIDATION_FAILED, CLEANING_CONCURRENT_UPDATE.
+   */
+
+  reportSessionMissedAsKsp(
+    request: ReportSessionMissedAsKspRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ReportSessionMissedAsKspResponse>
+    | Observable<ReportSessionMissedAsKspResponse>
+    | ReportSessionMissedAsKspResponse;
+
+  /**
+   * UC-NT-39 — R-EX-10. Retirer une photo de séance (KSP). REST : POST
+   * /api/v1/admin/cleaning/sessions/{id}/photos/{fileId}/remove. À tout moment, aussi après la
+   * clôture (photo confidentielle), avec un motif ; jamais sur une séance visée par une réclamation
+   * ouverte ("CLEANING_INVALID_TRANSITION", reason claim_open). Après la clôture, retirer la
+   * dernière photo « avant » ou « après » exige une photo de remplacement
+   * ("CLEANING_PHOTOS_MISSING"). La photo est supprimée chez file, puis sa référence ; l’action est
+   * tracée. Idempotent par idempotency_key (obligatoire). Permission : cleaning.program.manage.
+   * Erreurs : CLEANING_SESSION_NOT_FOUND, CLEANING_INVALID_TRANSITION, CLEANING_PHOTOS_MISSING,
+   * CLEANING_REASON_REQUIRED.
+   */
+
+  removeSessionPhotoAsKsp(
+    request: RemoveSessionPhotoAsKspRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<RemoveSessionPhotoAsKspResponse>
+    | Observable<RemoveSessionPhotoAsKspResponse>
+    | RemoveSessionPhotoAsKspResponse;
+}
+
+export function ProgramAdminServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = [
+      "listPrograms",
+      "getProgram",
+      "listProgramSessions",
+      "getSession",
+      "changeProgramSchedule",
+      "createAmendment",
+      "suspendProgram",
+      "resumeProgram",
+      "cancelProgram",
+      "approveProgramCancellation",
+      "rescheduleSessionAsKsp",
+      "cancelSessionAsKsp",
+      "resumeSession",
+      "completeSessionAsKsp",
+      "reportSessionMissedAsKsp",
+      "removeSessionPhotoAsKsp",
+    ];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("ProgramAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("ProgramAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const PROGRAM_ADMIN_SERVICE_NAME = "ProgramAdminService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : réclamations (UC-NT-40).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface ClaimAdminServiceClient {
+  /**
+   * UC-NT-40 — R-RC-02. File des réclamations. REST : GET /api/v1/admin/cleaning/claims.
+   * Permission : cleaning.claim.manage.
+   */
+
+  listClaims(request: ListClaimsRequest, metadata?: Metadata): Observable<ListClaimsResponse>;
+
+  /**
+   * UC-NT-40 — R-RC-02. Détail d’une réclamation. REST : GET /api/v1/admin/cleaning/claims/{id}.
+   * Permission : cleaning.claim.manage. Erreurs : CLEANING_CLAIM_NOT_FOUND.
+   */
+
+  getClaim(request: GetClaimRequest, metadata?: Metadata): Observable<GetClaimResponse>;
+
+  /**
+   * UC-NT-40 — R-RC-02. Prendre en charge, répondre au client. REST : PATCH
+   * /api/v1/admin/cleaning/claims/{id}. Passe la réclamation « en cours » et/ou ajoute un message
+   * au client. Idempotent par idempotency_key (obligatoire). Permission : cleaning.claim.manage.
+   * Erreurs : CLEANING_CLAIM_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  updateClaim(request: UpdateClaimRequest, metadata?: Metadata): Observable<UpdateClaimResponse>;
+
+  /**
+   * UC-NT-40 — R-RC-03, R-RC-04, 16.3. Décider d’une réclamation. REST : POST
+   * /api/v1/admin/cleaning/claims/{id}/decision. Repasse gratuite (séance à 0 FCFA ajoutée au
+   * programme), crédit au wallet (avoir pour une entreprise, émis par billing) ou rejet motivé.
+   * Crédit de plus de 50 000 FCFA : en attente de la validation d’une deuxième personne. Double
+   * authentification de moins de 10 minutes. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.claim.manage. Erreurs : CLEANING_CLAIM_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  decideClaim(request: DecideClaimRequest, metadata?: Metadata): Observable<DecideClaimResponse>;
+
+  /**
+   * UC-NT-40 — R-RC-03, R-WL-04, 16.3. Valider un crédit de réclamation. REST : POST
+   * /api/v1/admin/cleaning/claims/{id}/decision/approve. Deuxième personne, autre que l’auteur de
+   * la décision, qui a aussi la permission "cleaning.claim.manage" (R-RC-03 ne nomme pas de
+   * permission ; à valider : permission dédiée, par exemple portée par la finance) ; le crédit est
+   * alors versé au wallet. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.claim.manage. Erreurs : CLEANING_CLAIM_NOT_FOUND, CLEANING_SECOND_APPROVER_REQUIRED,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  approveClaimCredit(request: ApproveClaimCreditRequest, metadata?: Metadata): Observable<ApproveClaimCreditResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : réclamations (UC-NT-40).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface ClaimAdminServiceController {
+  /**
+   * UC-NT-40 — R-RC-02. File des réclamations. REST : GET /api/v1/admin/cleaning/claims.
+   * Permission : cleaning.claim.manage.
+   */
+
+  listClaims(
+    request: ListClaimsRequest,
+    metadata?: Metadata,
+  ): Promise<ListClaimsResponse> | Observable<ListClaimsResponse> | ListClaimsResponse;
+
+  /**
+   * UC-NT-40 — R-RC-02. Détail d’une réclamation. REST : GET /api/v1/admin/cleaning/claims/{id}.
+   * Permission : cleaning.claim.manage. Erreurs : CLEANING_CLAIM_NOT_FOUND.
+   */
+
+  getClaim(
+    request: GetClaimRequest,
+    metadata?: Metadata,
+  ): Promise<GetClaimResponse> | Observable<GetClaimResponse> | GetClaimResponse;
+
+  /**
+   * UC-NT-40 — R-RC-02. Prendre en charge, répondre au client. REST : PATCH
+   * /api/v1/admin/cleaning/claims/{id}. Passe la réclamation « en cours » et/ou ajoute un message
+   * au client. Idempotent par idempotency_key (obligatoire). Permission : cleaning.claim.manage.
+   * Erreurs : CLEANING_CLAIM_NOT_FOUND, CLEANING_INVALID_TRANSITION.
+   */
+
+  updateClaim(
+    request: UpdateClaimRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateClaimResponse> | Observable<UpdateClaimResponse> | UpdateClaimResponse;
+
+  /**
+   * UC-NT-40 — R-RC-03, R-RC-04, 16.3. Décider d’une réclamation. REST : POST
+   * /api/v1/admin/cleaning/claims/{id}/decision. Repasse gratuite (séance à 0 FCFA ajoutée au
+   * programme), crédit au wallet (avoir pour une entreprise, émis par billing) ou rejet motivé.
+   * Crédit de plus de 50 000 FCFA : en attente de la validation d’une deuxième personne. Double
+   * authentification de moins de 10 minutes. Idempotent par idempotency_key (obligatoire).
+   * Permission : cleaning.claim.manage. Erreurs : CLEANING_CLAIM_NOT_FOUND,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  decideClaim(
+    request: DecideClaimRequest,
+    metadata?: Metadata,
+  ): Promise<DecideClaimResponse> | Observable<DecideClaimResponse> | DecideClaimResponse;
+
+  /**
+   * UC-NT-40 — R-RC-03, R-WL-04, 16.3. Valider un crédit de réclamation. REST : POST
+   * /api/v1/admin/cleaning/claims/{id}/decision/approve. Deuxième personne, autre que l’auteur de
+   * la décision, qui a aussi la permission "cleaning.claim.manage" (R-RC-03 ne nomme pas de
+   * permission ; à valider : permission dédiée, par exemple portée par la finance) ; le crédit est
+   * alors versé au wallet. Idempotent par idempotency_key (obligatoire). Permission :
+   * cleaning.claim.manage. Erreurs : CLEANING_CLAIM_NOT_FOUND, CLEANING_SECOND_APPROVER_REQUIRED,
+   * CLEANING_INVALID_TRANSITION.
+   */
+
+  approveClaimCredit(
+    request: ApproveClaimCreditRequest,
+    metadata?: Metadata,
+  ): Promise<ApproveClaimCreditResponse> | Observable<ApproveClaimCreditResponse> | ApproveClaimCreditResponse;
+}
+
+export function ClaimAdminServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["listClaims", "getClaim", "updateClaim", "decideClaim", "approveClaimCredit"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("ClaimAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("ClaimAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const CLAIM_ADMIN_SERVICE_NAME = "ClaimAdminService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : réglages du module (UC-NT-43).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface SettingsAdminServiceClient {
+  /**
+   * UC-NT-43 — partie 16.1. Réglages. REST : GET /api/v1/admin/cleaning/settings. Lecture pour tout
+   * le personnel du module. Permission : cleaning.request.read.
+   */
+
+  getSettings(request: GetSettingsRequest, metadata?: Metadata): Observable<GetSettingsResponse>;
+
+  /**
+   * UC-NT-43 — partie 16.1, R-RB-06. Modifier les réglages. REST : PATCH
+   * /api/v1/admin/cleaning/settings. Champs absents inchangés ; chaque réglage est borné ; fusionné
+   * avec les valeurs en vigueur puis validé en entier (avertissement < suspension, heures par jour
+   * ≤ heures par semaine, poids = 100, rappel < validité ; 0 = aucun rappel) ; tracé au journal
+   * d’audit (avant, après). Permission : cleaning.settings.manage. Erreurs :
+   * CLEANING_VALIDATION_FAILED.
+   */
+
+  updateSettings(request: UpdateSettingsRequest, metadata?: Metadata): Observable<UpdateSettingsResponse>;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Back-office : réglages du module (UC-NT-43).
+ * ---------------------------------------------------------------------------
+ */
+
+export interface SettingsAdminServiceController {
+  /**
+   * UC-NT-43 — partie 16.1. Réglages. REST : GET /api/v1/admin/cleaning/settings. Lecture pour tout
+   * le personnel du module. Permission : cleaning.request.read.
+   */
+
+  getSettings(
+    request: GetSettingsRequest,
+    metadata?: Metadata,
+  ): Promise<GetSettingsResponse> | Observable<GetSettingsResponse> | GetSettingsResponse;
+
+  /**
+   * UC-NT-43 — partie 16.1, R-RB-06. Modifier les réglages. REST : PATCH
+   * /api/v1/admin/cleaning/settings. Champs absents inchangés ; chaque réglage est borné ; fusionné
+   * avec les valeurs en vigueur puis validé en entier (avertissement < suspension, heures par jour
+   * ≤ heures par semaine, poids = 100, rappel < validité ; 0 = aucun rappel) ; tracé au journal
+   * d’audit (avant, après). Permission : cleaning.settings.manage. Erreurs :
+   * CLEANING_VALIDATION_FAILED.
+   */
+
+  updateSettings(
+    request: UpdateSettingsRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateSettingsResponse> | Observable<UpdateSettingsResponse> | UpdateSettingsResponse;
+}
+
+export function SettingsAdminServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["getSettings", "updateSettings"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("SettingsAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("SettingsAdminService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const SETTINGS_ADMIN_SERVICE_NAME = "SettingsAdminService";
+
+/**
+ * ---------------------------------------------------------------------------
+ * Débit du wallet enregistré ? — réservé au service wallet.
+ * ---------------------------------------------------------------------------
+ * wallet rapproche les débits faits par cleaning (frais de visite, séances) dont l'enregistrement
+ * a pu échouer (panne entre le débit et sa prise en compte) : un débit qu'aucun objet de cleaning
+ * ne cite est remboursé. Appel d'un autre service : CLEANING_CALLER_FORBIDDEN.
  */
 
 export interface WalletDebitCheckServiceClient {
@@ -3687,11 +10567,11 @@ export interface WalletDebitCheckServiceClient {
 
 /**
  * ---------------------------------------------------------------------------
- * Débit du portefeuille enregistré ? — réservé au service wallet (ADR-048).
+ * Débit du wallet enregistré ? — réservé au service wallet.
  * ---------------------------------------------------------------------------
- * wallet rapproche les débits du portefeuille prépayé faits pour une mission dont l'enregistrement a
- * pu échouer (panne entre le débit et l'enregistrement du paiement) : un débit qu'aucun paiement de
- * la mission ne cite est remboursé. Appel d'un autre service : CLEANING_CALLER_FORBIDDEN.
+ * wallet rapproche les débits faits par cleaning (frais de visite, séances) dont l'enregistrement
+ * a pu échouer (panne entre le débit et sa prise en compte) : un débit qu'aucun objet de cleaning
+ * ne cite est remboursé. Appel d'un autre service : CLEANING_CALLER_FORBIDDEN.
  */
 
 export interface WalletDebitCheckServiceController {

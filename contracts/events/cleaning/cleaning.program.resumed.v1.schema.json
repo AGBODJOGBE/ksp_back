@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.program.resumed.v1.schema.json",
+  "title": "cleaning.program.resumed",
+  "description": "Programme repris : toutes les causes sont levées (R-SU-01, R-SU-03).",
+  "x-event-type": "cleaning.program.resumed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "programId",
+    "customerId",
+    "organizationId",
+    "sessionsToAssign",
+    "catchUpSessionIds",
+    "resumedAt",
+    "communeKey",
+    "liftedCause"
+  ],
+  "properties": {
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "sessionsToAssign": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Séances à venir repassées « à affecter »"
+    },
+    "catchUpSessionIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "Séances dont la date est passée pendant la suspension, proposées au rattrapage"
+    },
+    "resumedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    },
+    "liftedCause": {
+      "enum": ["overdue_sessions", "unpaid_invoices", "ksp_decision", "organization_suspended"],
+      "description": "Dernière cause levée"
+    }
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.reminder.v1.schema.json",
+  "title": "cleaning.session.reminder",
+  "description": "Rappel la veille d’une séance (partie 10, R-PP-05). Écouté par notification (client, agents).",
+  "x-event-type": "cleaning.session.reminder",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "programNumber",
+    "rank",
+    "sessionsCount",
+    "scheduledStart",
+    "agentIds",
+    "amountDue",
+    "balanceSufficient",
+    "remindedAt"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PN-000057"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rang de la séance"
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre de séances du programme"
+    },
+    "scheduledStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "amountDue": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["amount", "currency"],
+          "properties": {
+            "amount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "currency": {
+              "const": "XOF"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "null pour une entreprise"
+    },
+    "balanceSufficient": {
+      "type": ["boolean", "null"],
+      "description": "null pour une entreprise"
+    },
+    "remindedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.quote.accepted.v1.schema.json",
+  "title": "cleaning.quote.accepted",
+  "description": "Devis accepté : programme créé (UC-NT-08, R-AC-01).",
+  "x-event-type": "cleaning.quote.accepted",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "quoteId",
+    "requestId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "acceptedBy",
+    "total",
+    "acceptedAt",
+    "requestNumber"
+  ],
+  "properties": {
+    "quoteId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Programme créé, ou complété par un avenant"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "acceptedBy": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "total": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "acceptedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

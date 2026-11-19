@@ -2,44 +2,125 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.quote.sent.v1.schema.json",
   "title": "cleaning.quote.sent",
-  "description": "Devis envoyé au client (UC-CL-08) ; la notification porte un lien vers « Mon espace KSP ».",
+  "description": "Devis envoyé ou révisé (UC-NT-33, R-DV-05, R-DV-06). Écouté par notification.",
   "x-event-type": "cleaning.quote.sent",
   "x-event-version": 1,
   "type": "object",
   "additionalProperties": false,
-  "required": ["requestId", "quoteId", "customerId", "total", "validUntil"],
+  "required": [
+    "quoteId",
+    "requestId",
+    "requestNumber",
+    "customerId",
+    "organizationId",
+    "kind",
+    "version",
+    "sessionPrice",
+    "sessionsCount",
+    "total",
+    "visitFeeDeduction",
+    "validUntil",
+    "sentAt",
+    "placeTypeName",
+    "cleaningTypeNames"
+  ],
   "properties": {
-    "requestId": { "type": "string", "format": "uuid" },
-    "quoteId": { "type": "string", "format": "uuid" },
-    "customerId": { "type": "string", "format": "uuid" },
+    "quoteId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "kind": {
+      "enum": ["initial", "amendment", "renewal", "reorder"]
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Révision"
+    },
+    "sessionPrice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1
+    },
     "total": {
       "type": "object",
       "additionalProperties": false,
       "required": ["amount", "currency"],
       "properties": {
-        "amount": { "type": "integer", "minimum": 0 },
-        "currency": { "const": "XOF" }
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
       }
     },
-    "validUntil": { "type": "string", "format": "date-time" },
-    "serviceCode": {
-      "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*$",
-      "description": "Facultatif (ADR-034) : prestation de la demande"
+    "visitFeeDeduction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
     },
-    "serviceName": {
+    "validUntil": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sentAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "placeTypeName": {
       "type": "string",
       "minLength": 1,
-      "description": "Facultatif (ADR-034) : nom de la prestation au moment de l'événement"
+      "description": "Nom du lieu en vigueur"
     },
-    "groupId": {
-      "type": "string",
-      "format": "uuid",
-      "description": "Facultatif (ADR-034) : groupe des demandes créées ensemble pour un même lieu"
-    },
-    "summarizedByGroup": {
-      "type": "boolean",
-      "description": "Facultatif (ADR-035 point 14) : true quand l'opération de groupe publie aussi, dans la même transaction, l'événement de groupe qui la résume (cleaning.quote_group.sent) ; absent sinon"
+    "cleaningTypeNames": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Noms des types en vigueur, dans l’ordre de la demande"
     }
   }
 }

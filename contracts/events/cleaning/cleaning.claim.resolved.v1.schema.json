@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.claim.resolved.v1.schema.json",
+  "title": "cleaning.claim.resolved",
+  "description": "Réclamation tranchée (R-RC-03) ; un crédit au-delà de 50 000 FCFA n’est publié qu’après la deuxième validation.",
+  "x-event-type": "cleaning.claim.resolved",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "claimId",
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "outcome",
+    "creditAmount",
+    "redoSessionId",
+    "resolvedAt"
+  ],
+  "properties": {
+    "claimId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "outcome": {
+      "enum": ["free_redo", "wallet_credit", "rejected"]
+    },
+    "creditAmount": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["amount", "currency"],
+          "properties": {
+            "amount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "currency": {
+              "const": "XOF"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Crédit au wallet (avoir pour une entreprise) ; null sinon"
+    },
+    "redoSessionId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Repasse gratuite ajoutée"
+    },
+    "resolvedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
