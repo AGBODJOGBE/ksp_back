@@ -2,6 +2,8 @@
 
 **Statut** : Accepté (lot 2 ; décisions du responsable du 2026-10-27)
 
+**Remplacé en partie par ADR-055** (décision 6, pour la facturation : plus de prorata, `billing` facture les séances réalisées).
+
 ## Contexte
 
 Depuis l'ADR-027, une organisation a une fiche dans identity (raison sociale, adresse, IFU, RCCM facultatif) et un e-mail de facturation vérifié par code. Mais `billing` émettait les factures sans le nom de l'entreprise, et `notification` les envoyait à l'adresse du compte client qui porte le contrat (`customerId`). L'ADR-027 annonçait une lecture de l'organisation par une RPC interne d'identity.

@@ -2,6 +2,8 @@
 
 **Statut** : Accepté (lot 2 ; règles de facturation tranchées le 2026-10-23)
 
+**Remplacé en partie par ADR-055** (décisions 1 à 3 : plus de contrat de facturation ni de prorata ; facture mensuelle par organisation sur les séances réalisées, reçues par les événements de séance).
+
 ## Contexte
 
 Le cahier des charges Nettoyage (partie 10, décidée le 2026-10-23) impose une facture mensuelle pour les entreprises, une échéance réglable (10 jours), un avertissement dès 1 facture impayée, une suspension à 2 impayées et un déblocage au règlement. Le service `billing` arrive donc au lot 2, en version minimale. Il a besoin du montant, de la durée et du début de chaque contrat, qui vivent dans la base de `cleaning` ; la règle d'or n° 1 interdit de la lire.

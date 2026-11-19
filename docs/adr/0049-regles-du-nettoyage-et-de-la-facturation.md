@@ -2,6 +2,8 @@
 
 **Statut** : Proposé (décisions du responsable et corrections de la revue de code, 2026-11-10)
 
+**Remplacé en partie par ADR-054 et ADR-055** (décisions 2 et 5 à 11 ; les décisions 1, 3 et 4 sont reprises).
+
 ## Contexte
 
 La revue de code du Nettoyage (`cleaning`) et de la facturation (`billing`) a relevé des règles absentes

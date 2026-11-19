@@ -2,6 +2,8 @@
 
 **Statut** : Proposé (2026-11-09)
 
+**Remplacé en partie par ADR-059** (décision 6 et rôle du géocodage inverse pour la commune : la commune vient du contour officiel ; `ReverseGeocode` ne sert plus qu'à l'adresse lisible).
+
 ## Contexte
 
 Le Nettoyage retrouve la commune d'un point GPS par géocodage inverse (ADR-034 : Nominatim

@@ -2,6 +2,8 @@
 
 **Statut** : Proposé (décision du responsable, 2026-11-09)
 
+**Remplacé en partie par ADR-055** (décision 1 pour « jamais reversé », décisions 7 et 11 : paiement de la séance après sa réalisation, retrait vers Mobile Money sur demande, plus de paiement direct).
+
 ## Contexte
 
 Le responsable a décidé : « Chaque client a son wallet pour faire ses opérations sur la plateforme selon

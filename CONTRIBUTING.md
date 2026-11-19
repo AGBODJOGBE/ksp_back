@@ -50,7 +50,9 @@ Un cas d'usage = une classe = au moins un test de ses critères d'acceptation.
 ## Contrats
 
 - Tout changement d'API ou d'événement commence dans `contracts/`.
-- On reste compatible (`pnpm contracts:breaking`) ; sinon on crée une `v2` à côté de la `v1`.
+- On reste compatible (`pnpm contracts:breaking`) ; sinon on crée une `v2` à côté de la `v1`. Seule
+  exception : la refonte du Nettoyage, dont chaque rupture est nommée dans
+  `contracts/accepted-breaks.yaml` (ADR-054, décision 7).
 - Après une modification de `.proto` : `pnpm contracts:generate`, et le code généré est committé.
 - Un nouvel événement : schéma `contracts/events/<service>/<événement>.v1.schema.json` + type dans `libs/contracts/src/events`.
 - Une nouvelle route REST : dans `contracts/openapi/ksp-api.v1.yaml`, avec `x-ksp-grpc` (appel gRPC exécuté), `x-ksp-access` et `x-ksp-rate-limit`, et un exemple par requête et par réponse. Le test de contrat vérifie que l'appel gRPC existe et que chaque exemple respecte son schéma.

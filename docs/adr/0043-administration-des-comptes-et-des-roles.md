@@ -2,6 +2,8 @@
 
 **Statut** : Proposé (lot 2 ; UC-ID-18 à 20 ; décisions prises sur délégation du responsable)
 
+**Remplacé en partie par ADR-057** (décisions 3 et 7 : rôles créés et assignés par le super administrateur, portée zone, sessions fermées au retrait d'un rôle sensible).
+
 ## Contexte
 
 Donner un rôle du back-office (superviseur, agent, finance, admin…) imposait jusqu'ici le script `roles:grant` ou une écriture en base. L'ADR-023 a laissé à « l'administration des comptes internes » la réinitialisation de la double authentification (téléphone perdu), et le contrat prévoyait déjà la suspension d'un compte (`identity.user.suspended` et `.reactivated`, état `suspended` refusé à la connexion et au renouvellement). Il manquait l'écran et ses règles : qui peut donner quoi, comment ne jamais bloquer le système, comment tout tracer.

@@ -2,6 +2,8 @@
 
 **Statut** : Accepté (en service sur `main` depuis le 2026-11-06, constat du 2026-11-10 ; les points « À valider » ci-dessous restent ouverts ; historique : lot 2 ; besoin et décisions 1 à 5 validés par le responsable le 2026-11-04 ; compléments techniques du back-office validés le même jour)
 
+**Remplacé en partie par ADR-054, ADR-056 et ADR-059** (décisions 1 à 6 et 8 à 11 : un dossier = un lieu sans groupes, catalogue lieu × type, commune par contour ; la décision 7, confidentialité des positions, est reprise).
+
 ## Contexte
 
 Avec l'ADR-033, le client choisit **une** prestation, remplit son formulaire, simule puis demande un devis en saisissant sa commune et son adresse en texte. Le responsable veut un parcours plus simple et plus rapide :

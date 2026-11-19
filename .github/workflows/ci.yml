@@ -1,11 +1,12 @@
 # Intégration continue du backend KSP.
-# Toute demande de fusion vers main doit passer ces contrôles (protection de branche).
+# Toute demande de fusion vers main doit passer ces contrôles (protection de branche), de même que
+# toute demande de fusion vers la branche d'intégration de la refonte du Nettoyage (ADR-054).
 
 name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, refonte/nettoyage-v2]
   push:
     branches: [main]
 
@@ -86,27 +87,28 @@ jobs:
       - name: Contrats — lint
         run: pnpm contracts:lint
 
-      - name: Contrats — aucune rupture de compatibilité
-        if: github.event_name == 'pull_request'
-        run: |
-          git fetch --no-tags origin main:main
-          pnpm contracts:breaking
-
-      # Les fronts branchés sur l'API ne doivent jamais casser : toute rupture passe par /api/v2.
-      - name: Contrats — API REST (OpenAPI) sans rupture
+      # Outil de comparaison des contrats OpenAPI : version et empreinte figées (variables plus haut).
+      - name: Contrats — installation d'oasdiff
         if: github.event_name == 'pull_request'
         run: |
           archive="oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz"
           curl -fsSL -o "$RUNNER_TEMP/$archive"             "https://github.com/oasdiff/oasdiff/releases/download/v${OASDIFF_VERSION}/$archive"
           echo "$OASDIFF_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" oasdiff
-          git show main:contracts/openapi/ksp-api.v1.yaml > "$RUNNER_TEMP/ksp-api.main.yaml"
-          "$RUNNER_TEMP/oasdiff" breaking "$RUNNER_TEMP/ksp-api.main.yaml"             contracts/openapi/ksp-api.v1.yaml --fail-on ERR
 
-      # Une version d'événement publiée ne change que par ajout ; sinon un fichier v2 à côté.
-      - name: Contrats — événements sans rupture
+      # Aucune rupture de compatibilité par rapport à main, sur les trois contrats :
+      #   - gRPC : buf breaking (règles de buf.yaml) ;
+      #   - REST : oasdiff breaking, niveau ERR. Les fronts branchés sur l'API ne doivent jamais
+      #     casser : toute rupture passe par /api/v2 ;
+      #   - événements : une version publiée ne change que par ajout ; sinon un fichier v2 à côté.
+      # Seule exception : les ruptures nommées dans contracts/accepted-breaks.yaml, admises uniquement
+      # pour la refonte du Nettoyage (ADR-054, décision 7) et listées dans le résumé du job. Toute
+      # autre rupture, une entrée échue ou une entrée hors de la refonte font échouer ce contrôle.
+      - name: Contrats — aucune rupture non déclarée (buf, OpenAPI, événements)
         if: github.event_name == 'pull_request'
-        run: pnpm exec tsx tools/ci/event-schemas-compat.ts main
+        run: |
+          git fetch --no-tags origin main:main
+          pnpm contracts:breaking --against main --oasdiff "$RUNNER_TEMP/oasdiff"
 
       - name: Outils de la CI — tests
         run: pnpm exec tsx --test tools/ci/*.test.ts
