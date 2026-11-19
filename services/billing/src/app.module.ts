@@ -27,6 +27,7 @@ import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import {
   BillingAdminGrpcController,
   BillingGrpcController,
+  InvoiceIssuanceGrpcController,
   InvoicePaymentDueGrpcController,
   ObligationGrpcController,
   WalletDebitCheckGrpcController,
@@ -60,6 +61,7 @@ export class AppModule {
       controllers: [
         BillingGrpcController,
         BillingAdminGrpcController,
+        InvoiceIssuanceGrpcController,
         InvoicePaymentDueGrpcController,
         ObligationGrpcController,
         WalletDebitCheckGrpcController,

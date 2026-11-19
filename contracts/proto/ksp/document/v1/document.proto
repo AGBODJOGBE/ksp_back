@@ -19,6 +19,7 @@ package ksp.document.v1;
 //   recovery_mandate               v1  mandat de recouvrement, signé par le créancier    recovery
 //   recovery_formal_notice         v1  mise en demeure adressée au débiteur, sans signature   recovery
 //   recovery_settlement_agreement  v1  protocole d'accord et échéancier, signé par le débiteur  recovery
+//   cleaning_quote                 v1  devis de nettoyage, sans signature                    cleaning
 //   generic                        v1  document de test (titre, paragraphes), désactivé en production
 //
 // Statuts d'un document : "draft" (produit, aucune signature en cours), "pending_signature",

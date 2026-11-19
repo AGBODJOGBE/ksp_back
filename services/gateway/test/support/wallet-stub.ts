@@ -135,7 +135,14 @@ export const protoCreditRequest: walletV1.ManualCreditRequest = {
 };
 
 type Method = keyof walletV1.WalletAccountServiceController | keyof walletV1.WalletAdminServiceController;
-const ACCOUNT_METHODS: readonly Method[] = ['getMyWallet', 'listMyStatement', 'listMyPayouts', 'createTopUp'];
+const ACCOUNT_METHODS: readonly Method[] = [
+  'getMyWallet',
+  'listMyStatement',
+  'listMyPayouts',
+  'createTopUp',
+  'requestWithdrawal',
+  'listMyWithdrawals',
+];
 
 const DEFAULTS: Record<Method, () => unknown> = {
   getMyWallet: () => ({ wallet: protoWallet, topUpLimits: { min: xof(500), max: xof(1000000) } }),
@@ -220,6 +227,14 @@ const DEFAULTS: Record<Method, () => unknown> = {
     owedToCustomers: xof(5000),
     customersCount: 1,
   }),
+  // Méthodes du contrat v2 pas encore routées par la gateway : réponse vide.
+  requestWithdrawal: () => ({}),
+  listMyWithdrawals: () => ({}),
+  rejectManualCredit: () => ({}),
+  listWithdrawals: () => ({}),
+  processWithdrawal: () => ({}),
+  approveWithdrawal: () => ({}),
+  rejectWithdrawal: () => ({}),
 };
 
 export class WalletStub {

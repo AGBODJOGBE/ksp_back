@@ -15,6 +15,7 @@ import {
 } from '../../application/account-admin/account-admin.use-cases';
 import { type RoleScopeType } from '../../domain/role/role';
 import { USER_STATUS } from './mappers';
+import { notImplemented } from './not-implemented';
 
 const SCOPE_TYPE: Record<RoleScopeType, identityV1.ScopeType> = {
   global: identityV1.ScopeType.SCOPE_TYPE_GLOBAL,
@@ -194,5 +195,25 @@ export class AccountAdminGrpcController implements identityV1.AccountAdminServic
       reason: request.reason,
     });
     return { detail: toAccountDetailMessage(detail) };
+  }
+
+  listPermissions(): Promise<identityV1.ListPermissionsResponse> {
+    return notImplemented('ListPermissions');
+  }
+
+  getRole(): Promise<identityV1.GetRoleResponse> {
+    return notImplemented('GetRole');
+  }
+
+  createRole(): Promise<identityV1.CreateRoleResponse> {
+    return notImplemented('CreateRole');
+  }
+
+  updateRole(): Promise<identityV1.UpdateRoleResponse> {
+    return notImplemented('UpdateRole');
+  }
+
+  deactivateRole(): Promise<identityV1.DeactivateRoleResponse> {
+    return notImplemented('DeactivateRole');
   }
 }

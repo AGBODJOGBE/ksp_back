@@ -1,7 +1,15 @@
+import { AppError } from '@ksp/platform';
 import { geoV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import { GEO_USE_CASES, type GeoUseCases } from '../../application/use-cases';
 import { type Leg } from '../../domain/routing';
+
+/** Méthodes du contrat v2 (CDC Nettoyage v2) pas encore livrées : réponse NOT_IMPLEMENTED. */
+function notImplemented(method: string): Promise<never> {
+  return Promise.reject(
+    AppError.notImplemented('GEO_NOT_IMPLEMENTED', `La méthode ${method} n'est pas encore disponible.`),
+  );
+}
 
 const leg = (value: Leg) => ({
   distanceMeters: value.distanceMeters,
@@ -46,5 +54,13 @@ export class GeoGrpcController implements geoV1.GeoServiceController {
   async nearest(request: geoV1.NearestRequest): Promise<geoV1.NearestResponse> {
     const road = await this.useCases.nearest.execute(request);
     return { point: road.point, distanceMeters: road.distanceMeters, roadName: road.roadName };
+  }
+
+  resolveCommune(): Promise<geoV1.ResolveCommuneResponse> {
+    return notImplemented('ResolveCommune');
+  }
+
+  listCommunes(): Promise<geoV1.ListCommunesResponse> {
+    return notImplemented('ListCommunes');
   }
 }

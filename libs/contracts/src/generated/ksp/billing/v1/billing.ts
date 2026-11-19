@@ -19,8 +19,70 @@ export interface Page {
 export interface InvoiceLine {
   label: string;
   quantity: number;
+  /** Négatif pour une déduction (frais de visite déduits, R-FV-05). */
   unitPrice?: Money | undefined;
-  amount?: Money | undefined;
+  amount?:
+    | Money
+    | undefined;
+  /**
+   * v2 : "session" (séance réalisée), "missed_session" (séance manquée facturée), "late_cancellation"
+   * (annulation tardive), "visit_fee" (frais de visite), "visit_fee_deduction" (déduction, montant
+   * négatif) ou "adjustment" ; absent pour une ligne v1.
+   */
+  kind?:
+    | string
+    | undefined;
+  /** v2 : date de la séance (AAAA-MM-JJ, heure du Bénin) ; absente sinon. */
+  serviceDate?:
+    | string
+    | undefined;
+  /** v2 : regroupement d'une facture mensuelle par programme et par lieu (R-PE-01). */
+  programNumber?: string | undefined;
+  placeLabel?:
+    | string
+    | undefined;
+  /** v2 : objet facturé chez le service source (séance) ; absent sinon. */
+  sourceObjectId?: string | undefined;
+}
+
+/** v2 : objet facturé chez le service source. */
+export interface InvoiceSourceObject {
+  /** "cleaning_session", "cleaning_request"… */
+  objectType: string;
+  objectId: string;
+}
+
+/**
+ * v2 : avoir (R-PE-07). Numéro AV-<année>-<numéro sur 6 chiffres>, unique et sans trou par année
+ * (format à valider).
+ */
+export interface CreditNote {
+  id: string;
+  number: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  customerId: string;
+  /** Organisation facturée, vide pour un particulier. */
+  organizationId: string;
+  /** Montants positifs. */
+  lines: InvoiceLine[];
+  total?:
+    | Money
+    | undefined;
+  /** Motif, visible du client. */
+  reason: string;
+  /** Compte du back-office, ou "service:cleaning". */
+  issuedBy: string;
+  issuedAt: string;
+  /** Part imputée sur le reste dû de la facture. */
+  appliedToBalance?:
+    | Money
+    | undefined;
+  /** Part créditée au portefeuille (facture déjà payée) et sa transaction wallet ; 0 et vide sinon. */
+  creditedToWallet?: Money | undefined;
+  walletTransactionId: string;
+  /** Objet à l'origine de l'avoir (réclamation), absent sinon. */
+  sourceObject?: InvoiceSourceObject | undefined;
 }
 
 export interface InvoicePayment {
@@ -42,7 +104,10 @@ export interface InvoicePayment {
 
 export interface Invoice {
   id: string;
-  /** FAC-<année>-<numéro sur 6 chiffres>, unique et sans trou par année. */
+  /**
+   * FAC-<année>-<numéro sur 6 chiffres>, unique et sans trou par année (facture mensuelle : année
+   * de la période facturée).
+   */
   number: string;
   /** "pending_payment", "overdue", "paid" ou "cancelled". */
   status: string;
@@ -53,11 +118,6 @@ export interface Invoice {
   source: string;
   /** Contrat chez le service source (pour cleaning : la mission). */
   contractId: string;
-  /**
-   * Rang du mois civil facturé dans le contrat (1 pour le premier). Une facture par mois civil
-   * (heure du Bénin), émise le 1er du mois suivant à 00:00 ; mois partiels et jours de
-   * suspension au prorata des jours.
-   */
   periodIndex: number;
   /**
    * Période facturée : period_start est le premier instant facturé (minuit, heure du Bénin) ;
@@ -78,7 +138,40 @@ export interface Invoice {
    * En-tête de la facture d'une organisation. Absent pour un particulier, et pour une facture
    * émise avant l'enregistrement de l'en-tête.
    */
-  organization?: InvoiceOrganization | undefined;
+  organization?:
+    | InvoiceOrganization
+    | undefined;
+  /** v2 : "session", "visit_fee" ou "monthly" ; absent pour une facture v1. */
+  kind?:
+    | string
+    | undefined;
+  /** v2 : objet facturé (séance, demande) ; absent pour une facture mensuelle. */
+  sourceObject?:
+    | InvoiceSourceObject
+    | undefined;
+  /**
+   * v2 : références lisibles (dossier DN-…, programme PN-…, rang de la séance « 3/15 », nom du lieu
+   * donné par le client — jamais l'adresse ni la position) ; absentes si sans objet.
+   */
+  requestNumber?: string | undefined;
+  programNumber?: string | undefined;
+  sessionRank?: string | undefined;
+  placeLabel?:
+    | string
+    | undefined;
+  /** v2 : date de la séance (AAAA-MM-JJ, heure du Bénin) pour une facture de séance ; absente sinon. */
+  serviceDate?:
+    | string
+    | undefined;
+  /** v2 : avoirs émis sur cette facture ; absent s'il n'y en a aucun. */
+  credits?: InvoiceCredits | undefined;
+}
+
+/** v2 : avoirs d'une facture. */
+export interface InvoiceCredits {
+  creditNotes: CreditNote[];
+  /** Total des avoirs. */
+  total?: Money | undefined;
 }
 
 /**
@@ -166,10 +259,20 @@ export interface RecordInvoicePaymentResponse {
 }
 
 export interface BillingSettings {
-  /** Délai de règlement après l'émission (10 jours par défaut). */
+  /** Délai de règlement après l'émission (10 jours par défaut, 1 à 60). */
   paymentTermDays: number;
   updatedBy: string;
   updatedAt: string;
+  /** v2 (R-PE-05) : relances automatiques ; absent dans une mise à jour : inchangé. */
+  reminders?: ReminderSchedule | undefined;
+}
+
+/**
+ * v2 (R-PE-05) : décalages des relances, en jours par rapport à l'échéance (négatif : avant), sans
+ * doublon, entre -30 et 60 ; par défaut -3, 0, 3 et 7.
+ */
+export interface ReminderSchedule {
+  offsetDays: number[];
 }
 
 export interface GetBillingSettingsRequest {
@@ -238,6 +341,145 @@ export interface PayMyInvoiceFromWalletResponse {
   invoice?: Invoice | undefined;
 }
 
+export interface PayMyInvoiceByMobileMoneyRequest {
+  invoiceId: string;
+  /** En-tête Idempotency-Key (8 à 100 caractères : lettres, chiffres, "_" et "-"), obligatoire. */
+  idempotencyKey: string;
+}
+
+export interface PayMyInvoiceByMobileMoneyResponse {
+  /** Paiement chez payment, suivi par GET /api/v1/payment/payments/{id}. */
+  paymentId: string;
+  /** Reste dû demandé. */
+  amount?:
+    | Money
+    | undefined;
+  /** Page de paiement du prestataire ; vide si elle n'a pas pu être créée (réessayer, même clé). */
+  checkoutUrl: string;
+  expiresAt: string;
+  /** false : paiement déjà demandé avec cette clé. */
+  created: boolean;
+}
+
+/** v2 : préférences de facturation d'une organisation. */
+export interface BillingPreferences {
+  organizationId: string;
+  /**
+   * Prélèvement automatique de la facture mensuelle à l'échéance depuis le portefeuille de
+   * l'organisation, si le solde suffit (R-PE-04). Désactivé par défaut (à valider).
+   */
+  autoDebit: boolean;
+  /** Vides tant qu'elles n'ont jamais été modifiées. */
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface GetMyBillingPreferencesRequest {
+}
+
+export interface GetMyBillingPreferencesResponse {
+  preferences?: BillingPreferences | undefined;
+}
+
+export interface UpdateMyBillingPreferencesRequest {
+  autoDebit?: boolean | undefined;
+}
+
+export interface UpdateMyBillingPreferencesResponse {
+  preferences?: BillingPreferences | undefined;
+}
+
+/** v2 : paiement d'une facture émise payée (séance, frais de visite). */
+export interface IssuedInvoicePayment {
+  /** "wallet". */
+  method: string;
+  /** Débit du portefeuille (identifiant de la transaction wallet). */
+  reference: string;
+  amount?: Money | undefined;
+  paidAt: string;
+}
+
+export interface IssueInvoiceRequest {
+  /** Obligatoire (8 à 150 caractères : lettres, chiffres, ":", "_" et "-"). */
+  idempotencyKey: string;
+  /** "session" ou "visit_fee". */
+  kind: string;
+  customerId: string;
+  /** Organisation facturée (frais de visite d'une entreprise) ; vide pour un particulier. */
+  organizationId: string;
+  sourceObject?: InvoiceSourceObject | undefined;
+  requestNumber: string;
+  programNumber: string;
+  /** « 3/15 » ; vide pour des frais de visite. */
+  sessionRank: string;
+  placeLabel: string;
+  /** AAAA-MM-JJ (heure du Bénin) ; vide pour des frais de visite. */
+  serviceDate: string;
+  /** 1 à 50 lignes ; déductions en montant négatif. */
+  lines: InvoiceLine[];
+  payment?: IssuedInvoicePayment | undefined;
+}
+
+export interface IssueInvoiceResponse {
+  invoice?:
+    | Invoice
+    | undefined;
+  /** false : facture déjà émise avec cette clé. */
+  created: boolean;
+}
+
+export interface IssueCreditNoteRequest {
+  /** Obligatoire (8 à 150 caractères : lettres, chiffres, ":", "_" et "-"). */
+  idempotencyKey: string;
+  invoiceId: string;
+  /** 1 à 50 lignes, montants positifs. */
+  lines: InvoiceLine[];
+  /** Motif visible du client, 1 à 500 caractères. */
+  reason: string;
+  /** Objet à l'origine (réclamation), facultatif. */
+  sourceObject?: InvoiceSourceObject | undefined;
+}
+
+export interface IssueCreditNoteResponse {
+  creditNote?: CreditNote | undefined;
+  invoice?:
+    | Invoice
+    | undefined;
+  /** false : avoir déjà émis avec cette clé. */
+  created: boolean;
+}
+
+export interface IssueAdminCreditNoteRequest {
+  invoiceId: string;
+  /** 1 à 50 lignes, montants positifs. */
+  lines: InvoiceLine[];
+  /** Motif visible du client, 1 à 500 caractères. */
+  reason: string;
+  /** En-tête Idempotency-Key, obligatoire. */
+  idempotencyKey: string;
+}
+
+export interface IssueAdminCreditNoteResponse {
+  creditNote?: CreditNote | undefined;
+  invoice?: Invoice | undefined;
+  created: boolean;
+}
+
+export interface ListCreditNotesRequest {
+  page?:
+    | Page
+    | undefined;
+  /** Filtres facultatifs. */
+  invoiceId: string;
+  customerId: string;
+  organizationId: string;
+}
+
+export interface ListCreditNotesResponse {
+  creditNotes: CreditNote[];
+  nextCursor: string;
+}
+
 /**
  * Espace client : factures du client connecté (contexte personnel) ou de son organisation
  * active (contexte entreprise).
@@ -258,6 +500,33 @@ export interface BillingServiceClient {
     request: PayMyInvoiceFromWalletRequest,
     metadata?: Metadata,
   ): Observable<PayMyInvoiceFromWalletResponse>;
+
+  /**
+   * v2 (R-PE-04) : paiement du reste dû par Mobile Money. billing demande à payment un paiement direct
+   * du montant exact (TopUpPaymentService.CreatePaymentRequest, objet "billing_invoice") : il crédite
+   * d'abord le portefeuille du titulaire, puis billing débite la facture. Membre org_admin ou
+   * org_member de l'organisation active, sinon le client. Idempotent par clé.
+   */
+
+  payMyInvoiceByMobileMoney(
+    request: PayMyInvoiceByMobileMoneyRequest,
+    metadata?: Metadata,
+  ): Observable<PayMyInvoiceByMobileMoneyResponse>;
+
+  /**
+   * v2 (R-PE-04) : préférences de facturation de l'organisation active (prélèvement automatique à
+   * l'échéance). Lecture : tout membre ; modification : org_admin.
+   */
+
+  getMyBillingPreferences(
+    request: GetMyBillingPreferencesRequest,
+    metadata?: Metadata,
+  ): Observable<GetMyBillingPreferencesResponse>;
+
+  updateMyBillingPreferences(
+    request: UpdateMyBillingPreferencesRequest,
+    metadata?: Metadata,
+  ): Observable<UpdateMyBillingPreferencesResponse>;
 }
 
 /**
@@ -289,11 +558,54 @@ export interface BillingServiceController {
     | Promise<PayMyInvoiceFromWalletResponse>
     | Observable<PayMyInvoiceFromWalletResponse>
     | PayMyInvoiceFromWalletResponse;
+
+  /**
+   * v2 (R-PE-04) : paiement du reste dû par Mobile Money. billing demande à payment un paiement direct
+   * du montant exact (TopUpPaymentService.CreatePaymentRequest, objet "billing_invoice") : il crédite
+   * d'abord le portefeuille du titulaire, puis billing débite la facture. Membre org_admin ou
+   * org_member de l'organisation active, sinon le client. Idempotent par clé.
+   */
+
+  payMyInvoiceByMobileMoney(
+    request: PayMyInvoiceByMobileMoneyRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<PayMyInvoiceByMobileMoneyResponse>
+    | Observable<PayMyInvoiceByMobileMoneyResponse>
+    | PayMyInvoiceByMobileMoneyResponse;
+
+  /**
+   * v2 (R-PE-04) : préférences de facturation de l'organisation active (prélèvement automatique à
+   * l'échéance). Lecture : tout membre ; modification : org_admin.
+   */
+
+  getMyBillingPreferences(
+    request: GetMyBillingPreferencesRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<GetMyBillingPreferencesResponse>
+    | Observable<GetMyBillingPreferencesResponse>
+    | GetMyBillingPreferencesResponse;
+
+  updateMyBillingPreferences(
+    request: UpdateMyBillingPreferencesRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<UpdateMyBillingPreferencesResponse>
+    | Observable<UpdateMyBillingPreferencesResponse>
+    | UpdateMyBillingPreferencesResponse;
 }
 
 export function BillingServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["listMyInvoices", "getMyInvoice", "payMyInvoiceFromWallet"];
+    const grpcMethods: string[] = [
+      "listMyInvoices",
+      "getMyInvoice",
+      "payMyInvoiceFromWallet",
+      "payMyInvoiceByMobileMoney",
+      "getMyBillingPreferences",
+      "updateMyBillingPreferences",
+    ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("BillingService", method)(constructor.prototype[method], method, descriptor);
@@ -312,7 +624,8 @@ export const BILLING_SERVICE_NAME = "BillingService";
 
 /**
  * Back-office : finance_officer, cleaning_supervisor, cleaning_admin, super_admin, avec double
- * authentification. Réglages : cleaning_admin, finance_officer, super_admin.
+ * authentification (lecture des factures). Réglages : cleaning_admin, finance_officer, super_admin.
+ * Écritures d'argent (RecordInvoicePayment, IssueAdminCreditNote) : finance_officer, super_admin.
  */
 
 export interface BillingAdminServiceClient {
@@ -321,8 +634,17 @@ export interface BillingAdminServiceClient {
   getInvoice(request: GetInvoiceRequest, metadata?: Metadata): Observable<GetInvoiceResponse>;
 
   /**
-   * Paiement reçu hors ligne (espèces, virement, Mobile Money hors ligne). La facture passe
-   * « payée » quand le total est atteint (billing.invoice.paid).
+   * Retiré en v2 (R-PE-04, R-WL-05 : un seul chemin pour l'argent). v1 : paiement reçu hors ligne
+   * (espèces, virement, Mobile Money hors ligne) posé directement sur la facture. v2 : finance_officer,
+   * super_admin ; toute facture v2 (kind renseigné, donc toute facture émise après la bascule, sans
+   * reprise des factures v1) est refusée (BILLING_PAYMENT_INVALID, details.reason
+   * "wallet_path_required") : un virement reçu pour une facture se saisit au portefeuille de
+   * l'organisation (WalletAdminService.CreditPrepaidWallet, kind "bank_transfer_top_up", for_object =
+   * la facture, validé par une deuxième personne), puis billing débite aussitôt la facture. Méthode
+   * gardée pour la compatibilité du contrat ; son retrait se fera dans une version ultérieure (à
+   * valider).
+   *
+   * @deprecated
    */
 
   recordInvoicePayment(
@@ -336,11 +658,26 @@ export interface BillingAdminServiceClient {
     request: UpdateBillingSettingsRequest,
     metadata?: Metadata,
   ): Observable<UpdateBillingSettingsResponse>;
+
+  /**
+   * v2 (R-PE-07) : avoir saisi par la finance sur une facture émise (finance_officer, super_admin ;
+   * double authentification récente). Mêmes règles que InvoiceIssuanceService.IssueCreditNote.
+   */
+
+  issueAdminCreditNote(
+    request: IssueAdminCreditNoteRequest,
+    metadata?: Metadata,
+  ): Observable<IssueAdminCreditNoteResponse>;
+
+  /** v2 : avoirs, les plus récents d'abord ; filtres facultatifs. */
+
+  listCreditNotes(request: ListCreditNotesRequest, metadata?: Metadata): Observable<ListCreditNotesResponse>;
 }
 
 /**
  * Back-office : finance_officer, cleaning_supervisor, cleaning_admin, super_admin, avec double
- * authentification. Réglages : cleaning_admin, finance_officer, super_admin.
+ * authentification (lecture des factures). Réglages : cleaning_admin, finance_officer, super_admin.
+ * Écritures d'argent (RecordInvoicePayment, IssueAdminCreditNote) : finance_officer, super_admin.
  */
 
 export interface BillingAdminServiceController {
@@ -355,8 +692,15 @@ export interface BillingAdminServiceController {
   ): Promise<GetInvoiceResponse> | Observable<GetInvoiceResponse> | GetInvoiceResponse;
 
   /**
-   * Paiement reçu hors ligne (espèces, virement, Mobile Money hors ligne). La facture passe
-   * « payée » quand le total est atteint (billing.invoice.paid).
+   * Retiré en v2 (R-PE-04, R-WL-05 : un seul chemin pour l'argent). v1 : paiement reçu hors ligne
+   * (espèces, virement, Mobile Money hors ligne) posé directement sur la facture. v2 : finance_officer,
+   * super_admin ; toute facture v2 (kind renseigné, donc toute facture émise après la bascule, sans
+   * reprise des factures v1) est refusée (BILLING_PAYMENT_INVALID, details.reason
+   * "wallet_path_required") : un virement reçu pour une facture se saisit au portefeuille de
+   * l'organisation (WalletAdminService.CreditPrepaidWallet, kind "bank_transfer_top_up", for_object =
+   * la facture, validé par une deuxième personne), puis billing débite aussitôt la facture. Méthode
+   * gardée pour la compatibilité du contrat ; son retrait se fera dans une version ultérieure (à
+   * valider).
    */
 
   recordInvoicePayment(
@@ -373,6 +717,23 @@ export interface BillingAdminServiceController {
     request: UpdateBillingSettingsRequest,
     metadata?: Metadata,
   ): Promise<UpdateBillingSettingsResponse> | Observable<UpdateBillingSettingsResponse> | UpdateBillingSettingsResponse;
+
+  /**
+   * v2 (R-PE-07) : avoir saisi par la finance sur une facture émise (finance_officer, super_admin ;
+   * double authentification récente). Mêmes règles que InvoiceIssuanceService.IssueCreditNote.
+   */
+
+  issueAdminCreditNote(
+    request: IssueAdminCreditNoteRequest,
+    metadata?: Metadata,
+  ): Promise<IssueAdminCreditNoteResponse> | Observable<IssueAdminCreditNoteResponse> | IssueAdminCreditNoteResponse;
+
+  /** v2 : avoirs, les plus récents d'abord ; filtres facultatifs. */
+
+  listCreditNotes(
+    request: ListCreditNotesRequest,
+    metadata?: Metadata,
+  ): Promise<ListCreditNotesResponse> | Observable<ListCreditNotesResponse> | ListCreditNotesResponse;
 }
 
 export function BillingAdminServiceControllerMethods() {
@@ -383,6 +744,8 @@ export function BillingAdminServiceControllerMethods() {
       "recordInvoicePayment",
       "getBillingSettings",
       "updateBillingSettings",
+      "issueAdminCreditNote",
+      "listCreditNotes",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
@@ -399,6 +762,87 @@ export function BillingAdminServiceControllerMethods() {
 }
 
 export const BILLING_ADMIN_SERVICE_NAME = "BillingAdminService";
+
+/**
+ * v2 (CDC Nettoyage v2, partie 15.4) : émission par les services métier, réservée à cleaning
+ * (BILLING_ISSUER_CALLERS ; jeton de service). Idempotent par (appelant, clé) : la clé est tirée de
+ * l'objet facturé ("cleaning_session:<id>", "cleaning_request:<id>:visit_fee").
+ */
+
+export interface InvoiceIssuanceServiceClient {
+  /**
+   * Facture de séance (R-PP-06) ou reçu des frais de visite (R-FV-04), émis au paiement, statut
+   * "paid" : numéro, client, lieu, programme et rang de la séance, date, lignes, frais de visite
+   * déduits (ligne négative), total, moyen de paiement. Total = somme des lignes, positif ou nul, égal
+   * au montant payé. Publie billing.invoice.issued (PDF dans l'espace client, e-mail si l'adresse est
+   * vérifiée).
+   */
+
+  issueInvoice(request: IssueInvoiceRequest, metadata?: Metadata): Observable<IssueInvoiceResponse>;
+
+  /**
+   * Avoir sur une facture émise (R-PE-07 ; crédit d'une réclamation pour une entreprise, R-RC-03).
+   * Le total des avoirs d'une facture ne dépasse jamais son total. L'avoir réduit d'abord le reste dû ;
+   * la part au-delà (facture déjà payée) est créditée au portefeuille du titulaire (wallet.Credit, à
+   * valider par le comptable). Publie billing.credit_note.issued. Un avoir qui ramène le reste dû à 0,
+   * ou une annulation, publie billing.invoice.paid (settledBy).
+   */
+
+  issueCreditNote(request: IssueCreditNoteRequest, metadata?: Metadata): Observable<IssueCreditNoteResponse>;
+}
+
+/**
+ * v2 (CDC Nettoyage v2, partie 15.4) : émission par les services métier, réservée à cleaning
+ * (BILLING_ISSUER_CALLERS ; jeton de service). Idempotent par (appelant, clé) : la clé est tirée de
+ * l'objet facturé ("cleaning_session:<id>", "cleaning_request:<id>:visit_fee").
+ */
+
+export interface InvoiceIssuanceServiceController {
+  /**
+   * Facture de séance (R-PP-06) ou reçu des frais de visite (R-FV-04), émis au paiement, statut
+   * "paid" : numéro, client, lieu, programme et rang de la séance, date, lignes, frais de visite
+   * déduits (ligne négative), total, moyen de paiement. Total = somme des lignes, positif ou nul, égal
+   * au montant payé. Publie billing.invoice.issued (PDF dans l'espace client, e-mail si l'adresse est
+   * vérifiée).
+   */
+
+  issueInvoice(
+    request: IssueInvoiceRequest,
+    metadata?: Metadata,
+  ): Promise<IssueInvoiceResponse> | Observable<IssueInvoiceResponse> | IssueInvoiceResponse;
+
+  /**
+   * Avoir sur une facture émise (R-PE-07 ; crédit d'une réclamation pour une entreprise, R-RC-03).
+   * Le total des avoirs d'une facture ne dépasse jamais son total. L'avoir réduit d'abord le reste dû ;
+   * la part au-delà (facture déjà payée) est créditée au portefeuille du titulaire (wallet.Credit, à
+   * valider par le comptable). Publie billing.credit_note.issued. Un avoir qui ramène le reste dû à 0,
+   * ou une annulation, publie billing.invoice.paid (settledBy).
+   */
+
+  issueCreditNote(
+    request: IssueCreditNoteRequest,
+    metadata?: Metadata,
+  ): Promise<IssueCreditNoteResponse> | Observable<IssueCreditNoteResponse> | IssueCreditNoteResponse;
+}
+
+export function InvoiceIssuanceServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["issueInvoice", "issueCreditNote"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("InvoiceIssuanceService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("InvoiceIssuanceService", method)(constructor.prototype[method], method, descriptor);
+      Object.defineProperty(constructor.prototype, method, descriptor);
+    }
+  };
+}
+
+export const INVOICE_ISSUANCE_SERVICE_NAME = "InvoiceIssuanceService";
 
 /**
  * Reste dû d'une facture — réservé au service payment (ADR-031). payment ne recalcule rien : il lit

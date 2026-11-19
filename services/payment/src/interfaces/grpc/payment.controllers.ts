@@ -1,9 +1,16 @@
-import { AllowedCallers } from '@ksp/platform';
+import { AllowedCallers, AppError } from '@ksp/platform';
 import { commonV1, paymentV1 } from '@ksp/contracts';
 import { Controller, Inject, Logger } from '@nestjs/common';
 import { parsePage } from '../../application/shared/validation';
 import { PAYMENT_USE_CASES, type PaymentUseCases } from '../../application/use-cases';
 import { presentAdminPayment, presentPayment } from './presenters';
+
+/** Méthodes du contrat v2 (CDC Nettoyage v2) pas encore livrées : réponse NOT_IMPLEMENTED. */
+function notImplemented(method: string): Promise<never> {
+  return Promise.reject(
+    AppError.notImplemented('PAYMENT_NOT_IMPLEMENTED', `La méthode ${method} n'est pas encore disponible.`),
+  );
+}
 
 /** Adaptateur gRPC de l'espace client. Aucune règle métier ici. */
 @Controller()
@@ -72,6 +79,10 @@ export class TopUpPaymentGrpcController implements paymentV1.TopUpPaymentService
       payment: presentPayment(payment),
       receivedAmount: receivedAmount === null ? undefined : { amount: receivedAmount, currency: 'XOF' },
     };
+  }
+
+  createPaymentRequest(): Promise<paymentV1.CreatePaymentRequestResponse> {
+    return notImplemented('CreatePaymentRequest');
   }
 }
 

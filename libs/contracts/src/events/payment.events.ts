@@ -17,6 +17,16 @@ export type PaymentSubjectType = 'cleaning_mission' | 'billing_invoice' | 'walle
 export type PaymentPart = 'deposit' | 'balance';
 export type PaymentProviderName = 'fedapay' | 'simulated';
 
+/** Objet visé par un paiement direct (v2) : réglé par le portefeuille dès le crédit de la recharge. */
+export interface PaymentTargetRef {
+  service: string;
+  objectType: string;
+  objectId: string;
+  part: string | null;
+  /** Référence lisible (« DN-000124 », « FAC-2026-000012 »). */
+  reference: string;
+}
+
 interface PaymentRef {
   paymentId: string;
   subjectType: PaymentSubjectType;
@@ -38,6 +48,8 @@ export interface PaymentEventPayloads {
     /** Référence de la transaction chez le prestataire. */
     providerReference: string | null;
     succeededAt: string;
+    /** Paiement direct (v2, R-WL-05) : objet que la recharge doit régler aussitôt. */
+    target?: PaymentTargetRef;
   };
   'payment.intent.failed': PaymentRef & {
     status: 'failed' | 'cancelled' | 'expired';

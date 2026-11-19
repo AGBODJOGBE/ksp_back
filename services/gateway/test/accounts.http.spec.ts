@@ -81,7 +81,7 @@ describe('gateway → identity : administration des comptes', () => {
   });
 
   it('attribution et retrait : identifiants et motif transmis tels quels', async () => {
-    await as(http().post(`${base}/${ACCOUNT_ID}/roles`), cleaningHead)
+    await as(http().post(`${base}/${ACCOUNT_ID}/roles`), director)
       .send({ roleCode: 'cleaning_agent', reason: 'Renfort' })
       .expect(200);
     expect(identity.stub.last('grantAccountRole')!.request).toEqual({
@@ -90,7 +90,7 @@ describe('gateway → identity : administration des comptes', () => {
       reason: 'Renfort',
     });
     const assignmentId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0b01';
-    await as(http().post(`${base}/${ACCOUNT_ID}/roles/revoke`), cleaningHead)
+    await as(http().post(`${base}/${ACCOUNT_ID}/roles/revoke`), director)
       .send({ assignmentId, reason: 'Départ' })
       .expect(200);
     expect(identity.stub.last('revokeAccountRole')!.request).toEqual({
@@ -98,6 +98,20 @@ describe('gateway → identity : administration des comptes', () => {
       assignmentId,
       reason: 'Départ',
     });
+  });
+
+  it('attribution et retrait des rôles : réservés à super_admin dès la gateway (R-RB-02)', async () => {
+    const granted = await as(http().post(`${base}/${ACCOUNT_ID}/roles`), cleaningHead).send({
+      roleCode: 'cleaning_agent',
+      reason: 'Renfort',
+    });
+    expect(granted.status).toBe(403);
+    const revoked = await as(http().post(`${base}/${ACCOUNT_ID}/roles/revoke`), cleaningHead).send({
+      assignmentId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0b01',
+      reason: 'Départ',
+    });
+    expect(revoked.status).toBe(403);
+    expect(identity.stub.calls).toEqual([]);
   });
 
   it('suspension, réactivation, réinitialisation : réservées à super_admin dès la gateway', async () => {

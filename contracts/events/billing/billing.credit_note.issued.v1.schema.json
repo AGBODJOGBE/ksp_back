@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/billing/billing.credit_note.issued.v1.schema.json",
+  "title": "billing.credit_note.issued",
+  "description": "Avoir émis sur une facture (R-PE-07 du CDC Nettoyage v2 ; crédit d'une réclamation pour une entreprise, R-RC-03). Écouté par notification (PDF dans l'espace client). Identifiants et montants seulement.",
+  "x-event-type": "billing.credit_note.issued",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "creditNoteId",
+    "creditNoteNumber",
+    "invoiceId",
+    "invoiceNumber",
+    "customerId",
+    "organizationId",
+    "total",
+    "appliedToBalance",
+    "creditedToWallet",
+    "issuedAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    }
+  },
+  "properties": {
+    "creditNoteId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "creditNoteNumber": {
+      "type": "string",
+      "pattern": "^AV-[0-9]{4}-[0-9]{6}$"
+    },
+    "invoiceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "invoiceNumber": {
+      "type": "string",
+      "pattern": "^FAC-[0-9]{4}-[0-9]{6}$"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "total": {
+      "$ref": "#/$defs/money"
+    },
+    "appliedToBalance": {
+      "$ref": "#/$defs/money",
+      "description": "Part imputée sur le reste dû de la facture"
+    },
+    "creditedToWallet": {
+      "$ref": "#/$defs/money",
+      "description": "Part créditée au portefeuille (facture déjà payée)"
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

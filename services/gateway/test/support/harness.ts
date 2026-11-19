@@ -366,6 +366,18 @@ export class IdentityStub {
       },
     }),
     reactivateOrganization: () => ({ organization: protoOrganization }),
+    // Méthodes du contrat v2 pas encore routées par la gateway : réponse vide.
+    listOrganizationMembers: () => ({}),
+    inviteOrganizationMember: () => ({}),
+    listMyOrganizationInvitations: () => ({}),
+    respondToOrganizationInvitation: () => ({}),
+    changeOrganizationMemberRole: () => ({}),
+    removeOrganizationMember: () => ({}),
+    listPermissions: () => ({}),
+    getRole: () => ({}),
+    createRole: () => ({}),
+    updateRole: () => ({}),
+    deactivateRole: () => ({}),
   };
 
   /** Remplace la réponse d'une méthode (erreur métier, délai…) jusqu'à reset(). */
@@ -443,6 +455,24 @@ class StubOrganizationController implements identityV1.OrganizationServiceContro
   confirmOrganizationBillingEmail(request: identityV1.ConfirmOrganizationBillingEmailRequest) {
     return this.stub.handle('confirmOrganizationBillingEmail', { ...request });
   }
+  listOrganizationMembers(request: identityV1.ListOrganizationMembersRequest) {
+    return this.stub.handle('listOrganizationMembers', { ...request });
+  }
+  inviteOrganizationMember(request: identityV1.InviteOrganizationMemberRequest) {
+    return this.stub.handle('inviteOrganizationMember', { ...request });
+  }
+  listMyOrganizationInvitations(request: identityV1.ListMyOrganizationInvitationsRequest) {
+    return this.stub.handle('listMyOrganizationInvitations', { ...request });
+  }
+  respondToOrganizationInvitation(request: identityV1.RespondToOrganizationInvitationRequest) {
+    return this.stub.handle('respondToOrganizationInvitation', { ...request });
+  }
+  changeOrganizationMemberRole(request: identityV1.ChangeOrganizationMemberRoleRequest) {
+    return this.stub.handle('changeOrganizationMemberRole', { ...request });
+  }
+  removeOrganizationMember(request: identityV1.RemoveOrganizationMemberRequest) {
+    return this.stub.handle('removeOrganizationMember', { ...request });
+  }
 }
 
 @Controller()
@@ -499,6 +529,21 @@ class StubAccountAdminController implements identityV1.AccountAdminServiceContro
   }
   resetAccountMfa(request: identityV1.ResetAccountMfaRequest) {
     return this.stub.handle('resetAccountMfa', { ...request });
+  }
+  listPermissions(request: identityV1.ListPermissionsRequest) {
+    return this.stub.handle('listPermissions', { ...request });
+  }
+  getRole(request: identityV1.GetRoleRequest) {
+    return this.stub.handle('getRole', { ...request });
+  }
+  createRole(request: identityV1.CreateRoleRequest) {
+    return this.stub.handle('createRole', { ...request });
+  }
+  updateRole(request: identityV1.UpdateRoleRequest) {
+    return this.stub.handle('updateRole', { ...request });
+  }
+  deactivateRole(request: identityV1.DeactivateRoleRequest) {
+    return this.stub.handle('deactivateRole', { ...request });
   }
 }
 

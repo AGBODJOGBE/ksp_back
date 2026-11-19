@@ -12,15 +12,74 @@ import { type WalletEventPayloads, type WalletEventType } from './wallet.events'
 
 const EVENTS_ROOT = resolve(__dirname, '..', '..', '..', '..', 'contracts', 'events');
 
-function loadSchemas(service: string): Map<string, object> {
-  const dir = join(EVENTS_ROOT, service);
-  const schemas = new Map<string, object>();
-  for (const file of readdirSync(dir)) {
-    const schema = JSON.parse(readFileSync(join(dir, file), 'utf8'));
-    schemas.set(schema['x-event-type'], schema);
-  }
-  return schemas;
+interface EventSchema {
+  file: string;
+  type: string;
+  version: number;
+  schema: Record<string, unknown>;
 }
+
+const loaded = new Map<string, EventSchema[]>();
+
+/**
+ * Tous les schémas d'un service, toutes versions (<type>.v<version>.schema.json). Lus une seule
+ * fois : Ajv reconnaît un schéma déjà compilé à son objet, et refuse un second objet de même $id.
+ */
+function loadSchemaFiles(service: string): EventSchema[] {
+  const cached = loaded.get(service);
+  if (cached) return cached;
+  const dir = join(EVENTS_ROOT, service);
+  const files = readdirSync(dir).map((file) => {
+    const schema = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+    return { file, type: schema['x-event-type'], version: schema['x-event-version'], schema };
+  });
+  loaded.set(service, files);
+  return files;
+}
+
+/**
+ * Schéma de chaque type d'un service, dans sa version la plus récente : le type TypeScript d'un
+ * événement couvre toutes ses versions (une version suivante ne fait qu'élargir la précédente).
+ */
+function loadSchemas(service: string): Map<string, object> {
+  const latest = new Map<string, EventSchema>();
+  for (const entry of loadSchemaFiles(service)) {
+    const current = latest.get(entry.type);
+    if (!current || entry.version > current.version) latest.set(entry.type, entry);
+  }
+  return new Map([...latest].map(([type, entry]) => [type, entry.schema]));
+}
+
+/** Schéma d'une version donnée d'un type. */
+function loadSchemaVersion(service: string, type: string, version: number): object {
+  const found = loadSchemaFiles(service).find((entry) => entry.type === type && entry.version === version);
+  if (!found) throw new Error(`schéma ${type} v${version} absent`);
+  return found.schema;
+}
+
+const SERVICES = readdirSync(EVENTS_ROOT, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name);
+
+describe('Fichiers des schémas d’événements', () => {
+  it.each(SERVICES)('%s : nom du fichier, $id, type et version concordent', (service) => {
+    for (const { file, type, version, schema } of loadSchemaFiles(service)) {
+      expect(file).toBe(`${type}.v${version}.schema.json`);
+      expect(schema.$id).toBe(`https://contracts.ksp.bj/events/${service}/${file}`);
+      expect(type.startsWith(`${service}.`)).toBe(true);
+    }
+  });
+
+  it.each(SERVICES)('%s : versions d’un même type sans trou, à partir de 1', (service) => {
+    const versions = new Map<string, number[]>();
+    for (const { type, version } of loadSchemaFiles(service)) {
+      versions.set(type, [...(versions.get(type) ?? []), version]);
+    }
+    for (const list of versions.values()) {
+      expect(list.sort((a, b) => a - b)).toEqual(list.map((_, index) => index + 1));
+    }
+  });
+});
 
 const uuid = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0f';
 
@@ -82,6 +141,35 @@ const examples: { [K in IdentityEventType]: IdentityEventPayloads[K] } = {
     grantedBy: 'system',
   },
   'identity.role.revoked': { assignmentId: uuid, userId: uuid, roleCode: 'seller', revokedBy: uuid },
+  'identity.role.created': {
+    roleCode: 'cleaning_planner',
+    name: 'Planificateur Nettoyage',
+    permissions: ['cleaning.planning.manage', 'cleaning.request.read'],
+    sensitive: false,
+    createdBy: uuid,
+  },
+  'identity.role.updated': {
+    roleCode: 'cleaning_supervisor',
+    permissionsAdded: ['cleaning.claim.manage'],
+    permissionsRemoved: [],
+    updatedBy: uuid,
+  },
+  'identity.role.deactivated': { roleCode: 'cleaning_planner', deactivatedBy: uuid, reason: 'Rôle fusionné' },
+  'identity.member.role_changed': {
+    organizationId: uuid,
+    userId: uuid,
+    previousOrgRole: 'org_member',
+    orgRole: 'org_viewer',
+    changedBy: uuid,
+  },
+  'identity.member.invited': {
+    invitationId: uuid,
+    organizationId: uuid,
+    inviteeUserId: uuid,
+    orgRole: 'org_member',
+    invitedBy: uuid,
+    expiresAt: '2026-11-26T10:00:00.000Z',
+  },
 };
 
 describe('Contrats des événements identity', () => {
@@ -97,6 +185,37 @@ describe('Contrats des événements identity', () => {
   it.each(Object.entries(examples))('%s : l’exemple respecte le schéma', (type, payload) => {
     const validate = ajv.compile(schemas.get(type)!);
     expect(validate(payload)).toBe(true);
+  });
+
+  it('v2 : attribution limitée à des zones, révocation immédiate des sessions (R-RB-03, R-RB-05)', () => {
+    const granted = ajv.compile(schemas.get('identity.role.granted')!);
+    const zoned = {
+      ...examples['identity.role.granted'],
+      roleCode: 'cleaning_supervisor',
+      scopeType: 'zone' as const,
+      scopeId: null,
+      zoneKeys: ['porto-novo', 'abomey-calavi'],
+    };
+    expect(granted(zoned)).toBe(true);
+    expect(granted({ ...zoned, zoneKeys: ['Porto Novo'] })).toBe(false);
+    const { zoneKeys: _zoneKeys, ...zoneWithoutKeys } = zoned;
+    expect(granted(zoneWithoutKeys)).toBe(false);
+    expect(granted({ ...examples['identity.role.granted'], zoneKeys: ['porto-novo'] })).toBe(false);
+    const revoked = ajv.compile(schemas.get('identity.role.revoked')!);
+    expect(revoked({ ...examples['identity.role.revoked'], sessionsRevoked: true })).toBe(true);
+    const invited = ajv.compile(schemas.get('identity.member.invited')!);
+    expect(invited({ ...examples['identity.member.invited'], phone: '+2290197000045' })).toBe(false);
+  });
+
+  it('identity.role.granted : la v1 reste inchangée, la v2 l’élargit (portée zone)', () => {
+    const v1 = ajv.compile(loadSchemaVersion('identity', 'identity.role.granted', 1));
+    const v2 = ajv.compile(loadSchemaVersion('identity', 'identity.role.granted', 2));
+    const global = examples['identity.role.granted'];
+    expect(v1(global)).toBe(true);
+    expect(v2(global)).toBe(true);
+    const zoned = { ...global, scopeType: 'zone' as const, scopeId: null, zoneKeys: ['porto-novo'] };
+    expect(v1(zoned)).toBe(false);
+    expect(v2(zoned)).toBe(true);
   });
 
   it('identity.otp.requested refuse tout champ qui pourrait contenir le code', () => {
@@ -548,6 +667,29 @@ const billingExamples: { [K in BillingEventType]: BillingEventPayloads[K] } = {
   },
   'billing.invoice.overdue': { ...invoice, dueAt: '2026-12-15T08:00:00Z', overdueCount: 1 },
   'billing.invoice.paid': { ...invoice, paidAt: '2026-12-16T10:00:00Z', overdueCount: 0 },
+  'billing.invoice.reminded': {
+    invoiceId: uuid,
+    invoiceNumber: 'FAC-2026-000042',
+    customerId: uuid,
+    organizationId: uuid,
+    total: xof(160000),
+    balance: xof(160000),
+    dueAt: '2026-12-11T00:00:00Z',
+    offsetDays: -3,
+    remindedAt: '2026-12-08T07:00:00Z',
+  },
+  'billing.credit_note.issued': {
+    creditNoteId: uuid,
+    creditNoteNumber: 'AV-2026-000003',
+    invoiceId: uuid,
+    invoiceNumber: 'FAC-2026-000042',
+    customerId: uuid,
+    organizationId: uuid,
+    total: xof(20000),
+    appliedToBalance: xof(20000),
+    creditedToWallet: xof(0),
+    issuedAt: '2026-12-09T10:00:00Z',
+  },
 };
 
 describe('Contrats des événements billing', () => {
@@ -563,6 +705,23 @@ describe('Contrats des événements billing', () => {
   it.each(Object.entries(billingExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
     const validate = ajv.compile(schemas.get(type)!);
     expect(validate(payload)).toBe(true);
+  });
+
+  it('v2 : nature de la facture et impayés du titulaire (R-PE-06)', () => {
+    const issued = ajv.compile(schemas.get('billing.invoice.issued')!);
+    expect(issued({ ...billingExamples['billing.invoice.issued'], kind: 'session', status: 'paid' })).toBe(
+      true,
+    );
+    expect(issued({ ...billingExamples['billing.invoice.issued'], kind: 'weekly' })).toBe(false);
+    const overdue = ajv.compile(schemas.get('billing.invoice.overdue')!);
+    expect(
+      overdue({ ...billingExamples['billing.invoice.overdue'], kind: 'monthly', holderOverdueCount: 2 }),
+    ).toBe(true);
+    const paid = ajv.compile(schemas.get('billing.invoice.paid')!);
+    for (const settledBy of ['payment', 'credit_note', 'cancellation']) {
+      expect(paid({ ...billingExamples['billing.invoice.paid'], kind: 'monthly', settledBy })).toBe(true);
+    }
+    expect(paid({ ...billingExamples['billing.invoice.paid'], settledBy: 'refund' })).toBe(false);
   });
 
   it('aucun événement billing n’accepte d’adresse, et les montants sont des entiers en XOF', () => {
@@ -631,6 +790,25 @@ describe('Contrats des événements payment', () => {
   addFormats(ajv);
   ajv.addKeyword('x-event-type').addKeyword('x-event-version');
   const schemas = loadSchemas('payment');
+
+  it('v2 : paiement direct, recharge qui porte l’objet visé (R-WL-05)', () => {
+    const validate = ajv.compile(schemas.get('payment.intent.succeeded')!);
+    const succeeded = paymentExamples['payment.intent.succeeded'];
+    const direct = {
+      ...succeeded,
+      subjectType: 'wallet_top_up' as const,
+      part: null,
+      target: {
+        service: 'cleaning',
+        objectType: 'cleaning_request',
+        objectId: uuid,
+        part: 'visit_fee',
+        reference: 'DN-000124',
+      },
+    };
+    expect(validate(direct)).toBe(true);
+    expect(validate({ ...direct, target: { ...direct.target, reference: '' } })).toBe(false);
+  });
 
   it('chaque type TypeScript a un schéma, et inversement', () => {
     expect([...schemas.keys()].sort()).toEqual(Object.keys(paymentExamples).sort());
@@ -782,6 +960,48 @@ describe('Contrats des événements wallet', () => {
   addFormats(ajv);
   ajv.addKeyword('x-event-type').addKeyword('x-event-version');
   const schemas = loadSchemas('wallet');
+
+  it('v2 : recharge en espèces et paiement direct qui règle un objet (R-WL-02, R-WL-05)', () => {
+    const validate = ajv.compile(schemas.get('wallet.prepaid.credited')!);
+    const credited = walletExamples['wallet.prepaid.credited'];
+    const direct = {
+      ...credited,
+      kind: 'top_up' as const,
+      origin: 'payment' as const,
+      topUpChannel: 'mobile_money_online' as const,
+      paymentId: uuid,
+      refundedTransactionId: null,
+      forObject: { service: 'cleaning', objectType: 'cleaning_session', objectId: uuid, part: null },
+    };
+    expect(validate(direct)).toBe(true);
+    const { forObject: _forObject, ...cash } = direct;
+    expect(validate({ ...cash, topUpChannel: 'cash', origin: 'finance', paymentId: null })).toBe(true);
+    expect(validate({ ...credited, kind: 'commercial_gesture' })).toBe(true);
+    expect(validate({ ...direct, forObject: { ...direct.forObject, address: 'Cotonou' } })).toBe(false);
+  });
+
+  it('wallet.prepaid.credited : la v1 reste inchangée, la v2 l’élargit (R-WL-02, R-WL-05, R-PE-04)', () => {
+    const v1 = ajv.compile(loadSchemaVersion('wallet', 'wallet.prepaid.credited', 1));
+    const v2 = ajv.compile(loadSchemaVersion('wallet', 'wallet.prepaid.credited', 2));
+    const refund = walletExamples['wallet.prepaid.credited'];
+    expect(v1(refund)).toBe(true);
+    expect(v2(refund)).toBe(true);
+    const gesture = { ...refund, kind: 'commercial_gesture' as const, refundedTransactionId: null };
+    expect(v1(gesture)).toBe(false);
+    expect(v2(gesture)).toBe(true);
+    const transfer = {
+      ...refund,
+      kind: 'top_up' as const,
+      origin: 'finance' as const,
+      userId: null,
+      holder: { type: 'organization' as const, id: uuid },
+      refundedTransactionId: null,
+      topUpChannel: 'bank_transfer' as const,
+      forObject: { service: 'billing', objectType: 'billing_invoice', objectId: uuid, part: null },
+    };
+    expect(v1(transfer)).toBe(false);
+    expect(v2(transfer)).toBe(true);
+  });
 
   it('chaque type TypeScript a un schéma, et inversement', () => {
     expect([...schemas.keys()].sort()).toEqual(Object.keys(walletExamples).sort());

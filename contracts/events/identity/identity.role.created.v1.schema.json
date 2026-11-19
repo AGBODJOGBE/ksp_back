@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.role.created.v1.schema.json",
+  "title": "identity.role.created",
+  "description": "Rôle créé au back-office par le super administrateur (R-RB-02, CDC Nettoyage v2). Écouté par l'audit. Codes seulement.",
+  "x-event-type": "identity.role.created",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["roleCode", "name", "permissions", "sensitive", "createdBy"],
+  "properties": {
+    "roleCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,63}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+      }
+    },
+    "sensitive": {
+      "type": "boolean"
+    },
+    "createdBy": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

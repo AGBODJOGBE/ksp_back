@@ -1,8 +1,16 @@
+import { AppError } from '@ksp/platform';
 import { billingV1, commonV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import { parsePage } from '../../application/shared/validation';
 import { BILLING_USE_CASES, type BillingUseCases } from '../../application/use-cases';
 import { presentInvoice, presentSettings } from './presenters';
+
+/** Méthodes du contrat v2 (CDC Nettoyage v2) pas encore livrées : réponse NOT_IMPLEMENTED. */
+function notImplemented(method: string): Promise<never> {
+  return Promise.reject(
+    AppError.notImplemented('BILLING_NOT_IMPLEMENTED', `La méthode ${method} n'est pas encore disponible.`),
+  );
+}
 
 /**
  * ksp.common.v1.ObligationService, interrogé par identity avant la suppression d'un compte
@@ -47,6 +55,18 @@ export class BillingGrpcController implements billingV1.BillingServiceController
       idempotencyKey: request.idempotencyKey,
     });
     return { invoice: presentInvoice(invoice) };
+  }
+
+  payMyInvoiceByMobileMoney(): Promise<billingV1.PayMyInvoiceByMobileMoneyResponse> {
+    return notImplemented('PayMyInvoiceByMobileMoney');
+  }
+
+  getMyBillingPreferences(): Promise<billingV1.GetMyBillingPreferencesResponse> {
+    return notImplemented('GetMyBillingPreferences');
+  }
+
+  updateMyBillingPreferences(): Promise<billingV1.UpdateMyBillingPreferencesResponse> {
+    return notImplemented('UpdateMyBillingPreferences');
   }
 }
 
@@ -98,6 +118,14 @@ export class BillingAdminGrpcController implements billingV1.BillingAdminService
     });
     return { settings: presentSettings(saved) };
   }
+
+  issueAdminCreditNote(): Promise<billingV1.IssueAdminCreditNoteResponse> {
+    return notImplemented('IssueAdminCreditNote');
+  }
+
+  listCreditNotes(): Promise<billingV1.ListCreditNotesResponse> {
+    return notImplemented('ListCreditNotes');
+  }
 }
 
 /**
@@ -146,5 +174,21 @@ export class WalletDebitCheckGrpcController implements billingV1.WalletDebitChec
         transactionId: request.transactionId,
       }),
     };
+  }
+}
+
+/**
+ * InvoiceIssuanceService (v2) : émission des factures de séance, des reçus de frais de visite et des
+ * avoirs, réservée à cleaning. Pas encore livré : réponse NOT_IMPLEMENTED.
+ */
+@Controller()
+@billingV1.InvoiceIssuanceServiceControllerMethods()
+export class InvoiceIssuanceGrpcController implements billingV1.InvoiceIssuanceServiceController {
+  issueInvoice(): Promise<billingV1.IssueInvoiceResponse> {
+    return notImplemented('IssueInvoice');
+  }
+
+  issueCreditNote(): Promise<billingV1.IssueCreditNoteResponse> {
+    return notImplemented('IssueCreditNote');
   }
 }

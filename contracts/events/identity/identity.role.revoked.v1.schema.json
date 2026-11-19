@@ -25,6 +25,10 @@
     },
     "reason": {
       "type": "string"
+    },
+    "sessionsRevoked": {
+      "type": "boolean",
+      "description": "Rôle sensible (R-RB-05 du CDC Nettoyage v2) : toutes les sessions de la personne ont été révoquées immédiatement. Absent des événements publiés avant son ajout"
     }
   }
 }
