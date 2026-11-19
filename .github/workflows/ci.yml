@@ -135,8 +135,10 @@ jobs:
       - name: Typage
         run: pnpm typecheck
 
-      - name: Tests
-        run: pnpm test
+      # Tests avec mesure de la couverture : chaque paquet échoue sous son seuil minimal
+      # (coverageThreshold dans son jest.config.js).
+      - name: Tests et couverture
+        run: pnpm test:coverage
 
       - name: Build
         run: pnpm build

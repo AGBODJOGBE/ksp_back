@@ -111,6 +111,7 @@ organisation validée (`business`, avec `organization_name`), voir ci-dessous.
 ## Confiance et comptes (ADR-050)
 
 - **Essais des codes** (téléphone, e-mail, double authentification) : l'essai est pris en base, de façon atomique, avant de comparer le code ; des essais simultanés ne dépassent jamais le plafond.
+- **Limites d'envoi des codes par téléphone** : la lecture des envois du numéro, la décision et l'enregistrement de la demande se font dans une seule transaction, sous un verrou PostgreSQL propre au numéro (`pg_advisory_xact_lock`), valable entre répliques ; des demandes simultanées ne dépassent jamais les limites. Une demande dont l'envoi n'est ni réussi ni en échec compte dans les limites à sa date de création (à valider) ; un envoi en échec ne compte pas.
 - **Renouvellement entre onglets** : le successeur d'un jeton de renouvellement est dérivé de lui (HMAC, clé `OTP_HMAC_SECRET`) ; pendant `REFRESH_TOKEN_REUSE_GRACE_SECONDS` (10 s), l'ancien jeton rend le même successeur tant qu'il n'a pas servi. Au-delà, la réutilisation révoque la session (vol).
 - **Appelants** : `AuthService`, `AccountService`, `AccountAdminService`, `OrganizationService` et `OrganizationAdminService` n'acceptent que la gateway (`@AllowedCallers('gateway')`) ; `IdentityService` reste ouvert aux services.
 - **Administrateur de métier** : la fiche d'un compte hors de son équipe est introuvable ; écritures (rôles, suspension, réinitialisation) avec une double authentification de moins de 10 minutes.

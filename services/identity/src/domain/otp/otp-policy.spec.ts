@@ -43,6 +43,17 @@ describe('decideSend : limites d’envoi par numéro', () => {
     const old = sent(...Array.from({ length: 12 }, (_, i) => 90000 + i * 60));
     expect(decideSend(old, now, policy)).toEqual({ allowed: true });
   });
+
+  it('compte un envoi daté après maintenant comme un envoi qui vient d’avoir lieu', () => {
+    // Demande concurrente enregistrée après la lecture de l'horloge, ou réplique en avance.
+    expect(decideSend(sent(-5), now, policy)).toEqual({ allowed: false, retryAfterSeconds: 60 });
+    // Plafond horaire, même sans délai entre deux envois.
+    const noDelay = { ...policy, resendDelaySeconds: 0 };
+    expect(decideSend(sent(-5, -4, -3, -2, -1), now, noDelay)).toEqual({
+      allowed: false,
+      retryAfterSeconds: 3600,
+    });
+  });
 });
 
 describe('strictest : plusieurs limites à la fois', () => {

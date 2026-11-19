@@ -1,4 +1,5 @@
 import { type OtpChallenge, type OtpChannel } from '../../domain/otp/otp-challenge';
+import { type SendDecision } from '../../domain/otp/otp-policy';
 import { type StoredOtpChallenge } from '../../domain/otp/otp-verification';
 import { type PhoneNumber } from '../../domain/user/phone-number';
 
@@ -10,11 +11,28 @@ export interface OtpRequestedEvent {
   targetMasked: string;
 }
 
+/** Résultat d'une réservation : la décision, et les envois du numéro qui ont servi à la prendre. */
+export interface OtpReservation {
+  decision: SendDecision;
+  /** Envois comptés depuis `since`, sans la nouvelle demande. */
+  recent: Date[];
+}
+
 export interface OtpChallengeRepository {
-  /** Dates des envois réussis vers ce numéro depuis `since`. */
-  sentAtSince(target: PhoneNumber, since: Date): Promise<Date[]>;
-  /** Enregistre une nouvelle demande, avant l'envoi. */
-  create(challenge: OtpChallenge): Promise<void>;
+  /**
+   * Enregistre une nouvelle demande, avant l'envoi, seulement si les limites du numéro le
+   * permettent. La lecture des envois du numéro, la décision et l'insertion sont atomiques côté
+   * base (verrou propre au numéro, tenu jusqu'à la fin de la transaction) : des demandes
+   * simultanées, même sur plusieurs répliques, ne dépassent jamais les limites.
+   * Comptent depuis `since` : les envois réussis (date d'envoi) et les demandes dont l'envoi n'est
+   * ni réussi ni en échec (date de création). Un envoi en échec ne compte pas.
+   * La demande n'est enregistrée que si `decision.allowed`.
+   */
+  createIfAllowed(
+    challenge: OtpChallenge,
+    since: Date,
+    decide: (recent: Date[]) => SendDecision,
+  ): Promise<OtpReservation>;
   /** Envoi réussi : canal réellement utilisé, et événement dans la même transaction. */
   markSent(id: string, channelUsed: OtpChannel, sentAt: Date, event: OtpRequestedEvent): Promise<void>;
   /** Envoi impossible : la demande devient inutilisable et ne compte pas dans les limites. */

@@ -11,6 +11,7 @@
     "build": "pnpm -r --workspace-concurrency=1 run build",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
+    "test:coverage": "pnpm -r run test:coverage",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
