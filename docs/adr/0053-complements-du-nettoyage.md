@@ -2,6 +2,8 @@
 
 **Statut** : Proposé (phase 1 des compléments demandés le 2026-11-10 après l'inventaire du module)
 
+**Remplacé en partie par ADR-054 et ADR-058** (décisions 3 à 5 ; les décisions 1 et 2 sont reprises).
+
 ## Contexte
 
 L'inventaire du Nettoyage sur `main` (2026-11-10) a relevé des manques d'exploitation : photos des

@@ -2,6 +2,8 @@
 
 **Statut** : Accepté (en service sur `main` depuis le 2026-11-06, constat du 2026-11-10 ; les points « À valider » ci-dessous restent ouverts ; historique : lot 2 ; décisions 1 à 9 et 11 à 13 validées par le responsable le 2026-11-04 ; décision 14, messages regroupés (décision 10 de l'audit), validée dans son principe le 2026-11-05, détails à valider)
 
+**Remplacé en partie par ADR-054 et ADR-058** (décisions 1 à 5, 7, 9, 10 et 12 à 14 ; les décisions 8 et 11 sont reprises ; le sort de la décision 6, correction de la position, est à valider).
+
 ## Contexte
 
 L'ADR-034 crée une demande de devis par prestation, liées par un groupe, et laisse ouvertes les opérations sur le groupe entier : plafond des demandes ouvertes, visite commune, refus ou annulation du groupe, créneaux communs, planification commune. Les agents ne voient pas la liste de leurs visites, la position ne peut pas être corrigée sur place, une zone se désactive sans prévenir des dossiers en cours, et la position GPS (donnée personnelle) est gardée sans limite. Contraintes inchangées : circuit d'une demande intact, contrats par ajout, outbox et audit, idempotence.

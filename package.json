@@ -15,7 +15,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "contracts:lint": "buf lint",
-    "contracts:breaking": "buf breaking --against '.git#branch=main'",
+    "contracts:breaking": "tsx tools/ci/accepted-breaks.ts",
     "contracts:generate": "buf generate && prettier --write libs/contracts/src/generated",
     "prisma:generate": "pnpm -r --if-present run prisma:generate",
     "ci:changed-services": "tsx tools/ci/changed-services.ts",
@@ -45,7 +45,8 @@
     "ts-proto": "2.13.0",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.71.1"
+    "typescript-eslint": "8.71.1",
+    "yaml": "2.9.1"
   },
   "lint-staged": {
     "*.{ts,js,mjs,json,md,yml,yaml}": "prettier --write",

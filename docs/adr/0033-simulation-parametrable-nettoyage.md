@@ -2,6 +2,8 @@
 
 **Statut** : Accepté (en service sur `main` depuis le 2026-11-06, constat du 2026-11-10 ; les points « À valider » ci-dessous restent ouverts ; historique : lot 2 ; objectif, contrats et points ouverts de la phase 1 validés par le responsable le 2026-11-03 ; phase 2 : code)
 
+**Remplacé par ADR-054 et ADR-056.**
+
 ## Contexte
 
 Le simulateur du Nettoyage (UC-CL-01) repose sur un modèle figé dans le code de `cleaning` : une liste fixe d'unités (`SERVICE_UNITS` : m², pièce, fosse, m³), une seule quantité par prestation, un type de local (`PREMISES_TYPES`) et une fréquence (`once`, `weekly`, `monthly`) demandés au client sans aucun effet sur le prix, et des options forfaitaires sans paramètre. Formule actuelle : prix = max(minimum, (quantité × prix unitaire + Σ options) × coefficient de la commune), fourchette −10 % / +15 % arrondie à 500 FCFA.

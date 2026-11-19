@@ -2,6 +2,8 @@
 
 **Statut** : Proposé (lot 2, chantier 2.2 ; prestataire décidé par le responsable le 2026-10-21)
 
+**Remplacé en partie par ADR-055** (décisions 1 et 3 : plus d'objet payé `cleaning_mission` ni `billing_invoice` ; le paiement Mobile Money crédite le wallet, qui est ensuite débité).
+
 ## Contexte
 
 Le CDC Nettoyage (décisions du 2026-10-21) laisse le particulier payer l'acompte ou le solde d'une mission par « Mobile Money en ligne » (`mobile_money_online`), et l'entreprise régler sa facture mensuelle (`billing`). Au Bénin, MTN et Moov dominent ; FedaPay agrège les deux. Aucune clé FedaPay n'est encore fournie. Le montant dû est déjà calculé par `cleaning` (plan de paiement, acompte) et par `billing` (reste dû d'une facture) ; leurs règles d'impayés et de déblocage existent (ADR-025, ADR-030).

@@ -2,6 +2,8 @@
 
 **Statut** : Accepté (lot 2 ; met en œuvre la décision 6 de l'ADR-028, option a validée par le responsable le 2026-10-27 ; décisions de relecture du 2026-10-28)
 
+**Remplacé en partie par ADR-054 et ADR-055** (décisions 4, 8 et 9, et effets de la suspension et de la reprise des décisions 2 et 3 : programmes et séances au lieu des missions et des passages ; l'état appris par événements et les causes cumulées sont repris).
+
 ## Contexte
 
 Un admin KSP peut suspendre une organisation, puis la réactiver (ADR-027, route `POST /api/v1/admin/identity/organizations/{id}/suspend`). L'ADR-028 (décision 6) a fixé l'effet sur le Nettoyage : les contrats d'une organisation suspendue sont suspendus comme pour les impayés (passages à venir annulés, agents libérés) et reprennent à sa réactivation ; `billing` en tient compte par les événements de suspension et de reprise de `cleaning` (prorata, ADR-025).

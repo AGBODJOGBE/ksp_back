@@ -2,6 +2,8 @@
 
 **Statut** : Accepté (décision du 2026-10-17)
 
+**Remplacé en partie par ADR-057** (décision 1, pour les agents de terrain seulement : code par SMS et appareil enregistré, sans application d'authentification, R-RB-07).
+
 ## Contexte
 
 Le cahier des charges Identité (UC-ID-09) rend la double authentification obligatoire pour tout compte qui a un rôle du back-office, avec l'application d'authentification (TOTP) comme méthode principale et **un code SMS comme secours**. Il prévoit aussi des codes de récupération remis à l'activation.
