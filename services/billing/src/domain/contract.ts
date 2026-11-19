@@ -1,6 +1,9 @@
 /**
  * Contrat facturé chaque mois (CDC Nettoyage, partie 10, décisions du 2026-10-23), appris par
- * l'événement cleaning.booking.confirmed d'une organisation.
+ * l'événement cleaning.booking.confirmed d'une organisation. Cet événement et ceux qui suspendaient,
+ * reprenaient ou annulaient le contrat sont retirés par la refonte du Nettoyage (ADR-054) : plus
+ * aucun contrat n'est créé ni modifié. Les contrats déjà enregistrés restent facturés jusqu'à la
+ * facture mensuelle v2 sur les séances réalisées (lot F, ADR-055), qui remplace ce modèle.
  *
  * - Une facture par mois civil, à l'heure du Bénin (UTC+1, sans heure d'été), émise à la fin du
  *   mois : le 1er du mois suivant à 00:00 heure du Bénin (fin du mois écoulé).
@@ -223,24 +226,4 @@ export function duePeriods(
   return contractPeriods(contract).filter(
     (period) => period.issueAt <= now && !invoicedIndexes.has(period.index) && period.amount > 0,
   );
-}
-
-/** Suspension annoncée par cleaning ; un événement arrivé après la reprise est replacé dans l'historique. */
-export function applySuspension(contract: BillingContract, at: Date): BillingContract {
-  if (contract.suspendedSince) return contract;
-  if (contract.lastResumedAt && at < contract.lastResumedAt) {
-    return { ...contract, suspensions: [...contract.suspensions, { from: at, to: contract.lastResumedAt }] };
-  }
-  return { ...contract, suspendedSince: at };
-}
-
-export function applyResumption(contract: BillingContract, at: Date): BillingContract {
-  const lastResumedAt = contract.lastResumedAt && contract.lastResumedAt > at ? contract.lastResumedAt : at;
-  if (!contract.suspendedSince) return { ...contract, lastResumedAt };
-  return {
-    ...contract,
-    suspendedSince: null,
-    lastResumedAt,
-    suspensions: [...contract.suspensions, { from: contract.suspendedSince, to: at }],
-  };
 }

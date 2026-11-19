@@ -1,8 +1,7 @@
 import { Body, Controller, Inject, Param, Query } from '@nestjs/common';
 import { type NotificationApi } from '../../application/notification/notification.ports';
 import { NOTIFICATION_API } from '../../tokens';
-import { idFrom, pageFrom } from './cleaning.controller';
-import { parseParam } from './cleaning-schemas';
+import { idFrom, pageFrom, parseParam } from './params';
 import { notificationParams } from './notification-schemas';
 import { Route } from './route.decorator';
 import { parseBody, requestBodies } from './schemas';

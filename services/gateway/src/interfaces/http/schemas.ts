@@ -1,7 +1,6 @@
 import { AppError } from '@ksp/platform';
 import { z } from 'zod';
 import { billingBodies } from './billing-schemas';
-import { cleaningBodies } from './cleaning-schemas';
 import { notificationBodies } from './notification-schemas';
 import { documentBodies } from './document-schemas';
 import { fileBodies } from './file-schemas';
@@ -49,7 +48,6 @@ export const requestBodies = {
   confirmEmail: z.strictObject({ code: z.string().regex(/^[0-9]{4,8}$/) }),
   ...organizationBodies,
   ...accountBodies,
-  ...cleaningBodies,
   ...billingBodies,
   ...paymentBodies,
   ...notificationBodies,

@@ -2,8 +2,7 @@ import { Body, Controller, Headers, Inject, Param, Query } from '@nestjs/common'
 import { z } from 'zod';
 import { type WalletApi, type WalletHolder } from '../../application/wallet/wallet.ports';
 import { WALLET_API } from '../../tokens';
-import { keyFrom, pageFrom } from './cleaning.controller';
-import { parseParam } from './cleaning-schemas';
+import { keyFrom, pageFrom, parseParam } from './params';
 import { Route } from './route.decorator';
 import { parseBody, requestBodies } from './schemas';
 

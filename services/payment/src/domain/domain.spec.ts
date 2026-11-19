@@ -1,4 +1,4 @@
-import { invoiceAmount, missionAmount, unrecordedSuccesses } from './amount-due';
+import { invoiceAmount, unrecordedSuccesses } from './amount-due';
 import {
   applyProviderStatus,
   expire,
@@ -14,7 +14,7 @@ const USER = 'u1';
 
 const intent = (overrides: Partial<PaymentIntent> = {}): PaymentIntent => ({
   id: 'p1',
-  subject: { type: 'cleaning_mission', id: 'm1', part: 'deposit', reference: null },
+  subject: { type: 'billing_invoice', id: 'i1', part: null, reference: 'FAC-2026-000001' },
   amount: 15000,
   customerId: USER,
   organizationId: null,
@@ -74,15 +74,6 @@ describe('machine à états du paiement', () => {
 });
 
 describe('montant dû', () => {
-  const mission = {
-    missionId: 'm1',
-    customerId: USER,
-    organizationId: null,
-    status: 'scheduled',
-    depositDue: 15000,
-    remainingDue: 50000,
-    recordedPaymentIds: [],
-  };
   const payer = { userId: USER, organizationId: null };
 
   it('paiement réussi pas encore enregistré par le service de l’objet', () => {
@@ -96,26 +87,6 @@ describe('montant dû', () => {
     expect(unrecordedSuccesses([p1], [])).toEqual({ paymentIds: ['p1'], since: at(0) });
     // La plus ancienne réussite non enregistrée compte.
     expect(unrecordedSuccesses([p1, p2, p3], ['p1'])).toEqual({ paymentIds: ['p2', 'p3'], since: at(-3) });
-  });
-
-  it('mission : acompte ou reste dû, lus tels quels', () => {
-    expect(missionAmount(mission, 'deposit', payer)).toEqual({ amount: 15000 });
-    expect(missionAmount(mission, 'balance', payer)).toEqual({ amount: 50000 });
-  });
-
-  it('mission : autre client, entreprise, annulée, rien à payer', () => {
-    expect(missionAmount(mission, 'deposit', { userId: 'u2', organizationId: null })).toEqual({
-      refusal: 'not_found',
-    });
-    expect(missionAmount({ ...mission, organizationId: 'o1' }, 'deposit', payer)).toEqual({
-      refusal: 'via_invoice',
-    });
-    expect(missionAmount({ ...mission, status: 'cancelled' }, 'deposit', payer)).toEqual({
-      refusal: 'not_payable',
-    });
-    expect(missionAmount({ ...mission, depositDue: 0 }, 'deposit', payer)).toEqual({
-      refusal: 'nothing_due',
-    });
   });
 
   it('facture : même périmètre que « Mes factures »', () => {

@@ -1,5 +1,5 @@
 import { type PaymentEventPayloads, type PaymentEventType } from '@ksp/contracts';
-import { type InvoiceDue, type MissionDue, type SucceededPayment } from '../domain/amount-due';
+import { type InvoiceDue, type SucceededPayment } from '../domain/amount-due';
 import { type PaymentLink } from '../domain/payment-link';
 import {
   type PaymentIntent,
@@ -238,7 +238,6 @@ export interface ProviderNotificationLog {
  * inconnu : null. Une panne lève une erreur (le client réessaie avec la même clé).
  */
 export interface AmountDueDirectory {
-  missionDue(missionId: string): Promise<MissionDue | null>;
   invoiceDue(invoiceId: string): Promise<InvoiceDue | null>;
 }
 

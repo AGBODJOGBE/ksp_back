@@ -311,7 +311,7 @@ model Offer {
   placeTypeId     String           @map("place_type_id") @db.Uuid
   cleaningTypeId  String           @map("cleaning_type_id") @db.Uuid
   /// Calcul du nombre d'agents et de la durée d'une séance par tranche de superficie (R-CA-10),
-  /// ex. [{ from: 0, to: 100, agents: 2, durationMinutes: 180 }].
+  /// ex. [{ fromArea: 0, toArea: 100, agents: 2, durationMinutes: 180 }] (noms du contrat TeamRuleBracket).
   teamRule        Json             @map("team_rule")
   displayOrder    Int              @default(0) @map("display_order")
   /// Créée inactive, activée une fois prête (R-CA-12).

@@ -1,22 +1,9 @@
-import { type MissionPart } from './payment-intent';
-
 /**
- * Montants dus, tels que les services qui portent l'objet payé les calculent (cleaning, billing) :
- * payment n'en recalcule aucun (ADR-031). Il ne fait que choisir la part demandée et vérifier que
- * le payeur est dans le périmètre de l'objet.
+ * Montants dus, tels que le service qui porte l'objet payé les calcule (billing) : payment n'en
+ * recalcule aucun (ADR-031). Il ne fait que vérifier que le payeur est dans le périmètre de l'objet.
+ * L'acompte et le solde d'une mission du Nettoyage v1 (lus dans cleaning) sont retirés avec la v1
+ * (ADR-054) : le Nettoyage v2 passe par le portefeuille et le paiement direct (ADR-055).
  */
-export interface MissionDue {
-  missionId: string;
-  customerId: string;
-  organizationId: string | null;
-  status: string;
-  /** Acompte encore dû (0 pour un plan « totalité » ou un acompte déjà reçu). */
-  depositDue: number;
-  remainingDue: number;
-  /** Paiements en ligne (identifiants payment) déjà enregistrés sur la mission par cleaning. */
-  recordedPaymentIds: string[];
-}
-
 export interface InvoiceDue {
   invoiceId: string;
   number: string;
@@ -62,24 +49,7 @@ export interface PayerScope {
   organizationId: string | null;
 }
 
-export type DueRefusal = 'not_found' | 'via_invoice' | 'not_payable' | 'nothing_due';
-
-/**
- * Montant à payer pour une mission, ou la raison du refus. La mission est celle du client connecté
- * (même règle que cleaning : le client propriétaire, quel que soit son contexte) ; une mission
- * d'entreprise se règle par sa facture.
- */
-export function missionAmount(
-  due: MissionDue,
-  part: MissionPart,
-  payer: PayerScope,
-): { amount: number } | { refusal: DueRefusal } {
-  if (due.customerId !== payer.userId) return { refusal: 'not_found' };
-  if (due.organizationId !== null) return { refusal: 'via_invoice' };
-  if (due.status === 'cancelled') return { refusal: 'not_payable' };
-  const amount = part === 'deposit' ? due.depositDue : due.remainingDue;
-  return amount > 0 ? { amount } : { refusal: 'nothing_due' };
-}
+export type DueRefusal = 'not_found' | 'not_payable' | 'nothing_due';
 
 /**
  * Montant à payer pour une facture, ou la raison du refus. Même périmètre que « Mes factures » :

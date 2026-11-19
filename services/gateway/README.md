@@ -70,27 +70,39 @@ identity avant la gateway.
 un particulier). Après `POST /api/v1/identity/context`, le front remplace son jeton d'accès par
 celui de la réponse.
 
-## Routes du Nettoyage (lot 2)
+## Routes du Nettoyage v2 (ADR-054)
 
-71 routes vers `cleaning` (`CLEANING_GRPC_URL`, `localhost:50053` par défaut), déclarées dans `src/domain/routing/cleaning-routes.ts` :
+172 routes vers `cleaning` (`CLEANING_GRPC_URL`, `localhost:50053` par défaut), sous `/api/v1/cleaning` et
+`/api/v1/admin/cleaning`, **produites depuis les contrats** par `pnpm gateway:routes`
+(`tools/gateway/cleaning-routes.ts`, qui lit `contracts/openapi/ksp-api.v1.yaml` et
+`contracts/proto/ksp/cleaning/v1/cleaning.proto`). Fichiers produits, jamais modifiés à la main :
 
-- `/api/v1/cleaning/services` et `/api/v1/cleaning/zones` (zones desservies actives) : public ; `/api/v1/cleaning/simulations` (public, 20 par minute et par IP) ;
-- `/api/v1/cleaning/quote-requests…` et `/api/v1/cleaning/missions…` : connecté ; la demande de devis exige un profil complet (vérifié auprès d'identity par la gateway) et, comme l'acceptation, l'en-tête `Idempotency-Key` ;
-- `/api/v1/admin/cleaning/…` : rôles `cleaning_supervisor`, `cleaning_agent` ou `cleaning_admin` selon la route (extension `x-ksp-roles`), `super_admin` partout avec la portée de `cleaning_admin`, et double authentification faite pendant la session (`x-ksp-mfa-max-age`, 12 heures). Le paiement manuel accepte un en-tête `Idempotency-Key` facultatif (`idempotencyKey: 'optional'` dans le manifeste).
+| Fichier                                        | Contenu                                                                                                                                   |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/domain/routing/cleaning-routes.ts`        | Lignes du manifeste : appel gRPC, accès, permission, double authentification, limite, `Idempotency-Key`, profil complet, 204, route alias |
+| `src/interfaces/http/cleaning-schemas.ts`      | Validation zod des paramètres de chemin et de requête (convertis) et des corps (champs inconnus refusés)                                  |
+| `src/infrastructure/grpc/cleaning-bindings.ts` | Service et méthode gRPC de chaque route, place des paramètres, conversion JSON ⇄ message, liste des écarts admis entre les deux contrats  |
 
-Le détail (corps, réponses, erreurs) est dans le contrat OpenAPI, étiquettes « Nettoyage » et « Nettoyage (back-office) ».
+Un seul contrôleur (`cleaning.controller.ts`) sert toutes ces routes : la garde applique le manifeste,
+le contrôleur valide la requête contre le schéma de la route, `CallCleaningUseCase` vérifie le profil
+auprès d'identity quand la route l'exige (`x-ksp-requires-complete-profile`, 422
+`IDENTITY_PROFILE_INCOMPLETE`), puis `CleaningGrpcAdapter` appelle cleaning (lectures seules rejouées,
+aucun journal du contenu) et traduit sa réponse et ses erreurs (`upstream-error.ts`). Le test
+`test/cleaning-generated.spec.ts` échoue si un contrat change sans relancer `pnpm gateway:routes`.
 
-Compléments du Nettoyage (ADR-053) :
+- **Accès** : public (catalogue, simulateur 30 par minute et par IP, aperçu des dates), connecté (client, agent), ou
+  permission `x-ksp-permission` (RBAC dynamique, ADR-057) : la permission doit figurer dans la revendication `perms` du
+  jeton, ou dans au moins une liste de `zone_perms` (cleaning vérifie ensuite la commune du dossier). Sinon 403
+  `GATEWAY_FORBIDDEN` avec `details.permission`. Les rôles ne remplacent jamais la permission.
+- **Double authentification** : `x-ksp-mfa-max-age` (12 heures pendant la session, 10 minutes pour l'argent et les
+  validations).
+- **Correspondance REST ⇄ gRPC**, vérifiée à la génération : mêmes noms (camelCase), `{id}` → champ restant du message
+  (`placeId`…), montants `{ amount, currency }` des deux côtés. Écarts convertis : liste `data` ↔ champ répété nommé
+  (`items`…), curseur vide ↔ `null`, valeur simple ↔ message `ParameterValue`, tableau ↔ message liste (`StringList`…,
+  absent = inchangé), champ facultatif absent ↔ `null` ou champ omis selon le schéma REST.
 
-| Route                                                                         | Appel                                                  | Accès                                         |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------- |
-| `GET /api/v1/cleaning/interventions/{id}/photos`                              | `MissionService/ListMyInterventionPhotos`              | connecté (client de la mission)               |
-| `GET`, `POST /api/v1/admin/cleaning/interventions/{id}/photos`                | `…/ListInterventionPhotos`, `…/AddInterventionPhoto`   | supervision, agent du passage + MFA           |
-| `DELETE /api/v1/admin/cleaning/interventions/{id}/photos/{file}`              | `CleaningAdminService/RemoveInterventionPhoto`         | supervision, agent du passage + MFA           |
-| `POST /api/v1/admin/cleaning/interventions/{id}/reschedule`, `…/unschedule`   | `…/RescheduleIntervention`, `…/UnscheduleIntervention` | `cleaning_supervisor`, `cleaning_admin` + MFA |
-| `POST /api/v1/admin/cleaning/agents/{id}/deactivate`, `…/reactivate`          | `…/DeactivateAgent`, `…/ReactivateAgent`               | `cleaning_admin`, `super_admin` + MFA         |
-| `DELETE /api/v1/admin/cleaning/agents/{id}/unavailabilities/{unavailability}` | `CleaningAdminService/RemoveUnavailability`            | `cleaning_admin`, `super_admin` + MFA         |
-| `POST /api/v1/admin/cleaning/teams/{id}/deactivate`, `…/reactivate`           | `…/DeactivateTeam`, `…/ReactivateTeam`                 | `cleaning_admin`, `super_admin` + MFA         |
+Le détail (corps, réponses, erreurs) est dans le contrat OpenAPI, étiquettes « Nettoyage », « Nettoyage (agent) » et
+« Nettoyage (back-office) ».
 
 ## Routes des documents et de la signature (ADR-044)
 
@@ -135,7 +147,6 @@ La gateway appelle `notification` avec son jeton de service : `notification` doi
 | `GET /api/v1/admin/wallet/holders/{type}/{id}[/statement]`, `…/payouts`, `…/overview` | `WalletAdminService/…`                                | `finance_officer`, `super_admin` + MFA     |
 | `POST /api/v1/wallet/me/top-ups` (`Idempotency-Key`, ADR-046)                         | `WalletAccountService/CreateTopUp`                    | connecté (`org_viewer` refusé par wallet)  |
 | `POST /api/v1/admin/wallet/holders/{type}/{id}/credits` (`Idempotency-Key`)           | `WalletAdminService/CreditPrepaidWallet`              | `finance_officer`, `super_admin` + MFA     |
-| `POST /api/v1/cleaning/missions/{id}/pay` (`Idempotency-Key`, ADR-046)                | `MissionService/PayMissionFromWallet`                 | connecté (client de la mission)            |
 | `POST /api/v1/billing/invoices/{id}/pay` (`Idempotency-Key`, ADR-046)                 | `BillingService/PayMyInvoiceFromWallet`               | connecté (`org_viewer` refusé par billing) |
 
 Un jeton de lien mal formé rend 404 `PAYMENT_LINK_NOT_FOUND` sans appel de payment (rien de plus
@@ -143,16 +154,16 @@ qu'un jeton inconnu). Aucune donnée personnelle du payeur sur les routes publiq
 
 ## Fonctionnement
 
-| Sujet             | Règle                                                                                                                                                                                                                                                                                                   |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Type de client    | Déduit, jamais déclaré : origine `CORS_BACKOFFICE_ORIGINS` → back-office ; origine `CORS_WEB_ORIGINS` → web ; aucune origine et `X-App-Version` → mobile. Sinon, les routes d'authentification répondent 400 `GATEWAY_CLIENT_UNKNOWN`.                                                                  |
-| Jeton de renouv.  | Web : cookie `__Secure-ksp_rt`, back-office : `__Secure-ksp_admin_rt` (`HttpOnly`, `Secure`, `SameSite=Strict`, chemin `/api/v1/identity/token`), jamais dans le corps. Mobile : dans le corps. Cookie effacé à la déconnexion et sur un jeton refusé par identity.                                     |
-| Jeton d'accès     | Vérifié localement (`AccessTokenVerifier` du kit : ES256, `at+jwt`, émetteur, destinataire, expiration, 30 s de tolérance). Clés d'identity en cache 10 minutes, rechargées aussitôt pour une clé inconnue (au plus toutes les 30 s). Identity injoignable : dernières clés gardées ; aucune clé : 503. |
-| Contexte transmis | `x-correlation-id` (créé par la gateway, renvoyé dans `X-Correlation-Id`), `x-client-ip`, `x-user-agent`, utilisateur vérifié (`x-user-id`, `x-session-id`, rôles…) et jeton de service de la gateway (`authorization`).                                                                                |
-| Appels gRPC       | `GrpcCaller` du kit : 3 s de délai, coupe-circuit par service, une nouvelle tentative pour les lectures (`GetMe`), jamais pour les écritures.                                                                                                                                                           |
-| Erreurs           | `{ error: { code, message, details, correlationId } }`, statut selon la table gRPC → HTTP du kit. Pannes techniques : `IDENTITY_UNAVAILABLE` (503), `IDENTITY_TIMEOUT` (504), sans détail interne. 429 avec `Retry-After`.                                                                              |
-| Limites d'appels  | Compteurs à fenêtre fixe dans **Redis** (`REDIS_URL`, obligatoire en production) partagés par les répliques, repli en mémoire si Redis ne répond pas ; en mémoire sans `REDIS_URL` (développement). Au moins deux répliques en production (ADR-051).                                                    |
-| Sécurité HTTP     | Corps JSON de 1 Mo au plus (413), champs inconnus refusés, CORS limité aux origines configurées avec cookies, HSTS, `nosniff`, `no-referrer`, `Cache-Control: no-store`, pas d'en-tête `X-Powered-By`. Cookies et jetons masqués dans les journaux.                                                     |
+| Sujet             | Règle                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Type de client    | Déduit, jamais déclaré : origine `CORS_BACKOFFICE_ORIGINS` → back-office ; origine `CORS_WEB_ORIGINS` → web ; aucune origine et `X-App-Version` → mobile. Sinon, les routes d'authentification répondent 400 `GATEWAY_CLIENT_UNKNOWN`.                                                                                                                 |
+| Jeton de renouv.  | Web : cookie `__Secure-ksp_rt`, back-office : `__Secure-ksp_admin_rt` (`HttpOnly`, `Secure`, `SameSite=Strict`, chemin `/api/v1/identity/token`), jamais dans le corps. Mobile : dans le corps. Cookie effacé à la déconnexion et sur un jeton refusé par identity.                                                                                    |
+| Jeton d'accès     | Vérifié localement (`AccessTokenVerifier` du kit : ES256, `at+jwt`, émetteur, destinataire, expiration, 30 s de tolérance), puis permissions lues (`perms`, `zone_perms`). Clés d'identity en cache 10 minutes, rechargées aussitôt pour une clé inconnue (au plus toutes les 30 s). Identity injoignable : dernières clés gardées ; aucune clé : 503. |
+| Contexte transmis | `x-correlation-id` (créé par la gateway, renvoyé dans `X-Correlation-Id`), `x-client-ip`, `x-user-agent`, utilisateur vérifié (`x-user-id`, `x-session-id`, rôles…) et jeton de service de la gateway (`authorization`).                                                                                                                               |
+| Appels gRPC       | `GrpcCaller` du kit : 3 s de délai, coupe-circuit par service, une nouvelle tentative pour les lectures (`GetMe`), jamais pour les écritures.                                                                                                                                                                                                          |
+| Erreurs           | `{ error: { code, message, details, correlationId } }`, statut selon la table gRPC → HTTP du kit. Pannes techniques : `IDENTITY_UNAVAILABLE` (503), `IDENTITY_TIMEOUT` (504), sans détail interne. 429 avec `Retry-After`.                                                                                                                             |
+| Limites d'appels  | Compteurs à fenêtre fixe dans **Redis** (`REDIS_URL`, obligatoire en production) partagés par les répliques, repli en mémoire si Redis ne répond pas ; en mémoire sans `REDIS_URL` (développement). Au moins deux répliques en production (ADR-051).                                                                                                   |
+| Sécurité HTTP     | Corps JSON de 1 Mo au plus (413), champs inconnus refusés, CORS limité aux origines configurées avec cookies, HSTS, `nosniff`, `no-referrer`, `Cache-Control: no-store`, pas d'en-tête `X-Powered-By`. Cookies et jetons masqués dans les journaux.                                                                                                    |
 
 En production, la configuration refuse de démarrer sans `IDENTITY_JWKS_URL`, `IDENTITY_TOKEN_URL` et `SERVICE_CLIENT_SECRET`, `TRUST_PROXY`, origines HTTPS, ou avec `REFRESH_COOKIE_INSECURE=true`.
 
@@ -165,4 +176,4 @@ En production, la configuration refuse de démarrer sans `IDENTITY_JWKS_URL`, `I
 | `src/infrastructure`  | Client gRPC d'identity, cache des clés publiques, limiteurs Redis et en mémoire            |
 | `src/interfaces/http` | Contrôleurs, décorateur `@Route`, garde, contexte de requête, format d'erreur, chaîne HTTP |
 
-Tests : unitaires dans `src`, bout en bout dans `test/gateway.http.spec.ts` (vraie gateway face à un serveur gRPC identity simulé à partir du contrôleur généré, qui vérifie le jeton de service), contrat dans `test/openapi.contract.spec.ts`.
+Tests : unitaires dans `src`, bout en bout dans `test/gateway.http.spec.ts` (vraie gateway face à un serveur gRPC identity simulé à partir du contrôleur généré, qui vérifie le jeton de service), Nettoyage dans `test/cleaning.http.spec.ts` (service cleaning simulé, qui répond UNIMPLEMENTED tant qu'un test ne fixe pas la réponse), contrat dans `test/openapi.contract.spec.ts` (dont un succès par route du Nettoyage, réponse type construite depuis le contrat).

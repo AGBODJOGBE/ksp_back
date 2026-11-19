@@ -11,11 +11,15 @@ import request from 'supertest';
 import { parse } from 'yaml';
 import { z } from 'zod';
 import { DEFAULT_RATE_LIMITS } from '../src/domain/rate-limit/rate-limits';
+import { CLEANING_ROUTES, type CleaningOperationId } from '../src/domain/routing/cleaning-routes';
 import { ROUTE_MANIFEST, type RouteDefinition } from '../src/domain/routing/route-manifest';
+import { CLEANING_BINDINGS, CLEANING_MESSAGES } from '../src/infrastructure/grpc/cleaning-bindings';
+import { type CleaningBinding, CleaningCodec } from '../src/infrastructure/grpc/cleaning-codec';
 import { RESERVED_PREFIXES } from '../src/domain/routing/manifest-rules';
 import { AccountAdminHttpController } from '../src/interfaces/http/account-admin.controller';
 import { BillingHttpController } from '../src/interfaces/http/billing.controller';
-import { CleaningAdminHttpController } from '../src/interfaces/http/cleaning-admin.controller';
+import { type CleaningRequestSchema } from '../src/interfaces/http/cleaning-request';
+import { CLEANING_REQUESTS } from '../src/interfaces/http/cleaning-schemas';
 import { CleaningHttpController } from '../src/interfaces/http/cleaning.controller';
 import { DocumentHttpController } from '../src/interfaces/http/document.controller';
 import { FileHttpController } from '../src/interfaces/http/file.controller';
@@ -31,6 +35,7 @@ import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
 import { requestBodies } from '../src/interfaces/http/schemas';
 import { type BillingServer, startBillingStub } from './support/billing-stub';
 import { type CleaningServer, startCleaningStub } from './support/cleaning-stub';
+import { ContractSampler, type SchemaNode } from './support/contract-samples';
 import { type NotificationServer, startNotificationStub } from './support/notification-stub';
 import { type DocumentServer, SIGNING_TOKEN, startDocumentStub } from './support/document-stub';
 import { type FileServer, startFileStub } from './support/file-stub';
@@ -70,8 +75,58 @@ interface Operation extends Json {
   'x-ksp-mfa-max-age'?: number;
   'x-ksp-raw-body'?: boolean;
   'x-ksp-pending-deletion'?: boolean;
-  parameters?: { $ref?: string }[];
+  'x-ksp-permission'?: string;
+  'x-ksp-requires-complete-profile'?: boolean;
+  parameters?: { $ref?: string; name?: string; in?: string; required?: boolean; schema?: Json }[];
 }
+
+/**
+ * Opérations du contrat pas encore exposées par la gateway : socle du Nettoyage v2 (membres et
+ * invitations des organisations, rôles dynamiques, préférences et avoirs de facturation, retraits du
+ * portefeuille), livrées lot par lot. Le test vérifie que chacune existe au contrat et reste absente
+ * du manifeste ; la liste ne fait que diminuer.
+ */
+const NOT_YET_EXPOSED = [
+  'listOrganizationMembers',
+  'inviteOrganizationMember',
+  'changeOrganizationMemberRole',
+  'removeOrganizationMember',
+  'listMyOrganizationInvitations',
+  'respondToOrganizationInvitation',
+  'createRole',
+  'listPermissions',
+  'getRole',
+  'updateRole',
+  'deactivateRole',
+  'payMyInvoiceByMobileMoney',
+  'getMyBillingPreferences',
+  'updateMyBillingPreferences',
+  'issueAdminCreditNote',
+  'listCreditNotes',
+  'requestWithdrawal',
+  'listMyWithdrawals',
+  'rejectManualCredit',
+  'listWithdrawals',
+  'processWithdrawal',
+  'approveWithdrawal',
+  'rejectWithdrawal',
+];
+
+/**
+ * Champs facultatifs ajoutés au contrat par le socle du Nettoyage v2, pas encore acceptés par la
+ * gateway (livrés avec leur lot). Le test vérifie qu'ils existent au contrat, facultatifs, et
+ * toujours absents du schéma de la gateway ; la liste ne fait que diminuer.
+ */
+const FIELDS_NOT_YET_ACCEPTED: Record<string, string[]> = {
+  createOrganization: ['commune', 'logoFileId', 'phone', 'representativeName', 'sector'],
+  grantAccountRole: ['zoneKeys'],
+  updateBillingSettings: ['reminderOffsetDays'],
+  creditPrepaidWallet: ['forObject', 'receiptReference'],
+};
+
+/** Routes du Nettoyage : produites depuis le contrat (tools/gateway/cleaning-routes.ts). */
+const isCleaning = (path: string) =>
+  path.startsWith('/api/v1/cleaning/') || path.startsWith('/api/v1/admin/cleaning/');
 
 const doc = parse(
   readFileSync(resolve(__dirname, '..', '..', '..', 'contracts', 'openapi', 'ksp-api.v1.yaml'), 'utf8'),
@@ -89,6 +144,8 @@ const operations = Object.entries(doc.paths).flatMap(([path, item]) =>
     op: item[method] as Operation,
   })),
 );
+/** Opérations exposées par la gateway : toutes, sauf celles des lots à venir. */
+const exposed = operations.filter(({ op }) => !NOT_YET_EXPOSED.includes(op.operationId));
 const operation = (operationId: string) => {
   const found = operations.find(({ op }) => op.operationId === operationId);
   if (!found) throw new Error(`Opération ${operationId} absente du contrat`);
@@ -137,8 +194,16 @@ const handlers = (controller: { prototype: object }) =>
 const contractSchema = (name: string) => resolveRef(doc.components.schemas[name] as Json) as Json;
 
 describe('contrat OpenAPI : manifeste de routage', () => {
+  it('les opérations pas encore exposées existent au contrat, sans route dans le manifeste', () => {
+    const manifest = new Set(ROUTE_MANIFEST.map((route) => route.operationId as string));
+    for (const operationId of NOT_YET_EXPOSED) {
+      expect(operation(operationId)).toBeDefined();
+      expect(manifest.has(operationId)).toBe(false);
+    }
+  });
+
   it('le manifeste déclare exactement les opérations du contrat, avec leurs extensions x-ksp-*', () => {
-    const fromContract = operations
+    const fromContract = exposed
       .map(({ path, method, op }) => ({
         operationId: op.operationId,
         method,
@@ -149,6 +214,9 @@ describe('contrat OpenAPI : manifeste de routage', () => {
         roles: op['x-ksp-roles'] ?? null,
         mfaMaxAge: op['x-ksp-mfa-max-age'] ?? null,
         pendingDeletion: op['x-ksp-pending-deletion'] ?? false,
+        permission: op['x-ksp-permission'] ?? null,
+        completeProfile: op['x-ksp-requires-complete-profile'] ?? false,
+        successStatus: op.responses['200'] ? 200 : 204,
         idempotencyKey: (op.parameters ?? []).some((p) => p.$ref?.endsWith('/IdempotencyKey'))
           ? 'required'
           : (op.parameters ?? []).some((p) => p.$ref?.endsWith('/OptionalIdempotencyKey'))
@@ -167,6 +235,9 @@ describe('contrat OpenAPI : manifeste de routage', () => {
         roles: route.access.anyRole ? [...route.access.anyRole] : null,
         mfaMaxAge: route.access.recentMfaSeconds ?? null,
         pendingDeletion: route.access.allowsPendingDeletion ?? false,
+        permission: route.access.permission ?? null,
+        completeProfile: route.requiresCompleteProfile ?? false,
+        successStatus: route.successStatus ?? 200,
         idempotencyKey: route.idempotencyKey ?? null,
       }))
       .sort((a, b) => a.operationId.localeCompare(b.operationId));
@@ -196,7 +267,6 @@ describe('contrat OpenAPI : manifeste de routage', () => {
       OrganizationAdminHttpController,
       AccountAdminHttpController,
       CleaningHttpController,
-      CleaningAdminHttpController,
       BillingHttpController,
       PaymentHttpController,
       NotificationHttpController,
@@ -248,9 +318,10 @@ describe('contrat OpenAPI : corps des requêtes', () => {
 
   it('chaque opération avec un corps a son schéma de validation, et seulement elles', () => {
     expect(bodies.map((b) => b.operationId).sort()).toEqual(
-      operations
+      exposed
         // Corps brut (notification signée d'un prestataire) : transmis tel quel, sans schéma ici.
-        .filter(({ op }) => op.requestBody && !op['x-ksp-raw-body'])
+        // Nettoyage : schémas produits depuis le contrat, vérifiés plus bas.
+        .filter(({ path, op }) => op.requestBody && !op['x-ksp-raw-body'] && !isCleaning(path))
         .map(({ op }) => op.operationId)
         .sort(),
     );
@@ -265,7 +336,17 @@ describe('contrat OpenAPI : corps des requêtes', () => {
         additionalProperties?: boolean;
       };
       const contract = body.contract as typeof generated;
-      expect(Object.keys(generated.properties).sort()).toEqual(Object.keys(contract.properties).sort());
+      const pending = FIELDS_NOT_YET_ACCEPTED[body.operationId] ?? [];
+      for (const field of pending) {
+        expect(Object.keys(contract.properties)).toContain(field);
+        expect(contract.required ?? []).not.toContain(field);
+        expect(Object.keys(generated.properties)).not.toContain(field);
+      }
+      expect(Object.keys(generated.properties).sort()).toEqual(
+        Object.keys(contract.properties)
+          .filter((field) => !pending.includes(field))
+          .sort(),
+      );
       expect([...(generated.required ?? [])].sort()).toEqual([...(contract.required ?? [])].sort());
       expect(generated.additionalProperties).toBe(false);
       expect(contract.additionalProperties).toBe(false);
@@ -291,6 +372,71 @@ describe('contrat OpenAPI : corps des requêtes', () => {
     expect(requestBodies.confirmEmail.safeParse({ code: '4829 13' }).success).toBe(false);
     expect(requestBodies.changeEmail.safeParse({ email: 'x'.repeat(255) }).success).toBe(false);
   });
+});
+
+describe('contrat OpenAPI : routes du Nettoyage, produites depuis le contrat', () => {
+  const sampler = new ContractSampler(doc.components.schemas as Record<string, SchemaNode>);
+  const cleaning = exposed.filter(({ path }) => isCleaning(path));
+  const ids = cleaning.map(({ op }) => op.operationId).sort();
+  const requests = CLEANING_REQUESTS as Record<string, CleaningRequestSchema>;
+
+  it('chaque opération du Nettoyage a sa route, sa validation et son appel gRPC', () => {
+    expect(CLEANING_ROUTES.map((route) => route.operationId as string).sort()).toEqual(ids);
+    expect(Object.keys(CLEANING_REQUESTS).sort()).toEqual(ids);
+    expect(Object.keys(CLEANING_BINDINGS).sort()).toEqual(ids);
+    for (const route of CLEANING_ROUTES) {
+      expect(route.grpc.split('/')[0]).toBe(
+        `ksp.cleaning.v1.${CLEANING_BINDINGS[route.operationId].service}`,
+      );
+    }
+  });
+
+  it('une route alias appelle la même méthode gRPC que sa route principale', () => {
+    const aliases = (CLEANING_ROUTES as readonly RouteDefinition[]).filter((route) => route.aliasOf);
+    expect(aliases.map((route) => [route.operationId, route.aliasOf])).toEqual([
+      ['cleaningCorrectRequestLocationOnSite', 'cleaningCorrectRequestLocation'],
+    ]);
+  });
+
+  const bodies = cleaning
+    .filter(({ op }) => op.requestBody)
+    .map(({ op }) => {
+      const content = op.requestBody!.content['application/json'];
+      return {
+        operationId: op.operationId,
+        schema: requests[op.operationId]!.body!,
+        contract: resolveRef(content.schema) as Json & { properties: Json; required?: string[] },
+        validate: ajv.compile(absolutize(content.schema) as Json),
+        values: [
+          ...(content.example !== undefined ? [content.example] : []),
+          ...Object.values(content.examples ?? {}).map((named) => named.value),
+          sampler.sample(content.schema as SchemaNode),
+          sampler.sample(content.schema as SchemaNode, true),
+        ],
+      };
+    });
+
+  it.each(bodies)('$operationId : mêmes champs, mêmes champs obligatoires que le contrat', (body) => {
+    const generated = z.toJSONSchema(body.schema, { io: 'input', unrepresentable: 'any' }) as Json & {
+      properties: Json;
+      required?: string[];
+      additionalProperties?: boolean;
+    };
+    expect(Object.keys(generated.properties).sort()).toEqual(Object.keys(body.contract.properties).sort());
+    expect([...(generated.required ?? [])].sort()).toEqual([...(body.contract.required ?? [])].sort());
+    expect(generated.additionalProperties).toBe(false);
+  });
+
+  it.each(bodies)(
+    '$operationId : exemples du contrat acceptés, comme par un validateur JSON Schema',
+    ({ schema, validate, values }) => {
+      for (const value of values) {
+        expect(validate(value) ? [] : validate.errors).toEqual([]);
+        expect(schema.safeParse(value).error?.issues ?? []).toEqual([]);
+      }
+      expect(schema.safeParse({ ...(values.at(-1) as object), champInconnu: 1 }).success).toBe(false);
+    },
+  );
 });
 
 describe('contrat OpenAPI : réponses réelles de la gateway', () => {
@@ -917,14 +1063,16 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       },
     ],
     ['clés publiques', 'getJwks', 200, () => from(http().get('/.well-known/jwks.json'), 'none')],
+    ...serviceScenarios(),
     ...cleaningScenarios(),
   ];
 
   /**
-   * Nettoyage : un succès par opération, construit depuis le contrat (exemple de corps, en-tête
-   * Idempotency-Key, jeton client ou back-office), puis les erreurs propres aux routes.
+   * Facturation, paiement, fichiers, portefeuille, documents, organisations, comptes, notifications :
+   * un succès par opération, construit depuis le contrat (exemple de corps, en-tête Idempotency-Key,
+   * jeton client ou back-office), puis les erreurs propres aux routes.
    */
-  function cleaningScenarios(): typeof scenarios {
+  function serviceScenarios(): typeof scenarios {
     const ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001';
     type Auth = 'customer' | 'staff' | 'staff_no_mfa' | 'none';
     const call = (operationId: string, options: { auth?: Auth; body?: unknown; key?: boolean } = {}) => {
@@ -954,21 +1102,9 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       const body = options.body ?? content?.example ?? Object.values(content?.examples ?? {})[0]?.value;
       return body === undefined ? req : req.send(body as object);
     };
-    const completeProfile = () =>
-      identity.stub.on('getMe', async () => ({
-        user: protoUser,
-        profileIncomplete: false,
-        activeContext: protoIndividual,
-      }));
-    const cleaningFails = (method: Parameters<typeof cleaning.stub.on>[0], error: AppError) =>
-      cleaning.stub.on(method, () => Promise.reject(error));
-    const simulationBody = () =>
-      operation('simulateCleaning').op.requestBody!.content['application/json'].example as object;
-
-    const successes = operations
+    const successes = exposed
       .filter(
         ({ path }) =>
-          path.includes('/cleaning') ||
           path.includes('/billing') ||
           (path.includes('/payment') && !path.includes('/webhooks/')) ||
           path.startsWith('/api/v1/file/') ||
@@ -986,11 +1122,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
             `succès ${op.operationId}`,
             op.operationId,
             200,
-            () => {
-              if (['requestCleaningQuote', 'requestCleaningQuoteGroup'].includes(op.operationId))
-                completeProfile();
-              return call(op.operationId);
-            },
+            () => call(op.operationId),
           ] as (typeof scenarios)[number],
       );
     const fileFails = (method: Parameters<typeof file.stub.on>[0], error: AppError) =>
@@ -1278,180 +1410,6 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         () => call('resolvePaymentMismatch', { body: { note: '' } }),
       ],
       [
-        'estimation : prestation non proposée par le lieu',
-        'estimateCleaning',
-        400,
-        () => {
-          cleaningFails(
-            'estimate',
-            AppError.invalid('CLEANING_SERVICE_NOT_OFFERED', 'Non proposée.', {
-              field: 'items[0].serviceCode',
-              placeType: 'apartment',
-              serviceCode: 'garden_maintenance',
-            }),
-          );
-          return call('estimateCleaning');
-        },
-      ],
-      [
-        'estimation : type de lieu inconnu',
-        'estimateCleaning',
-        404,
-        () => {
-          cleaningFails('estimate', AppError.notFound('CLEANING_PLACE_TYPE_NOT_FOUND', 'Introuvable.'));
-          return call('estimateCleaning');
-        },
-      ],
-      [
-        'position sans connexion',
-        'resolveCleaningLocation',
-        401,
-        () => call('resolveCleaningLocation', { auth: 'none' }),
-      ],
-      [
-        'position hors bornes',
-        'resolveCleaningLocation',
-        400,
-        () => call('resolveCleaningLocation', { body: { latitude: 120, longitude: 2 } }),
-      ],
-      [
-        'groupe : profil incomplet',
-        'requestCleaningQuoteGroup',
-        422,
-        () => call('requestCleaningQuoteGroup'),
-      ],
-      [
-        'groupe : commune introuvable, à demander au client',
-        'requestCleaningQuoteGroup',
-        422,
-        () => {
-          completeProfile();
-          cleaningFails(
-            'requestQuoteGroup',
-            AppError.precondition('CLEANING_LOCATION_UNRESOLVED', 'Choisissez votre commune.'),
-          );
-          return call('requestCleaningQuoteGroup');
-        },
-      ],
-      [
-        'groupe d’un autre client',
-        'getMyCleaningQuoteRequestGroup',
-        404,
-        () => {
-          cleaningFails(
-            'getRequestGroup',
-            AppError.notFound('CLEANING_REQUEST_GROUP_NOT_FOUND', 'Introuvable.'),
-          );
-          return call('getMyCleaningQuoteRequestGroup');
-        },
-      ],
-      [
-        'types de lieu sans double authentification',
-        'listCleaningPlaceTypes',
-        403,
-        () => call('listCleaningPlaceTypes', { auth: 'staff_no_mfa' }),
-      ],
-      [
-        'type de lieu : prestation inconnue',
-        'saveCleaningPlaceType',
-        400,
-        () => {
-          cleaningFails(
-            'savePlaceType',
-            AppError.invalid('CLEANING_VALIDATION_FAILED', 'Prestation inconnue.', {
-              field: 'serviceCodes[0]',
-            }),
-          );
-          return call('saveCleaningPlaceType');
-        },
-      ],
-      [
-        'simulateur : champ inconnu',
-        'simulateCleaning',
-        400,
-        () => call('simulateCleaning', { body: { serviceCode: 'home_cleaning', surprise: 1 } }),
-      ],
-      [
-        'simulateur : limite de 20 par minute et par adresse',
-        'simulateCleaning',
-        429,
-        async () => {
-          const send = () =>
-            http()
-              .post('/api/v1/cleaning/simulations')
-              .set('X-Forwarded-For', '198.51.100.7')
-              .send(simulationBody());
-          for (let i = 0; i < 20; i += 1) await send();
-          // La 21e requête de la même adresse dans la minute est refusée.
-          return send() as never;
-        },
-      ],
-      [
-        'demande sans Idempotency-Key',
-        'requestCleaningQuote',
-        400,
-        () => call('requestCleaningQuote', { key: false }),
-      ],
-      ['demande avec un profil incomplet', 'requestCleaningQuote', 422, () => call('requestCleaningQuote')],
-      [
-        'demande au nom d’une organisation suspendue par KSP',
-        'requestCleaningQuote',
-        422,
-        () => {
-          completeProfile();
-          cleaningFails(
-            'requestQuote',
-            AppError.precondition(
-              'CLEANING_ORGANIZATION_SUSPENDED',
-              'Ce compte entreprise est suspendu par KSP.',
-            ),
-          );
-          return call('requestCleaningQuote');
-        },
-      ],
-      [
-        'mes demandes sans jeton',
-        'listMyCleaningRequests',
-        401,
-        () => call('listMyCleaningRequests', { auth: 'none' }),
-      ],
-      [
-        'demande d\u2019un autre client',
-        'getMyCleaningRequest',
-        404,
-        () => {
-          cleaningFails(
-            'getRequest',
-            AppError.notFound('CLEANING_REQUEST_NOT_FOUND', 'Demande introuvable.'),
-          );
-          return call('getMyCleaningRequest');
-        },
-      ],
-      [
-        'devis expiré',
-        'acceptCleaningQuote',
-        422,
-        () => {
-          cleaningFails('acceptQuote', AppError.precondition('CLEANING_QUOTE_EXPIRED', 'Ce devis a expiré.'));
-          return call('acceptCleaningQuote');
-        },
-      ],
-      [
-        'devis d’une organisation suspendue par KSP',
-        'acceptCleaningQuote',
-        422,
-        () => {
-          cleaningFails(
-            'acceptQuote',
-            AppError.precondition(
-              'CLEANING_ORGANIZATION_SUSPENDED',
-              'Ce compte entreprise est suspendu par KSP.',
-            ),
-          );
-          return call('acceptCleaningQuote');
-        },
-      ],
-      [
         'facture d’un autre client',
         'getMyInvoice',
         404,
@@ -1713,54 +1671,6 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         () => call('listAssignableRoles', { auth: 'staff_no_mfa' }),
       ],
       [
-        'paiement manuel avec Idempotency-Key (facultative)',
-        'recordCleaningPayment',
-        200,
-        () => call('recordCleaningPayment', { key: true }),
-      ],
-      [
-        'paiement manuel : Idempotency-Key mal formée',
-        'recordCleaningPayment',
-        400,
-        () => call('recordCleaningPayment').set('Idempotency-Key', 'court'),
-      ],
-      [
-        'paiement au-delà du dû : reste dû dans les détails',
-        'recordCleaningPayment',
-        400,
-        () => {
-          cleaningFails(
-            'recordPayment',
-            AppError.invalid('CLEANING_PAYMENT_INVALID', 'Ce paiement dépasse le reste dû : 12 500 FCFA.', {
-              reason: 'exceeds_balance',
-              remainingDue: { amount: 12500, currency: 'XOF' },
-            }),
-          );
-          return call('recordCleaningPayment');
-        },
-      ],
-      [
-        'demandes du back-office : type de client inconnu',
-        'listCleaningQuoteRequests',
-        400,
-        () => call('listCleaningQuoteRequests').query({ customerKind: 'company' }),
-      ],
-      [
-        'passage démarré avant le jour prévu',
-        'startCleaningIntervention',
-        422,
-        () => {
-          cleaningFails(
-            'startIntervention',
-            AppError.precondition('CLEANING_INTERVENTION_TOO_EARLY', 'Trop tôt.', {
-              scheduledDate: '2026-11-05',
-              timeZone: 'Africa/Porto-Novo',
-            }),
-          );
-          return call('startCleaningIntervention');
-        },
-      ],
-      [
         'notification d’un autre compte',
         'markNotificationRead',
         404,
@@ -1834,56 +1744,89 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         403,
         () => call('listOrganizations', { auth: 'customer' }),
       ],
-      [
-        'back-office sans rôle',
-        'listCleaningQuoteRequests',
-        403,
-        () => call('listCleaningQuoteRequests', { auth: 'customer' }),
-      ],
-      [
-        'back-office sans double authentification',
-        'listCleaningMissions',
-        403,
-        () => call('listCleaningMissions', { auth: 'staff_no_mfa' }),
-      ],
-      [
-        'agent déjà pris sur le créneau',
-        'scheduleCleaningIntervention',
-        409,
-        () => {
-          cleaningFails(
-            'scheduleIntervention',
-            AppError.conflict('CLEANING_TEAM_UNAVAILABLE', 'Agent déjà pris.', { agentIds: [ID] }),
-          );
-          return call('scheduleCleaningIntervention');
-        },
-      ],
-      [
-        'cleaning indisponible',
-        'getMyCleaningMission',
-        503,
-        () => {
-          cleaningFails('getMission', AppError.unavailable('CLEANING_UNAVAILABLE', 'Indisponible.'));
-          return call('getMyCleaningMission');
-        },
-      ],
-      [
-        'identifiant mal formé',
-        'getCleaningMission',
-        400,
-        () =>
-          from(http().get('/api/v1/admin/cleaning/missions/abc'), 'backoffice').set(
-            'Authorization',
-            `Bearer ${staffToken}`,
-          ),
-      ],
     ];
     return [...successes, ...documentErrors, ...errors];
   }
 
+  /**
+   * Nettoyage : un succès par route, construit depuis le contrat. Requête : paramètres de chemin et de
+   * requête, corps complet, Idempotency-Key, jeton qui porte la permission de la route et une double
+   * authentification récente. Réponse type : exemple complet du schéma REST, converti en message
+   * gRPC par la table de la route ; la gateway doit rendre ce même JSON, conforme au contrat.
+   */
+  function cleaningScenarios(): typeof scenarios {
+    const sampler = new ContractSampler(doc.components.schemas as Record<string, SchemaNode>);
+    const codec = new CleaningCodec(CLEANING_MESSAGES);
+    // Utilisateur à part : ses compteurs de limites ne gênent pas les autres scénarios.
+    const subject = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0c1e';
+    return (CLEANING_ROUTES as readonly RouteDefinition[]).map((route) => {
+      const status = route.successStatus ?? 200;
+      const run = async () => {
+        const { path, method, op } = operation(route.operationId);
+        const binding: CleaningBinding = CLEANING_BINDINGS[route.operationId as CleaningOperationId];
+        const content = (
+          op.responses['200'] as { content?: Record<string, { schema: SchemaNode }> } | undefined
+        )?.content?.['application/json'];
+        const expected = content ? sampler.sample(content.schema, true) : undefined;
+        cleaning.stub.on(binding.method, async () => {
+          if (!binding.response) return {};
+          const message = codec.toGrpc(expected, binding.response.codec);
+          return binding.response.field ? { [binding.response.field]: message } : message;
+        });
+        if (route.requiresCompleteProfile) {
+          identity.stub.on('getMe', async () => ({
+            user: protoUser,
+            profileIncomplete: false,
+            activeContext: protoIndividual,
+          }));
+        }
+        const parameters = (op.parameters ?? []).map((parameter) => resolveRef(parameter as Json) as Json);
+        const values: Record<string, string> = {};
+        let url = path;
+        for (const parameter of parameters.filter((each) => each['in'] === 'path')) {
+          const value = String(sampler.sample(parameter['schema'] as SchemaNode));
+          values[parameter['name'] as string] = value;
+          url = url.replace(`{${parameter['name'] as string}}`, value);
+        }
+        const query = Object.fromEntries(
+          parameters
+            .filter((each) => each['in'] === 'query')
+            .map((each) => [each['name'], String(sampler.sample(each['schema'] as SchemaNode, true))]),
+        );
+        const backoffice = path.startsWith('/api/v1/admin/');
+        let req = from(
+          http()[method.toLowerCase() as 'get' | 'post' | 'put' | 'patch' | 'delete'](url).query(query),
+          backoffice ? 'backoffice' : 'web',
+        );
+        if (route.access.level === 'authenticated') {
+          const permission = route.access.permission ? [route.access.permission] : [];
+          const bearer = await keys.accessToken({
+            subject,
+            claims: { client_id: backoffice ? 'backoffice' : 'web', mfa: true, perms: permission },
+          });
+          req = req.set('Authorization', `Bearer ${bearer}`);
+        }
+        if (route.idempotencyKey) req = req.set('Idempotency-Key', 'cle-0192f1c4-0c1e');
+        const body = op.requestBody?.content['application/json'];
+        const res = await (body ? req.send(sampler.sample(body.schema as SchemaNode, true) as object) : req);
+
+        // Le bon appel gRPC, paramètres de chemin et clé d'idempotence à leur place dans le message.
+        const call = cleaning.stub.last(binding.method);
+        expect({ status: res.status, service: call?.service }).toEqual({ status, service: binding.service });
+        for (const [name, field] of Object.entries(binding.params ?? {})) {
+          expect(String(call!.request[field])).toBe(values[name]);
+        }
+        if (route.idempotencyKey) expect(call!.request['idempotencyKey']).toBe('cle-0192f1c4-0c1e');
+        if (expected !== undefined) expect(res.body).toMatchObject(expected as object);
+        return res;
+      };
+      return [`succès ${route.operationId}`, route.operationId, status, run] as (typeof scenarios)[number];
+    });
+  }
+
   it('chaque opération du contrat a au moins un scénario de succès', () => {
-    const succeeded = new Set(scenarios.filter(([, , status]) => status === 200).map(([, id]) => id));
-    expect([...succeeded].sort()).toEqual(operations.map(({ op }) => op.operationId).sort());
+    const succeeded = new Set(scenarios.filter(([, , status]) => status < 300).map(([, id]) => id));
+    expect([...succeeded].sort()).toEqual(exposed.map(({ op }) => op.operationId).sort());
   });
 
   it.each(scenarios)(
@@ -1893,8 +1836,13 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       expect(res.status).toBe(status);
       expect(Object.keys(operation(operationId).op.responses)).toContain(String(status));
 
-      const validate = responseSchema(operationId, status);
-      expect(validate(res.body) ? [] : validate.errors).toEqual([]);
+      if (status === 204) {
+        // Réponse sans corps.
+        expect(res.text).toBe('');
+      } else {
+        const validate = responseSchema(operationId, status);
+        expect(validate(res.body) ? [] : validate.errors).toEqual([]);
+      }
       expect(res.headers['x-correlation-id']).toMatch(/^[0-9a-f-]{36}$/);
       if (status >= 400) {
         expect(res.body.error.correlationId).toBe(res.headers['x-correlation-id']);

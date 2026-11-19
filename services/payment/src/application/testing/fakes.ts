@@ -2,7 +2,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { type RoleClaim, runWithContext } from '@ksp/platform';
 import { type PaymentLink } from '../../domain/payment-link';
 import { type Payout, type PayoutBeneficiary, type ProviderPayoutStatus } from '../../domain/payout';
-import { type InvoiceDue, type MissionDue } from '../../domain/amount-due';
+import { type InvoiceDue } from '../../domain/amount-due';
 import {
   DUE_SUBJECT_TYPES,
   type DueSubjectType,
@@ -44,8 +44,9 @@ import { PaymentErrors } from '../shared/errors';
 export const CUSTOMER_ID = '0192f1c4-0000-7000-8000-00000000c001';
 export const OTHER_CUSTOMER_ID = '0192f1c4-0000-7000-8000-00000000c002';
 export const ORGANIZATION_ID = '0192f1c4-0000-7000-8000-00000000a001';
-export const MISSION_ID = '0192f1c4-0000-7000-8000-00000000b001';
 export const INVOICE_ID = '0192f1c4-0000-7000-8000-00000000f001';
+/** Facture personnelle du client (sans organisation). */
+export const PERSONAL_INVOICE_ID = '0192f1c4-0000-7000-8000-00000000f002';
 export const STAFF_ID = '0192f1c4-0000-7000-8000-00000000d001';
 
 export class FixedClock implements Clock {
@@ -251,13 +252,8 @@ export class InMemoryPeople implements PeopleDirectory {
 }
 
 export class InMemoryDues implements AmountDueDirectory {
-  readonly missions = new Map<string, MissionDue>();
   readonly invoices = new Map<string, InvoiceDue>();
   calls = 0;
-  async missionDue(id: string) {
-    this.calls += 1;
-    return this.missions.get(id) ?? null;
-  }
   async invoiceDue(id: string) {
     this.calls += 1;
     return this.invoices.get(id) ?? null;
@@ -541,19 +537,6 @@ export function makeDeps(overrides: Partial<PaymentDeps> = {}) {
   return deps;
 }
 
-export function missionDue(overrides: Partial<MissionDue> = {}): MissionDue {
-  return {
-    missionId: MISSION_ID,
-    customerId: CUSTOMER_ID,
-    organizationId: null,
-    status: 'scheduled',
-    depositDue: 15000,
-    remainingDue: 50000,
-    recordedPaymentIds: [],
-    ...overrides,
-  };
-}
-
 export function invoiceDue(overrides: Partial<InvoiceDue> = {}): InvoiceDue {
   return {
     invoiceId: INVOICE_ID,
@@ -565,6 +548,17 @@ export function invoiceDue(overrides: Partial<InvoiceDue> = {}): InvoiceDue {
     recordedPaymentIds: [],
     ...overrides,
   };
+}
+
+/** Facture personnelle du client : payée dans son contexte personnel. */
+export function personalInvoiceDue(overrides: Partial<InvoiceDue> = {}): InvoiceDue {
+  return invoiceDue({
+    invoiceId: PERSONAL_INVOICE_ID,
+    number: 'FAC-2026-000043',
+    organizationId: null,
+    balance: 15000,
+    ...overrides,
+  });
 }
 
 function as<T>(

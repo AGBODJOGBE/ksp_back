@@ -50,70 +50,9 @@ function withService(
 }
 
 export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateSpec>> = {
-  'cleaning.quote_requested.customer': withService(
-    (v) =>
-      v['visit_required'] === 'true' ? 'ksp_cleaning_quote_requested_visit' : 'ksp_cleaning_quote_requested',
-    ['link'],
-  ),
   'cleaning.visit_scheduled.customer': withService('ksp_cleaning_visit_scheduled', ['date', 'link']),
   'cleaning.visit_scheduled.agent': withService('ksp_cleaning_visit_assigned', ['date']),
   'cleaning.quote_sent.customer': withService('ksp_cleaning_quote_sent', ['total', 'valid_until', 'link']),
-  'cleaning.booking_confirmed.customer': withService('ksp_cleaning_booking_confirmed', [
-    'planned_interventions',
-    'total',
-    'payment_note',
-    'link',
-  ]),
-  'cleaning.mission_scheduled.customer': withService('ksp_cleaning_mission_scheduled', [
-    'date',
-    'duration',
-    'link',
-  ]),
-  'cleaning.mission_scheduled.agent': withService('ksp_cleaning_mission_assigned', ['date', 'duration']),
-  // Planification en lot (ADR-052) : un message qui résume les passages.
-  'cleaning.interventions_batch_scheduled.customer': withService('ksp_cleaning_interventions_scheduled', [
-    'count',
-    'first_date',
-    'last_date',
-    'duration',
-    'link',
-  ]),
-  'cleaning.interventions_batch_scheduled.agent': withService('ksp_cleaning_interventions_assigned', [
-    'count',
-    'first_date',
-    'last_date',
-    'duration',
-  ]),
-  // Messages regroupés (ADR-035 point 14) : envoi groupé, visite commune, devis envoyés ensemble.
-  'cleaning.quote_group_requested.customer': spec(
-    (v) =>
-      v['visit_required'] === 'true'
-        ? 'ksp_cleaning_quote_group_requested_visit'
-        : 'ksp_cleaning_quote_group_requested',
-    ['request_count', 'services', 'link'],
-  ),
-  'cleaning.group_visit_scheduled.customer': spec('ksp_cleaning_group_visit_scheduled', [
-    'services',
-    'date',
-    'link',
-  ]),
-  'cleaning.group_visit_scheduled.agent': spec('ksp_cleaning_group_visit_assigned', [
-    'request_count',
-    'services',
-    'date',
-  ]),
-  'cleaning.quote_group_sent.customer': spec('ksp_cleaning_quote_group_sent', [
-    'quote_count',
-    'quotes',
-    'total',
-    'valid_until',
-    'link',
-  ]),
-  'cleaning.mission_completed.customer': spec('ksp_cleaning_mission_completed', [
-    'completed_interventions',
-    'completed_on',
-    'link',
-  ]),
   // Un modèle par motif (annulation par le client ou par KSP, refus de KSP, devis refusé) ;
   // `scope` distingue « votre demande » de « votre prestation ». Avec le nom de la prestation :
   // modèle `<motif>_service`, la prestation après « votre demande » (ADR-035 point 14).
@@ -127,44 +66,6 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
       v['link'] ?? '',
     ],
   },
-  // Impayés, suspension et reprise (cahier des charges Nettoyage, partie 10).
-  'cleaning.suspension_warning.customer': spec('ksp_cleaning_suspension_warning', [
-    'unpaid_text',
-    'threshold',
-    'link',
-  ]),
-  'cleaning.contract_suspended.customer': spec('ksp_cleaning_contract_suspended', ['unpaid_text', 'link']),
-  'cleaning.contract_suspended.agent': spec('ksp_cleaning_interventions_cancelled', []),
-  'cleaning.contract_resumed.customer': spec('ksp_cleaning_contract_resumed', [
-    'rescheduled_count',
-    'failed_count',
-    'link',
-  ]),
-  // Organisation cliente suspendue puis réactivée par KSP (ADR-030).
-  'cleaning.contract_suspended_organization.customer': spec('ksp_cleaning_contract_suspended_organization', [
-    'link',
-  ]),
-  // Un modèle par cas ; les impayés ne sont cités que lorsqu'ils maintiennent la suspension.
-  'cleaning.suspension_updated.customer': {
-    name: (v) => `ksp_cleaning_suspension_${v['case'] ?? 'unpaid_added'}`,
-    parameters: (v) => [
-      name(v),
-      ...(v['case'] === 'unpaid_added' || v['case'] === 'organization_lifted'
-        ? [v['unpaid_text'] ?? '']
-        : []),
-      v['link'] ?? '',
-    ],
-  },
-  'cleaning.contract_resumed_organization.customer': spec('ksp_cleaning_contract_resumed_organization', [
-    'rescheduled_count',
-    'failed_count',
-    'link',
-  ]),
-  'cleaning.contract_resumed_organization.team': spec('ksp_cleaning_team_contract_resumed_organization', [
-    'mission_id',
-    'rescheduled_count',
-    'failed_count',
-  ]),
   // Comptes entreprise (ADR-027).
   'identity.organization_requested.team': spec('ksp_identity_team_organization_requested', ['legal_name']),
   'identity.organization_validated.customer': spec('ksp_identity_organization_validated', [
@@ -192,15 +93,6 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
   ]),
   'identity.account_deletion_cancelled.customer': spec('ksp_identity_account_deletion_cancelled', ['link']),
   'identity.mfa_reset.staff': spec('ksp_identity_mfa_reset', ['enroll_before']),
-  'cleaning.contract_resumed.team': spec('ksp_cleaning_team_contract_resumed', [
-    'mission_id',
-    'rescheduled_count',
-    'failed_count',
-  ]),
-  'cleaning.rescheduling_failed.team': spec('ksp_cleaning_team_rescheduling_failed', [
-    'mission_id',
-    'failed_count',
-  ]),
   // Compléments du Nettoyage (ADR-053).
   'cleaning.quote_expiry_reminder.customer': spec(
     (v) =>
@@ -211,24 +103,6 @@ export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateS
     (v) => (v['quote_count'] === '1' ? 'ksp_cleaning_quote_expired' : 'ksp_cleaning_quotes_expired'),
     ['quotes', 'link'],
   ),
-  'cleaning.intervention_rescheduled.customer': withService('ksp_cleaning_intervention_rescheduled', [
-    'previous_date',
-    'date',
-    'duration',
-    'link',
-  ]),
-  'cleaning.intervention_rescheduled.agent': withService('ksp_cleaning_intervention_rescheduled_agent', [
-    'previous_date',
-    'date',
-    'duration',
-  ]),
-  'cleaning.intervention_released.agent': withService('ksp_cleaning_intervention_released', [
-    'previous_date',
-  ]),
-  'cleaning.intervention_unscheduled.customer': withService('ksp_cleaning_intervention_unscheduled', [
-    'previous_date',
-    'link',
-  ]),
   'cleaning.visit_cancelled.agent': spec('ksp_cleaning_visit_cancelled', ['date', 'services']),
   // Facturation mensuelle des contrats d'entreprise (ADR-025).
   'billing.invoice_issued.customer': spec('ksp_billing_invoice_issued', [

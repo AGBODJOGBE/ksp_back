@@ -11,11 +11,9 @@ import { WALLET_RULES } from './wallet.rules';
  * Événements écoutés par notification, avec leur règle. Chaque événement a sa file
  * `notification.<événement>` (et ses files `.retry` et `.dlq`).
  *
- * Nettoyage : les 20 événements publiés (demande, envoi groupé, visite, devis, devis du groupe,
- * réservation, planification, planification en lot (ADR-052), fin, annulation, avertissement
- * d'impayés, suspension, changement de cause de suspension, reprise, reprogrammation incomplète ;
- * ADR-053 : rappel avant l'expiration et expiration des devis, passage reporté ou annulé pour être
- * replanifié, visite annulée).
+ * Nettoyage (refonte v2, ADR-054) : les six événements v1 réécrits sur place (demande annulée,
+ * visite planifiée ou annulée, devis envoyé, rappel avant l'expiration, devis expiré) ; les autres
+ * événements v2 seront écoutés avec leurs lots (lot G, abonnements déclarés avec D40).
  * Facturation : les 3 événements publiés par billing (facture émise, impayée, réglée).
  * Comptes entreprise (identity) : nouvelle demande (équipe KSP), validation, refus, suspension et
  * réactivation (demandeur).
@@ -35,3 +33,12 @@ export const EVENT_RULES: EventRules = {
 };
 
 export const LISTENED_EVENTS = Object.keys(EVENT_RULES) as KspEventType[];
+
+/**
+ * Versions de l'enveloppe lues par événement ; version 1 seule pour les autres. Le portefeuille
+ * crédité est lu en versions 1 et 2 (RV-101) : wallet ne publiera plus que la version 2 une fois
+ * tous ses consommateurs livrés ; tout message v1 est un message v2 valide.
+ */
+export const LISTENED_EVENT_VERSIONS: { readonly [T in KspEventType]?: readonly number[] } = {
+  'wallet.prepaid.credited': [1, 2],
+};

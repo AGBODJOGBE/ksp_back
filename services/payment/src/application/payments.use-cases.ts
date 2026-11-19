@@ -1,9 +1,8 @@
-import { type DueRefusal, invoiceAmount, missionAmount, unrecordedSuccesses } from '../domain/amount-due';
+import { type DueRefusal, invoiceAmount, unrecordedSuccesses } from '../domain/amount-due';
 import { isLinkSubjectType } from '../domain/payment-link';
 import {
   DUE_SUBJECT_TYPES,
   type DueSubjectType,
-  MISSION_PARTS,
   type MissionPart,
   PAYMENT_STATUSES,
   type PaymentIntent,
@@ -39,8 +38,6 @@ function refusalError(refusal: DueRefusal) {
   switch (refusal) {
     case 'not_found':
       return PaymentErrors.subjectNotFound();
-    case 'via_invoice':
-      return PaymentErrors.viaInvoice();
     case 'not_payable':
       return PaymentErrors.notPayable();
     case 'nothing_due':
@@ -57,18 +54,21 @@ async function visiblePayment(deps: PaymentDeps, paymentId: string): Promise<Pay
 }
 
 /**
- * Création d'un paiement (ADR-031) : montant dû lu dans cleaning ou billing, payeur vérifié,
+ * Création d'un paiement (ADR-031) : reste dû d'une facture lu dans billing, payeur vérifié,
  * idempotence par (payeur, clé), réutilisation d'un paiement encore en attente pour le même objet
  * et le même montant, puis page de paiement chez le prestataire.
  *
  * Refus (409, ADR-032) tant qu'un paiement réussi de l'objet n'est pas encore enregistré par
- * cleaning ou billing : le montant dû lu ne le déduit pas encore. PAYMENT_ALREADY_RECEIVED
- * (« réessayez ») pendant `unrecordedGraceMinutes` après la réussite, puis
- * PAYMENT_RECONCILIATION_PENDING (support) avec une alerte : jamais de second paiement.
+ * billing : le montant dû lu ne le déduit pas encore. PAYMENT_ALREADY_RECEIVED (« réessayez »)
+ * pendant `unrecordedGraceMinutes` après la réussite, puis PAYMENT_RECONCILIATION_PENDING (support)
+ * avec une alerte : jamais de second paiement.
  *
  * Refus aussi (409 PAYMENT_UNDER_REVIEW, avec une alerte à chaque refus) tant qu'un paiement de
- * l'objet est en écart de montant non traité par la finance (ADR-032), quel que soit le payeur ou la
- * part. Le rejeu d'une même clé passe avant ces contrôles : il rend toujours le même paiement.
+ * l'objet est en écart de montant non traité par la finance (ADR-032), quel que soit le payeur. Le
+ * rejeu d'une même clé passe avant ces contrôles : il rend toujours le même paiement.
+ *
+ * L'acompte et le solde d'une mission du Nettoyage v1 (`cleaning_mission`) ne se paient plus ici
+ * depuis la refonte du Nettoyage (ADR-054) : objet refusé comme tout type inconnu.
  */
 export class CreatePaymentUseCase {
   private readonly sync: PaymentSync;
@@ -89,20 +89,18 @@ export class CreatePaymentUseCase {
     }
     const type = oneOf<DueSubjectType>('subjectType', input.subjectType, DUE_SUBJECT_TYPES);
     const subjectId = requireUuid('subjectId', input.subjectId);
-    let part: MissionPart | null = null;
-    if (type === 'cleaning_mission') part = oneOf('part', input.part, MISSION_PARTS);
-    else if (input.part) throw PaymentErrors.invalid('part', 'Une facture se règle sans part.');
+    if (input.part) throw PaymentErrors.invalid('part', 'Une facture se règle sans part.');
 
     // Rejeu : même clé, même objet → même paiement (page reprise si elle manquait).
     const replay = await this.deps.payments.findByIdempotencyKey(payer.userId, input.idempotencyKey);
     if (replay) {
-      if (!sameSubject(replay.subject, { type, id: subjectId, part })) throw PaymentErrors.keyReused();
+      if (!sameSubject(replay.subject, { type, id: subjectId, part: null })) throw PaymentErrors.keyReused();
       return { payment: await this.withCheckout(replay), created: false };
     }
 
     const [{ amount, subject, organizationId, recordedPaymentIds }, succeeded, underReview] =
       await Promise.all([
-        this.amountDue(type, subjectId, part, payer),
+        this.amountDue(type, subjectId, payer),
         this.deps.payments.listSucceeded({ subjectType: type, subjectId }),
         this.deps.payments.listUnresolvedMismatches({ subjectType: type, subjectId }),
       ]);
@@ -122,7 +120,7 @@ export class CreatePaymentUseCase {
     // Une seule page payable par objet, toutes parts et tous payeurs (ADR-048).
     const open = await this.deps.payments.findPendingForSubject({ subjectType: type, subjectId });
     if (open) {
-      const reused = await this.reuseOrRefuse(open, { payer: payer.userId, part, amount });
+      const reused = await this.reuseOrRefuse(open, { payer: payer.userId, part: null, amount });
       if (reused) return { payment: reused, created: false };
     }
 
@@ -153,7 +151,7 @@ export class CreatePaymentUseCase {
     if (stored.created) return { payment: await this.withCheckout(stored.intent), created: true };
     if (stored.conflict === 'open_checkout') {
       // Page ouverte au même instant par un autre envoi (deux clics, deux membres).
-      if (isSamePage(stored.intent, { payer: payer.userId, part, amount })) {
+      if (isSamePage(stored.intent, { payer: payer.userId, part: null, amount })) {
         return { payment: await this.withCheckout(stored.intent), created: false };
       }
       throw PaymentErrors.checkoutOpen(stored.intent.expiresAt);
@@ -186,7 +184,6 @@ export class CreatePaymentUseCase {
   private async amountDue(
     type: DueSubjectType,
     subjectId: string,
-    part: MissionPart | null,
     payer: ReturnType<typeof currentPayer>,
   ): Promise<{
     amount: number;
@@ -194,18 +191,6 @@ export class CreatePaymentUseCase {
     organizationId: string | null;
     recordedPaymentIds: string[];
   }> {
-    if (type === 'cleaning_mission') {
-      const due = await this.deps.dues.missionDue(subjectId);
-      if (!due) throw PaymentErrors.subjectNotFound();
-      const result = missionAmount(due, part!, payer);
-      if ('refusal' in result) throw refusalError(result.refusal);
-      return {
-        amount: result.amount,
-        subject: { type, id: subjectId, part, reference: null },
-        organizationId: null,
-        recordedPaymentIds: due.recordedPaymentIds,
-      };
-    }
     const due = await this.deps.dues.invoiceDue(subjectId);
     if (!due) throw PaymentErrors.subjectNotFound();
     const result = invoiceAmount(due, payer);

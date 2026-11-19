@@ -12,7 +12,8 @@ import { type KspEventType } from '@ksp/contracts';
  */
 export const EVENT_CONSUMERS = {
   // Facture mensuelle des entreprises : séances réalisées et manquées, avec leur montant dû
-  // (CDC Nettoyage v2, 15.5 et R-PE-01).
+  // (CDC Nettoyage v2, 15.5 et R-PE-01). Déclarés avant l'abonnement de billing (lot F) : publiés plus
+  // tôt par cleaning, ils restent dans son outbox (mis de côté au bout de 24 h, rejouables), jamais perdus.
   billing: ['cleaning.session.completed', 'cleaning.session.missed', 'payment.intent.succeeded'],
   cleaning: [
     'billing.invoice.overdue',
@@ -34,8 +35,10 @@ export const EVENT_CONSUMERS = {
     'billing.invoice.overdue',
     'billing.invoice.paid',
     'cleaning.quote.expired',
+    'cleaning.quote.expiry_reminded',
     'cleaning.quote.sent',
     'cleaning.request.cancelled',
+    'cleaning.visit.cancelled',
     'cleaning.visit.scheduled',
     'identity.organization.created',
     'identity.organization.reactivated',
@@ -45,6 +48,7 @@ export const EVENT_CONSUMERS = {
     'identity.user.deleted',
     'identity.user.deletion_cancelled',
     'identity.user.deletion_requested',
+    'identity.user.mfa_reset',
     'payment.intent.succeeded',
     'wallet.prepaid.credited',
     'wallet.prepaid.debited',

@@ -250,6 +250,8 @@ describe('gateway → liens de paiement, reversements, portefeuille', () => {
         amount: { amount: 5000, currency: 'XOF' },
         reason: 'Passage manqué',
         paymentId: '',
+        // Objet payé (socle du Nettoyage v2) : pas encore transmis par la gateway.
+        forObject: null,
       });
     });
 

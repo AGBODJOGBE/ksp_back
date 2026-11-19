@@ -1,4 +1,4 @@
-import { BACKOFFICE_MFA_SECONDS } from './cleaning-routes';
+import { BACKOFFICE_MFA_SECONDS } from '../access/mfa-age';
 import { type RouteDefinition } from './route-manifest';
 
 const CENTER = 'ksp.notification.v1.InAppNotificationService';

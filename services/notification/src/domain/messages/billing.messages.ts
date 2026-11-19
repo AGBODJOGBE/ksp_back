@@ -7,8 +7,8 @@ import { type EventTemplateDefinition, type RenderedMessage } from '../template'
  *
  * Nature : `document` pour les trois messages (la facture et ses suites) → e-mail si l'adresse est
  * vérifiée (ADR-026), WhatsApp sinon ou en bascule. L'avertissement et la suspension pour impayés
- * restent les messages du Nettoyage (`cleaning.messages.ts`) : la facture impayée n'en reprend pas
- * les conséquences, elle désigne la facture et son montant.
+ * sont des messages du Nettoyage (v1 retirés par la refonte, ADR-054 ; v2 au lot F) : la facture
+ * impayée n'en reprend pas les conséquences, elle désigne la facture et son montant.
  */
 
 const FIRST_NAME = /^[^\n]{0,100}$/;

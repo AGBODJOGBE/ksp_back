@@ -26,20 +26,20 @@ export const PAYMENT_STATUSES: readonly PaymentStatus[] = [
 export const LATE_SUCCESS_STATUSES: readonly PaymentStatus[] = ['failed', 'expired', 'cancelled'];
 
 /**
- * Objets payés par un compte connecté : acompte ou solde d'une mission, facture, ou recharge du
- * portefeuille prépayé (ADR-046, demandée par wallet seulement). Réservés : un lien ne les porte
- * jamais.
+ * Objets payés par un compte connecté : facture, ou recharge du portefeuille prépayé (ADR-046,
+ * demandée par wallet seulement). `cleaning_mission` (acompte ou solde d'une mission du Nettoyage v1)
+ * n'est plus créé depuis la refonte du Nettoyage (ADR-054) ; il reste lisible dans les paiements déjà
+ * enregistrés. Réservés : un lien ne les porte jamais.
  */
 export type SubjectType = 'cleaning_mission' | 'billing_invoice' | 'wallet_top_up';
 export const SUBJECT_TYPES: readonly SubjectType[] = ['cleaning_mission', 'billing_invoice', 'wallet_top_up'];
 
 /** Objets dont le montant dû est lu dans le service qui les porte (CreatePayment, ADR-031). */
-export type DueSubjectType = 'cleaning_mission' | 'billing_invoice';
-export const DUE_SUBJECT_TYPES: readonly DueSubjectType[] = ['cleaning_mission', 'billing_invoice'];
+export type DueSubjectType = 'billing_invoice';
+export const DUE_SUBJECT_TYPES: readonly DueSubjectType[] = ['billing_invoice'];
 
-/** Mission : acompte ou reste dû. */
+/** Mission du Nettoyage v1 : acompte ou reste dû (paiements déjà enregistrés seulement). */
 export type MissionPart = 'deposit' | 'balance';
-export const MISSION_PARTS: readonly MissionPart[] = ['deposit', 'balance'];
 
 export type ProviderName = 'fedapay' | 'simulated';
 
@@ -249,9 +249,6 @@ export function sameSubject(a: PaymentSubject, b: Pick<PaymentSubject, 'type' | 
 /** Libellé du paiement chez le prestataire : aucune donnée personnelle, aucune adresse. */
 export function providerDescription(subject: PaymentSubject): string {
   if (subject.type === 'billing_invoice') return `KSP - Facture ${subject.reference ?? ''}`.trim();
-  if (subject.type === 'cleaning_mission') {
-    return subject.part === 'deposit' ? 'KSP Nettoyage - Acompte' : 'KSP Nettoyage - Solde';
-  }
   if (subject.type === 'wallet_top_up') return 'KSP - Recharge du portefeuille';
   // Lien de paiement : référence de l'émetteur (dossier, échéance), jamais le nom du payeur.
   return `KSP - Paiement ${subject.reference ?? ''}`.trim();

@@ -147,12 +147,17 @@ describe('recharge du portefeuille prépayé (ADR-046)', () => {
       const { payment } = await topUp();
       expect((await rejection(read(payment.id, 'cleaning'))).code).toBe('PAYMENT_CALLER_FORBIDDEN');
       expect((await rejection(read('0192f1c4-0000-7000-8000-0000000fffff'))).code).toBe('PAYMENT_NOT_FOUND');
-      const mission = { ...payment, id: '0192f1c4-0000-7000-8000-0000000ffffe' };
-      payments().rows.set(mission.id, {
-        ...mission,
-        subject: { type: 'cleaning_mission', id: mission.subject.id, part: 'deposit', reference: null },
+      const invoice = { ...payment, id: '0192f1c4-0000-7000-8000-0000000ffffe' };
+      payments().rows.set(invoice.id, {
+        ...invoice,
+        subject: {
+          type: 'billing_invoice',
+          id: invoice.subject.id,
+          part: null,
+          reference: 'FAC-2026-000001',
+        },
       });
-      expect((await rejection(read(mission.id))).code).toBe('PAYMENT_NOT_FOUND');
+      expect((await rejection(read(invoice.id))).code).toBe('PAYMENT_NOT_FOUND');
     });
   });
 

@@ -25,7 +25,7 @@ export function Route(operationId: OperationId): MethodDecorator {
   if (!route) throw new Error(`Route ${operationId} absente du manifeste de routage.`);
   return applyDecorators(
     RequestMapping({ path: expressPath(route.path), method: RequestMethod[route.method] }),
-    HttpCode(200),
+    HttpCode(route.successStatus ?? 200),
     SetMetadata(ROUTE_DEFINITION, route),
     UseGuards(RouteGuard),
     UseInterceptors(RequestContextInterceptor),

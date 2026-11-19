@@ -91,7 +91,7 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
         creditApprovalThreshold: 50_000,
         debitCheckDelayMinutes: 30,
       },
-      debitChecks: { isRecorded: async () => true },
+      debitChecks: { debitStatus: async () => 'recorded' },
       creditRequests: new PrismaCreditRequests(prisma),
       clock: new SystemClock(),
       ids: new UuidV7Generator(),
@@ -293,14 +293,9 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       );
       const reference = debits[0].reference as string;
       const original = await store.findByReference('cleaning', reference);
-      const results = await Promise.all([
-        useCases.refundFromEvent.execute({
-          producer: 'cleaning',
-          transactionIds: [original!.id],
-          reason: 'mission annulée',
-        }),
-        asCleaning(() => useCases.refundDebit.execute({ transactionId: original!.id, reason: 'annulée' })),
-      ]);
+      const refund = () =>
+        asCleaning(() => useCases.refundDebit.execute({ transactionId: original!.id, reason: 'annulée' }));
+      const results = await Promise.all([refund(), refund()]);
       expect(results).toHaveLength(2);
       expect(await prepaidBalance()).toBe(12000);
       const { rows } = await pool.query(
@@ -314,25 +309,6 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       const balance = (code: string) => overview.internal.find((a) => a.account === code)!.balance;
       expect(balance('ksp:prepaid_funds')).toBe(overview.owedToCustomers + balance('ksp:service_revenue'));
       expect(overview).toMatchObject({ owedToCustomers: 12000, customersCount: 1 });
-    });
-
-    it('crédit au prorata d’une mission arrêtée : une seule fois par creditId (ADR-049)', async () => {
-      const holder = { type: 'user' as const, id: '0192f1c4-0000-7000-8000-00000000c0aa' };
-      const event = {
-        eventId: '0192f1c4-0000-7000-b000-00000000e0a1',
-        eventType: 'cleaning.mission.credited',
-        producer: 'cleaning',
-        missionId: MISSION_ID,
-        customerId: holder.id,
-        creditId: '0192f1c4-0000-7000-b000-00000000e0c1',
-        amount: 30000,
-      };
-      const results = await Promise.all([
-        useCases.creditFromMission.execute(event),
-        useCases.creditFromMission.execute({ ...event, eventId: '0192f1c4-0000-7000-b000-00000000e0a2' }),
-      ]);
-      expect(results.filter((r) => r === 'recorded')).toHaveLength(1);
-      expect((await asCleaning(() => useCases.getPrepaidBalance.execute(holder))).balance).toBe(30000);
     });
   });
 

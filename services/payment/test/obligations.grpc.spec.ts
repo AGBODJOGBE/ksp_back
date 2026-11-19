@@ -18,8 +18,8 @@ import {
   CUSTOMER_ID,
   type InMemoryDues,
   makeDeps,
-  MISSION_ID,
-  missionDue,
+  PERSONAL_INVOICE_ID,
+  personalInvoiceDue,
 } from '../src/application/testing/fakes';
 import { createUseCases, PAYMENT_USE_CASES } from '../src/application/use-cases';
 import { ObligationGrpcController } from '../src/interfaces/grpc/payment.controllers';
@@ -47,7 +47,7 @@ describe('payment en gRPC : obligations avant la suppression d’un compte (ADR-
 
   beforeAll(async () => {
     const deps = makeDeps();
-    (deps.dues as InMemoryDues).missions.set(MISSION_ID, missionDue());
+    (deps.dues as InMemoryDues).invoices.set(PERSONAL_INVOICE_ID, personalInvoiceDue());
     useCases = createUseCases(deps);
 
     @Module({
@@ -87,9 +87,9 @@ describe('payment en gRPC : obligations avant la suppression d’un compte (ADR-
 
     const { payment } = await asCustomer(() =>
       useCases.createPayment.execute({
-        subjectType: 'cleaning_mission',
-        subjectId: MISSION_ID,
-        part: 'deposit',
+        subjectType: 'billing_invoice',
+        subjectId: PERSONAL_INVOICE_ID,
+        part: '',
         idempotencyKey: 'pay-key-0001',
       }),
     );

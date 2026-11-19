@@ -7,7 +7,7 @@ import {
   type AccountAdminApi,
   type AccountStatusAction,
 } from '../../application/identity/account-admin.ports';
-import { type Json } from '../../application/cleaning/cleaning.ports';
+import { type Json } from '../../application/common/api.ports';
 import { USER_STATUS } from './identity-grpc.adapter';
 import { toUpstreamError } from './upstream-error';
 

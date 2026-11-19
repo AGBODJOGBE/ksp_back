@@ -1,13 +1,13 @@
 import { type geoV1 } from '@ksp/contracts';
 import { type GrpcCaller } from '@ksp/platform';
 import { Logger } from '@nestjs/common';
-import { type ReverseGeocoder } from '../../application/ports';
 import {
   type GeocodedPlace,
   GEOCODING_PROVIDERS,
   type GeocodingProvider,
   type GeoPoint,
-} from '../../domain/location';
+  type ReverseGeocoder,
+} from '../../application/ports';
 
 const isProvider = (value: string): value is GeocodingProvider =>
   (GEOCODING_PROVIDERS as readonly string[]).includes(value);
@@ -16,8 +16,8 @@ const isProvider = (value: string): value is GeocodingProvider =>
  * Géocodage inverse par le service interne geo (ADR-045), qui porte la chaîne Nominatim puis
  * Google d'ADR-034. Appel gRPC avec le jeton de service de cleaning, délai du GrpcCaller, sans
  * nouvelle tentative : geo enchaîne déjà ses fournisseurs avec leurs propres délais. Comme le
- * port l'exige, jamais d'erreur : geo indisponible ou réponse vide valent « non trouvé » (le client
- * choisit alors sa commune). Journal : code d'erreur seulement, jamais les coordonnées.
+ * port l'exige, jamais d'erreur : geo indisponible ou réponse vide valent « non trouvé », jamais
+ * bloquant (reprise RV-47). Journal : code d'erreur seulement, jamais les coordonnées.
  */
 export class GeoServiceGeocoder implements ReverseGeocoder {
   private readonly logger = new Logger('Geocoding');

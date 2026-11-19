@@ -353,16 +353,21 @@ export class InMemoryCreditRequests implements ManualCreditRequests {
   }
 }
 
-/** cleaning et billing simulés : débits enregistrés connus, panne simulable (ADR-048). */
+/**
+ * cleaning et billing simulés : débits enregistrés connus, opérations encore en cours chez
+ * l'appelant (RV-80), panne simulable (ADR-048).
+ */
 export class FakeDebitChecks implements DebitRecordChecks {
   readonly recorded = new Set<string>();
-  readonly asked: Parameters<DebitRecordChecks['isRecorded']>[0][] = [];
+  readonly inProgress = new Set<string>();
+  readonly asked: Parameters<DebitRecordChecks['debitStatus']>[0][] = [];
   recordedAll = false;
   down = false;
-  async isRecorded(debit: Parameters<DebitRecordChecks['isRecorded']>[0]) {
+  async debitStatus(debit: Parameters<DebitRecordChecks['debitStatus']>[0]) {
     if (this.down) throw AppError.unavailable('GRPC_UNAVAILABLE', 'service injoignable');
     this.asked.push(debit);
-    return this.recordedAll || this.recorded.has(debit.transactionId);
+    if (this.recordedAll || this.recorded.has(debit.transactionId)) return 'recorded' as const;
+    return this.inProgress.has(debit.transactionId) ? ('in_progress' as const) : ('not_recorded' as const);
   }
 }
 

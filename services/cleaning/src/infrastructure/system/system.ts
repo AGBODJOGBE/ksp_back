@@ -1,5 +1,5 @@
 import { v7 as uuidv7 } from 'uuid';
-import { type Clock, type IdGenerator } from '../../application/shared/system.ports';
+import { type Clock, type IdGenerator } from '../../application/ports';
 
 export class SystemClock implements Clock {
   now(): Date {

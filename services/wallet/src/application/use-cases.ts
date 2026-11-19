@@ -7,13 +7,11 @@ import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import { type WalletDeps } from './ports';
 import {
   CreateTopUpUseCase,
-  CreditFromMissionUseCase,
   CreditTopUpUseCase,
   DebitPrepaidUseCase,
   GetPrepaidBalanceUseCase,
   RefundDebitUseCase,
   ReconcileDebitsUseCase,
-  RefundFromEventUseCase,
 } from './prepaid.use-cases';
 import {
   GetBalanceUseCase,
@@ -51,8 +49,6 @@ export function createUseCases(deps: WalletDeps) {
     settlePayout: new SettlePayoutUseCase(deps),
     debitPrepaid: new DebitPrepaidUseCase(deps),
     refundDebit: new RefundDebitUseCase(deps),
-    refundFromEvent: new RefundFromEventUseCase(deps),
-    creditFromMission: new CreditFromMissionUseCase(deps),
     reconcileDebits: new ReconcileDebitsUseCase(deps),
     getPrepaidBalance: new GetPrepaidBalanceUseCase(deps),
     createTopUp: new CreateTopUpUseCase(deps),

@@ -3,7 +3,7 @@ import { type notificationV1 } from '@ksp/contracts';
 import { AppError, type GrpcCaller } from '@ksp/platform';
 import { Logger } from '@nestjs/common';
 import { type Observable } from 'rxjs';
-import { type Json, type Page } from '../../application/cleaning/cleaning.ports';
+import { type Json, type Page } from '../../application/common/api.ports';
 import {
   type DeliveryFilters,
   type NotificationApi,

@@ -1,7 +1,7 @@
 import { Body, Controller, Inject, Param } from '@nestjs/common';
 import { type OrganizationsApi } from '../../application/identity/organizations.ports';
 import { ORGANIZATIONS_API } from '../../tokens';
-import { idFrom } from './cleaning.controller';
+import { idFrom } from './params';
 import { Route } from './route.decorator';
 import { parseBody, requestBodies } from './schemas';
 

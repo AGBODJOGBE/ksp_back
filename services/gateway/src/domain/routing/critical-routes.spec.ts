@@ -1,4 +1,4 @@
-import { CRITICAL_MFA_SECONDS } from './cleaning-routes';
+import { CRITICAL_MFA_SECONDS } from '../access/mfa-age';
 import { findRoute } from './route-manifest';
 
 /**

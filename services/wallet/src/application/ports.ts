@@ -196,17 +196,24 @@ export interface TopUpPayments {
 }
 
 /**
+ * Issue d'un débit chez le service qui l'a fait (RV-80) : `recorded`, l'objet cite le débit ;
+ * `not_recorded`, aucun objet ne le cite ; `in_progress`, opération encore en cours chez l'appelant
+ * (ne jamais rembourser, redemander au passage suivant).
+ */
+export type DebitRecordStatus = 'recorded' | 'not_recorded' | 'in_progress';
+
+/**
  * « Débit enregistré ? » chez le service qui l'a fait (WalletDebitCheckService de cleaning et de
- * billing, ADR-048) : true si un paiement de l'objet cite le débit. null : service ou objet que ce
- * contrôle ne couvre pas (le débit est laissé tel quel). Une panne lève l'erreur.
+ * billing, ADR-048). null : service ou objet que ce contrôle ne couvre pas (le débit est laissé tel
+ * quel). Une panne, ou une réponse illisible, lève l'erreur.
  */
 export interface DebitRecordChecks {
-  isRecorded(debit: {
+  debitStatus(debit: {
     caller: string;
     objectType: string;
     objectId: string;
     transactionId: string;
-  }): Promise<boolean | null>;
+  }): Promise<DebitRecordStatus | null>;
 }
 
 export type CreditKind = 'refund' | 'top_up';

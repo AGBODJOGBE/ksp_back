@@ -1,4 +1,4 @@
-import { type Json } from '../cleaning/cleaning.ports';
+import { type Json } from '../common/api.ports';
 
 /**
  * Vue de la gateway sur la recherche de compte du back-office d'identity (ADR-029), indépendante

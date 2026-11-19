@@ -10,17 +10,17 @@ import {
   type InMemoryDues,
   type InMemoryPayments,
   makeDeps,
-  MISSION_ID,
-  missionDue,
   ORGANIZATION_ID,
   OTHER_CUSTOMER_ID,
+  PERSONAL_INVOICE_ID,
+  personalInvoiceDue,
   type RecordingAlerts,
 } from './testing/fakes';
 import { createUseCases } from './use-cases';
 
 /**
- * Une seule page payable par objet (ADR-048) : toutes parts et tous payeurs confondus, et jamais de
- * nouvelle page tant que l'ancienne peut encore être payée chez le prestataire.
+ * Une seule page payable par objet (ADR-048) : tous payeurs confondus, et jamais de nouvelle page tant
+ * que l'ancienne peut encore être payée chez le prestataire.
  */
 async function rejection(promise: Promise<unknown>): Promise<AppError> {
   try {
@@ -48,17 +48,18 @@ describe('page de paiement unique par objet (ADR-048)', () => {
   beforeEach(() => {
     deps = makeDeps();
     useCases = createUseCases(deps);
-    dues().missions.set(MISSION_ID, missionDue());
+    dues().invoices.set(PERSONAL_INVOICE_ID, personalInvoiceDue());
     dues().invoices.set(INVOICE_ID, invoiceDue());
   });
 
-  const mission = (part: string, key: string, userId = CUSTOMER_ID) =>
+  /** Facture personnelle du client, payée dans son contexte personnel. */
+  const personal = (key: string, userId = CUSTOMER_ID) =>
     asCustomer(
       () =>
         useCases.createPayment.execute({
-          subjectType: 'cleaning_mission',
-          subjectId: MISSION_ID,
-          part,
+          subjectType: 'billing_invoice',
+          subjectId: PERSONAL_INVOICE_ID,
+          part: '',
           idempotencyKey: key,
         }),
       userId,
@@ -77,17 +78,12 @@ describe('page de paiement unique par objet (ADR-048)', () => {
     );
   const reconcile = () => useCases.reconcilePendingPayments.execute();
 
-  it('acompte en attente : la page du solde est refusée (409), jamais deux pages pour la mission', async () => {
-    const deposit = await mission('deposit', 'pay-key-0001');
-    const error = await rejection(mission('balance', 'pay-key-0002'));
-    expect(error.code).toBe('PAYMENT_CHECKOUT_OPEN');
-    expect(error.details).toMatchObject({ expiresAt: deposit.payment.expiresAt.toISOString() });
-    expect(provider().checkouts).toHaveLength(1);
-  });
-
   it('facture d’organisation : un second membre est refusé ; le même membre retrouve sa page', async () => {
     const first = await invoice('pay-key-0001', CUSTOMER_ID);
-    expect((await rejection(invoice('pay-key-0002', OTHER_CUSTOMER_ID))).code).toBe('PAYMENT_CHECKOUT_OPEN');
+    const error = await rejection(invoice('pay-key-0002', OTHER_CUSTOMER_ID));
+    expect(error.code).toBe('PAYMENT_CHECKOUT_OPEN');
+    expect(error.details).toMatchObject({ expiresAt: first.payment.expiresAt.toISOString() });
+    expect(provider().checkouts).toHaveLength(1);
     expect(await invoice('pay-key-0003', CUSTOMER_ID)).toMatchObject({
       created: false,
       payment: { id: first.payment.id },
@@ -126,23 +122,23 @@ describe('page de paiement unique par objet (ADR-048)', () => {
     beforeEach(() => withoutCancel());
 
     it('page payable jusqu’à sa validité chez le prestataire (24 h par défaut), réutilisée jusque-là', async () => {
-      const first = await mission('deposit', 'pay-key-0001');
+      const first = await personal('pay-key-0001');
       expect(first.payment.expiresAt.getTime() - first.payment.createdAt.getTime()).toBe(24 * 60 * MINUTE);
       clock().advance(2 * 60 * MINUTE);
       await reconcile();
-      const again = await mission('deposit', 'pay-key-0002');
+      const again = await personal('pay-key-0002');
       expect(again).toMatchObject({ created: false, payment: { id: first.payment.id, status: 'pending' } });
     });
 
     it('montant dû changé : l’ancienne page encore payable, pas de nouvelle page (409)', async () => {
-      await mission('balance', 'pay-key-0001');
-      dues().missions.set(MISSION_ID, missionDue({ remainingDue: 20000 }));
-      expect((await rejection(mission('balance', 'pay-key-0002'))).code).toBe('PAYMENT_CHECKOUT_OPEN');
+      await personal('pay-key-0001');
+      dues().invoices.set(PERSONAL_INVOICE_ID, personalInvoiceDue({ balance: 20000 }));
+      expect((await rejection(personal('pay-key-0002'))).code).toBe('PAYMENT_CHECKOUT_OPEN');
       expect(provider().checkouts).toHaveLength(1);
     });
 
     it('validité écoulée : clos avec une alerte (page non annulée chez le prestataire), puis relu', async () => {
-      const first = await mission('deposit', 'pay-key-0001');
+      const first = await personal('pay-key-0001');
       clock().advance(24 * 60 * MINUTE + MINUTE);
       expect(await reconcile()).toMatchObject({ failed: 1 });
       expect((await payments().findById(first.payment.id))!.status).toBe('expired');
@@ -157,14 +153,16 @@ describe('page de paiement unique par objet (ADR-048)', () => {
   });
 
   it('annulation chez le prestataire impossible (panne) : le paiement reste en attente jusqu’à la validité', async () => {
-    const first = await mission('deposit', 'pay-key-0001');
+    const first = await personal('pay-key-0001');
     provider().cancelTransaction = async () => {
       throw new Error('panne');
     };
     clock().advance(31 * MINUTE);
     await reconcile();
     expect((await payments().findById(first.payment.id))!.status).toBe('pending');
-    expect((await rejection(mission('balance', 'pay-key-0002'))).code).toBe('PAYMENT_CHECKOUT_OPEN');
+    // Montant dû changé : l'ancienne page, que le prestataire n'a pas annulée, reste payable.
+    dues().invoices.set(PERSONAL_INVOICE_ID, personalInvoiceDue({ balance: 20000 }));
+    expect((await rejection(personal('pay-key-0002'))).code).toBe('PAYMENT_CHECKOUT_OPEN');
     clock().advance(24 * 60 * MINUTE);
     await reconcile();
     expect((await payments().findById(first.payment.id))!.status).toBe('expired');

@@ -18,34 +18,21 @@ const envelope = {
 describe('EventNotificationsConsumer', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('s’abonne aux 20 événements du Nettoyage, aux 3 de la facturation, aux 5 des comptes entreprise, aux 2 de la suppression du compte, à la réinitialisation de la double authentification, au paiement en ligne et aux 2 du portefeuille (files notification.<événement>)', async () => {
-    const subscribed: string[] = [];
+  it('s’abonne aux 6 événements du Nettoyage gardés par la refonte v2, aux 3 de la facturation, aux 5 des comptes entreprise, aux 2 de la suppression du compte, à la réinitialisation de la double authentification, au paiement en ligne et aux 2 du portefeuille (files notification.<événement>)', async () => {
+    const subscribed: [string, readonly number[] | undefined][] = [];
     const consumer = {
-      subscribe: async (type: string) => void subscribed.push(type),
+      subscribe: async (type: string, _handler: unknown, options: { versions?: readonly number[] }) =>
+        void subscribed.push([type, options.versions]),
     } as unknown as RabbitMqConsumer;
     await new EventNotificationsConsumer(consumer, {} as NotifyEventUseCase).onApplicationBootstrap();
-    expect(subscribed.sort()).toEqual([
+    expect(subscribed.map(([type]) => type).sort()).toEqual([
       'billing.invoice.issued',
       'billing.invoice.overdue',
       'billing.invoice.paid',
-      'cleaning.booking.confirmed',
-      'cleaning.contract.resumed',
-      'cleaning.contract.suspended',
-      'cleaning.contract.suspension_updated',
-      'cleaning.contract.suspension_warning',
-      'cleaning.intervention.rescheduled',
-      'cleaning.intervention.unscheduled',
-      'cleaning.interventions.batch_scheduled',
-      'cleaning.mission.completed',
-      'cleaning.mission.scheduled',
       'cleaning.quote.expired',
       'cleaning.quote.expiry_reminded',
-      'cleaning.quote.requested',
       'cleaning.quote.sent',
-      'cleaning.quote_group.requested',
-      'cleaning.quote_group.sent',
       'cleaning.request.cancelled',
-      'cleaning.rescheduling.failed',
       'cleaning.visit.cancelled',
       'cleaning.visit.scheduled',
       'identity.organization.created',
@@ -60,6 +47,10 @@ describe('EventNotificationsConsumer', () => {
       'wallet.prepaid.credited',
       'wallet.prepaid.debited',
     ]);
+    // Portefeuille crédité lu en versions 1 et 2 (RV-101) ; version 1 seule pour les autres.
+    const versions = new Map(subscribed);
+    expect(versions.get('wallet.prepaid.credited')).toEqual([1, 2]);
+    expect(versions.get('wallet.prepaid.debited')).toBeUndefined();
   });
 
   it('délègue au cas d’usage et journalise les compteurs, sans données personnelles', async () => {

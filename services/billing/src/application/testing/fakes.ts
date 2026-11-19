@@ -42,25 +42,14 @@ export class Recorder {
   }
 }
 
+/** Contrats v1 en mémoire : les tests les enregistrent directement (`add`), comme un contrat déjà en base. */
 export class InMemoryContracts implements ContractRepository {
   readonly contracts = new Map<string, BillingContract>();
-  readonly processed = new Set<string>();
 
   constructor(private readonly invoices: InMemoryInvoices) {}
 
-  async apply(
-    eventId: string,
-    consumer: string,
-    contractId: string,
-    change: (current: BillingContract | null) => BillingContract | null,
-  ) {
-    const key = `${eventId}/${consumer}`;
-    if (this.processed.has(key)) return 'duplicate' as const;
-    // Comme la transaction SQL : une erreur levée par `change` n'enregistre pas l'événement (inbox).
-    const next = change(this.contracts.get(contractId) ?? null);
-    this.processed.add(key);
-    if (next) this.contracts.set(contractId, next);
-    return 'processed' as const;
+  add(contract: BillingContract): void {
+    this.contracts.set(contract.id, contract);
   }
   async findById(id: string) {
     return this.contracts.get(id) ?? null;
@@ -260,6 +249,31 @@ export const CUSTOMER_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11';
 export const OTHER_CUSTOMER_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e99';
 export const ORGANIZATION_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000';
 export const STAFF_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001';
+export const MISSION_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000';
+
+/**
+ * Contrat v1 d'une organisation, déjà enregistré (ADR-025) : 300 000 FCFA sur trois mois civils
+ * entiers, à partir du 1er novembre 2026 à 00:00, heure du Bénin.
+ */
+export function organizationContract(overrides: Partial<BillingContract> = {}): BillingContract {
+  return {
+    id: MISSION_ID,
+    source: 'cleaning',
+    customerId: CUSTOMER_ID,
+    organizationId: ORGANIZATION_ID,
+    total: 300_000,
+    durationMonths: 3,
+    oneOff: false,
+    startsAt: new Date('2026-10-31T23:00:00.000Z'),
+    terminatedAt: null,
+    suspendedSince: null,
+    suspensions: [],
+    lastResumedAt: null,
+    serviceName: null,
+    createdAt: new Date('2026-10-23T08:00:00Z'),
+    ...overrides,
+  };
+}
 
 /** Fiche de l'organisation des tests, telle qu'identity la rend à billing. */
 export const ORGANIZATION_PROFILE: OrganizationProfile = {

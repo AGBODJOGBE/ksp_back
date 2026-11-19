@@ -287,12 +287,10 @@ describe('MetaWhatsAppProvider', () => {
       service_name: 'Vitres',
       link: 'https://ksp.bj/d',
     });
-    await send('cleaning.quote_group_sent.customer', {
+    await send('cleaning.quote_expired.customer', {
       first_name: 'Awa',
-      quote_count: '2',
-      quotes: '« Vitres » (1 FCFA) et « Jardin » (2 FCFA)',
-      total: '3 FCFA',
-      valid_until: '15 novembre 2026',
+      quote_count: '1',
+      quotes: 'du dossier DN-000124 (1 FCFA)',
       link: 'https://ksp.bj/g',
     });
     const templates = calls.map((call) => JSON.parse(call.init.body as string).template);
@@ -301,18 +299,12 @@ describe('MetaWhatsAppProvider', () => {
     expect(templates.map((template) => template.name)).toEqual([
       'ksp_cleaning_quote_sent_service',
       'ksp_cleaning_declined_service',
-      'ksp_cleaning_quote_group_sent',
+      'ksp_cleaning_quote_expired',
     ]);
     expect(texts(0)).toEqual(['Awa', 'Vitres', 'montant', '15 novembre 2026', 'https://ksp.bj/d']);
     expect(texts(1)).toEqual(['Awa', 'votre demande', 'Vitres', 'https://ksp.bj/d']);
-    expect(texts(2)).toEqual([
-      'Awa',
-      '2',
-      '« Vitres » (1 FCFA) et « Jardin » (2 FCFA)',
-      '3 FCFA',
-      '15 novembre 2026',
-      'https://ksp.bj/g',
-    ]);
+    // Sans nom de prestation : le modèle d'avant, inchangé.
+    expect(texts(2)).toEqual(['Awa', 'du dossier DN-000124 (1 FCFA)', 'https://ksp.bj/g']);
   });
 
   it.each([

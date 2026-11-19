@@ -6,19 +6,36 @@ import { type AccessRequirement } from '../routing/route-manifest';
  */
 export const ACCOUNT_DELETION_PENDING_ROLE = 'account_deletion_pending';
 
+/**
+ * Permissions du jeton d'accès (RBAC dynamique, cahier des charges Nettoyage v2, R-RB-03 et R-RB-05) :
+ * valables partout (revendication perms), ou limitées à des communes (zone_perms : clé de commune →
+ * permissions).
+ */
+export interface CallerPermissions {
+  global: readonly string[];
+  byZone: Readonly<Record<string, readonly string[]>>;
+}
+
 /** Ce que la gateway sait de l'appelant, tiré du jeton d'accès vérifié. */
 export interface Caller {
   roles: readonly { role: string }[];
   mfa: boolean;
   /** Dernière authentification forte, en secondes depuis 1970. */
   authTime?: number;
+  /** Absentes d'un jeton émis avant leur ajout : aucune permission. */
+  permissions?: CallerPermissions;
 }
 
 export type AccessDecision =
   | { allowed: true }
   | {
       allowed: false;
-      reason: 'unauthenticated' | 'role_missing' | 'mfa_required' | 'account_deletion_pending';
+      reason:
+        | 'unauthenticated'
+        | 'role_missing'
+        | 'permission_missing'
+        | 'mfa_required'
+        | 'account_deletion_pending';
     };
 
 /**
@@ -45,6 +62,9 @@ export function checkAccess(
     if (!requirement.anyRole.some((role) => held.has(role)))
       return { allowed: false, reason: 'role_missing' };
   }
+  if (requirement.permission !== undefined && !holdsPermission(caller.permissions, requirement.permission)) {
+    return { allowed: false, reason: 'permission_missing' };
+  }
   if (requirement.recentMfaSeconds !== undefined) {
     const fresh =
       caller.mfa &&
@@ -53,4 +73,16 @@ export function checkAccess(
     if (!fresh) return { allowed: false, reason: 'mfa_required' };
   }
   return { allowed: true };
+}
+
+/**
+ * Permission détenue partout, ou dans au moins une commune : la gateway laisse passer l'appel, le
+ * service vérifie ensuite que le dossier est dans l'une de ces communes (sinon NOT_FOUND).
+ */
+export function holdsPermission(permissions: CallerPermissions | undefined, permission: string): boolean {
+  if (!permissions) return false;
+  return (
+    permissions.global.includes(permission) ||
+    Object.values(permissions.byZone).some((granted) => granted.includes(permission))
+  );
 }

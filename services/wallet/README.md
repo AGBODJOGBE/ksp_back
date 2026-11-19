@@ -52,7 +52,7 @@ payés). Invariant : recharges reçues = Σ portefeuilles + services payés.
 | ------------------------------------------------------ | --------------------------------------------------- |
 | Recharge (`payment.intent.succeeded`, `wallet_top_up`) | D recharges / C portefeuille, une fois par paiement |
 | `Debit` (cleaning, billing)                            | D portefeuille / C services — jamais partiel        |
-| `Refund`, `cleaning.mission.refunded`                  | écriture inverse du débit, une seule fois           |
+| `Refund`                                               | écriture inverse du débit, une seule fois           |
 | Crédit de la finance (`refund` ou `top_up`)            | D services (ou D recharges) / C portefeuille, motif |
 
 - `WalletAccountService.CreateTopUp` : limites `WALLET_TOP_UP_MIN`/`MAX`, rôle `org_admin` ou
@@ -74,13 +74,18 @@ payés). Invariant : recharges reçues = Σ portefeuilles + services payés.
   (`WALLET_MANUAL_REFUND_MAX`) et justifié (15 caractères) ; au-delà de `WALLET_CREDIT_APPROVAL_THRESHOLD`,
   demande validée par un **autre** membre de la finance (`ApproveManualCredit`) ; MFA de moins de 10 minutes.
 - Rapprochement des débits (`WALLET_DEBIT_RECONCILE_INTERVAL_MS`, après `WALLET_DEBIT_CHECK_DELAY_MINUTES`) :
-  `GetWalletDebitStatus` de cleaning et billing ; débit jamais enregistré → remboursé, alerte.
+  `GetWalletDebitStatus` de cleaning (frais de visite `cleaning_visit_fee`, séance `cleaning_session`) et
+  billing (facture) ; débit jamais enregistré (`not_recorded`) → remboursé, alerte ; opération encore en
+  cours chez cleaning (`in_progress`, RV-80) → redemandée au passage suivant, jamais remboursée. Un débit
+  d'une mission du Nettoyage v1 (`cleaning_mission`) n'est plus soumis à cleaning (ADR-054).
 - Grand livre verrouillé par la base (solde, `TRUNCATE`, transaction complète, nom effacé après transmission).
   Au déploiement, retirer au rôle applicatif `UPDATE`, `DELETE`, `TRUNCATE` sur `ledger_transactions` et
   `ledger_entries`, `DELETE`, `TRUNCATE` sur `ledger_accounts`.
 - Rejeu d'un reversement : empreinte HMAC du numéro (`WALLET_PHONE_HASH_SECRET`, coffre en production).
 - `HasPendingObligations` (identity) : solde prépayé, fonds dus ou reversement en cours bloquent la suppression.
-- `cleaning.mission.credited` : crédit au prorata d'une mission arrêtée, une fois par `creditId`.
+- Remboursements et crédits du Nettoyage v1 par événement (`cleaning.mission.refunded`,
+  `cleaning.mission.credited`) retirés avec la v1 (ADR-054) : le Nettoyage v2 passe par `Refund` et
+  `Credit` (RV-81), `Credit` répondant `WALLET_NOT_IMPLEMENTED` jusqu'à sa livraison.
 
 ## Reversements
 

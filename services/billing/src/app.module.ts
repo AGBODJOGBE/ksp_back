@@ -12,7 +12,6 @@ import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { BILLING_USE_CASES, createUseCases } from './application/use-cases';
 import { type ServiceConfig } from './config';
 import { IdentityOrganizationDirectory } from './infrastructure/identity/identity-organization-directory';
-import { CleaningEventsConsumer } from './infrastructure/messaging/cleaning-events.consumer';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { PaymentEventsConsumer } from './infrastructure/messaging/payment-events.consumer';
 import { PrismaContractRepository } from './infrastructure/persistence/prisma-contract.repository';
@@ -37,9 +36,8 @@ const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
 
 /**
- * Délais croissants de nouvel essai des événements reçus, environ 1 h au total (ADR-032) : une
- * annulation arrivée avant la confirmation de sa mission attend le contrat au lieu de partir en file
- * d'erreurs dès la première minute.
+ * Délais croissants de nouvel essai des événements reçus, environ 1 h au total (ADR-032) : une panne
+ * passagère ne fait pas partir l'événement en file d'erreurs dès la première minute.
  */
 export const CONSUMER_RETRY_DELAYS_MS = [
   10_000, 30_000, 60_000, 120_000, 300_000, 600_000, 900_000, 1_800_000,
@@ -72,7 +70,6 @@ export class AppModule {
         PrismaContractRepository,
         PrismaInvoiceRepository,
         PrismaSettingsRepository,
-        CleaningEventsConsumer,
         PaymentEventsConsumer,
         BillingSchedulerService,
         { provide: BILLING_SCHEDULER_INTERVAL_MS, useValue: config.BILLING_SCHEDULER_INTERVAL_MS },

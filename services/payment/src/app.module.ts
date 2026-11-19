@@ -1,4 +1,4 @@
-import { billingV1, cleaningV1, identityV1 } from '@ksp/contracts';
+import { billingV1, identityV1 } from '@ksp/contracts';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -47,7 +47,6 @@ import {
   TopUpPaymentGrpcController,
 } from './interfaces/grpc/payment.controllers';
 
-const CLEANING_CLIENT = Symbol('CLEANING_CLIENT');
 const BILLING_CLIENT = Symbol('BILLING_CLIENT');
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 
@@ -84,7 +83,6 @@ export class AppModule {
       imports: [
         PlatformModule.forRoot(config),
         ClientsModule.register([
-          grpcClientOptions(CLEANING_CLIENT, 'cleaning', config.CLEANING_GRPC_URL),
           grpcClientOptions(BILLING_CLIENT, 'billing', config.BILLING_GRPC_URL),
           grpcClientOptions(IDENTITY_CLIENT, 'identity', config.IDENTITY_GRPC_URL),
         ]),
@@ -116,7 +114,6 @@ export class AppModule {
             PrismaProviderNotificationLog,
             PrismaPaymentLinkRepository,
             PrismaPayoutRepository,
-            CLEANING_CLIENT,
             BILLING_CLIENT,
             IDENTITY_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
@@ -126,7 +123,6 @@ export class AppModule {
             notifications: PrismaProviderNotificationLog,
             links: PrismaPaymentLinkRepository,
             payouts: PrismaPayoutRepository,
-            cleaning: ClientGrpc,
             billing: ClientGrpc,
             identity: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
@@ -134,7 +130,7 @@ export class AppModule {
             const logger = new Logger('Payment');
             if (!serviceTokens) {
               logger.warn(
-                'Aucun jeton de service : appels vers cleaning, billing et identity non authentifiés (développement uniquement).',
+                'Aucun jeton de service : appels vers billing et identity non authentifiés (développement uniquement).',
               );
             }
             const caller = (target: string) =>
@@ -150,20 +146,12 @@ export class AppModule {
               payouts,
               payoutProvider,
               notifications,
-              dues: new GrpcAmountDueDirectory(
-                {
-                  client: cleaning.getService<cleaningV1.MissionPaymentDueServiceClient>(
-                    cleaningV1.MISSION_PAYMENT_DUE_SERVICE_NAME,
-                  ),
-                  caller: caller('cleaning'),
-                },
-                {
-                  client: billing.getService<billingV1.InvoicePaymentDueServiceClient>(
-                    billingV1.INVOICE_PAYMENT_DUE_SERVICE_NAME,
-                  ),
-                  caller: caller('billing'),
-                },
-              ),
+              dues: new GrpcAmountDueDirectory({
+                client: billing.getService<billingV1.InvoicePaymentDueServiceClient>(
+                  billingV1.INVOICE_PAYMENT_DUE_SERVICE_NAME,
+                ),
+                caller: caller('billing'),
+              }),
               people: new IdentityPeopleDirectory(
                 identity.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
                 caller('identity'),

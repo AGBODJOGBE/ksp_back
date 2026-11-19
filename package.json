@@ -17,6 +17,7 @@
     "contracts:lint": "buf lint",
     "contracts:breaking": "tsx tools/ci/accepted-breaks.ts",
     "contracts:generate": "buf generate && prettier --write libs/contracts/src/generated",
+    "gateway:routes": "tsx tools/gateway/cleaning-routes.ts",
     "prisma:generate": "pnpm -r --if-present run prisma:generate",
     "ci:changed-services": "tsx tools/ci/changed-services.ts",
     "new-service": "tsx tools/new-service/index.ts",

@@ -1,6 +1,12 @@
 /** Doublures des ports de l'application, pour les tests des cas d'usage. */
 import { AppError, type VerifiedAccessToken } from '@ksp/platform';
-import { type AccessTokenVerifierPort, type RateLimiter, type RateLimitResult } from '../access/access.ports';
+import { type CallerPermissions } from '../../domain/access/access-policy';
+import {
+  type AccessTokenVerifierPort,
+  type AuthenticatedCaller,
+  type RateLimiter,
+  type RateLimitResult,
+} from '../access/access.ports';
 import {
   type AccountDeletion,
   type ActiveContext,
@@ -17,7 +23,10 @@ import {
   type UserProfile,
 } from '../identity/identity.ports';
 
-export function verifiedToken(overrides: Partial<VerifiedAccessToken['user']> = {}): VerifiedAccessToken {
+export function verifiedToken(
+  overrides: Partial<VerifiedAccessToken['user']> = {},
+  permissions: CallerPermissions = { global: [], byZone: {} },
+): AuthenticatedCaller {
   return {
     user: {
       userId: 'u-1',
@@ -31,14 +40,15 @@ export function verifiedToken(overrides: Partial<VerifiedAccessToken['user']> = 
     clientId: 'web',
     tokenId: 'j-1',
     expiresAt: 1_792_400_900,
+    permissions,
   };
 }
 
 /** Jetons connus par leur texte ; tout autre jeton est invalide. */
 export class FakeTokenVerifier implements AccessTokenVerifierPort {
-  readonly tokens = new Map<string, VerifiedAccessToken>();
+  readonly tokens = new Map<string, AuthenticatedCaller>();
 
-  async verify(token: string): Promise<VerifiedAccessToken> {
+  async verify(token: string): Promise<AuthenticatedCaller> {
     const found = this.tokens.get(token);
     if (!found) throw AppError.unauthenticated('GATEWAY_TOKEN_INVALID', 'Jeton invalide.');
     return found;

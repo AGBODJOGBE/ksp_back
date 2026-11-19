@@ -1,10 +1,4 @@
 import {
-  RegisterContractUseCase,
-  ResumeContractUseCase,
-  SuspendContractUseCase,
-  TerminateContractUseCase,
-} from './contracts.use-cases';
-import {
   GetBillingSettingsUseCase,
   GetInvoiceUseCase,
   GetMyInvoiceUseCase,
@@ -26,10 +20,6 @@ import { type BillingDeps } from './ports';
 /** Cas d'usage du service (une classe chacun), reliés aux mêmes dépendances. */
 export function createUseCases(deps: BillingDeps) {
   return {
-    registerContract: new RegisterContractUseCase(deps),
-    terminateContract: new TerminateContractUseCase(deps),
-    suspendContract: new SuspendContractUseCase(deps),
-    resumeContract: new ResumeContractUseCase(deps),
     issueDueInvoices: new IssueDueInvoicesUseCase(deps),
     markOverdueInvoices: new MarkOverdueInvoicesUseCase(deps),
     listMyInvoices: new ListMyInvoicesUseCase(deps),

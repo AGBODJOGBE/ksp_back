@@ -36,18 +36,13 @@ export interface IdGenerator {
   next(): string;
 }
 
+/**
+ * Contrats de facturation v1 (ADR-025). Ils étaient appris par les événements de cleaning v1
+ * (mission confirmée, annulée, suspendue, reprise), retirés par la refonte du Nettoyage (ADR-054) :
+ * plus aucun contrat n'est créé. Les contrats déjà enregistrés restent facturés jusqu'à la facture
+ * mensuelle v2 (lot F, ADR-055), qui remplace ce port.
+ */
 export interface ContractRepository {
-  /**
-   * Applique un événement de cleaning au contrat (verrouillé), avec l'inbox dans la même
-   * transaction : un doublon n'a aucun effet. `change` reçoit le contrat actuel (ou null) et
-   * renvoie le contrat à enregistrer, ou null pour ne rien changer.
-   */
-  apply(
-    eventId: string,
-    consumer: string,
-    contractId: string,
-    change: (current: BillingContract | null) => BillingContract | null,
-  ): Promise<'processed' | 'duplicate'>;
   findById(id: string): Promise<BillingContract | null>;
   /** Contrats dont tous les mois civils ne sont pas encore facturés, avec les mois déjà facturés. */
   listOpen(): Promise<{ contract: BillingContract; invoicedIndexes: number[] }[]>;

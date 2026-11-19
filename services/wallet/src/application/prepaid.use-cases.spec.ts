@@ -204,74 +204,11 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
         'Remboursement — Nettoyage de maison — acompte (mission annulée)',
       );
       expect(await refund()).toMatchObject({ created: false, transaction: { id: first.transaction.id } });
-      expect(
-        await useCases.refundFromEvent.execute({
-          producer: 'cleaning',
-          transactionIds: [transaction.id],
-          reason: 'mission annulée',
-        }),
-      ).toEqual({ refunded: 0, already: 1 });
       expect((await rejection(debit())).code).toBe('WALLET_DEBIT_REFUNDED');
       expect(setup.store.events.at(-1)).toMatchObject({
         type: 'wallet.prepaid.credited',
         payload: { kind: 'refund', origin: 'service', refundedTransactionId: transaction.id },
       });
-    });
-
-    it('événement d’un émetteur non autorisé ignoré', async () => {
-      expect(
-        await useCases.refundFromEvent.execute({
-          producer: 'recovery',
-          transactionIds: [MISSION_ID],
-          reason: 'x',
-        }),
-      ).toBe('ignored');
-    });
-  });
-
-  describe('crédit au prorata d’une mission arrêtée (cleaning.mission.credited, ADR-049)', () => {
-    const CREDIT_ID = '0192f1c4-0000-7000-8000-00000000e101';
-    const credited = (overrides: Record<string, unknown> = {}) =>
-      useCases.creditFromMission.execute({
-        eventId: '0192f1c4-0000-7000-c000-000000000101',
-        eventType: 'cleaning.mission.credited',
-        producer: 'cleaning',
-        missionId: MISSION_ID,
-        customerId: USER_ID,
-        creditId: CREDIT_ID,
-        amount: 30000,
-        ...overrides,
-      });
-
-    it('crédité une seule fois par creditId, au portefeuille du client, événement publié', async () => {
-      expect(await credited()).toBe('recorded');
-      expect(await credited()).toBe('duplicate');
-      expect(await credited({ eventId: '0192f1c4-0000-7000-c000-000000000102' })).toBe('duplicate');
-      expect((await prepaid()).balance).toBe(30000);
-      const [transaction] = [...setup.store.transactions.values()];
-      expect(transaction).toMatchObject({
-        kind: 'refund',
-        caller: 'cleaning',
-        amount: 30000,
-        object: { type: 'cleaning_mission', id: MISSION_ID, part: null },
-      });
-      expect(setup.store.events).toEqual([
-        {
-          type: 'wallet.prepaid.credited',
-          payload: expect.objectContaining({
-            kind: 'refund',
-            origin: 'service',
-            userId: USER_ID,
-            amount: xof(30000),
-          }),
-        },
-      ]);
-    });
-
-    it('émetteur autre que cleaning, ou montant invalide : rien', async () => {
-      expect(await credited({ producer: 'billing' })).toBe('ignored');
-      expect((await rejection(credited({ amount: 0 }))).code).toBe('WALLET_VALIDATION_FAILED');
-      expect((await prepaid()).balance).toBe(0);
     });
   });
 

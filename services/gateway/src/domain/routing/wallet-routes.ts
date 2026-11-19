@@ -1,4 +1,4 @@
-import { BACKOFFICE_MFA_SECONDS, CRITICAL_MFA_SECONDS } from './cleaning-routes';
+import { BACKOFFICE_MFA_SECONDS, CRITICAL_MFA_SECONDS } from '../access/mfa-age';
 import { type RouteDefinition } from './route-manifest';
 
 const ACCOUNT = 'ksp.wallet.v1.WalletAccountService';

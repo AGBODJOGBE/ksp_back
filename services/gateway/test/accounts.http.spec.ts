@@ -88,6 +88,8 @@ describe('gateway → identity : administration des comptes', () => {
       userId: ACCOUNT_ID,
       roleCode: 'cleaning_agent',
       reason: 'Renfort',
+      // Communes d'une attribution limitée (socle du Nettoyage v2) : pas encore transmises par la gateway.
+      zones: null,
     });
     const assignmentId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0b01';
     await as(http().post(`${base}/${ACCOUNT_ID}/roles/revoke`), director)

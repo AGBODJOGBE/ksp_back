@@ -6,16 +6,15 @@ partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/bill
 
 ## Règles
 
-- **Contrats appris par événements** (une base par service) : `cleaning.booking.confirmed` d'une
-  organisation crée le contrat (montant, durée, début `startsAt`) ; `cleaning.request.cancelled`
-  y met fin ; `cleaning.contract.suspended` / `resumed` mettent la facturation en pause. Aucun
-  appel vers cleaning : la facturation fonctionne même quand cleaning est arrêté. Les événements
-  peuvent arriver dans le désordre (ADR-032) : une annulation, suspension ou reprise d'une mission
-  d'organisation reçue avant sa confirmation n'est pas marquée traitée et repasse par la file
-  `.retry` jusqu'à ce que le contrat existe.
-- **Libellé** : le nom de la prestation reçu dans `cleaning.booking.confirmed` (`serviceName`, ADR-035)
-  est gardé sur le contrat et repris dans la ligne (« Nettoyage de bureaux — novembre 2026 : … ») ;
-  sans lui, « Prestation de nettoyage — … ».
+- **Contrats v1, plus alimentés** : les contrats étaient appris par les événements de cleaning v1
+  (`cleaning.booking.confirmed`, `cleaning.request.cancelled`, `cleaning.contract.suspended` /
+  `resumed`), retirés par la refonte du Nettoyage (ADR-054) : billing n'écoute plus aucun événement de
+  cleaning et ne crée plus de contrat. Les contrats déjà enregistrés restent facturés selon les règles
+  ci-dessous, jusqu'à la facture mensuelle v2 sur les séances réalisées (`cleaning.session.completed` et
+  `cleaning.session.missed`, lot F, ADR-055) ; les méthodes v2 du contrat gRPC répondent
+  `BILLING_NOT_IMPLEMENTED` d'ici là.
+- **Libellé** : le nom de la prestation gardé sur le contrat (`serviceName`, ADR-035) est repris dans la
+  ligne (« Nettoyage de bureaux — novembre 2026 : … ») ; sans lui, « Prestation de nettoyage — … ».
 - **Une facture par mois civil** (heure du Bénin, UTC+1), émise à la fin du mois : le 1er du
   mois suivant à 00:00, heure du Bénin (au premier passage de la tâche planifiée).
 - **Prorata des jours** : montant mensuel (`total / durée`) × jours facturables / jours du mois,
@@ -33,7 +32,7 @@ partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/bill
   avant cet en-tête n'en ont pas (`organization` nul).
 - **Prestation ponctuelle** (ADR-049) : facturée en une fois, en entier, sur la facture du mois de son
   passage (heure du Bénin) ; rien si elle est annulée ce jour-là ou avant (`one_off`).
-- **Montant recalculé sous le verrou** du contrat à l'émission (ADR-049) : un événement enregistré
+- **Montant recalculé sous le verrou** du contrat à l'émission (ADR-049) : un changement enregistré
   entre la lecture et l'émission compte. Les mois s'ajoutent au calendrier du Bénin.
 - **Numérotation** `FAC-<année>-<000001>`, continue par année (compteur dans la transaction) ; année de
   la période facturée au Bénin (ADR-049) : la facture de décembre émise en janvier garde son année.

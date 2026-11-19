@@ -3,7 +3,6 @@ import {
   type Holder,
   type LedgerTransaction,
   type PaidObject,
-  refundEntries,
   reversalEntries,
   sameDebit,
   servicePaymentEntries,
@@ -234,29 +233,6 @@ export class RefundDebitUseCase {
   }
 }
 
-/**
- * cleaning.mission.refunded (ADR-046) : chaque débit cité est remboursé, une seule fois (un
- * événement rejoué ne rembourse rien de plus). Émetteur hors de WALLET_DEBIT_CALLERS : ignoré.
- */
-export class RefundFromEventUseCase {
-  constructor(private readonly deps: WalletDeps) {}
-
-  async execute(input: {
-    producer: string;
-    transactionIds: readonly string[];
-    reason: string;
-  }): Promise<{ refunded: number; already: number } | 'ignored'> {
-    if (!this.deps.settings.debitCallers.includes(input.producer)) return 'ignored';
-    const counts = { refunded: 0, already: 0 };
-    for (const id of input.transactionIds) {
-      const result = await refundDebit(this.deps, input.producer, id, input.reason);
-      if (result.created) counts.refunded += 1;
-      else counts.already += 1;
-    }
-    return counts;
-  }
-}
-
 /** Motif d'un débit remboursé par le rapprochement. */
 export const UNRECORDED_DEBIT_REASON = 'paiement non enregistré par le service';
 
@@ -264,31 +240,40 @@ export const UNRECORDED_DEBIT_REASON = 'paiement non enregistré par le service'
  * Tâche planifiée (ADR-048) : débits du portefeuille plus anciens que le délai réglable, ni vérifiés
  * ni remboursés, rapprochés avec le service qui les a faits (« débit enregistré ? »). Enregistré :
  * noté vérifié. Non enregistré (panne entre le débit et l'enregistrement du paiement) : remboursé au
- * portefeuille, une seule fois, avec une alerte. Service injoignable : laissé pour le prochain
+ * portefeuille, une seule fois, avec une alerte. Opération encore en cours chez l'appelant (RV-80) :
+ * redemandée au passage suivant, jamais remboursée. Service injoignable : laissé pour le prochain
  * passage, jamais remboursé à l'aveugle. Une erreur sur un débit n'empêche pas l'examen des suivants.
  */
 export class ReconcileDebitsUseCase {
   constructor(private readonly deps: WalletDeps) {}
 
-  async execute(
-    limit = 50,
-  ): Promise<{ examined: number; recorded: number; refunded: number; errors: number }> {
+  async execute(limit = 50): Promise<{
+    examined: number;
+    recorded: number;
+    refunded: number;
+    inProgress: number;
+    errors: number;
+  }> {
     const before = new Date(
       this.deps.clock.now().getTime() - this.deps.settings.debitCheckDelayMinutes * 60_000,
     );
     const debits = await this.deps.ledger.listUncheckedDebits(before, limit);
-    const counts = { examined: debits.length, recorded: 0, refunded: 0, errors: 0 };
+    const counts = { examined: debits.length, recorded: 0, refunded: 0, inProgress: 0, errors: 0 };
     for (const debit of debits) {
       try {
         if (!debit.object) continue;
-        const recorded = await this.deps.debitChecks.isRecorded({
+        const status = await this.deps.debitChecks.debitStatus({
           caller: debit.caller,
           objectType: debit.object.type,
           objectId: debit.object.id,
           transactionId: debit.id,
         });
-        if (recorded === null) continue;
-        if (recorded) {
+        if (status === null) continue;
+        if (status === 'in_progress') {
+          counts.inProgress += 1;
+          continue;
+        }
+        if (status === 'recorded') {
           await this.deps.ledger.markDebitChecked(debit.id, 'recorded', this.deps.clock.now());
           counts.recorded += 1;
           continue;
@@ -301,53 +286,6 @@ export class ReconcileDebitsUseCase {
       }
     }
     return counts;
-  }
-}
-
-/** Émetteur de cleaning.mission.credited. */
-const CLEANING = 'cleaning';
-
-/**
- * cleaning.mission.credited (ADR-049) : montant payé pour des passages non faits d'une mission
- * récurrente arrêtée, crédité au portefeuille prépayé du client (écriture `refund`, quel que soit le
- * moyen de paiement d'origine). Une seule fois par crédit : référence `mission-credit:<creditId>`
- * propre à cleaning, et inbox dans la même transaction. Émetteur autre que cleaning : ignoré.
- */
-export class CreditFromMissionUseCase {
-  constructor(private readonly deps: WalletDeps) {}
-
-  async execute(input: {
-    eventId: string;
-    eventType: string;
-    producer: string;
-    missionId: string;
-    customerId: string;
-    creditId: string;
-    amount: number;
-  }): Promise<'recorded' | 'duplicate' | 'ignored'> {
-    if (input.producer !== CLEANING || !this.deps.settings.debitCallers.includes(CLEANING)) return 'ignored';
-    const holder: Holder = { type: 'user', id: requireUuid('customerId', input.customerId) };
-    const amount = requireXof('amount', { amount: input.amount, currency: 'XOF' });
-    const reference = `mission-credit:${requireUuid('creditId', input.creditId)}`;
-    if (await this.deps.ledger.findByReference(CLEANING, reference)) return 'duplicate';
-    const credit = transaction(this.deps, {
-      kind: 'refund',
-      caller: CLEANING,
-      reference,
-      holder,
-      amount,
-      description: 'Remboursement au prorata — passages non effectués',
-      object: { type: 'cleaning_mission', id: requireUuid('missionId', input.missionId), part: null },
-      entries: refundEntries(holder, amount),
-    });
-    const outcome = await this.deps.ledger.record({
-      transaction: credit,
-      inbox: { eventId: input.eventId, consumer: `wallet.${input.eventType}` },
-      events: (balance) => [creditedEvent(credit, balance, { origin: 'service', userId: holder.id })],
-    });
-    if (outcome.kind === 'recorded') return 'recorded';
-    if (outcome.kind === 'already_processed' || outcome.kind === 'duplicate') return 'duplicate';
-    throw WalletErrors.concurrentUpdate();
   }
 }
 
