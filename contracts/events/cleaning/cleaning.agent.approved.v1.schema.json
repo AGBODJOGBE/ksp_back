@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.agent.approved.v1.schema.json",
+  "title": "cleaning.agent.approved",
+  "description": "Agent validé (R-AG-01) : identity lui donne le rôle cleaning_agent.",
+  "x-event-type": "cleaning.agent.approved",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agentId", "userId", "approvedBy", "skillCodes", "employmentKind", "approvedAt"],
+  "properties": {
+    "agentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "approvedBy": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "skillCodes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Compétences validées"
+    },
+    "employmentKind": {
+      "enum": ["employee", "independent"]
+    },
+    "approvedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.request.submitted.v1.schema.json",
+  "title": "cleaning.request.submitted",
+  "description": "Demande de devis envoyée (UC-NT-04). Frais de visite débités, ou en attente de paiement (R-FV-02). Écouté par notification (client, superviseur).",
+  "x-event-type": "cleaning.request.submitted",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "requestId",
+    "requestNumber",
+    "customerId",
+    "organizationId",
+    "placeTypeId",
+    "cleaningTypeIds",
+    "visitFee",
+    "visitFeeStatus",
+    "submittedAt",
+    "communeKey",
+    "placeTypeName",
+    "cleaningTypeNames"
+  ],
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1,
+      "description": "DN-000124"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "placeTypeId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "cleaningTypeIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "Types choisis ; vide pour un lieu « Autre »"
+    },
+    "visitFee": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "visitFeeStatus": {
+      "enum": ["paid", "awaiting_payment"]
+    },
+    "submittedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    },
+    "placeTypeName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Nom du lieu en vigueur"
+    },
+    "cleaningTypeNames": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Noms des types en vigueur, dans l’ordre de la demande"
+    }
+  }
+}

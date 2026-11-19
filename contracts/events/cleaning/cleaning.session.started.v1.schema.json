@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.started.v1.schema.json",
+  "title": "cleaning.session.started",
+  "description": "Séance démarrée par le chef d’équipe (partie 10). Écouté par notification (client).",
+  "x-event-type": "cleaning.session.started",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "leadAgentId",
+    "startedAt",
+    "programNumber",
+    "rank",
+    "sessionsCount"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "leadAgentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PN-000057"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rang de la séance"
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre de séances du programme"
+    }
+  }
+}

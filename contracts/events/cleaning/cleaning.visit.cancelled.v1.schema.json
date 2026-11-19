@@ -2,56 +2,92 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.visit.cancelled.v1.schema.json",
   "title": "cleaning.visit.cancelled",
-  "description": "Visite technique planifiée annulée parce que sa demande (ou toutes les demandes de la visite commune) est refusée, annulée, déclinée ou expirée (ADR-053). Un événement par visite, visite commune comprise.",
+  "description": "Visite annulée (R-VI-06). Publié si la visite n’était pas encore passée. Écouté par notification (client, agents).",
   "x-event-type": "cleaning.visit.cancelled",
   "x-event-version": 1,
   "type": "object",
   "additionalProperties": false,
-  "required": ["visitId", "requestIds", "customerId", "agentId", "scheduledAt", "outcome", "cancelledAt"],
+  "required": [
+    "visitId",
+    "requestId",
+    "requestNumber",
+    "customerId",
+    "organizationId",
+    "communeKey",
+    "releasedAgentIds",
+    "scheduledAt",
+    "cause",
+    "visitFeeRefund",
+    "cancelledAt"
+  ],
   "properties": {
     "visitId": {
       "type": "string",
-      "format": "uuid",
-      "description": "Visite seule, ou identifiant de la visite commune (groupVisitId)"
+      "format": "uuid"
     },
-    "requestIds": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 10,
-      "items": { "type": "string", "format": "uuid" }
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
     },
-    "customerId": { "type": "string", "format": "uuid" },
-    "agentId": { "type": "string", "format": "uuid" },
-    "scheduledAt": { "type": "string", "format": "date-time" },
-    "outcome": {
-      "enum": ["rejected", "cancelled", "declined", "expired"],
-      "description": "État de clôture de la demande (de la première demande citée pour une visite commune)"
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
     },
-    "cancelledAt": { "type": "string", "format": "date-time" },
-    "groupId": {
+    "customerId": {
       "type": "string",
       "format": "uuid",
-      "description": "Facultatif : groupe des demandes créées ensemble pour un même lieu"
+      "description": "Compte du client (titulaire ou auteur de la demande)"
     },
-    "requests": {
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    },
+    "releasedAgentIds": {
       "type": "array",
-      "minItems": 1,
-      "maxItems": 10,
-      "description": "Demandes de la visite avec leur prestation",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["requestId", "serviceCode"],
-        "properties": {
-          "requestId": { "type": "string", "format": "uuid" },
-          "serviceCode": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-          "serviceName": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Nom de la prestation au moment de l'événement ; absent si la prestation n'existe plus"
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "Agents libérés"
+    },
+    "scheduledAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "cause": {
+      "enum": ["request_cancelled", "request_rejected", "slot_changed", "ksp", "agent_no_show"]
+    },
+    "visitFeeRefund": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["amount", "currency"],
+          "properties": {
+            "amount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "currency": {
+              "const": "XOF"
+            }
           }
+        },
+        {
+          "type": "null"
         }
-      }
+      ],
+      "description": "null : rien de remboursé"
+    },
+    "cancelledAt": {
+      "type": "string",
+      "format": "date-time"
     }
   }
 }

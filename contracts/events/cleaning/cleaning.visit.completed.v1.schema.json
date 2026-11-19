@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.visit.completed.v1.schema.json",
+  "title": "cleaning.visit.completed",
+  "description": "Visite clôturée, constat saisi (UC-NT-22), par l’agent ou par le back-office pour lui (R-VI-08).",
+  "x-event-type": "cleaning.visit.completed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "visitId",
+    "requestId",
+    "customerId",
+    "organizationId",
+    "agentIds",
+    "completedAt",
+    "requestNumber",
+    "completedBy"
+  ],
+  "properties": {
+    "visitId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "agentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "completedBy": {
+      "enum": ["agent", "ksp"],
+      "description": "Agent, ou back-office pour son compte (R-VI-08)"
+    }
+  }
+}

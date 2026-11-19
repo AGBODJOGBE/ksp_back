@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.request.rejected.v1.schema.json",
+  "title": "cleaning.request.rejected",
+  "description": "Demande refusée par KSP avant l’acceptation (R-AC-05, UC-NT-30).",
+  "x-event-type": "cleaning.request.rejected",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "requestId",
+    "requestNumber",
+    "customerId",
+    "organizationId",
+    "reasonCode",
+    "rejectedBy",
+    "visitFeeRefund",
+    "rejectedAt"
+  ],
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "reasonCode": {
+      "enum": ["place_inaccessible", "service_impossible", "other"],
+      "description": "Motif dans la liste (le texte libre ne quitte pas cleaning)"
+    },
+    "rejectedBy": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "visitFeeRefund": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["amount", "currency"],
+          "properties": {
+            "amount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "currency": {
+              "const": "XOF"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Remboursés s’il n’y a pas eu de visite"
+    },
+    "rejectedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

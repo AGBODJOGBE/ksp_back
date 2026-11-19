@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.unassigned.v1.schema.json",
+  "title": "cleaning.session.unassigned",
+  "description": "Agents retirés d’une séance (désaffectation, indisponibilité, désactivation, refus ou absence de réponse d’un indépendant, report). Pas d’événement unitaire quand la libération vient d’une annulation de séance (cleaning.session.cancelled), d’un arrêt de programme (cleaning.program.cancelled) ou d’une suspension (cleaning.program.suspended) : ces événements portent releasedAgentIds.",
+  "x-event-type": "cleaning.session.unassigned",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "agentIds",
+    "cause",
+    "unassignedAt",
+    "programNumber",
+    "rank",
+    "sessionsCount",
+    "scheduledStart",
+    "batchId"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "agentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "minItems": 1,
+      "description": "Agents retirés"
+    },
+    "cause": {
+      "enum": [
+        "manual",
+        "unavailability",
+        "agent_deactivated",
+        "agent_declined",
+        "no_response",
+        "rescheduled"
+      ]
+    },
+    "unassignedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PN-000057"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rang de la séance"
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre de séances du programme"
+    },
+    "scheduledStart": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Début au moment du retrait"
+    },
+    "batchId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    }
+  }
+}

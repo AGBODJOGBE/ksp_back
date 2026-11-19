@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.quote.forwarded.v1.schema.json",
+  "title": "cleaning.quote.forwarded",
+  "description": "Devis transmis pour accord par un membre de l’organisation (R-AC-02). Écouté par notification (administrateurs de l’organisation).",
+  "x-event-type": "cleaning.quote.forwarded",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "quoteId",
+    "requestId",
+    "requestNumber",
+    "customerId",
+    "organizationId",
+    "forwardedBy",
+    "forwardedAt"
+  ],
+  "properties": {
+    "quoteId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "forwardedBy": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "forwardedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

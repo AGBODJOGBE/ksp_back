@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.balance_insufficient.v1.schema.json",
+  "title": "cleaning.session.balance_insufficient",
+  "description": "Solde du particulier insuffisant pour une séance prévue (R-WL-06). Écouté par notification (client, lien de recharge).",
+  "x-event-type": "cleaning.session.balance_insufficient",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "programNumber",
+    "rank",
+    "sessionsCount",
+    "scheduledStart",
+    "amountDue",
+    "missing",
+    "guaranteeRequired",
+    "trigger",
+    "detectedAt"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PN-000057"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rang de la séance"
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre de séances du programme"
+    },
+    "scheduledStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "amountDue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "missing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "guaranteeRequired": {
+      "type": "boolean",
+      "description": "Garantie de solde activée"
+    },
+    "trigger": {
+      "enum": ["assigned", "debit"]
+    },
+    "detectedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

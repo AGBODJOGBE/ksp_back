@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.missed.v1.schema.json",
+  "title": "cleaning.session.missed",
+  "description": "Séance manquée (R-EX-02) ou annulée moins de 24 h avant via le support (partie 12) : 50 % du prix dû. Porte le montant dû, comme cleaning.session.completed.",
+  "x-event-type": "cleaning.session.missed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "payerKind",
+    "placeId",
+    "programNumber",
+    "rank",
+    "sessionsCount",
+    "scheduledStart",
+    "price",
+    "visitFeeDeduction",
+    "amountDue",
+    "cause",
+    "feeBps",
+    "missedAt",
+    "communeKey",
+    "reportedBy"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "payerKind": {
+      "enum": ["individual", "organization"],
+      "description": "Particulier (payé séance par séance) ou entreprise (facture mensuelle)"
+    },
+    "placeId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Lieu, pour grouper la facture mensuelle par lieu (R-PE-01)"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PN-000057"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rang de la séance"
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre de séances du programme"
+    },
+    "scheduledStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "price": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      },
+      "description": "Prix de la séance (prix d’une séance du devis)"
+    },
+    "visitFeeDeduction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      },
+      "description": "Frais de visite déduits de cette séance (R-FV-05, R-PP-02) : portés par la première séance réalisée ou manquée du programme, au plus son montant dû, le reste par les suivantes ; ligne négative sur la facture mensuelle d’une entreprise ; 0 sinon"
+    },
+    "amountDue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      },
+      "description": "Montant dû après déduction ; billing construit la facture sans rappeler cleaning"
+    },
+    "cause": {
+      "enum": ["customer_absent", "access_impossible", "late_cancellation"],
+      "description": "À valider : annulation tardive publiée ici faute d’événement dédié"
+    },
+    "feeBps": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000,
+      "description": "Part du prix due (5000 = 50 %)"
+    },
+    "missedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    },
+    "reportedBy": {
+      "enum": ["team", "ksp"],
+      "description": "Équipe, ou back-office pour son compte (R-EX-08)"
+    }
+  }
+}
