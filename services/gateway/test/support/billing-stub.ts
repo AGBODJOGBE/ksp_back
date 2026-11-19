@@ -66,7 +66,14 @@ export const protoInvoice: billingV1.Invoice = {
 const settings: billingV1.BillingSettings = { paymentTermDays: 10, updatedBy: '', updatedAt: '' };
 
 type Method = keyof billingV1.BillingServiceController | keyof billingV1.BillingAdminServiceController;
-const CUSTOMER_METHODS: readonly Method[] = ['listMyInvoices', 'getMyInvoice', 'payMyInvoiceFromWallet'];
+const CUSTOMER_METHODS: readonly Method[] = [
+  'listMyInvoices',
+  'getMyInvoice',
+  'payMyInvoiceFromWallet',
+  'payMyInvoiceByMobileMoney',
+  'getMyBillingPreferences',
+  'updateMyBillingPreferences',
+];
 
 const DEFAULTS: Record<Method, () => unknown> = {
   listMyInvoices: () => ({ invoices: [protoInvoice], nextCursor: '' }),
@@ -93,6 +100,12 @@ const DEFAULTS: Record<Method, () => unknown> = {
       paidAt: '2026-12-16T11:00:00.000Z',
     },
   }),
+  // Méthodes du contrat v2 pas encore routées par la gateway : réponse vide.
+  payMyInvoiceByMobileMoney: () => ({}),
+  getMyBillingPreferences: () => ({}),
+  updateMyBillingPreferences: () => ({}),
+  issueAdminCreditNote: () => ({}),
+  listCreditNotes: () => ({}),
 };
 
 export class BillingStub {

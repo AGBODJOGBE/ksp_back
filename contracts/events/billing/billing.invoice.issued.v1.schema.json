@@ -40,12 +40,20 @@
     "contractId": {
       "type": "string",
       "format": "uuid",
-      "description": "Contrat chez le service source (pour cleaning : la mission)"
+      "description": "Contrat chez le service source (v1 : la mission). v2 : programme (séance), demande (frais de visite) ou organisation facturée (facture mensuelle, qui couvre tous ses programmes ; à valider)"
     },
     "periodStart": { "type": "string", "format": "date-time" },
     "periodEnd": { "type": "string", "format": "date-time" },
     "total": { "$ref": "#/$defs/money" },
     "issuedAt": { "type": "string", "format": "date-time" },
-    "dueAt": { "type": "string", "format": "date-time" }
+    "dueAt": { "type": "string", "format": "date-time" },
+    "kind": {
+      "enum": ["session", "visit_fee", "monthly"],
+      "description": "v2 : facture de séance, reçu des frais de visite ou facture mensuelle d'organisation ; absent pour une facture v1"
+    },
+    "status": {
+      "enum": ["pending_payment", "paid"],
+      "description": "v2 : paid pour une facture émise au paiement (séance, frais de visite : dueAt = issuedAt) ; absent pour une facture v1"
+    }
   }
 }

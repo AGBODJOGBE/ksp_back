@@ -72,7 +72,7 @@
     },
     "roles": {
       "type": "array",
-      "description": "Rôles du contexte actif, avec leur portée. Les permissions ne sont pas dans le jeton : chaque service les déduit du catalogue. Session restreinte d'un compte en cours de suppression (ADR-036) : le seul rôle account_deletion_pending, sans customer.",
+      "description": "Rôles du contexte actif, avec leur portée. Depuis la v2 (CDC Nettoyage v2, R-RB-05 et partie 16.3), les permissions des rôles voyagent aussi dans le jeton (perms, zone_perms) : les services revérifient les droits sans appeler identity. Session restreinte d'un compte en cours de suppression (ADR-036) : le seul rôle account_deletion_pending, sans customer.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -83,10 +83,20 @@
             "pattern": "^[a-z][a-z0-9_]*$"
           },
           "scopeType": {
-            "enum": ["global", "domain", "org", "personal"]
+            "enum": ["global", "domain", "org", "personal", "zone"]
           },
           "scopeId": {
             "type": ["string", "null"]
+          },
+          "zoneKeys": {
+            "type": "array",
+            "description": "Portée zone (R-RB-03) : clés des communes (référentiel de geo) ; absent pour une autre portée",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+            }
           }
         }
       }
@@ -98,6 +108,31 @@
     "auth_time": {
       "type": "integer",
       "description": "Dernière authentification forte, en secondes depuis 1970"
+    },
+    "perms": {
+      "type": "array",
+      "description": "Permissions du contexte actif valables partout (R-RB-01, R-RB-03, R-RB-05) : union des permissions des rôles actifs attribués sans limite de zone, permissions retirées exclues, triées. Calculées à l'émission : un changement de rôle s'applique au renouvellement du jeton (15 minutes au plus). Facultatif : absent des jetons émis avant son ajout (le service le traite comme une liste vide).",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+      }
+    },
+    "zone_perms": {
+      "type": "object",
+      "description": "Permissions limitées à des zones (portée zone, R-RB-03) : clé de commune → permissions valables dans cette commune seulement, en plus de perms. Facultatif : absent s'il n'y en a aucune.",
+      "propertyNames": {
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+        }
+      }
     },
     "amr": {
       "type": "array",

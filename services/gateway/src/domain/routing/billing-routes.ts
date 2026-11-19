@@ -7,6 +7,8 @@ const ADMIN = 'ksp.billing.v1.BillingAdminService';
 /** Rôles du back-office de la facturation (CDC Nettoyage, partie 10). */
 const BILLING_STAFF = ['finance_officer', 'cleaning_supervisor', 'cleaning_admin', 'super_admin'] as const;
 const SETTINGS_ADMINS = ['cleaning_admin', 'finance_officer', 'super_admin'] as const;
+/** Écritures d'argent au back-office : la finance seule (CDC Nettoyage v2, R-PE-04). */
+const FINANCE = ['finance_officer', 'super_admin'] as const;
 
 /**
  * Routes de la facturation : « Mes factures » et back-office. Reprises des extensions x-ksp-* du
@@ -64,8 +66,9 @@ export const BILLING_ROUTES = [
     operationId: 'recordInvoicePayment',
     method: 'POST',
     path: '/api/v1/admin/billing/invoices/{id}/payments',
+    // Retiré en v2 (R-PE-04) : refuse toute facture v2 ; le virement passe par le portefeuille.
     grpc: `${ADMIN}/RecordInvoicePayment`,
-    access: { level: 'authenticated', anyRole: BILLING_STAFF, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
+    access: { level: 'authenticated', anyRole: FINANCE, recentMfaSeconds: BACKOFFICE_MFA_SECONDS },
     rateLimit: 'authenticated',
     requiresKnownClient: false,
     // Ajouté après le branchement du back-office : facultatif, pour ne rien casser.

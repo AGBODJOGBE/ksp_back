@@ -56,6 +56,8 @@ tags:
     description: Validation, refus, suspension des comptes entreprise (ADR-027)
   - name: Comptes (back-office)
     description: Recherche d'un compte KSP par numéro (ADR-029) ; administration des comptes et des rôles (ADR-043)
+  - name: Rôles et permissions (back-office)
+    description: Rôles dynamiques du super administrateur, permissions déclarées par les services (CDC Nettoyage v2, R-RB-01 à 06)
   - name: Clés publiques
     description: Vérification des jetons d'accès (UC-ID-22)
   - name: Nettoyage
@@ -1477,6 +1479,319 @@ paths:
         '504':
           $ref: '#/components/responses/GatewayTimeout'
 
+  /api/v1/identity/organizations/{id}/members:
+    get:
+      tags:
+        - Comptes entreprise
+      operationId: listOrganizationMembers
+      summary: Membres de l’organisation
+      description: |
+        R-CP-03. Membres et leur rôle (administrateur, membre, lecteur), numéros masqués ; invitations en attente
+        pour un administrateur. Tout membre de l'organisation.
+
+        Erreurs : `IDENTITY_ORGANIZATION_NOT_FOUND` (404, organisation inconnue ou appelant non membre).
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/ListOrganizationMembers
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationMemberList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/identity/organizations/{id}/invitations:
+    post:
+      tags:
+        - Comptes entreprise
+      operationId: inviteOrganizationMember
+      summary: Inviter un membre
+      description: |
+        R-CP-03. Un administrateur de l'organisation (validée) invite un numéro avec un rôle d'organisation. Réponse
+        identique que le numéro ait un compte ou non ; l'invitation attend l'acceptation de la personne et expire
+        après 7 jours (à valider).
+
+        Erreurs : `IDENTITY_MEMBER_INVALID` (400, `details.field`), `IDENTITY_ORGANIZATION_FORBIDDEN` (403),
+        `IDENTITY_ORGANIZATION_NOT_FOUND` (404), `IDENTITY_MEMBER_ALREADY_EXISTS` (409),
+        `IDENTITY_ORGANIZATION_NOT_ACTIVE` (422).
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/InviteOrganizationMember
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteOrganizationMemberRequest'
+            example:
+              phone: '+2290197000045'
+              role: org_member
+      responses:
+        '201':
+          description: Invitation envoyée
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationInvitation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/identity/organizations/{id}/members/{userId}:
+    patch:
+      tags:
+        - Comptes entreprise
+      operationId: changeOrganizationMemberRole
+      summary: Changer le rôle d’un membre
+      description: |
+        R-CP-03. Administrateur seulement ; jamais le dernier administrateur (`IDENTITY_ORGANIZATION_LAST_ADMIN`).
+        Événement `identity.member.role_changed`.
+
+        Erreurs : `IDENTITY_MEMBER_INVALID` (400), `IDENTITY_ORGANIZATION_FORBIDDEN` (403),
+        `IDENTITY_ORGANIZATION_NOT_FOUND`, `IDENTITY_MEMBER_NOT_FOUND` (404), `IDENTITY_ORGANIZATION_LAST_ADMIN` (422).
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/ChangeOrganizationMemberRole
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - name: userId
+          in: path
+          required: true
+          description: Compte du membre (UUID).
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeOrganizationMemberRoleRequest'
+            example:
+              role: org_viewer
+      responses:
+        '200':
+          description: Rôle changé
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationMemberView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/identity/organizations/{id}/members/{userId}/remove:
+    post:
+      tags:
+        - Comptes entreprise
+      operationId: removeOrganizationMember
+      summary: Retirer un membre
+      description: |
+        R-CP-03. Un administrateur retire un membre ; un membre peut se retirer lui-même. Jamais le dernier
+        administrateur. Événement `identity.member.removed`.
+
+        Erreurs : `IDENTITY_ORGANIZATION_FORBIDDEN` (403), `IDENTITY_ORGANIZATION_NOT_FOUND`,
+        `IDENTITY_MEMBER_NOT_FOUND` (404), `IDENTITY_ORGANIZATION_LAST_ADMIN` (422).
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/RemoveOrganizationMember
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - name: userId
+          in: path
+          required: true
+          description: Compte du membre (UUID).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Membre retiré
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/identity/me/organization-invitations:
+    get:
+      tags:
+        - Comptes entreprise
+      operationId: listMyOrganizationInvitations
+      summary: Mes invitations
+      description: |
+        Invitations en attente adressées au compte connecté (R-CP-03).
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/ListMyOrganizationInvitations
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationInvitationList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/identity/organization-invitations/{id}/respond:
+    post:
+      tags:
+        - Comptes entreprise
+      operationId: respondToOrganizationInvitation
+      summary: Accepter ou refuser une invitation
+      description: |
+        R-CP-03. `accept: true` : le compte devient membre avec le rôle de l'invitation (`identity.member.added`) ;
+        `false` : invitation refusée.
+
+        Erreurs : `IDENTITY_INVITATION_NOT_FOUND` (404), `IDENTITY_INVITATION_NOT_PENDING` (422).
+      x-ksp-grpc: ksp.identity.v1.OrganizationService/RespondToOrganizationInvitation
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de l'invitation (UUID).
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondToOrganizationInvitationRequest'
+            example:
+              accept: true
+      responses:
+        '200':
+          description: Réponse enregistrée
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationInvitationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/admin/identity/organizations:
     get:
       tags: [Comptes entreprise (back-office)]
@@ -1918,7 +2233,7 @@ paths:
 
         Erreurs : `GATEWAY_VALIDATION_FAILED`, `IDENTITY_ACCOUNT_ADMIN_INVALID` (400, `details.field = query`).
 
-        Rôles : `cleaning_admin`, `recovery_admin` (rôles de leur métier seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `recovery_admin` (lecture de leur équipe seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.identity.v1.AccountAdminService/SearchAccounts
       x-ksp-access: authenticated
       x-ksp-rate-limit: account_lookup
@@ -1977,7 +2292,7 @@ paths:
 
         Erreurs : `IDENTITY_USER_NOT_FOUND` (404, compte inconnu ou supprimé).
 
-        Rôles : `cleaning_admin`, `recovery_admin` (rôles de leur métier seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `recovery_admin` (lecture de leur équipe seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.identity.v1.AccountAdminService/GetAccount
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -2024,21 +2339,23 @@ paths:
       summary: Attribuer un rôle
       description: |
         Attribue un rôle du catalogue à un compte actif, avec la portée du rôle (globale, ou le métier qui le
-        déclare). Une attribution active identique est rendue sans écriture. Le rôle entre dans les jetons au
+        déclare) ; `zoneKeys` la limite à des communes (portée `zone`, R-RB-03 du CDC Nettoyage v2). Jamais à
+        soi-même (`IDENTITY_SELF_ACTION_FORBIDDEN`, 422), jamais un rôle désactivé (`IDENTITY_ROLE_INACTIVE`,
+        422). Une attribution active identique est rendue sans écriture. Le rôle entre dans les jetons au
         renouvellement suivant (15 minutes au plus) ; un compte sans double authentification la configure à sa
-        prochaine connexion au back-office. Motif tracé ; événement `identity.role.granted`. Renvoie la fiche.
+        prochaine connexion au back-office. Motif tracé ; événement `identity.role.granted` (version 2). Renvoie la fiche.
 
         Erreurs : `IDENTITY_ACCOUNT_ADMIN_INVALID` (400, motif), `IDENTITY_ROLE_SCOPE_INVALID` (400),
-        `IDENTITY_ROLE_FORBIDDEN` (403, rôle hors du périmètre), `IDENTITY_USER_NOT_FOUND`, `IDENTITY_ROLE_NOT_FOUND`
+        `IDENTITY_ROLE_FORBIDDEN` (403, rôle non attribuable), `IDENTITY_USER_NOT_FOUND`, `IDENTITY_ROLE_NOT_FOUND`
         (404), `IDENTITY_ACCOUNT_NOT_ACTIVE` (422, `details.status`).
 
-        Rôles : `cleaning_admin`, `recovery_admin` (rôles de leur métier seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `super_admin` seulement (CDC Nettoyage v2, partie 2, R-RB-02 et 13.3 : les rôles s'assignent par le
+        super administrateur ; un agent validé reçoit son rôle par le service cleaning, `GrantRole`) ; double
+        authentification de moins de 10 minutes.
       x-ksp-grpc: ksp.identity.v1.AccountAdminService/GrantAccountRole
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
-        - cleaning_admin
-        - recovery_admin
         - super_admin
       x-ksp-mfa-max-age: 600
       security:
@@ -2092,20 +2409,21 @@ paths:
       summary: Retirer un rôle
       description: |
         Retire une attribution active. Effet au renouvellement suivant (15 minutes au plus) ; une session du
-        back-office sans rôle restant est alors fermée. Jamais le dernier `super_admin` d'un compte actif. Motif
+        back-office sans rôle restant est alors fermée. Rôle sensible (R-RB-05 du CDC Nettoyage v2) : toutes les
+        sessions de la personne sont révoquées immédiatement. Jamais le dernier `super_admin` d'un compte actif. Motif
         tracé et publié dans `identity.role.revoked`. Renvoie la fiche.
 
         Erreurs : `IDENTITY_ACCOUNT_ADMIN_INVALID` (400, motif), `IDENTITY_ROLE_FORBIDDEN` (403),
         `IDENTITY_USER_NOT_FOUND`, `IDENTITY_ROLE_ASSIGNMENT_NOT_FOUND` (404), `IDENTITY_ROLE_ALREADY_REVOKED`,
         `IDENTITY_LAST_SUPER_ADMIN` (422).
 
-        Rôles : `cleaning_admin`, `recovery_admin` (rôles de leur métier seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `super_admin` seulement (CDC Nettoyage v2, partie 2, R-RB-02 et 13.3 : les rôles s'assignent par le
+        super administrateur ; un agent validé reçoit son rôle par le service cleaning, `GrantRole`) ; double
+        authentification de moins de 10 minutes.
       x-ksp-grpc: ksp.identity.v1.AccountAdminService/RevokeAccountRole
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
-        - cleaning_admin
-        - recovery_admin
         - super_admin
       x-ksp-mfa-max-age: 600
       security:
@@ -2348,9 +2666,10 @@ paths:
       summary: Catalogue des rôles
       description: |
         Rôles enregistrés par les services, avec ceux que l'appelant peut attribuer (`grantable`) : tous pour
-        `super_admin` ; ceux de son métier, sauf le sien, pour un administrateur de métier.
+        `super_admin` ; aucun pour un administrateur de métier (l'attribution est réservée au super administrateur,
+        R-RB-02 du CDC Nettoyage v2).
 
-        Rôles : `cleaning_admin`, `recovery_admin` (rôles de leur métier seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+        Rôles : `cleaning_admin`, `recovery_admin` (lecture de leur équipe seulement, revérifié par identity), `super_admin` ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.identity.v1.AccountAdminService/ListAssignableRoles
       x-ksp-access: authenticated
       x-ksp-rate-limit: authenticated
@@ -2375,6 +2694,331 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+    post:
+      tags:
+        - Rôles et permissions (back-office)
+      operationId: createRole
+      summary: Créer un rôle
+      description: |
+        R-RB-02. Nouveau rôle (code immuable, nom, description) avec ses permissions cochées parmi celles déclarées par
+        les services ; actif, portée globale, accès au back-office et double authentification exigés pour ses
+        titulaires. `sensitive` : son retrait révoquera immédiatement les sessions (R-RB-05). Motif tracé dans le
+        journal d'audit ; événement `identity.role.created`. Renvoie la fiche du rôle.
+
+        Erreurs : `IDENTITY_ROLE_INVALID` (400, `details.field`), `IDENTITY_PERMISSION_NOT_FOUND` (404,
+        `details.codes`), `IDENTITY_ROLE_ALREADY_EXISTS` (409).
+
+        Rôles : `super_admin` ; double authentification de moins de 10 minutes.
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/CreateRole
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 600
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoleRequest'
+            example:
+              code: cleaning_planner
+              name: Planificateur Nettoyage
+              description: Planifie les visites et les séances, sans toucher au catalogue.
+              permissions:
+                - cleaning.request.read
+                - cleaning.planning.manage
+              sensitive: false
+              reason: Nouvelle organisation du planning.
+      responses:
+        '201':
+          description: Rôle créé
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRole'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/identity/permissions:
+    get:
+      tags:
+        - Rôles et permissions (back-office)
+      operationId: listPermissions
+      summary: Permissions déclarées par les services
+      description: |
+        R-RB-01. Permissions fixées par le code et déclarées par chaque service à chaque déploiement, triées par
+        service, module puis code : ce sont les cases à cocher d'un rôle. Une permission retirée (plus déclarée
+        par son service) n'apparaît qu'avec `includeRetired=true`.
+
+        Rôles : `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/ListPermissions
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: service
+          in: query
+          required: false
+          description: Service déclarant, par exemple `cleaning`.
+          schema:
+            type: string
+            pattern: ^[a-z]+$
+        - name: includeRetired
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/identity/roles/{code}:
+    get:
+      tags:
+        - Rôles et permissions (back-office)
+      operationId: getRole
+      summary: Fiche d’un rôle
+      description: |
+        Permissions cochées, nombre d'attributions actives, auteur et date des changements.
+
+        Erreurs : `IDENTITY_ROLE_NOT_FOUND` (404).
+
+        Rôles : `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/GetRole
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: Code du rôle.
+          schema:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{2,63}$
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRole'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    patch:
+      tags:
+        - Rôles et permissions (back-office)
+      operationId: updateRole
+      summary: Modifier un rôle
+      description: |
+        R-RB-02. Nom, description, sensibilité et permissions (`permissions` : liste complète qui remplace la
+        précédente ; absente : inchangée). Rôle livré par défaut compris, jamais `super_admin`
+        (`IDENTITY_ROLE_NOT_EDITABLE`). Effet au renouvellement des jetons (15 minutes au plus, R-RB-05). Motif
+        tracé avec l'avant et l'après (R-RB-06) ; événement `identity.role.updated`.
+
+        Erreurs : `IDENTITY_ROLE_INVALID` (400), `IDENTITY_ROLE_NOT_FOUND`, `IDENTITY_PERMISSION_NOT_FOUND` (404),
+        `IDENTITY_ROLE_NOT_EDITABLE`, `IDENTITY_ROLE_INACTIVE` (422).
+
+        Rôles : `super_admin` ; double authentification de moins de 10 minutes.
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/UpdateRole
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 600
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: Code du rôle.
+          schema:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{2,63}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoleRequest'
+            example:
+              permissions:
+                - cleaning.request.read
+                - cleaning.request.process
+                - cleaning.planning.manage
+              reason: Le planificateur traite aussi les demandes.
+      responses:
+        '200':
+          description: Rôle modifié
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRole'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/identity/roles/{code}/deactivate:
+    post:
+      tags:
+        - Rôles et permissions (back-office)
+      operationId: deactivateRole
+      summary: Désactiver un rôle
+      description: |
+        R-RB-02. Un rôle ne se supprime jamais. Il se désactive seulement s'il n'a plus d'attribution active :
+        réaffecter d'abord ses titulaires (`IDENTITY_ROLE_IN_USE`, `details.activeAssignments`). Jamais
+        `super_admin`. Motif tracé ; événement `identity.role.deactivated`.
+
+        Erreurs : `IDENTITY_ACCOUNT_ADMIN_INVALID` (400, motif), `IDENTITY_ROLE_NOT_FOUND` (404),
+        `IDENTITY_ROLE_NOT_EDITABLE`, `IDENTITY_ROLE_IN_USE`, `IDENTITY_ROLE_INACTIVE` (422).
+
+        Rôles : `super_admin` ; double authentification de moins de 10 minutes.
+      x-ksp-grpc: ksp.identity.v1.AccountAdminService/DeactivateRole
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - super_admin
+      x-ksp-mfa-max-age: 600
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: Code du rôle.
+          schema:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{2,63}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountAdminReasonRequest'
+            example:
+              reason: Rôle remplacé par cleaning_supervisor.
+      responses:
+        '200':
+          description: Rôle désactivé
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRole'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -8991,6 +9635,147 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/billing/invoices/{id}/pay-mobile-money:
+    post:
+      tags:
+        - Facturation
+      operationId: payMyInvoiceByMobileMoney
+      summary: Payer une facture par Mobile Money
+      description: |
+        R-PE-04 (CDC Nettoyage v2). Reste dû d'une de mes factures payé par Mobile Money : billing demande à payment
+        un paiement direct du montant exact, qui **crédite d'abord le portefeuille** du titulaire ; billing débite
+        ensuite la facture (un seul chemin pour l'argent : pas de double paiement possible). Membre `org_admin` ou
+        `org_member` de l'organisation active, sinon le client. Suivre le paiement par
+        `GET /api/v1/payment/payments/{id}`.
+
+        Erreurs : `BILLING_VALIDATION_FAILED` (400), `AUTH_FORBIDDEN` (403, membre lecteur),
+        `BILLING_INVOICE_NOT_FOUND` (404), `BILLING_INVALID_TRANSITION` (422, facture déjà payée ou annulée),
+        `PAYMENT_PROVIDER_UNAVAILABLE` (503).
+      x-ksp-grpc: ksp.billing.v1.BillingService/PayMyInvoiceByMobileMoney
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: payment_create
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Paiement créé (ou déjà créé avec cette clé)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceMobileMoneyPayment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/billing/preferences:
+    get:
+      tags:
+        - Facturation
+      operationId: getMyBillingPreferences
+      summary: Préférences de facturation
+      description: |
+        R-PE-04. Préférences de l'organisation active : prélèvement automatique de la facture mensuelle à
+        l'échéance depuis son portefeuille. Tout membre.
+      x-ksp-grpc: ksp.billing.v1.BillingService/GetMyBillingPreferences
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingPreferences'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    patch:
+      tags:
+        - Facturation
+      operationId: updateMyBillingPreferences
+      summary: Modifier les préférences de facturation
+      description: |
+        R-PE-04. Active ou désactive le prélèvement automatique à l'échéance (si le solde suffit ; sinon la
+        facture reste à payer). Administrateur de l'organisation active (`org_admin`).
+
+        Erreurs : `BILLING_VALIDATION_FAILED` (400), `BILLING_NOT_ORGANIZATION_ADMIN` (403).
+      x-ksp-grpc: ksp.billing.v1.BillingService/UpdateMyBillingPreferences
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBillingPreferencesRequest'
+            example:
+              autoDebit: true
+      responses:
+        '200':
+          description: Préférences enregistrées
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingPreferences'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/admin/billing/invoices:
     get:
       tags:
@@ -9135,12 +9920,22 @@ paths:
       tags:
         - Facturation (back-office)
       operationId: recordInvoicePayment
-      summary: Enregistrer un paiement manuel
+      summary: Enregistrer un paiement manuel (retiré en v2)
+      deprecated: true
       description: |
-        Paiement reçu hors ligne (espèces, virement, Mobile Money hors ligne). Paiement partiel accepté, jamais
-        au-delà du reste dû ; la facture devient « payée » au total, ce qui peut débloquer un contrat suspendu.
+        **Retiré en v2 (CDC Nettoyage v2, R-PE-04 et R-WL-05 : un seul chemin pour l'argent).** Toute facture v2
+        (champ `kind` renseigné, donc toute facture émise après la bascule, sans reprise des factures v1) est
+        refusée : `BILLING_PAYMENT_INVALID` (400, `details.reason` = `wallet_path_required`). Un virement reçu
+        pour une facture se saisit au portefeuille de l'organisation
+        (`POST /api/v1/admin/wallet/holders/organization/{id}/credits`, `kind` = `bank_transfer_top_up`, `forObject` = la facture),
+        validé par une deuxième personne ; billing débite alors aussitôt la facture. Route gardée pour la
+        compatibilité du contrat ; son retrait se fera dans une version ultérieure (à valider).
 
-        Rôles : `finance_officer`, `cleaning_supervisor`, `cleaning_admin`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+        v1 : paiement reçu hors ligne (espèces, virement, Mobile Money hors ligne). Paiement partiel accepté,
+        jamais au-delà du reste dû ; la facture devient « payée » au total, ce qui peut débloquer un contrat
+        suspendu.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
 
         Idempotent avec l'en-tête `Idempotency-Key` (facultatif) : un second envoi avec la même clé pour la même
         facture renvoie la facture telle quelle, sans second paiement (même si elle est payée depuis). Sans clé,
@@ -9154,8 +9949,6 @@ paths:
       x-ksp-rate-limit: authenticated
       x-ksp-roles:
         - finance_officer
-        - cleaning_supervisor
-        - cleaning_admin
         - super_admin
       x-ksp-mfa-max-age: 43200
       security:
@@ -9197,6 +9990,145 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/billing/invoices/{id}/credit-notes:
+    post:
+      tags:
+        - Facturation (back-office)
+      operationId: issueAdminCreditNote
+      summary: Émettre un avoir
+      description: |
+        R-PE-07 (CDC Nettoyage v2). Une facture émise ne se modifie jamais : une erreur se corrige par un avoir
+        (lignes positives, motif visible du client). Le total des avoirs d'une facture ne dépasse jamais son total
+        (`BILLING_CREDIT_NOTE_EXCEEDS_INVOICE`). L'avoir réduit d'abord le reste dû ; la part au-delà (facture déjà
+        payée) est créditée au portefeuille du titulaire (à valider par le comptable). Événement
+        `billing.credit_note.issued`.
+
+        Erreurs : `BILLING_VALIDATION_FAILED` (400), `BILLING_INVOICE_NOT_FOUND` (404),
+        `BILLING_IDEMPOTENCY_KEY_REUSED` (409), `BILLING_CREDIT_NOTE_EXCEEDS_INVOICE`, `BILLING_INVALID_TRANSITION`
+        (422, facture annulée).
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification de moins de 10 minutes.
+      x-ksp-grpc: ksp.billing.v1.BillingAdminService/IssueAdminCreditNote
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 600
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueCreditNoteRequest'
+            example:
+              lines:
+                - label: Séance du 12 novembre facturée deux fois
+                  amount:
+                    amount: 32040
+                    currency: XOF
+              reason: Doublon sur la facture de novembre.
+      responses:
+        '201':
+          description: Avoir émis (ou déjà émis avec cette clé)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditNoteIssued'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/billing/credit-notes:
+    get:
+      tags:
+        - Facturation (back-office)
+      operationId: listCreditNotes
+      summary: Avoirs
+      description: |
+        R-PE-07. Avoirs émis, les plus récents d'abord ; filtres facultatifs.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.billing.v1.BillingAdminService/ListCreditNotes
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: invoiceId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: customerId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: organizationId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditNoteList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -10378,6 +11310,115 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/wallet/me/withdrawals:
+    post:
+      tags:
+        - Portefeuille
+      operationId: requestWithdrawal
+      summary: Demander un retrait vers Mobile Money
+      description: |
+        R-WL-04 (CDC Nettoyage v2). Retrait du portefeuille prépayé vers un compte Mobile Money, sur demande du
+        titulaire (contexte personnel) ou d'un administrateur de l'organisation active. Le montant est retenu
+        aussitôt (jamais au-delà du solde disponible, à valider) ; la finance traite la demande, une deuxième
+        personne la valide, puis payment fait le virement. Idempotent par clé.
+
+        Erreurs : `WALLET_VALIDATION_FAILED` (400), `AUTH_FORBIDDEN` (403, membre qui n'est pas administrateur),
+        `WALLET_IDEMPOTENCY_KEY_REUSED` (409), `WALLET_INSUFFICIENT_FUNDS` (422, `details.missing`).
+      x-ksp-grpc: ksp.wallet.v1.WalletAccountService/RequestWithdrawal
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: payment_create
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestWithdrawalRequest'
+            example:
+              amount:
+                amount: 25000
+                currency: XOF
+              beneficiary:
+                phone: '+2290197000045'
+                operator: mtn
+                name: Afi Dossou
+      responses:
+        '201':
+          description: Demande enregistrée, montant retenu (ou déjà demandée avec cette clé)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+    get:
+      tags:
+        - Portefeuille
+      operationId: listMyWithdrawals
+      summary: Mes retraits
+      description: |
+        Retraits du titulaire connecté (ou de son organisation active), les plus récents d'abord.
+      x-ksp-grpc: ksp.wallet.v1.WalletAccountService/ListMyWithdrawals
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/WithdrawalStatus'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/admin/wallet/holders/{type}/{id}:
     get:
       tags:
@@ -10488,6 +11529,10 @@ paths:
         - `top_up` : recharge Mobile Money reçue mais non créditée — écart de montant (`amount_mismatch`) traité
           par la finance : `paymentId` obligatoire, montant réellement reçu. Une recharge n'est créditée qu'une
           fois, automatiquement ou ici (`WALLET_IDEMPOTENCY_KEY_REUSED`, 409, si elle l'est déjà).
+        - `cash_top_up` (v2, R-WL-02) : recharge en espèces au guichet KSP ; `bank_transfer_top_up` (v2, R-PE-04) :
+          virement reçu d'une organisation. `receiptReference` obligatoire ; **toujours** soumis à la validation
+          d'une deuxième personne (`pendingRequest`), quel que soit le montant. `forObject` facultatif : objet à
+          régler aussitôt (facture), débité par son service dès le crédit.
 
         Idempotent : la même clé (ou, pour `top_up`, le même paiement) renvoie le même crédit (`created: false`).
 
@@ -10664,6 +11709,335 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/credit-requests/{id}/reject:
+    post:
+      tags:
+        - Portefeuille (back-office)
+      operationId: rejectManualCredit
+      summary: Rejeter une demande de crédit manuel
+      description: |
+        Rejet motivé d'une demande de crédit en attente (recharge en espèces introuvable en caisse, virement non
+        reçu…) : rien n'est crédité. L'auteur peut rejeter sa propre demande pour l'annuler (à valider).
+
+        Erreurs : `WALLET_VALIDATION_FAILED` (400), `WALLET_CREDIT_REQUEST_NOT_FOUND` (404),
+        `WALLET_CREDIT_REQUEST_NOT_PENDING` (422).
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification de moins de 10 minutes.
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/RejectManualCredit
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 600
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la demande de crédit (UUID).
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalletReasonRequest'
+            example:
+              reason: Reçu de caisse introuvable
+      responses:
+        '200':
+          description: Demande rejetée
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualCreditRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/withdrawals:
+    get:
+      tags:
+        - Portefeuille (back-office)
+      operationId: listWithdrawals
+      summary: Demandes de retrait
+      description: |
+        R-WL-04. Demandes de retrait vers Mobile Money, les plus anciennes d'abord ; filtres facultatifs.
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/ListWithdrawals
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/WithdrawalStatus'
+        - name: holderType
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/WalletHolderType'
+        - name: holderId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/withdrawals/{id}/process:
+    post:
+      tags:
+        - Portefeuille (back-office)
+      operationId: processWithdrawal
+      summary: Traiter une demande de retrait
+      description: |
+        R-WL-04, première personne de la finance : vérifications faites (titulaire, numéro), la demande attend la
+        validation d'une deuxième personne (`requested` → `awaiting_approval`).
+
+        Erreurs : `WALLET_VALIDATION_FAILED` (400), `WALLET_WITHDRAWAL_NOT_FOUND` (404),
+        `WALLET_WITHDRAWAL_INVALID_TRANSITION` (422).
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification de moins de 10 minutes.
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/ProcessWithdrawal
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 600
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant du retrait (UUID).
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProcessWithdrawalRequest'
+            example:
+              note: Titulaire joint par téléphone, numéro confirmé.
+      responses:
+        '200':
+          description: Demande traitée
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Withdrawal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/withdrawals/{id}/approve:
+    post:
+      tags:
+        - Portefeuille (back-office)
+      operationId: approveWithdrawal
+      summary: Valider un retrait (deuxième personne)
+      description: |
+        R-WL-04, deuxième personne de la finance, jamais celle qui a traité la demande
+        (`WALLET_APPROVAL_BY_PROCESSOR`) : le virement est transmis à payment (`awaiting_approval` → `submitted`),
+        puis soldé à sa confirmation (`completed`) ou rendu au portefeuille en cas d'échec (`failed`). Rejouable.
+
+        Erreurs : `WALLET_APPROVAL_BY_PROCESSOR` (403), `WALLET_WITHDRAWAL_NOT_FOUND` (404),
+        `WALLET_WITHDRAWAL_INVALID_TRANSITION` (422).
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification de moins de 10 minutes.
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/ApproveWithdrawal
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 600
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant du retrait (UUID).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Retrait validé et transmis
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Withdrawal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/wallet/withdrawals/{id}/reject:
+    post:
+      tags:
+        - Portefeuille (back-office)
+      operationId: rejectWithdrawal
+      summary: Refuser un retrait
+      description: |
+        R-WL-04. Refus motivé d'une demande `requested` ou `awaiting_approval` : le montant retenu est rendu au
+        portefeuille (`rejected`) et le client est prévenu du motif.
+
+        Erreurs : `WALLET_VALIDATION_FAILED` (400), `WALLET_WITHDRAWAL_NOT_FOUND` (404),
+        `WALLET_WITHDRAWAL_INVALID_TRANSITION` (422).
+
+        Rôles : `finance_officer`, `super_admin` ; double authentification de moins de 10 minutes.
+      x-ksp-grpc: ksp.wallet.v1.WalletAdminService/RejectWithdrawal
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+      x-ksp-mfa-max-age: 600
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant du retrait (UUID).
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalletReasonRequest'
+            example:
+              reason: Numéro Mobile Money au nom d’un tiers
+      responses:
+        '200':
+          description: Retrait refusé, montant rendu
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Withdrawal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -13257,7 +14631,10 @@ components:
     OrgRole:
       type: string
       enum: [org_admin, org_member, org_viewer]
-      description: Rôle dans l'organisation ; seul `org_admin` (le créateur) est attribué aujourd'hui.
+      description: |
+        Rôle dans l'organisation (R-CP-03) : `org_admin` (tout, dont les membres), `org_member` (demandes et suivi),
+        `org_viewer` (consultation et factures). Le créateur est `org_admin` ; les autres rôles sont donnés à
+        l'invitation.
 
     Organization:
       type: object
@@ -13311,6 +14688,20 @@ components:
           type: [string, 'null']
           format: date-time
           description: Date de la validation ou du refus.
+        commune:
+          type: [string, 'null']
+          description: v2 — commune du siège (clé du référentiel de geo) ; null pour une organisation créée avant.
+        phone:
+          type: [string, 'null']
+          description: v2 — téléphone de l'organisation (E.164).
+        representativeName:
+          type: [string, 'null']
+          description: v2 — nom du représentant légal.
+        sector:
+          type: [string, 'null']
+        logoFileId:
+          type: [string, 'null']
+          format: uuid
 
     OrganizationMembership:
       type: object
@@ -13360,6 +14751,27 @@ components:
           minLength: 1
           maxLength: 50
           description: Facultatif, par exemple `RB/COT/19 B 12345`.
+        commune:
+          type: string
+          pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+          description: Obligatoire en v2 (partie 3 du CDC Nettoyage v2) ; commune du siège, clé du référentiel de geo.
+        phone:
+          type: string
+          pattern: ^\+[1-9][0-9]{7,14}$
+          description: Obligatoire en v2 ; téléphone de l'organisation (E.164).
+        representativeName:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Obligatoire en v2 ; nom du représentant légal.
+        sector:
+          type: string
+          minLength: 1
+          maxLength: 100
+        logoFileId:
+          type: string
+          format: uuid
+          description: Logo déposé par le service file.
 
     OrganizationDecisionRequest:
       type: object
@@ -13593,6 +15005,15 @@ components:
           minLength: 1
           maxLength: 500
           description: Motif tracé dans le journal d'audit d'identity (une ligne).
+        zoneKeys:
+          type: array
+          minItems: 1
+          maxItems: 77
+          uniqueItems: true
+          description: Facultatif (R-RB-03 du CDC Nettoyage v2) — limite l'attribution à ces communes (clés du référentiel de geo).
+          items:
+            type: string
+            pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
 
     RevokeAccountRoleRequest:
       type: object
@@ -13621,7 +15042,7 @@ components:
 
     RoleScopeType:
       type: string
-      enum: [global, domain, org, personal]
+      enum: [global, domain, org, personal, zone]
 
     AdminAccount:
       type: object
@@ -13743,6 +15164,11 @@ components:
         revocable:
           type: boolean
           description: L'appelant peut retirer ce rôle.
+        zoneKeys:
+          type: array
+          description: Portée `zone` (R-RB-03) ; absent pour une autre portée.
+          items:
+            type: string
 
     AdminAccountAuditEntry:
       type: object
@@ -13839,6 +15265,18 @@ components:
               grantable:
                 type: boolean
                 description: L'appelant peut attribuer ce rôle.
+              name:
+                type: string
+                description: v2 — nom affiché.
+              active:
+                type: boolean
+                description: v2 — false pour un rôle désactivé (R-RB-02), jamais attribuable.
+              sensitive:
+                type: boolean
+                description: v2 — son retrait révoque immédiatement les sessions (R-RB-05).
+              origin:
+                enum: [default, custom]
+                description: v2 — livré par un service, ou créé par le super administrateur.
 
     Jwks:
       type: object
@@ -17339,6 +18777,20 @@ components:
           $ref: '#/components/schemas/Money'
         amount:
           $ref: '#/components/schemas/Money'
+        kind:
+          description: v2 — nature de la ligne ; absent pour une ligne v1.
+          enum: [session, missed_session, late_cancellation, visit_fee, visit_fee_deduction, adjustment]
+        serviceDate:
+          type: string
+          format: date
+          description: v2 — date de la séance (heure du Bénin).
+        programNumber:
+          type: string
+          description: v2 — programme (PN-…), regroupement de la facture mensuelle (R-PE-01).
+        placeLabel:
+          type: string
+          description: v2 — nom du lieu donné par le client (jamais l'adresse).
+
     InvoicePayment:
       type: object
       additionalProperties: false
@@ -17918,6 +19370,10 @@ components:
             - string
             - 'null'
           format: date-time
+        withdrawalsInProgress:
+          $ref: '#/components/schemas/Money'
+          description: v2 — retraits vers Mobile Money demandés, pas encore terminés (déjà déduits du solde, R-WL-04).
+
     WalletObjectReference:
       type: object
       additionalProperties: false
@@ -18215,10 +19671,15 @@ components:
         - reason
       properties:
         kind:
-          description: '`refund` (remboursement) ou `top_up` (recharge reçue mais non créditée, `paymentId` obligatoire).'
+          description: |
+            `refund` (remboursement) ou `top_up` (recharge reçue mais non créditée, `paymentId` obligatoire) ; v2 :
+            `cash_top_up` (espèces au guichet, R-WL-02) ou `bank_transfer_top_up` (virement d'une organisation,
+            R-PE-04), `receiptReference` obligatoire et double validation toujours exigée.
           enum:
             - refund
             - top_up
+            - cash_top_up
+            - bank_transfer_top_up
         amount:
           $ref: '#/components/schemas/Money'
         reason:
@@ -18230,6 +19691,14 @@ components:
           type: string
           format: uuid
           description: '`top_up` seulement : paiement Mobile Money reçu (écart de montant traité).'
+        receiptReference:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: v2 — numéro du reçu de caisse (espèces) ou référence du virement.
+        forObject:
+          $ref: '#/components/schemas/WalletObjectRef'
+
     WalletCredit:
       type: object
       additionalProperties: false
@@ -18249,6 +19718,8 @@ components:
           enum:
             - refund
             - top_up
+            - cash_top_up
+            - bank_transfer_top_up
         amount:
           $ref: '#/components/schemas/Money'
         description:
@@ -18281,6 +19752,7 @@ components:
       enum:
         - pending_approval
         - approved
+        - rejected
     ManualCreditRequest:
       type: object
       additionalProperties: false
@@ -18317,6 +19789,8 @@ components:
           enum:
             - refund
             - top_up
+            - cash_top_up
+            - bank_transfer_top_up
         amount:
           $ref: '#/components/schemas/Money'
         reason:
@@ -18349,6 +19823,22 @@ components:
             - string
             - 'null'
           format: uuid
+        receiptReference:
+          type: [string, 'null']
+          description: v2 — reçu de caisse ou référence du virement.
+        forObject:
+          oneOf:
+            - $ref: '#/components/schemas/WalletObjectRef'
+            - type: 'null'
+        rejectedBy:
+          type: [string, 'null']
+          format: uuid
+        rejectedAt:
+          type: [string, 'null']
+          format: date-time
+        rejectionReason:
+          type: [string, 'null']
+
     ManualCreditRequestList:
       type: object
       additionalProperties: false
@@ -18384,6 +19874,8 @@ components:
           enum:
             - refund
             - top_up
+            - cash_top_up
+            - bank_transfer_top_up
         amount:
           $ref: '#/components/schemas/Money'
         description:
@@ -18509,6 +20001,30 @@ components:
           oneOf:
             - $ref: '#/components/schemas/InvoiceOrganization'
             - type: 'null'
+        kind:
+          description: v2 — facture de séance, reçu des frais de visite ou facture mensuelle ; absent pour une facture v1.
+          enum: [session, visit_fee, monthly]
+        requestNumber:
+          type: [string, 'null']
+          description: v2 — dossier (DN-…).
+        programNumber:
+          type: [string, 'null']
+          description: v2 — programme (PN-…).
+        sessionRank:
+          type: [string, 'null']
+          description: v2 — rang de la séance, par exemple `3/15` (R-PP-06).
+        placeLabel:
+          type: [string, 'null']
+          description: v2 — nom du lieu donné par le client.
+        serviceDate:
+          type: [string, 'null']
+          format: date
+        creditNotes:
+          type: array
+          description: v2 — avoirs émis sur cette facture (R-PE-07).
+          items:
+            $ref: '#/components/schemas/CreditNote'
+
     InvoiceOrganization:
       type: object
       additionalProperties: false
@@ -18570,6 +20086,16 @@ components:
             - string
             - 'null'
           format: date-time
+        reminderOffsetDays:
+          type: array
+          description: v2 (R-PE-05) — relances, en jours par rapport à l'échéance (négatif = avant) ; -3, 0, 3, 7 par défaut.
+          uniqueItems: true
+          maxItems: 10
+          items:
+            type: integer
+            minimum: -30
+            maximum: 60
+
     RecordInvoicePaymentRequest:
       type: object
       additionalProperties: false
@@ -18597,6 +20123,16 @@ components:
           type: integer
           minimum: 1
           maximum: 90
+        reminderOffsetDays:
+          type: array
+          description: v2 (R-PE-05) — facultatif ; absent = inchangé.
+          uniqueItems: true
+          maxItems: 10
+          items:
+            type: integer
+            minimum: -30
+            maximum: 60
+
     CleaningZone:
       type: object
       additionalProperties: false
@@ -20167,3 +21703,607 @@ components:
           oneOf:
             - $ref: '#/components/schemas/DocumentDownloadUrl'
             - type: 'null'
+
+    PermissionList:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, description, service, module, retired]
+            properties:
+              code:
+                type: string
+                pattern: ^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$
+              description:
+                type: string
+              service:
+                type: string
+              module:
+                type: string
+                description: Groupe de cases au back-office (deuxième segment du code).
+              retired:
+                type: boolean
+                description: Plus déclarée par son service ; n'entre plus dans les jetons.
+
+    ManagedRole:
+      type: object
+      additionalProperties: false
+      description: Rôle géré au back-office (R-RB-02 du CDC Nettoyage v2).
+      required:
+        [
+          code,
+          name,
+          description,
+          service,
+          origin,
+          scopeType,
+          permissions,
+          sensitive,
+          backofficeAccess,
+          requiresMfa,
+          active,
+          editable,
+          activeAssignments,
+          createdAt,
+          createdBy,
+          updatedAt,
+          updatedBy,
+          deactivatedAt,
+          deactivatedBy,
+        ]
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{2,63}$
+        name:
+          type: string
+        description:
+          type: string
+        service:
+          type: string
+          description: Service qui l'a livré par défaut ; `identity` pour un rôle créé au back-office.
+        origin:
+          enum: [default, custom]
+        scopeType:
+          $ref: '#/components/schemas/RoleScopeType'
+        permissions:
+          type: array
+          items:
+            type: string
+        sensitive:
+          type: boolean
+        backofficeAccess:
+          type: boolean
+        requiresMfa:
+          type: boolean
+        active:
+          type: boolean
+        editable:
+          type: boolean
+          description: false pour `super_admin` (R-RB-04).
+        activeAssignments:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: [string, 'null']
+          format: uuid
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedBy:
+          type: [string, 'null']
+          format: uuid
+        deactivatedAt:
+          type: [string, 'null']
+          format: date-time
+        deactivatedBy:
+          type: [string, 'null']
+          format: uuid
+
+    CreateRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [code, name, permissions, reason]
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{2,63}$
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        description:
+          type: string
+          maxLength: 500
+        permissions:
+          type: array
+          maxItems: 500
+          uniqueItems: true
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$
+        sensitive:
+          type: boolean
+          default: false
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Motif tracé dans le journal d'audit d'identity.
+
+    UpdateRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        description:
+          type: string
+          maxLength: 500
+        sensitive:
+          type: boolean
+        permissions:
+          type: array
+          description: Liste complète qui remplace la précédente ; absente = inchangée.
+          maxItems: 500
+          uniqueItems: true
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+
+    OrganizationMemberView:
+      type: object
+      additionalProperties: false
+      description: Membre vu par les membres de son organisation (numéro masqué).
+      required: [userId, role, firstName, lastName, phoneMasked, joinedAt]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        role:
+          $ref: '#/components/schemas/OrgRole'
+        firstName:
+          type: [string, 'null']
+        lastName:
+          type: [string, 'null']
+        phoneMasked:
+          type: [string, 'null']
+        joinedAt:
+          type: string
+          format: date-time
+
+    OrganizationInvitation:
+      type: object
+      additionalProperties: false
+      required:
+        [id, organizationId, organizationName, role, phoneMasked, status, invitedBy, invitedAt, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        role:
+          $ref: '#/components/schemas/OrgRole'
+        phoneMasked:
+          type: string
+        status:
+          enum: [pending, accepted, declined, expired]
+        invitedBy:
+          type: string
+          format: uuid
+        invitedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    OrganizationMemberList:
+      type: object
+      additionalProperties: false
+      required: [data, pendingInvitations]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrganizationMemberView'
+        pendingInvitations:
+          type: array
+          description: Vide pour un membre qui n'est pas administrateur.
+          items:
+            $ref: '#/components/schemas/OrganizationInvitation'
+
+    OrganizationInvitationList:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrganizationInvitation'
+
+    InviteOrganizationMemberRequest:
+      type: object
+      additionalProperties: false
+      required: [phone, role]
+      properties:
+        phone:
+          type: string
+          minLength: 8
+          maxLength: 20
+          description: Numéro E.164 de la personne invitée (espaces tolérés).
+        role:
+          $ref: '#/components/schemas/OrgRole'
+
+    ChangeOrganizationMemberRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        role:
+          $ref: '#/components/schemas/OrgRole'
+
+    RespondToOrganizationInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [accept]
+      properties:
+        accept:
+          type: boolean
+
+    OrganizationInvitationResponse:
+      type: object
+      additionalProperties: false
+      required: [invitation, membership]
+      properties:
+        invitation:
+          $ref: '#/components/schemas/OrganizationInvitation'
+        membership:
+          description: Appartenance créée (invitation acceptée) ; null sinon.
+          oneOf:
+            - $ref: '#/components/schemas/OrganizationMembership'
+            - type: 'null'
+
+    WalletObjectRef:
+      type: object
+      additionalProperties: false
+      description: Objet d'un service à régler aussitôt par le portefeuille (v2, R-WL-05, R-PE-04).
+      required: [objectType, objectId]
+      properties:
+        service:
+          type: string
+          pattern: ^[a-z]+$
+          description: Service de l'objet (par exemple `billing`) ; renseigné par wallet dans les réponses.
+        objectType:
+          type: string
+          pattern: ^[a-z0-9_]{3,50}$
+        objectId:
+          type: string
+          format: uuid
+        part:
+          type: [string, 'null']
+
+    WalletReasonRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+
+    WithdrawalStatus:
+      enum: [requested, awaiting_approval, submitted, completed, failed, rejected]
+      description: |
+        `requested` (montant retenu, à traiter), `awaiting_approval` (traité, attend une deuxième personne),
+        `submitted` (transmis à payment), `completed`, `failed` (montant rendu), `rejected` (montant rendu).
+
+    RequestWithdrawalRequest:
+      type: object
+      additionalProperties: false
+      required: [amount, beneficiary]
+      properties:
+        amount:
+          $ref: '#/components/schemas/Money'
+        beneficiary:
+          type: object
+          additionalProperties: false
+          required: [phone, operator, name]
+          properties:
+            phone:
+              type: string
+              pattern: ^\+[1-9][0-9]{7,14}$
+            operator:
+              enum: [mtn, moov, celtiis]
+            name:
+              type: string
+              minLength: 1
+              maxLength: 120
+
+    Withdrawal:
+      type: object
+      additionalProperties: false
+      description: Retrait du portefeuille prépayé vers Mobile Money (R-WL-04).
+      required:
+        [
+          id,
+          holder,
+          amount,
+          status,
+          beneficiaryOperator,
+          beneficiaryPhoneMasked,
+          requestedBy,
+          requestedAt,
+          processedBy,
+          processedAt,
+          approvedBy,
+          approvedAt,
+          rejectedAt,
+          rejectionReason,
+          paymentPayoutId,
+          completedAt,
+          failedAt,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        holder:
+          $ref: '#/components/schemas/WalletHolder'
+        amount:
+          $ref: '#/components/schemas/Money'
+        status:
+          $ref: '#/components/schemas/WithdrawalStatus'
+        beneficiaryOperator:
+          enum: [mtn, moov, celtiis]
+        beneficiaryPhoneMasked:
+          type: string
+        requestedBy:
+          type: string
+          format: uuid
+        requestedAt:
+          type: string
+          format: date-time
+        processedBy:
+          type: [string, 'null']
+          format: uuid
+        processedAt:
+          type: [string, 'null']
+          format: date-time
+        processingNote:
+          type: [string, 'null']
+          description: Back-office seulement.
+        approvedBy:
+          type: [string, 'null']
+          format: uuid
+        approvedAt:
+          type: [string, 'null']
+          format: date-time
+        rejectedAt:
+          type: [string, 'null']
+          format: date-time
+        rejectionReason:
+          type: [string, 'null']
+        paymentPayoutId:
+          type: [string, 'null']
+          format: uuid
+        completedAt:
+          type: [string, 'null']
+          format: date-time
+        failedAt:
+          type: [string, 'null']
+          format: date-time
+
+    WithdrawalList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Withdrawal'
+        nextCursor:
+          type: [string, 'null']
+
+    WithdrawalCreated:
+      type: object
+      additionalProperties: false
+      required: [withdrawal, wallet, created]
+      properties:
+        withdrawal:
+          $ref: '#/components/schemas/Withdrawal'
+        wallet:
+          $ref: '#/components/schemas/PrepaidWallet'
+        created:
+          type: boolean
+          description: false si le retrait était déjà demandé avec cette clé.
+
+    ProcessWithdrawalRequest:
+      type: object
+      additionalProperties: false
+      required: [note]
+      properties:
+        note:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Vérifications faites.
+
+    InvoiceMobileMoneyPayment:
+      type: object
+      additionalProperties: false
+      required: [paymentId, amount, checkoutUrl, expiresAt, created]
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+        amount:
+          $ref: '#/components/schemas/Money'
+        checkoutUrl:
+          type: [string, 'null']
+          format: uri
+          description: Page de paiement du prestataire ; null si elle n'a pas pu être créée (réessayer, même clé).
+        expiresAt:
+          type: string
+          format: date-time
+        created:
+          type: boolean
+
+    BillingPreferences:
+      type: object
+      additionalProperties: false
+      required: [organizationId, autoDebit, updatedBy, updatedAt]
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+        autoDebit:
+          type: boolean
+          description: Prélèvement automatique de la facture mensuelle à l'échéance depuis le portefeuille (R-PE-04).
+        updatedBy:
+          type: [string, 'null']
+          format: uuid
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+
+    UpdateBillingPreferencesRequest:
+      type: object
+      additionalProperties: false
+      required: [autoDebit]
+      properties:
+        autoDebit:
+          type: boolean
+
+    IssueCreditNoteRequest:
+      type: object
+      additionalProperties: false
+      required: [lines, reason]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [label, amount]
+            properties:
+              label:
+                type: string
+                minLength: 1
+                maxLength: 200
+              quantity:
+                type: integer
+                minimum: 1
+                default: 1
+              amount:
+                $ref: '#/components/schemas/Money'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Motif visible du client.
+
+    CreditNote:
+      type: object
+      additionalProperties: false
+      description: Avoir sur une facture émise (R-PE-07). Numéro `AV-<année>-<6 chiffres>` (format à valider).
+      required:
+        [
+          id,
+          number,
+          invoiceId,
+          invoiceNumber,
+          customerId,
+          organizationId,
+          lines,
+          total,
+          reason,
+          issuedBy,
+          issuedAt,
+          appliedToBalance,
+          creditedToWallet,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          pattern: ^AV-[0-9]{4}-[0-9]{6}$
+        invoiceId:
+          type: string
+          format: uuid
+        invoiceNumber:
+          type: string
+        customerId:
+          type: string
+          format: uuid
+        organizationId:
+          type: [string, 'null']
+          format: uuid
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoiceLine'
+        total:
+          $ref: '#/components/schemas/Money'
+        reason:
+          type: string
+        issuedBy:
+          type: string
+          description: Compte du back-office, ou `service:cleaning`.
+        issuedAt:
+          type: string
+          format: date-time
+        appliedToBalance:
+          $ref: '#/components/schemas/Money'
+        creditedToWallet:
+          $ref: '#/components/schemas/Money'
+
+    CreditNoteList:
+      type: object
+      additionalProperties: false
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreditNote'
+        nextCursor:
+          type: [string, 'null']
+
+    CreditNoteIssued:
+      type: object
+      additionalProperties: false
+      required: [creditNote, invoice, created]
+      properties:
+        creditNote:
+          $ref: '#/components/schemas/CreditNote'
+        invoice:
+          $ref: '#/components/schemas/Invoice'
+        created:
+          type: boolean

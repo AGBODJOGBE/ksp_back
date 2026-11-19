@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.member.role_changed.v1.schema.json",
+  "title": "identity.member.role_changed",
+  "description": "Rôle d'un membre changé dans son organisation (R-CP-03, CDC Nettoyage v2).",
+  "x-event-type": "identity.member.role_changed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["organizationId", "userId", "previousOrgRole", "orgRole", "changedBy"],
+  "properties": {
+    "organizationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "previousOrgRole": {
+      "enum": ["org_admin", "org_member", "org_viewer"]
+    },
+    "orgRole": {
+      "enum": ["org_admin", "org_member", "org_viewer"]
+    },
+    "changedBy": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

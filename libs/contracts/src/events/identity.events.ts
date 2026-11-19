@@ -3,7 +3,11 @@
  * Source de vérité : contracts/events/identity/*.schema.json. Le test de contrat vérifie
  * que ces types et les schémas restent alignés.
  */
-export type ScopeTypeName = 'global' | 'domain' | 'org' | 'personal';
+/**
+ * `zone` : attribution limitée à des communes (R-RB-03 du CDC Nettoyage v2), dans
+ * identity.role.granted version 2 seulement.
+ */
+export type ScopeTypeName = 'global' | 'domain' | 'org' | 'personal' | 'zone';
 export type OrgRole = 'org_admin' | 'org_member' | 'org_viewer';
 
 export interface IdentityEventPayloads {
@@ -60,12 +64,20 @@ export interface IdentityEventPayloads {
   };
   'identity.member.added': { organizationId: string; userId: string; orgRole: OrgRole };
   'identity.member.removed': { organizationId: string; userId: string; removedBy: string };
+  /**
+   * Versions 1 et 2 (contracts/events/identity/identity.role.granted.v1 et .v2) : la v2 ajoute la
+   * portée `zone` et `zoneKeys` ; tout message v1 est un message v2 valide. Publié en version 2
+   * (enveloppe `version: 2`) dès qu'une attribution peut porter des zones ; un consommateur déclare
+   * `versions: [1, 2]`.
+   */
   'identity.role.granted': {
     assignmentId: string;
     userId: string;
     roleCode: string;
     scopeType: ScopeTypeName;
     scopeId?: string | null;
+    /** v2, portée zone : clés des communes (référentiel de geo) ; absent sinon. */
+    zoneKeys?: string[];
     grantedBy: string;
   };
   'identity.role.revoked': {
@@ -74,6 +86,44 @@ export interface IdentityEventPayloads {
     roleCode: string;
     revokedBy: string;
     reason?: string;
+    /** Rôle sensible (R-RB-05) : toutes les sessions de la personne révoquées immédiatement. */
+    sessionsRevoked?: boolean;
+  };
+  /** Rôle créé au back-office par le super administrateur (R-RB-02). */
+  'identity.role.created': {
+    roleCode: string;
+    name: string;
+    permissions: string[];
+    sensitive: boolean;
+    createdBy: string;
+  };
+  /** Rôle modifié : l'avant et l'après des permissions (R-RB-06). */
+  'identity.role.updated': {
+    roleCode: string;
+    name?: string;
+    sensitive?: boolean;
+    permissionsAdded: string[];
+    permissionsRemoved: string[];
+    updatedBy: string;
+  };
+  /** Rôle désactivé, sans attribution active (R-RB-02). */
+  'identity.role.deactivated': { roleCode: string; deactivatedBy: string; reason: string };
+  /** Rôle d'un membre changé dans son organisation (R-CP-03). */
+  'identity.member.role_changed': {
+    organizationId: string;
+    userId: string;
+    previousOrgRole: OrgRole;
+    orgRole: OrgRole;
+    changedBy: string;
+  };
+  /** Invitation d'un compte existant dans une organisation (R-CP-03) ; jamais de numéro. */
+  'identity.member.invited': {
+    invitationId: string;
+    organizationId: string;
+    inviteeUserId: string;
+    orgRole: OrgRole;
+    invitedBy: string;
+    expiresAt: string;
   };
 }
 

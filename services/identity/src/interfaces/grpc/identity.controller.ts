@@ -39,6 +39,10 @@ export class IdentityGrpcController implements identityV1.IdentityServiceControl
     return { organizations: organizations.map(toOrganizationProfileMessage) };
   }
 
+  listStaffByPermission(): Promise<identityV1.ListStaffByPermissionResponse> {
+    return notImplemented('ListStaffByPermission');
+  }
+
   checkPermission(): Promise<identityV1.CheckPermissionResponse> {
     return notImplemented('CheckPermission');
   }

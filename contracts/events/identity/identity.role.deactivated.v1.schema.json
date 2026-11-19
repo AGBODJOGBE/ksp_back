@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.role.deactivated.v1.schema.json",
+  "title": "identity.role.deactivated",
+  "description": "Rôle désactivé (R-RB-02) : il n'avait plus d'attribution active et ne s'attribue plus.",
+  "x-event-type": "identity.role.deactivated",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["roleCode", "deactivatedBy", "reason"],
+  "properties": {
+    "roleCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,63}$"
+    },
+    "deactivatedBy": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    }
+  }
+}

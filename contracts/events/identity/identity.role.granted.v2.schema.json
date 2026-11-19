@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.role.granted.v2.schema.json",
+  "title": "identity.role.granted",
+  "description": "Un rôle a été attribué (UC-ID-17, UC-ID-19), version 2 (enveloppe version 2) : ajoute la portée zone (R-RB-03 du CDC Nettoyage v2), absente de la v1. Le schéma v1 reste en place, inchangé (règle d'or n° 4) ; une fois la v2 déployée, identity publie chaque écriture en v2 seulement, et chaque consommateur déclare les versions 1 et 2 (option versions de subscribe, ADR-047) avant ce déploiement (messages v1 encore en attente). Tout message v1 est aussi un message v2 valide.",
+  "x-event-type": "identity.role.granted",
+  "x-event-version": 2,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assignmentId", "userId", "roleCode", "scopeType", "grantedBy"],
+  "properties": {
+    "assignmentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "roleCode": {
+      "type": "string"
+    },
+    "scopeType": {
+      "enum": ["global", "domain", "org", "personal", "zone"],
+      "description": "zone (v2) : permissions du rôle limitées aux communes de zoneKeys"
+    },
+    "scopeId": {
+      "type": ["string", "null"]
+    },
+    "zoneKeys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 77,
+      "uniqueItems": true,
+      "description": "Portée zone : clés des communes (référentiel de geo) ; obligatoire pour la portée zone, absent sinon",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      }
+    },
+    "grantedBy": {
+      "type": "string",
+      "description": "Utilisateur ou \"system\" pour une activation automatique"
+    }
+  },
+  "if": {
+    "required": ["scopeType"],
+    "properties": {
+      "scopeType": {
+        "const": "zone"
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "zoneKeys": true
+    },
+    "required": ["zoneKeys"]
+  },
+  "else": {
+    "properties": {
+      "zoneKeys": false
+    }
+  }
+}

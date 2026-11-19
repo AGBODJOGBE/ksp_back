@@ -51,12 +51,17 @@ export interface Wallet {
 
 /** Portefeuille prépayé d'un titulaire (ADR-046) : dépensable sur la plateforme, jamais négatif. */
 export interface PrepaidWallet {
-  holder?: Holder | undefined;
+  holder?:
+    | Holder
+    | undefined;
+  /** Solde disponible (retraits demandés déjà déduits). */
   balance?:
     | Money
     | undefined;
   /** Dernière écriture, vide si le portefeuille n'en a aucune. */
   lastEntryAt: string;
+  /** Retraits vers Mobile Money demandés, pas encore terminés (R-WL-04) ; déjà déduits du solde. */
+  withdrawalsInProgress?: Money | undefined;
 }
 
 /** Objet payé par un débit du portefeuille prépayé, chez le service appelant. */
@@ -124,7 +129,8 @@ export interface LedgerEntry {
   /**
    * "holder:user:<id>", "holder:organization:<id>", "ksp:collections", "ksp:commission" ou
    * "ksp:payouts_in_transit" ; portefeuille prépayé (ADR-046) : "prepaid:user:<id>",
-   * "prepaid:organization:<id>", "ksp:prepaid_funds" ou "ksp:service_revenue".
+   * "prepaid:organization:<id>", "ksp:prepaid_funds" ou "ksp:service_revenue" ; retraits (R-WL-04) :
+   * "ksp:prepaid_withdrawals_in_transit".
    */
   account: string;
   /** "debit" ou "credit". */
@@ -136,7 +142,8 @@ export interface LedgerTransaction {
   id: string;
   /**
    * "collection", "payout_hold", "payout_settlement", "payout_release" ou "reversal" ;
-   * portefeuille prépayé (ADR-046) : "top_up", "service_payment" ou "refund".
+   * portefeuille prépayé (ADR-046) : "top_up", "service_payment" ou "refund" ; v2 : "service_credit"
+   * (Credit), "withdrawal_hold", "withdrawal_settlement", "withdrawal_release".
    */
   kind: string;
   /** Référence d'idempotence de l'appelant. */
@@ -476,6 +483,9 @@ export interface CreditPrepaidWalletRequest {
    * "refund" (remboursement d'un service, geste commercial) ou "top_up" (recharge reçue par Mobile
    * Money mais non créditée : écart de montant traité par la finance ; payment_id obligatoire, un
    * seul crédit par paiement, automatique ou manuel).
+   * v2 : "cash_top_up" (recharge en espèces au guichet, R-WL-02) ou "bank_transfer_top_up" (virement
+   * reçu d'une organisation, R-PE-04) : receipt_reference obligatoire, toujours soumis à la
+   * validation d'une deuxième personne (pending_request), quel que soit le montant.
    */
   kind: string;
   amount?:
@@ -484,6 +494,15 @@ export interface CreditPrepaidWalletRequest {
   /** Motif, 1 à 200 caractères, visible dans le relevé du client. */
   reason: string;
   paymentId: string;
+  /** Espèces : numéro du reçu de caisse ; virement : référence bancaire (1 à 100 caractères). */
+  receiptReference?:
+    | string
+    | undefined;
+  /**
+   * Facultatif : objet que ce versement doit régler aussitôt (facture, séance) ; repris dans
+   * wallet.prepaid.credited v2 (forObject) pour que son service débite le portefeuille (R-PE-04).
+   */
+  forObject?: ObjectReference | undefined;
 }
 
 export interface CreditPrepaidWalletResponse {
@@ -507,13 +526,13 @@ export interface ManualCreditRequest {
   holder?:
     | Holder
     | undefined;
-  /** "refund" ou "top_up". */
+  /** "refund", "top_up", "cash_top_up" ou "bank_transfer_top_up". */
   kind: string;
   amount?: Money | undefined;
   reason: string;
   /** Recharge : paiement crédité ; vide sinon. */
   paymentId: string;
-  /** "pending_approval" ou "approved". */
+  /** "pending_approval", "approved" ou "rejected". */
   status: string;
   requestedBy: string;
   requestedAt: string;
@@ -521,13 +540,25 @@ export interface ManualCreditRequest {
   approvedBy: string;
   approvedAt: string;
   transactionId: string;
+  /** Espèces ou virement : référence du reçu ; absente sinon. */
+  receiptReference?:
+    | string
+    | undefined;
+  /** Objet à régler aussitôt, absent sinon. */
+  forObject?:
+    | ObjectReference
+    | undefined;
+  /** Rejet : auteur, date, motif ; absents sinon. */
+  rejectedBy?: string | undefined;
+  rejectedAt?: string | undefined;
+  rejectionReason?: string | undefined;
 }
 
 export interface ListManualCreditRequestsRequest {
   page?:
     | Page
     | undefined;
-  /** "pending_approval" ou "approved" ; vide : toutes. */
+  /** "pending_approval", "approved" ou "rejected" ; vide : toutes. */
   status: string;
 }
 
@@ -548,6 +579,165 @@ export interface ApproveManualCreditResponse {
     | undefined;
   /** false : demande déjà validée (le même crédit est rendu). */
   created: boolean;
+}
+
+export interface CreditRequest {
+  /** Obligatoire (8 à 150 caractères : lettres, chiffres, ":", "_" et "-"), propre à l'appelant. */
+  idempotencyKey: string;
+  holder?:
+    | Holder
+    | undefined;
+  /** Entier en XOF, 1 à 1 000 000 000. */
+  amount?:
+    | Money
+    | undefined;
+  /** Objet à l'origine du crédit chez l'appelant (réclamation, demande annulée…). */
+  object?:
+    | ObjectReference
+    | undefined;
+  /**
+   * "commercial_gesture" (geste commercial, réclamation) ou "refund" (remboursement sans débit
+   * remboursable en entier, par exemple une part de séance).
+   */
+  kind: string;
+  /** Libellé du relevé, 1 à 140 caractères (« Nettoyage — geste commercial, séance 3/15 »). */
+  description: string;
+  /** Facultatif : débit d'origine (transaction wallet) ; vide sinon. */
+  relatedTransactionId: string;
+}
+
+export interface CreditResponse {
+  transaction?: LedgerTransaction | undefined;
+  wallet?:
+    | PrepaidWallet
+    | undefined;
+  /** false : crédit déjà enregistré avec cette clé. */
+  created: boolean;
+}
+
+export interface RejectManualCreditRequest {
+  requestId: string;
+  /** Motif, 1 à 200 caractères. */
+  reason: string;
+}
+
+export interface RejectManualCreditResponse {
+  request?: ManualCreditRequest | undefined;
+}
+
+/** Retrait du portefeuille prépayé vers Mobile Money (R-WL-04). */
+export interface Withdrawal {
+  id: string;
+  holder?: Holder | undefined;
+  amount?:
+    | Money
+    | undefined;
+  /**
+   * "requested" (montant retenu, à traiter), "awaiting_approval" (traité, attend une deuxième
+   * personne), "submitted" (transmis à payment), "completed", "failed" (virement échoué, montant
+   * rendu) ou "rejected" (refusé par la finance, montant rendu).
+   */
+  status: string;
+  beneficiaryOperator: string;
+  /**
+   * Numéro masqué (deux derniers chiffres) : wallet ne garde le numéro complet que jusqu'à sa
+   * transmission à payment.
+   */
+  beneficiaryPhoneMasked: string;
+  /** Compte qui l'a demandé (titulaire, ou administrateur de l'organisation). */
+  requestedBy: string;
+  requestedAt: string;
+  /** Traitement par la finance (première personne) ; vides avant. */
+  processedBy: string;
+  processedAt: string;
+  processingNote: string;
+  /** Validation (deuxième personne) ; vides avant. */
+  approvedBy: string;
+  approvedAt: string;
+  /** Refus ; vides sinon. */
+  rejectedBy: string;
+  rejectedAt: string;
+  rejectionReason: string;
+  /** Reversement chez payment, vide tant qu'il n'est pas transmis. */
+  paymentPayoutId: string;
+  holdTransactionId: string;
+  /** Transaction qui l'a soldé (terminé ou rendu), vide en cours. */
+  settlementTransactionId: string;
+  completedAt: string;
+  failedAt: string;
+}
+
+export interface RequestWithdrawalRequest {
+  /** En-tête Idempotency-Key, obligatoire (8 à 100 caractères). */
+  idempotencyKey: string;
+  /** Entier en XOF, 1 à 1 000 000 000, au plus le solde disponible. */
+  amount?: Money | undefined;
+  beneficiary?: PayoutBeneficiary | undefined;
+}
+
+export interface RequestWithdrawalResponse {
+  withdrawal?: Withdrawal | undefined;
+  wallet?:
+    | PrepaidWallet
+    | undefined;
+  /** false : retrait déjà demandé avec cette clé. */
+  created: boolean;
+}
+
+export interface ListMyWithdrawalsRequest {
+  page?:
+    | Page
+    | undefined;
+  /** Filtre facultatif sur le statut. */
+  status: string;
+}
+
+export interface ListMyWithdrawalsResponse {
+  withdrawals: Withdrawal[];
+  nextCursor: string;
+}
+
+export interface ListWithdrawalsRequest {
+  page?:
+    | Page
+    | undefined;
+  /** Filtres facultatifs. */
+  status: string;
+  holder?: Holder | undefined;
+}
+
+export interface ListWithdrawalsResponse {
+  withdrawals: Withdrawal[];
+  nextCursor: string;
+}
+
+export interface ProcessWithdrawalRequest {
+  withdrawalId: string;
+  /** Vérifications faites, 1 à 500 caractères. */
+  note: string;
+}
+
+export interface ProcessWithdrawalResponse {
+  withdrawal?: Withdrawal | undefined;
+}
+
+export interface ApproveWithdrawalRequest {
+  withdrawalId: string;
+}
+
+export interface ApproveWithdrawalResponse {
+  withdrawal?: Withdrawal | undefined;
+}
+
+export interface RejectWithdrawalRequest {
+  withdrawalId: string;
+  /** Motif communiqué au client, 1 à 500 caractères. */
+  reason: string;
+}
+
+export interface RejectWithdrawalResponse {
+  withdrawal?: Withdrawal | undefined;
+  wallet?: PrepaidWallet | undefined;
 }
 
 /** Opérations des services métier (recovery), jeton de service obligatoire. */
@@ -572,6 +762,10 @@ export interface WalletServiceClient {
   /**
    * Portefeuille prépayé (ADR-046), services de WALLET_DEBIT_CALLERS : paiement d'un service débité
    * du portefeuille (jamais partiel, jamais au-delà du solde), idempotent par (appelant, clé).
+   * R-WL-03 (v2) : la clé est tirée de l'objet ("<object_type>:<object_id>[:<part>]", par exemple
+   * "cleaning_session:<id>" pour une séance, R-PP-01) et un objet (appelant, type, identifiant, part)
+   * n'a jamais deux débits non remboursés : un second débit avec une autre clé est refusé
+   * (WALLET_OBJECT_ALREADY_DEBITED).
    */
 
   debit(request: DebitRequest, metadata?: Metadata): Observable<DebitResponse>;
@@ -580,7 +774,19 @@ export interface WalletServiceClient {
 
   refund(request: RefundRequest, metadata?: Metadata): Observable<RefundResponse>;
 
+  /** Solde prépayé d'un titulaire (le « GetBalance » du CDC Nettoyage v2, partie 15.4). */
+
   getPrepaidBalance(request: GetPrepaidBalanceRequest, metadata?: Metadata): Observable<GetPrepaidBalanceResponse>;
+
+  /**
+   * Crédit au portefeuille prépayé décidé par un service (WALLET_CREDIT_CALLERS : cleaning au
+   * lancement) sans débit à rembourser : geste commercial, crédit d'une réclamation (R-RC-03),
+   * remboursement partiel (R-WL-04). Le service a déjà fait ses propres contrôles (double validation
+   * au-delà de 50 000 FCFA pour une réclamation). Idempotent par (appelant, clé). Contrepartie
+   * comptable : "ksp:service_revenue" (à valider par le comptable).
+   */
+
+  credit(request: CreditRequest, metadata?: Metadata): Observable<CreditResponse>;
 }
 
 /** Opérations des services métier (recovery), jeton de service obligatoire. */
@@ -620,6 +826,10 @@ export interface WalletServiceController {
   /**
    * Portefeuille prépayé (ADR-046), services de WALLET_DEBIT_CALLERS : paiement d'un service débité
    * du portefeuille (jamais partiel, jamais au-delà du solde), idempotent par (appelant, clé).
+   * R-WL-03 (v2) : la clé est tirée de l'objet ("<object_type>:<object_id>[:<part>]", par exemple
+   * "cleaning_session:<id>" pour une séance, R-PP-01) et un objet (appelant, type, identifiant, part)
+   * n'a jamais deux débits non remboursés : un second débit avec une autre clé est refusé
+   * (WALLET_OBJECT_ALREADY_DEBITED).
    */
 
   debit(request: DebitRequest, metadata?: Metadata): Promise<DebitResponse> | Observable<DebitResponse> | DebitResponse;
@@ -631,10 +841,25 @@ export interface WalletServiceController {
     metadata?: Metadata,
   ): Promise<RefundResponse> | Observable<RefundResponse> | RefundResponse;
 
+  /** Solde prépayé d'un titulaire (le « GetBalance » du CDC Nettoyage v2, partie 15.4). */
+
   getPrepaidBalance(
     request: GetPrepaidBalanceRequest,
     metadata?: Metadata,
   ): Promise<GetPrepaidBalanceResponse> | Observable<GetPrepaidBalanceResponse> | GetPrepaidBalanceResponse;
+
+  /**
+   * Crédit au portefeuille prépayé décidé par un service (WALLET_CREDIT_CALLERS : cleaning au
+   * lancement) sans débit à rembourser : geste commercial, crédit d'une réclamation (R-RC-03),
+   * remboursement partiel (R-WL-04). Le service a déjà fait ses propres contrôles (double validation
+   * au-delà de 50 000 FCFA pour une réclamation). Idempotent par (appelant, clé). Contrepartie
+   * comptable : "ksp:service_revenue" (à valider par le comptable).
+   */
+
+  credit(
+    request: CreditRequest,
+    metadata?: Metadata,
+  ): Promise<CreditResponse> | Observable<CreditResponse> | CreditResponse;
 }
 
 export function WalletServiceControllerMethods() {
@@ -648,6 +873,7 @@ export function WalletServiceControllerMethods() {
       "debit",
       "refund",
       "getPrepaidBalance",
+      "credit",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
@@ -680,6 +906,17 @@ export interface WalletAccountServiceClient {
    */
 
   createTopUp(request: CreateTopUpRequest, metadata?: Metadata): Observable<CreateTopUpResponse>;
+
+  /**
+   * R-WL-04 : demande de retrait du portefeuille prépayé vers un compte Mobile Money (titulaire
+   * connecté ; pour une organisation, administrateur org_admin). Le montant est retenu aussitôt
+   * (jamais au-delà du solde, à valider), puis la finance traite la demande et une deuxième personne
+   * la valide ; payment exécute le virement. Idempotent par clé.
+   */
+
+  requestWithdrawal(request: RequestWithdrawalRequest, metadata?: Metadata): Observable<RequestWithdrawalResponse>;
+
+  listMyWithdrawals(request: ListMyWithdrawalsRequest, metadata?: Metadata): Observable<ListMyWithdrawalsResponse>;
 }
 
 /** Espace du titulaire connecté : son compte (contexte personnel) ou son organisation active. */
@@ -709,11 +946,35 @@ export interface WalletAccountServiceController {
     request: CreateTopUpRequest,
     metadata?: Metadata,
   ): Promise<CreateTopUpResponse> | Observable<CreateTopUpResponse> | CreateTopUpResponse;
+
+  /**
+   * R-WL-04 : demande de retrait du portefeuille prépayé vers un compte Mobile Money (titulaire
+   * connecté ; pour une organisation, administrateur org_admin). Le montant est retenu aussitôt
+   * (jamais au-delà du solde, à valider), puis la finance traite la demande et une deuxième personne
+   * la valide ; payment exécute le virement. Idempotent par clé.
+   */
+
+  requestWithdrawal(
+    request: RequestWithdrawalRequest,
+    metadata?: Metadata,
+  ): Promise<RequestWithdrawalResponse> | Observable<RequestWithdrawalResponse> | RequestWithdrawalResponse;
+
+  listMyWithdrawals(
+    request: ListMyWithdrawalsRequest,
+    metadata?: Metadata,
+  ): Promise<ListMyWithdrawalsResponse> | Observable<ListMyWithdrawalsResponse> | ListMyWithdrawalsResponse;
 }
 
 export function WalletAccountServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["getMyWallet", "listMyStatement", "listMyPayouts", "createTopUp"];
+    const grpcMethods: string[] = [
+      "getMyWallet",
+      "listMyStatement",
+      "listMyPayouts",
+      "createTopUp",
+      "requestWithdrawal",
+      "listMyWithdrawals",
+    ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("WalletAccountService", method)(constructor.prototype[method], method, descriptor);
@@ -777,6 +1038,40 @@ export interface WalletAdminServiceClient {
     request: ApproveManualCreditRequest,
     metadata?: Metadata,
   ): Observable<ApproveManualCreditResponse>;
+
+  /**
+   * Rejet d'une demande de crédit en attente, avec motif (recharge en espèces non retrouvée en
+   * caisse…) ; l'auteur peut rejeter sa propre demande pour l'annuler (à valider). Rien n'est crédité.
+   */
+
+  rejectManualCredit(request: RejectManualCreditRequest, metadata?: Metadata): Observable<RejectManualCreditResponse>;
+
+  /** Demandes de retrait (R-WL-04), les plus anciennes d'abord ; filtres facultatifs. */
+
+  listWithdrawals(request: ListWithdrawalsRequest, metadata?: Metadata): Observable<ListWithdrawalsResponse>;
+
+  /**
+   * Premier membre de la finance : vérifications faites (titulaire, numéro), la demande attend la
+   * validation d'une deuxième personne ("requested" → "awaiting_approval").
+   */
+
+  processWithdrawal(request: ProcessWithdrawalRequest, metadata?: Metadata): Observable<ProcessWithdrawalResponse>;
+
+  /**
+   * Deuxième personne de la finance (jamais celle qui a traité la demande) : le virement est
+   * transmis à payment (PayoutService.RequestPayout, référence "wallet_withdrawal:<id>")
+   * ("awaiting_approval" → "submitted"), puis soldé à payment.payout.completed ("completed") ou rendu
+   * au portefeuille à payment.payout.failed ("failed"). Rejouable.
+   */
+
+  approveWithdrawal(request: ApproveWithdrawalRequest, metadata?: Metadata): Observable<ApproveWithdrawalResponse>;
+
+  /**
+   * Refus motivé d'une demande "requested" ou "awaiting_approval" : le montant retenu est rendu au
+   * portefeuille ("rejected").
+   */
+
+  rejectWithdrawal(request: RejectWithdrawalRequest, metadata?: Metadata): Observable<RejectWithdrawalResponse>;
 }
 
 /** Back-office : finance_officer, super_admin, avec double authentification. */
@@ -838,6 +1133,55 @@ export interface WalletAdminServiceController {
     request: ApproveManualCreditRequest,
     metadata?: Metadata,
   ): Promise<ApproveManualCreditResponse> | Observable<ApproveManualCreditResponse> | ApproveManualCreditResponse;
+
+  /**
+   * Rejet d'une demande de crédit en attente, avec motif (recharge en espèces non retrouvée en
+   * caisse…) ; l'auteur peut rejeter sa propre demande pour l'annuler (à valider). Rien n'est crédité.
+   */
+
+  rejectManualCredit(
+    request: RejectManualCreditRequest,
+    metadata?: Metadata,
+  ): Promise<RejectManualCreditResponse> | Observable<RejectManualCreditResponse> | RejectManualCreditResponse;
+
+  /** Demandes de retrait (R-WL-04), les plus anciennes d'abord ; filtres facultatifs. */
+
+  listWithdrawals(
+    request: ListWithdrawalsRequest,
+    metadata?: Metadata,
+  ): Promise<ListWithdrawalsResponse> | Observable<ListWithdrawalsResponse> | ListWithdrawalsResponse;
+
+  /**
+   * Premier membre de la finance : vérifications faites (titulaire, numéro), la demande attend la
+   * validation d'une deuxième personne ("requested" → "awaiting_approval").
+   */
+
+  processWithdrawal(
+    request: ProcessWithdrawalRequest,
+    metadata?: Metadata,
+  ): Promise<ProcessWithdrawalResponse> | Observable<ProcessWithdrawalResponse> | ProcessWithdrawalResponse;
+
+  /**
+   * Deuxième personne de la finance (jamais celle qui a traité la demande) : le virement est
+   * transmis à payment (PayoutService.RequestPayout, référence "wallet_withdrawal:<id>")
+   * ("awaiting_approval" → "submitted"), puis soldé à payment.payout.completed ("completed") ou rendu
+   * au portefeuille à payment.payout.failed ("failed"). Rejouable.
+   */
+
+  approveWithdrawal(
+    request: ApproveWithdrawalRequest,
+    metadata?: Metadata,
+  ): Promise<ApproveWithdrawalResponse> | Observable<ApproveWithdrawalResponse> | ApproveWithdrawalResponse;
+
+  /**
+   * Refus motivé d'une demande "requested" ou "awaiting_approval" : le montant retenu est rendu au
+   * portefeuille ("rejected").
+   */
+
+  rejectWithdrawal(
+    request: RejectWithdrawalRequest,
+    metadata?: Metadata,
+  ): Promise<RejectWithdrawalResponse> | Observable<RejectWithdrawalResponse> | RejectWithdrawalResponse;
 }
 
 export function WalletAdminServiceControllerMethods() {
@@ -850,6 +1194,11 @@ export function WalletAdminServiceControllerMethods() {
       "creditPrepaidWallet",
       "listManualCreditRequests",
       "approveManualCredit",
+      "rejectManualCredit",
+      "listWithdrawals",
+      "processWithdrawal",
+      "approveWithdrawal",
+      "rejectWithdrawal",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);

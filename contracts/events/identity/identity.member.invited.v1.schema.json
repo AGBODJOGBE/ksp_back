@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.member.invited.v1.schema.json",
+  "title": "identity.member.invited",
+  "description": "Un administrateur a invité un compte à rejoindre son organisation (R-CP-03). Publié seulement si le numéro a un compte KSP (inviteeUserId) : notification prévient l'invité. Jamais de numéro de téléphone.",
+  "x-event-type": "identity.member.invited",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["invitationId", "organizationId", "inviteeUserId", "orgRole", "invitedBy", "expiresAt"],
+  "properties": {
+    "invitationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "organizationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "inviteeUserId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "orgRole": {
+      "enum": ["org_admin", "org_member", "org_viewer"]
+    },
+    "invitedBy": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

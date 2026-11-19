@@ -1,4 +1,4 @@
-import { AllowedCallers } from '@ksp/platform';
+import { AllowedCallers, AppError } from '@ksp/platform';
 import { commonV1, walletV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import {
@@ -12,6 +12,13 @@ import { parsePage } from '../../application/shared';
 import { WALLET_USE_CASES, type WalletUseCases } from '../../application/use-cases';
 import { type LedgerTransaction } from '../../domain/ledger';
 import { type WalletPayout } from '../../domain/wallet-payout';
+
+/** Méthodes du contrat v2 (CDC Nettoyage v2) pas encore livrées : réponse NOT_IMPLEMENTED. */
+function notImplemented(method: string): Promise<never> {
+  return Promise.reject(
+    AppError.notImplemented('WALLET_NOT_IMPLEMENTED', `La méthode ${method} n'est pas encore disponible.`),
+  );
+}
 
 const iso = (value: Date | null) => (value ? value.toISOString() : '');
 const xof = (amount: number) => ({ amount, currency: 'XOF' });
@@ -244,6 +251,10 @@ export class WalletGrpcController implements walletV1.WalletServiceController {
   ): Promise<walletV1.GetPrepaidBalanceResponse> {
     return { wallet: presentPrepaid(await this.useCases.getPrepaidBalance.execute(request.holder)) };
   }
+
+  credit(): Promise<walletV1.CreditResponse> {
+    return notImplemented('Credit');
+  }
 }
 
 /** Espace du titulaire connecté (gateway). */
@@ -291,6 +302,14 @@ export class WalletAccountGrpcController implements walletV1.WalletAccountServic
     return payoutPage(
       await this.useCases.listMyPayouts.execute({ page: parsePage(request.page), status: request.status }),
     );
+  }
+
+  requestWithdrawal(): Promise<walletV1.RequestWithdrawalResponse> {
+    return notImplemented('RequestWithdrawal');
+  }
+
+  listMyWithdrawals(): Promise<walletV1.ListMyWithdrawalsResponse> {
+    return notImplemented('ListMyWithdrawals');
   }
 }
 
@@ -381,5 +400,25 @@ export class WalletAdminGrpcController implements walletV1.WalletAdminServiceCon
       request: presentCreditRequest(result.request),
       created: result.created,
     };
+  }
+
+  rejectManualCredit(): Promise<walletV1.RejectManualCreditResponse> {
+    return notImplemented('RejectManualCredit');
+  }
+
+  listWithdrawals(): Promise<walletV1.ListWithdrawalsResponse> {
+    return notImplemented('ListWithdrawals');
+  }
+
+  processWithdrawal(): Promise<walletV1.ProcessWithdrawalResponse> {
+    return notImplemented('ProcessWithdrawal');
+  }
+
+  approveWithdrawal(): Promise<walletV1.ApproveWithdrawalResponse> {
+    return notImplemented('ApproveWithdrawal');
+  }
+
+  rejectWithdrawal(): Promise<walletV1.RejectWithdrawalResponse> {
+    return notImplemented('RejectWithdrawal');
   }
 }

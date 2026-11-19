@@ -2,7 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { Metadata } from '@grpc/grpc-js';
 import { v7 as uuidv7 } from 'uuid';
 
-export type ScopeKind = 'global' | 'domain' | 'org' | 'personal';
+/** `zone` : attribution limitée à des communes (portée zone d'identity, R-RB-03 du CDC Nettoyage v2). */
+export type ScopeKind = 'global' | 'domain' | 'org' | 'personal' | 'zone';
 
 export interface RoleClaim {
   role: string;
