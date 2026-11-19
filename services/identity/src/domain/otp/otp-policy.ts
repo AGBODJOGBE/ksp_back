@@ -23,9 +23,11 @@ const HOUR = 3600;
  * des dernières 24 heures. En cas de refus, indique dans combien de secondes réessayer.
  */
 export function decideSend(sentAt: Date[], now: Date, policy: OtpPolicy): SendDecision {
+  // Un envoi daté après `now` (demande concurrente enregistrée entre-temps, horloges de répliques
+  // décalées) compte comme un envoi qui vient d'avoir lieu : l'écarter laisserait passer la demande.
   const ages = sentAt
-    .map((date) => (now.getTime() - date.getTime()) / 1000)
-    .filter((age) => age >= 0 && age < 24 * HOUR)
+    .map((date) => Math.max(0, (now.getTime() - date.getTime()) / 1000))
+    .filter((age) => age < 24 * HOUR)
     .sort((a, b) => a - b);
   if (ages.length === 0) return { allowed: true };
 

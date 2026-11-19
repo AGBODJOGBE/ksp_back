@@ -27,4 +27,6 @@ module.exports = {
     '!src/tracing.ts',
     '!src/**/generated/**',
   ],
+  // Résumé dans la console (CI) ; rapport détaillé dans coverage/ (lcov, ouvrable dans un navigateur).
+  coverageReporters: ['text-summary', 'lcov'],
 };

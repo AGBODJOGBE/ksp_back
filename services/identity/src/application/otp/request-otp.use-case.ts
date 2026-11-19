@@ -50,16 +50,6 @@ export class RequestOtpUseCase {
     }
 
     const now = this.clock.now();
-    const recent = await this.challenges.sentAtSince(target, new Date(now.getTime() - DAY_MS));
-    const decision = decideSend(recent, now, this.policy);
-    if (!decision.allowed) {
-      throw AppError.rateLimited(
-        'IDENTITY_OTP_RATE_LIMITED',
-        'Trop de codes demandés pour ce numéro. Réessayez plus tard.',
-        { retryAfterSeconds: decision.retryAfterSeconds },
-      );
-    }
-
     const id = this.ids.next();
     const code = this.codes.generate(this.policy.codeLength);
     const challenge = newOtpChallenge({
@@ -72,7 +62,20 @@ export class RequestOtpUseCase {
       now,
       policy: this.policy,
     });
-    await this.challenges.create(challenge);
+    // Vérification des limites et enregistrement en une seule opération atomique côté base :
+    // des demandes simultanées pour le même numéro ne peuvent pas toutes passer.
+    const { decision, recent } = await this.challenges.createIfAllowed(
+      challenge,
+      new Date(now.getTime() - DAY_MS),
+      (sent) => decideSend(sent, now, this.policy),
+    );
+    if (!decision.allowed) {
+      throw AppError.rateLimited(
+        'IDENTITY_OTP_RATE_LIMITED',
+        'Trop de codes demandés pour ce numéro. Réessayez plus tard.',
+        { retryAfterSeconds: decision.retryAfterSeconds },
+      );
+    }
 
     let channelUsed: OtpChannel;
     try {

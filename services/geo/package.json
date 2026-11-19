@@ -11,6 +11,7 @@
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest",
+    "test:coverage": "jest --coverage",
     "dev": "node --watch --env-file=.env -r ../../tools/dev/register.cjs -r ./src/tracing.ts src/main.ts",
     "start": "node dist/main.js"
   },

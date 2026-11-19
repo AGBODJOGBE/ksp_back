@@ -4,9 +4,9 @@
  */
 import { type Organization, type OrganizationStatus } from '../../domain/organization/organization';
 import { type OtpChallenge, type OtpChannel } from '../../domain/otp/otp-challenge';
+import { type SendDecision } from '../../domain/otp/otp-policy';
 import { clientKindsOf, sessionCategory } from '../../domain/session/session-policy';
 import { type StoredOtpChallenge } from '../../domain/otp/otp-verification';
-import { type PhoneNumber } from '../../domain/user/phone-number';
 import { type EmailAddress } from '../../domain/user/email-address';
 import {
   type EmailCodeRequestedEvent,
@@ -28,7 +28,7 @@ import {
   type OrganizationRepository,
   type OrganizationStatusChange,
 } from '../organization/organization.ports';
-import { type OtpChallengeRepository, type OtpRequestedEvent } from '../otp/otp.ports';
+import { type OtpChallengeRepository, type OtpRequestedEvent, type OtpReservation } from '../otp/otp.ports';
 import {
   type RefreshRotation,
   type SessionStore,
@@ -74,11 +74,21 @@ export class InMemoryChallenges implements OtpChallengeRepository {
   readonly rows = new Map<string, ChallengeRow>();
   readonly events: OtpRequestedEvent[] = [];
 
-  async sentAtSince(target: PhoneNumber, since: Date): Promise<Date[]> {
-    return [...this.rows.values()]
-      .filter((row) => row.target.e164 === target.e164 && row.sentAt && row.sentAt >= since)
-      .map((row) => row.sentAt as Date);
+  /** Lecture, décision et insertion sans attente intermédiaire : atomiques, comme sous le verrou en base. */
+  async createIfAllowed(
+    challenge: OtpChallenge,
+    since: Date,
+    decide: (recent: Date[]) => SendDecision,
+  ): Promise<OtpReservation> {
+    const recent = [...this.rows.values()]
+      .filter((row) => row.target.e164 === challenge.target.e164 && !row.sendFailedAt)
+      .map((row) => row.sentAt ?? row.createdAt)
+      .filter((date) => date >= since);
+    const decision = decide(recent);
+    if (decision.allowed) this.rows.set(challenge.id, { ...challenge });
+    return { decision, recent };
   }
+  /** Pour préparer un test : enregistre une demande sans appliquer les limites. */
   async create(challenge: OtpChallenge): Promise<void> {
     this.rows.set(challenge.id, { ...challenge });
   }

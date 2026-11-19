@@ -1,6 +1,7 @@
 import { AppError } from '@ksp/platform';
 import { type OtpChannel } from '../../domain/otp/otp-challenge';
 import { type OtpPolicy } from '../../domain/otp/otp-policy';
+import { PhoneNumber } from '../../domain/user/phone-number';
 import { InMemoryChallenges } from '../testing/fakes';
 import { type OtpSender } from './otp.ports';
 import { RequestOtpUseCase } from './request-otp.use-case';
@@ -27,7 +28,7 @@ class FakeSender implements OtpSender {
   }
 }
 
-function setup() {
+function setup(otpPolicy: OtpPolicy = policy) {
   let now = new Date('2026-10-17T12:00:00Z');
   let seq = 0;
   const challenges = new InMemoryChallenges();
@@ -39,7 +40,7 @@ function setup() {
     { generate: (length) => '4'.repeat(length) },
     { next: () => `00000000-0000-7000-8000-${String(++seq).padStart(12, '0')}` },
     { now: () => now },
-    policy,
+    otpPolicy,
   );
   const advance = (seconds: number) => {
     now = new Date(now.getTime() + seconds * 1000);
@@ -148,6 +149,61 @@ describe('RequestOtpUseCase (UC-ID-01, demande de code)', () => {
       advance(60);
     }
     await expectAppError(useCase.execute(request), 'IDENTITY_OTP_RATE_LIMITED');
+  });
+
+  describe('demandes simultanées pour le même numéro', () => {
+    const CONCURRENT = 20;
+
+    async function concurrently(useCase: RequestOtpUseCase) {
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: CONCURRENT }, () => useCase.execute(request)),
+      );
+      const rejectedCodes = outcomes.flatMap((outcome) =>
+        outcome.status === 'rejected' ? [(outcome.reason as AppError).code] : [],
+      );
+      return { sent: outcomes.length - rejectedCodes.length, rejectedCodes };
+    }
+
+    it('n’envoient qu’un code pendant le délai entre deux envois', async () => {
+      const { useCase, sender } = setup();
+      const { sent, rejectedCodes } = await concurrently(useCase);
+
+      expect(sent).toBe(1);
+      expect(rejectedCodes).toEqual(Array(CONCURRENT - 1).fill('IDENTITY_OTP_RATE_LIMITED'));
+      expect(sender.sent).toHaveLength(1);
+    });
+
+    it('ne dépassent jamais le plafond horaire', async () => {
+      const { useCase, sender, challenges } = setup({ ...policy, resendDelaySeconds: 0 });
+      const { sent } = await concurrently(useCase);
+
+      expect(sent).toBe(policy.maxPerHour);
+      expect(sender.sent).toHaveLength(policy.maxPerHour);
+      expect(challenges.rows.size).toBe(policy.maxPerHour);
+    });
+  });
+
+  it('une demande en cours d’envoi compte dans les limites', async () => {
+    const { useCase, challenges, advance } = setup();
+    // Demande enregistrée dont l'envoi n'est pas encore confirmé (ni réussi, ni en échec).
+    await challenges.createIfAllowed(
+      {
+        id: '00000000-0000-7000-8000-0000000000ff',
+        target: PhoneNumber.parse(request.phone)!,
+        channel: 'sms',
+        purpose: 'login',
+        codeHash: 'h',
+        attempts: 0,
+        expiresAt: new Date('2026-10-17T12:05:00Z'),
+        ip: null,
+        createdAt: new Date('2026-10-17T12:00:00Z'),
+      },
+      new Date(0),
+      () => ({ allowed: true }),
+    );
+    advance(20);
+    const error = await expectAppError(useCase.execute(request), 'IDENTITY_OTP_RATE_LIMITED');
+    expect(error.details).toEqual({ retryAfterSeconds: 40 });
   });
 
   it('si l’envoi échoue, la demande est marquée inutilisable et ne compte pas dans les limites', async () => {

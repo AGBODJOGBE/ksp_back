@@ -86,6 +86,7 @@ la carte à jour (puis `docker compose --profile routing restart osrm`).
 | ------------------------------------- | --------------------------------------------------------------------------------- |
 | `pnpm typecheck`                      | Vérification des types de tout le dépôt                                           |
 | `pnpm test`                           | Tests unitaires (et tests d'intégration si `TEST_DATABASE_URL` est défini)        |
+| `pnpm test:coverage`                  | Tests avec couverture ; échoue sous le seuil minimal de chaque paquet (CI)        |
 | `pnpm lint` · `pnpm format:check`     | Règles de code et format                                                          |
 | `pnpm build`                          | Compilation de toutes les bibliothèques et services                               |
 | `pnpm contracts:lint`                 | Vérifie les `.proto`                                                              |
