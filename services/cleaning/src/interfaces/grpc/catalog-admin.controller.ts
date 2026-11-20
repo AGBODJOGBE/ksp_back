@@ -1,156 +1,296 @@
 import { cleaningV1 } from '@ksp/contracts';
-import { Controller } from '@nestjs/common';
-import { notImplemented } from './not-implemented';
+import { AllowedCallers } from '@ksp/platform';
+import { Controller, Inject } from '@nestjs/common';
+import { CATALOG_USE_CASES, type CatalogUseCases } from '../../application/catalog/catalog-use-cases';
+import { type TariffFields } from '../../application/catalog/tariffs.use-cases';
+import { type Page } from '../../application/shared/paging';
+import { type TeamRuleBracket } from '../../domain/pricing/types';
+import {
+  type Names,
+  presentCategory,
+  presentCleaningType,
+  presentCommune,
+  presentHoliday,
+  presentOffer,
+  presentParameter,
+  presentPlaceType,
+  presentSkill,
+  presentTariff,
+  presentZone,
+} from './catalog.presenters';
+import { presentSimulation, scheduleFromProto, valuesFromProto } from './simulation.presenters';
+
+/** Règle d'équipe reçue : `toArea` absent vaut « sans limite ». */
+const teamRule = (brackets: cleaningV1.TeamRuleBracket[]): TeamRuleBracket[] =>
+  brackets.map((bracket) => ({ ...bracket, toArea: bracket.toArea ?? null }));
+
+const tariffFields = (
+  request: cleaningV1.CreateTariffDraftRequest | cleaningV1.UpdateTariffDraftRequest,
+): TariffFields => ({
+  baseParameterCode: request.baseParameterCode,
+  brackets: request.brackets.map((bracket) => ({ ...bracket, amount: bracket.amount?.amount })),
+  supplements: request.supplements.map((supplement) => ({
+    ...supplement,
+    amount: supplement.amount?.amount,
+  })),
+  minimum: request.minimum?.amount,
+  frequencyCoefficients: request.frequencyCoefficients,
+  packDiscountBps: request.packDiscountBps,
+});
 
 /**
  * Adaptateur gRPC de CatalogAdminService — back-office : catalogue, tarifs, compétences, jours
- * fériés, zones (UC-NT-25 à 29). Métier v2 livré lot par lot (ADR-054) : chaque méthode pas encore
- * livrée répond NOT_IMPLEMENTED.
+ * fériés, zones (UC-NT-25 à 29). Réservé à la gateway, qui contrôle la permission de la route ; le
+ * compte et sa double authentification sont revérifiés par chaque cas d'usage. Chaque réponse porte
+ * les noms des auteurs (ADR-029).
  */
 @Controller()
+@AllowedCallers('gateway')
 @cleaningV1.CatalogAdminServiceControllerMethods()
 export class CatalogAdminGrpcController implements cleaningV1.CatalogAdminServiceController {
-  listPlaceCategories(): Promise<cleaningV1.ListPlaceCategoriesResponse> {
-    return notImplemented('ListPlaceCategories');
+  constructor(@Inject(CATALOG_USE_CASES) private readonly useCases: CatalogUseCases) {}
+
+  /** Auteurs cités par les éléments rendus : modification, création, publication. */
+  private names(entries: readonly object[]) {
+    return this.useCases.userNames(
+      entries.flatMap((entry) => {
+        const authors = entry as {
+          updatedBy?: string | null;
+          createdBy?: string;
+          publishedBy?: string | null;
+        };
+        return [authors.updatedBy ?? null, authors.createdBy ?? null, authors.publishedBy ?? null];
+      }),
+    );
   }
 
-  createPlaceCategory(): Promise<cleaningV1.CreatePlaceCategoryResponse> {
-    return notImplemented('CreatePlaceCategory');
+  private async page<T extends object, M>(page: Page<T>, present: (item: T, names: Names) => M) {
+    const names = await this.names(page.items);
+    return {
+      items: page.items.map((item) => present(item, names)),
+      nextCursor: page.nextCursor ?? '',
+      total: page.total,
+    };
   }
 
-  getPlaceCategory(): Promise<cleaningV1.GetPlaceCategoryResponse> {
-    return notImplemented('GetPlaceCategory');
+  private async one<T extends object, M>(item: T, present: (item: T, names: Names) => M): Promise<M> {
+    return present(item, await this.names([item]));
   }
 
-  updatePlaceCategory(): Promise<cleaningV1.UpdatePlaceCategoryResponse> {
-    return notImplemented('UpdatePlaceCategory');
+  // --- Catégories et lieux (UC-NT-25) ---------------------------------------------------------
+
+  async listPlaceCategories(request: cleaningV1.ListPlaceCategoriesRequest) {
+    return this.page(await this.useCases.categories.list(request), presentCategory);
   }
 
-  listPlaceTypes(): Promise<cleaningV1.ListPlaceTypesResponse> {
-    return notImplemented('ListPlaceTypes');
+  async createPlaceCategory(request: cleaningV1.CreatePlaceCategoryRequest) {
+    const category = await this.useCases.categories.create({
+      ...request,
+      visitFee: request.visitFee?.amount,
+    });
+    return { placeCategory: await this.one(category, presentCategory) };
   }
 
-  createPlaceType(): Promise<cleaningV1.CreatePlaceTypeResponse> {
-    return notImplemented('CreatePlaceType');
+  async getPlaceCategory(request: cleaningV1.GetPlaceCategoryRequest) {
+    return { placeCategory: await this.one(await this.useCases.categories.get(request.id), presentCategory) };
   }
 
-  getPlaceType(): Promise<cleaningV1.GetPlaceTypeResponse> {
-    return notImplemented('GetPlaceType');
+  async updatePlaceCategory(request: cleaningV1.UpdatePlaceCategoryRequest) {
+    const category = await this.useCases.categories.update({
+      ...request,
+      visitFee: request.visitFee?.amount,
+    });
+    return { placeCategory: await this.one(category, presentCategory) };
   }
 
-  updatePlaceType(): Promise<cleaningV1.UpdatePlaceTypeResponse> {
-    return notImplemented('UpdatePlaceType');
+  async listPlaceTypes(request: cleaningV1.ListPlaceTypesRequest) {
+    return this.page(await this.useCases.placeTypes.list(request), presentPlaceType);
   }
 
-  listCleaningTypes(): Promise<cleaningV1.ListCleaningTypesResponse> {
-    return notImplemented('ListCleaningTypes');
+  async createPlaceType(request: cleaningV1.CreatePlaceTypeRequest) {
+    return { placeType: await this.one(await this.useCases.placeTypes.create(request), presentPlaceType) };
   }
 
-  createCleaningType(): Promise<cleaningV1.CreateCleaningTypeResponse> {
-    return notImplemented('CreateCleaningType');
+  async getPlaceType(request: cleaningV1.GetPlaceTypeRequest) {
+    return { placeType: await this.one(await this.useCases.placeTypes.get(request.id), presentPlaceType) };
   }
 
-  getCleaningType(): Promise<cleaningV1.GetCleaningTypeResponse> {
-    return notImplemented('GetCleaningType');
+  async updatePlaceType(request: cleaningV1.UpdatePlaceTypeRequest) {
+    const placeType = await this.useCases.placeTypes.update({
+      ...request,
+      parameterIds: request.parameterIds?.items,
+    });
+    return { placeType: await this.one(placeType, presentPlaceType) };
   }
 
-  updateCleaningType(): Promise<cleaningV1.UpdateCleaningTypeResponse> {
-    return notImplemented('UpdateCleaningType');
+  // --- Types de nettoyage et packs (UC-NT-26) -------------------------------------------------
+
+  async listCleaningTypes(request: cleaningV1.ListCleaningTypesRequest) {
+    return this.page(await this.useCases.cleaningTypes.list(request), presentCleaningType);
   }
 
-  listParameters(): Promise<cleaningV1.ListParametersResponse> {
-    return notImplemented('ListParameters');
+  async createCleaningType(request: cleaningV1.CreateCleaningTypeRequest) {
+    return {
+      cleaningType: await this.one(await this.useCases.cleaningTypes.create(request), presentCleaningType),
+    };
   }
 
-  createParameter(): Promise<cleaningV1.CreateParameterResponse> {
-    return notImplemented('CreateParameter');
+  async getCleaningType(request: cleaningV1.GetCleaningTypeRequest) {
+    return {
+      cleaningType: await this.one(await this.useCases.cleaningTypes.get(request.id), presentCleaningType),
+    };
   }
 
-  getParameter(): Promise<cleaningV1.GetParameterResponse> {
-    return notImplemented('GetParameter');
+  async updateCleaningType(request: cleaningV1.UpdateCleaningTypeRequest) {
+    const type = await this.useCases.cleaningTypes.update({
+      ...request,
+      checklist: request.checklist?.items,
+      packItemIds: request.packItemIds?.items,
+    });
+    return { cleaningType: await this.one(type, presentCleaningType) };
   }
 
-  updateParameter(): Promise<cleaningV1.UpdateParameterResponse> {
-    return notImplemented('UpdateParameter');
+  // --- Paramètres (UC-NT-27) ------------------------------------------------------------------
+
+  async listParameters(request: cleaningV1.ListParametersRequest) {
+    return this.page(await this.useCases.parameters.list(request), presentParameter);
   }
 
-  listOffers(): Promise<cleaningV1.ListOffersResponse> {
-    return notImplemented('ListOffers');
+  async createParameter(request: cleaningV1.CreateParameterRequest) {
+    return {
+      parameterDefinition: await this.one(await this.useCases.parameters.create(request), presentParameter),
+    };
   }
 
-  createOffer(): Promise<cleaningV1.CreateOfferResponse> {
-    return notImplemented('CreateOffer');
+  async getParameter(request: cleaningV1.GetParameterRequest) {
+    return {
+      parameterDefinition: await this.one(await this.useCases.parameters.get(request.id), presentParameter),
+    };
   }
 
-  getOffer(): Promise<cleaningV1.GetOfferResponse> {
-    return notImplemented('GetOffer');
+  async updateParameter(request: cleaningV1.UpdateParameterRequest) {
+    const parameter = await this.useCases.parameters.update({ ...request, choices: request.choices?.items });
+    return { parameterDefinition: await this.one(parameter, presentParameter) };
   }
 
-  updateOffer(): Promise<cleaningV1.UpdateOfferResponse> {
-    return notImplemented('UpdateOffer');
+  // --- Offres, tarifs, simulateur de test (UC-NT-28) ------------------------------------------
+
+  async listOffers(request: cleaningV1.ListOffersRequest) {
+    return this.page(await this.useCases.offers.list(request), presentOffer);
   }
 
-  listTariffs(): Promise<cleaningV1.ListTariffsResponse> {
-    return notImplemented('ListTariffs');
+  async createOffer(request: cleaningV1.CreateOfferRequest) {
+    const offer = await this.useCases.offers.create({ ...request, teamRule: teamRule(request.teamRule) });
+    return { offer: await this.one(offer, presentOffer) };
   }
 
-  createTariffDraft(): Promise<cleaningV1.CreateTariffDraftResponse> {
-    return notImplemented('CreateTariffDraft');
+  async getOffer(request: cleaningV1.GetOfferRequest) {
+    return { offer: await this.one(await this.useCases.offers.get(request.id), presentOffer) };
   }
 
-  updateTariffDraft(): Promise<cleaningV1.UpdateTariffDraftResponse> {
-    return notImplemented('UpdateTariffDraft');
+  async updateOffer(request: cleaningV1.UpdateOfferRequest) {
+    const offer = await this.useCases.offers.update({
+      ...request,
+      extraParameterIds: request.extraParameterIds?.items,
+      teamRule: request.teamRule ? teamRule(request.teamRule.items) : undefined,
+    });
+    return { offer: await this.one(offer, presentOffer) };
   }
 
-  publishTariff(): Promise<cleaningV1.PublishTariffResponse> {
-    return notImplemented('PublishTariff');
+  async listTariffs(request: cleaningV1.ListTariffsRequest) {
+    return this.page(await this.useCases.tariffs.list(request), presentTariff);
   }
 
-  simulateWithDrafts(): Promise<cleaningV1.SimulateWithDraftsResponse> {
-    return notImplemented('SimulateWithDrafts');
+  async createTariffDraft(request: cleaningV1.CreateTariffDraftRequest) {
+    const tariff = await this.useCases.tariffs.createDraft({
+      ...tariffFields(request),
+      offerId: request.offerId,
+      idempotencyKey: request.idempotencyKey,
+    });
+    return { tariff: await this.one(tariff, presentTariff) };
   }
 
-  listSkills(): Promise<cleaningV1.ListSkillsResponse> {
-    return notImplemented('ListSkills');
+  async updateTariffDraft(request: cleaningV1.UpdateTariffDraftRequest) {
+    const tariff = await this.useCases.tariffs.updateDraft({
+      ...tariffFields(request),
+      offerId: request.offerId,
+      version: request.version,
+    });
+    return { tariff: await this.one(tariff, presentTariff) };
   }
 
-  createSkill(): Promise<cleaningV1.CreateSkillResponse> {
-    return notImplemented('CreateSkill');
+  async publishTariff(request: cleaningV1.PublishTariffRequest) {
+    return { tariff: await this.one(await this.useCases.tariffs.publish(request), presentTariff) };
   }
 
-  updateSkill(): Promise<cleaningV1.UpdateSkillResponse> {
-    return notImplemented('UpdateSkill');
+  async simulateWithDrafts(request: cleaningV1.SimulateWithDraftsRequest) {
+    const result = await this.useCases.simulateWithDrafts.execute({
+      placeTypeId: request.placeTypeId,
+      cleaningTypeIds: request.cleaningTypeIds,
+      values: valuesFromProto(request.values),
+      schedule: scheduleFromProto(request.schedule),
+      communeKey: request.communeKey,
+      draftTariffIds: request.draftTariffIds,
+    });
+    return { simulation: presentSimulation(result) };
   }
 
-  listHolidays(): Promise<cleaningV1.ListHolidaysResponse> {
-    return notImplemented('ListHolidays');
+  // --- Compétences et jours fériés (UC-NT-25, 26) ---------------------------------------------
+
+  async listSkills(request: cleaningV1.ListSkillsRequest) {
+    const page = await this.useCases.skills.list(request);
+    return { items: page.items.map(presentSkill), nextCursor: page.nextCursor ?? '', total: page.total };
   }
 
-  createHoliday(): Promise<cleaningV1.CreateHolidayResponse> {
-    return notImplemented('CreateHoliday');
+  async createSkill(request: cleaningV1.CreateSkillRequest) {
+    return { skill: presentSkill(await this.useCases.skills.create(request)) };
   }
 
-  deleteHoliday(): Promise<cleaningV1.DeleteHolidayResponse> {
-    return notImplemented('DeleteHoliday');
+  async updateSkill(request: cleaningV1.UpdateSkillRequest) {
+    return { skill: presentSkill(await this.useCases.skills.update(request)) };
   }
 
-  listZones(): Promise<cleaningV1.ListZonesResponse> {
-    return notImplemented('ListZones');
+  async listHolidays(request: cleaningV1.ListHolidaysRequest) {
+    const page = await this.useCases.holidays.list(request);
+    return { items: page.items.map(presentHoliday), nextCursor: page.nextCursor ?? '', total: page.total };
   }
 
-  createZone(): Promise<cleaningV1.CreateZoneResponse> {
-    return notImplemented('CreateZone');
+  async createHoliday(request: cleaningV1.CreateHolidayRequest) {
+    return { holiday: presentHoliday(await this.useCases.holidays.create(request)) };
   }
 
-  updateZone(): Promise<cleaningV1.UpdateZoneResponse> {
-    return notImplemented('UpdateZone');
+  async deleteHoliday(request: cleaningV1.DeleteHolidayRequest) {
+    await this.useCases.holidays.delete(request.holidayId);
+    return {};
   }
 
-  setZoneActive(): Promise<cleaningV1.SetZoneActiveResponse> {
-    return notImplemented('SetZoneActive');
+  // --- Zones et communes (UC-NT-29) -----------------------------------------------------------
+
+  async listZones(request: cleaningV1.ListZonesRequest) {
+    return this.page(await this.useCases.zones.list(request), presentZone);
   }
 
-  listCommunes(): Promise<cleaningV1.ListCommunesResponse> {
-    return notImplemented('ListCommunes');
+  async createZone(request: cleaningV1.CreateZoneRequest) {
+    const zone = await this.useCases.zones.create({
+      ...request,
+      visitFeeSurcharge: request.visitFeeSurcharge?.amount,
+    });
+    return { zone: await this.one(zone, presentZone) };
+  }
+
+  async updateZone(request: cleaningV1.UpdateZoneRequest) {
+    const zone = await this.useCases.zones.update({
+      ...request,
+      visitFeeSurcharge: request.visitFeeSurcharge?.amount,
+    });
+    return { zone: await this.one(zone, presentZone) };
+  }
+
+  async setZoneActive(request: cleaningV1.SetZoneActiveRequest) {
+    return { zone: await this.one(await this.useCases.zones.setActive(request), presentZone) };
+  }
+
+  async listCommunes() {
+    return { communes: (await this.useCases.zones.listCommunes()).map(presentCommune) };
   }
 }

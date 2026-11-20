@@ -26,9 +26,48 @@ export interface AuditEntry {
   details?: Record<string, unknown>;
 }
 
+/**
+ * Clé d'idempotence consommée par une écriture (règle d'or n° 3, partie 15.3), enregistrée dans la
+ * même transaction que l'action : un rejeu de la même clé, par le même compte et pour la même
+ * opération, rend la réponse gardée sans refaire l'action.
+ */
+export interface IdempotencyRecord {
+  actorId: string;
+  /** Nom stable de l'action (ex. catalog.category.create). */
+  operation: string;
+  key: string;
+  /** Empreinte du corps de la requête : la même clé avec un autre corps est refusée. */
+  requestHash: string;
+  /** Réponse gardée (identifiants de l'objet créé ou modifié). */
+  response: Record<string, unknown>;
+  at: Date;
+}
+
 export interface Changes {
   events: OutboxMessage[];
   audit: AuditEntry[];
+  idempotency?: IdempotencyRecord;
+}
+
+/** Lecture des clés d'idempotence déjà consommées. */
+export interface IdempotencyStore {
+  find(ref: {
+    actorId: string;
+    operation: string;
+    key: string;
+  }): Promise<Pick<IdempotencyRecord, 'requestHash' | 'response'> | null>;
+}
+
+/**
+ * Unicité violée à l'écriture, traduite par l'adaptateur : code de catalogue déjà pris, clé
+ * d'idempotence consommée au même instant par un autre appel, ou écriture concurrente (version de
+ * tarif, tarif publié, zone d'une commune).
+ */
+export class DuplicateKeyError extends Error {
+  constructor(readonly key: 'code' | 'idempotency' | 'concurrent') {
+    super(`Unicité violée : ${key}`);
+    this.name = 'DuplicateKeyError';
+  }
 }
 
 /** Débit du wallet d'un titulaire (wallet.Debit, ADR-046). */

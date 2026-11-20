@@ -1,5 +1,16 @@
 import {
+  type CatalogSettingsReader,
+  type CleaningTypeRepository,
+  type CommuneDirectory,
+  type HolidayRepository,
+  type OfferRepository,
+  type ParameterRepository,
+  type PlaceCatalogRepository,
+  type ZoneRepository,
+} from './catalog/catalog.ports';
+import {
   type Clock,
+  type IdempotencyStore,
   type IdGenerator,
   type PeopleDirectory,
   type PhotoStore,
@@ -21,4 +32,14 @@ export interface CleaningDeps {
   geocoder: ReverseGeocoder;
   clock: Clock;
   ids: IdGenerator;
+  /** Lot A : catalogue, zones, jours fériés, réglages lus par le simulateur. */
+  places: PlaceCatalogRepository;
+  parameters: ParameterRepository;
+  cleaningTypes: CleaningTypeRepository;
+  offers: OfferRepository;
+  zones: ZoneRepository;
+  holidays: HolidayRepository;
+  settings: CatalogSettingsReader;
+  communes: CommuneDirectory;
+  idempotency: IdempotencyStore;
 }

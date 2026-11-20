@@ -2,12 +2,16 @@ import { loadConfig } from '@ksp/platform';
 import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
+import { CATALOG_USE_CASES, type CatalogUseCases } from '../src/application/catalog/catalog-use-cases';
 import { CLEANING_DEPS, type CleaningDeps } from '../src/application/deps';
 import { configSchema } from '../src/config';
 import { GrpcPhotoStore } from '../src/infrastructure/file/grpc-photo-store';
+import { GeoServiceCommuneDirectory } from '../src/infrastructure/geocoding/geo-service.communes';
 import { GeoServiceGeocoder } from '../src/infrastructure/geocoding/geo-service.geocoder';
 import { IdentityPeopleDirectory } from '../src/infrastructure/identity/identity-people-directory';
 import { OutboxRelayService } from '../src/infrastructure/messaging/outbox-relay.service';
+import { PrismaOfferRepository } from '../src/infrastructure/persistence/catalog/prisma-offer.repository';
+import { PrismaPlaceCatalogRepository } from '../src/infrastructure/persistence/catalog/prisma-place-catalog.repository';
 import { SystemClock, UuidV7Generator } from '../src/infrastructure/system/system';
 import { GrpcWalletLedger } from '../src/infrastructure/wallet/grpc-wallet-ledger';
 import { CLEANING_GRPC_CONTROLLERS } from '../src/interfaces/grpc/controllers';
@@ -24,7 +28,7 @@ const ENV = {
 describe('AppModule', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('assemble le squelette v2 : contrôleurs, outbox et adaptateurs vers les autres services', async () => {
+  it('assemble le service : contrôleurs, outbox, adaptateurs, dépôts et cas d’usage du lot A', async () => {
     const warnings: string[] = [];
     jest.spyOn(Logger.prototype, 'warn').mockImplementation((message: unknown) => {
       warnings.push(String(message));
@@ -41,6 +45,10 @@ describe('AppModule', () => {
     expect(deps.clock).toBeInstanceOf(SystemClock);
     expect(deps.ids).toBeInstanceOf(UuidV7Generator);
     expect(deps.ids.next()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-/);
+    expect(deps.places).toBeInstanceOf(PrismaPlaceCatalogRepository);
+    expect(deps.offers).toBeInstanceOf(PrismaOfferRepository);
+    expect(deps.communes).toBeInstanceOf(GeoServiceCommuneDirectory);
+    expect(Object.keys(moduleRef.get<CatalogUseCases>(CATALOG_USE_CASES))).toContain('simulate');
     expect(warnings).toContain(
       'Aucun jeton de service : appels vers identity, wallet, file et geo non authentifiés (développement uniquement).',
     );
