@@ -39,6 +39,15 @@ export interface OrganizationDirectory {
   findBillingContacts(organizationIds: readonly string[]): Promise<OrganizationBillingContact[]>;
 }
 
+/**
+ * Personnel à prévenir (identity, ListStaffByPermission ; CDC Nettoyage v2, 16.2 ; RV-62) : comptes
+ * actifs dont une attribution globale, ou limitée à la zone, porte la permission ; `zoneKey` null :
+ * attributions globales seulement. Une panne lève une erreur (l'événement sera repris plus tard).
+ */
+export interface StaffDirectory {
+  findStaff(permission: string, zoneKey: string | null): Promise<string[]>;
+}
+
 /** Notification « dans l'application » : affichée dans l'espace KSP du destinataire. */
 export interface InAppNotification {
   id: string;

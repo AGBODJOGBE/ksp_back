@@ -8,7 +8,8 @@ import { type EventTemplateDefinition, type RenderedMessage } from '../template'
  * Refonte v2 (ADR-054) : seuls restent les messages des six événements v1 réécrits sur place
  * (demande annulée, visite planifiée ou annulée, devis envoyé, rappel avant l'expiration, devis
  * expiré). Les messages des demandes groupées, des missions, des passages, de la suspension et de la
- * reprise sont retirés avec la v1 ; ceux de la v2 viendront avec leurs lots (lot G).
+ * reprise sont retirés avec la v1. Les messages de la v2 (lot G) sont dans cleaning-customer,
+ * cleaning-sessions et cleaning-team.messages.ts.
  *
  * Nature du message (règle de choix du canal, voir channel.ts) :
  * - short : message court transactionnel → WhatsApp, e-mail en bascule ;

@@ -2,6 +2,9 @@ import { type ChannelName } from './channel';
 import { BILLING_TEMPLATES } from './messages/billing.messages';
 import { PAYMENT_TEMPLATES } from './messages/payment.messages';
 import { CLEANING_TEMPLATES } from './messages/cleaning.messages';
+import { CLEANING_CUSTOMER_TEMPLATES } from './messages/cleaning-customer.messages';
+import { CLEANING_SESSION_TEMPLATES } from './messages/cleaning-sessions.messages';
+import { CLEANING_TEAM_TEMPLATES } from './messages/cleaning-team.messages';
 import { IDENTITY_DIRECT_TEMPLATES } from './messages/identity.messages';
 import { ACCOUNT_TEMPLATES } from './messages/account.messages';
 import { DOCUMENT_DIRECT_TEMPLATES } from './messages/document.messages';
@@ -73,6 +76,10 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
   ...Object.fromEntries(IDENTITY_DIRECT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(DOCUMENT_DIRECT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(CLEANING_TEMPLATES.map((template) => [template.code, template])),
+  // Nettoyage v2 (CDC Nettoyage v2, 16.2 ; lot G).
+  ...Object.fromEntries(CLEANING_CUSTOMER_TEMPLATES.map((template) => [template.code, template])),
+  ...Object.fromEntries(CLEANING_SESSION_TEMPLATES.map((template) => [template.code, template])),
+  ...Object.fromEntries(CLEANING_TEAM_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(BILLING_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(ORGANIZATION_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(ACCOUNT_TEMPLATES.map((template) => [template.code, template])),

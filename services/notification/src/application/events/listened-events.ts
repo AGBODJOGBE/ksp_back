@@ -11,9 +11,9 @@ import { WALLET_RULES } from './wallet.rules';
  * Événements écoutés par notification, avec leur règle. Chaque événement a sa file
  * `notification.<événement>` (et ses files `.retry` et `.dlq`).
  *
- * Nettoyage (refonte v2, ADR-054) : les six événements v1 réécrits sur place (demande annulée,
- * visite planifiée ou annulée, devis envoyé, rappel avant l'expiration, devis expiré) ; les autres
- * événements v2 seront écoutés avec leurs lots (lot G, abonnements déclarés avec D40).
+ * Nettoyage (refonte v2, ADR-054 ; CDC Nettoyage v2, 16.2 ; lot G, D40) : les 45 événements publiés
+ * par cleaning (client, organisation, agents, superviseur de la zone, admin). Liste alignée sur
+ * `EVENT_CONSUMERS.notification` (test).
  * Facturation : les 3 événements publiés par billing (facture émise, impayée, réglée).
  * Comptes entreprise (identity) : nouvelle demande (équipe KSP), validation, refus, suspension et
  * réactivation (demandeur).

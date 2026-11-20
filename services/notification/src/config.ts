@@ -4,6 +4,41 @@ import { z } from 'zod';
 /** Une variable vide (`X=` dans un fichier .env) vaut une variable absente. */
 const optionalText = z.preprocess((value) => (value === '' ? undefined : value), z.string().optional());
 
+/** Permissions qui désignent le personnel du Nettoyage prévenu (RV-62). */
+const CLEANING_STAFF_PERMISSIONS = [
+  'cleaning.request.process',
+  'cleaning.program.manage',
+  'cleaning.claim.manage',
+  'cleaning.agent.manage',
+] as const;
+
+/** JSON « permission → identifiants de comptes » ; vide ou absent : aucun repli. */
+const cleaningStaffFallback = z
+  .string()
+  .default('')
+  .transform((raw, context) => {
+    if (raw.trim() === '') return {};
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        message: 'NOTIFICATION_CLEANING_STAFF_FALLBACK : JSON attendu ({"permission": ["uuid", …]}).',
+      });
+      return z.NEVER;
+    }
+  })
+  .pipe(
+    z.partialRecord(
+      z.enum(CLEANING_STAFF_PERMISSIONS),
+      z.array(
+        z
+          .uuid('NOTIFICATION_CLEANING_STAFF_FALLBACK : identifiants de comptes (UUID) attendus.')
+          .transform((id) => id.toLowerCase()),
+      ),
+    ),
+  );
+
 /**
  * Configuration du service : variables communes, plus celles propres à notification.
  *
@@ -81,6 +116,19 @@ export const configSchema = baseServiceConfigSchema
         z.array(z.uuid('NOTIFICATION_CLEANING_TEAM_USER_IDS : identifiants de comptes (UUID) attendus.')),
       ),
     /**
+     * Repli quand identity ne rend personne pour une permission (ListStaffByPermission, RV-62) :
+     * JSON « permission → identifiants de comptes », par exemple
+     * {"cleaning.request.process": ["…"]}. Permissions : cleaning.request.process,
+     * cleaning.program.manage, cleaning.claim.manage, cleaning.agent.manage. Sans entrée pour la
+     * permission : NOTIFICATION_CLEANING_TEAM_USER_IDS.
+     */
+    NOTIFICATION_CLEANING_STAFF_FALLBACK: cleaningStaffFallback,
+    /**
+     * Adresse publique du back-office, pour les liens des messages du personnel (superviseur, admin).
+     * Absente : messages du personnel sans lien. En production : HTTPS et nom public.
+     */
+    BACKOFFICE_BASE_URL: z.preprocess((value) => (value === '' ? undefined : value), z.url().optional()),
+    /**
      * Comptes de l'équipe KSP qui valide les comptes entreprise (ADR-027), prévenus de chaque
      * nouvelle demande. Identifiants séparés par des virgules ; vide par défaut (personne n'est
      * prévenu : les demandes restent visibles au back-office).
@@ -142,6 +190,17 @@ export const configSchema = baseServiceConfigSchema
       'PORTAL_BASE_URL doit être une adresse HTTPS publique en production : elle figure dans les liens des messages envoyés aux clients.',
     path: ['PORTAL_BASE_URL'],
   })
+  .refine(
+    (cfg) =>
+      cfg.NODE_ENV !== 'production' ||
+      cfg.BACKOFFICE_BASE_URL === undefined ||
+      isPublicHttpsUrl(cfg.BACKOFFICE_BASE_URL),
+    {
+      message:
+        'BACKOFFICE_BASE_URL doit être une adresse HTTPS publique en production : elle figure dans les liens des messages du personnel.',
+      path: ['BACKOFFICE_BASE_URL'],
+    },
+  )
   // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
   .superRefine(requireGrpcAddressesInProduction);
 

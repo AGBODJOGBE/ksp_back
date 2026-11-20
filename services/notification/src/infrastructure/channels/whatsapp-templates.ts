@@ -49,7 +49,250 @@ function withService(
   };
 }
 
+/**
+ * Nettoyage v2 (CDC Nettoyage v2, 16.2 ; lot G). Une variante par cas quand le texte change
+ * (`case`) ; le remboursement d'une visite et le lien des messages du personnel restent dans
+ * l'e-mail et l'espace KSP. Messages du personnel : `ksp_cleaning_staff_*` ; des agents :
+ * `ksp_cleaning_agent_*`.
+ */
+const CLEANING_V2: Readonly<Record<string, WhatsAppTemplateSpec>> = {
+  'cleaning.request_submitted.customer': spec(
+    (v) =>
+      v['case'] === 'paid' ? 'ksp_cleaning_request_submitted' : 'ksp_cleaning_request_submitted_unpaid',
+    ['request_number', 'place', 'visit_fee', 'link'],
+  ),
+  'cleaning.visit_fee_paid.customer': spec('ksp_cleaning_visit_fee_paid', [
+    'request_number',
+    'amount',
+    'link',
+  ]),
+  'cleaning.visit_rescheduled.customer': spec('ksp_cleaning_visit_rescheduled', [
+    'request_number',
+    'previous_date',
+    'date',
+    'link',
+  ]),
+  'cleaning.visit_cancelled.customer': spec(
+    (v) =>
+      v['case'] === 'slot_changed'
+        ? 'ksp_cleaning_visit_cancelled_slot_changed'
+        : 'ksp_cleaning_visit_cancelled_by_ksp',
+    ['request_number', 'date', 'link'],
+  ),
+  'cleaning.visit_arrived.customer': spec('ksp_cleaning_visit_arrived', ['request_number', 'link']),
+  'cleaning.visit_completed.customer': spec('ksp_cleaning_visit_completed', ['request_number', 'link']),
+  'cleaning.renewal_proposed.customer': spec('ksp_cleaning_renewal_proposed', [
+    'request_number',
+    'total',
+    'valid_until',
+    'link',
+  ]),
+  'cleaning.quote_forwarded.customer': spec('ksp_cleaning_quote_forwarded', ['request_number', 'link']),
+  'cleaning.program_confirmed.customer': spec('ksp_cleaning_program_confirmed', [
+    'program_number',
+    'place',
+    'sessions_count',
+    'first_date',
+    'total',
+    'link',
+  ]),
+  'cleaning.program_completed.customer': spec(
+    (v) =>
+      v['case'] === 'one_off' ? 'ksp_cleaning_program_completed_one_off' : 'ksp_cleaning_program_completed',
+    ['program_number', 'end_date', 'sessions_completed', 'link'],
+  ),
+  'cleaning.program_cancelled.customer': spec(
+    (v) => (v['case'] === 'ksp' ? 'ksp_cleaning_program_cancelled_by_ksp' : 'ksp_cleaning_program_cancelled'),
+    ['link'],
+  ),
+  'cleaning.program_suspended.customer': spec('ksp_cleaning_program_suspended', ['causes', 'link']),
+  'cleaning.program_suspension_updated.customer': spec(
+    (v) =>
+      v['case'] === 'cause_added'
+        ? 'ksp_cleaning_program_suspension_cause_added'
+        : 'ksp_cleaning_program_suspension_cause_lifted',
+    ['cause', 'causes', 'link'],
+  ),
+  'cleaning.program_resumed.customer': spec('ksp_cleaning_program_resumed', ['link']),
+  'cleaning.unpaid_warning.customer': spec('ksp_cleaning_unpaid_warning', [
+    'unpaid_count',
+    'suspension_threshold',
+    'link',
+  ]),
+  'cleaning.session_assigned.customer': spec('ksp_cleaning_session_assigned', ['session', 'date', 'link']),
+  'cleaning.sessions_assigned.customer': spec('ksp_cleaning_sessions_assigned', [
+    'count',
+    'first_date',
+    'last_date',
+    'link',
+  ]),
+  'cleaning.session_rescheduled.customer': spec('ksp_cleaning_session_rescheduled', [
+    'session',
+    'previous_date',
+    'date',
+    'link',
+  ]),
+  'cleaning.session_cancelled.customer': spec(
+    (v) =>
+      v['case'] === 'customer'
+        ? 'ksp_cleaning_session_cancelled'
+        : v['case'] === 'no_agent'
+          ? 'ksp_cleaning_session_cancelled_no_agent'
+          : 'ksp_cleaning_session_cancelled_by_ksp',
+    ['session', 'date', 'link'],
+  ),
+  // Particulier : l'état du solde et le montant ; entreprise (facture mensuelle) : sans montant.
+  'cleaning.session_reminder.customer': {
+    name: (v) =>
+      !v['amount'] || v['case'] === 'invoiced'
+        ? 'ksp_cleaning_session_reminder'
+        : v['case'] === 'sufficient'
+          ? 'ksp_cleaning_session_reminder_balance_ok'
+          : 'ksp_cleaning_session_reminder_balance_low',
+    parameters: (v) => [
+      name(v),
+      v['session'] ?? '',
+      v['date'] ?? '',
+      ...(!v['amount'] || v['case'] === 'invoiced' ? [] : [v['amount']]),
+      v['link'] ?? '',
+    ],
+  },
+  'cleaning.balance_insufficient.customer': spec('ksp_cleaning_balance_insufficient', [
+    'session',
+    'date',
+    'amount_due',
+    'missing',
+    'link',
+  ]),
+  'cleaning.session_arrived.customer': spec('ksp_cleaning_session_arrived', ['session', 'link']),
+  'cleaning.session_started.customer': spec('ksp_cleaning_session_started', ['session', 'link']),
+  'cleaning.session_completed.customer': spec('ksp_cleaning_session_completed', ['session', 'link']),
+  'cleaning.session_payment_due.customer': spec('ksp_cleaning_session_payment_due', [
+    'session',
+    'amount',
+    'due_by',
+    'link',
+  ]),
+  'cleaning.session_paid.customer': spec('ksp_cleaning_session_paid', ['session', 'amount', 'link']),
+  'cleaning.session_overdue.customer': spec('ksp_cleaning_session_overdue', ['session', 'amount', 'link']),
+  // Demande refusée, devis retiré, paiement laissé au portefeuille, client absent à la visite.
+  'cleaning.request_rejected.customer': spec('ksp_cleaning_request_rejected', [
+    'request_number',
+    'reason',
+    'link',
+  ]),
+  'cleaning.quote_withdrawn.customer': spec('ksp_cleaning_quote_withdrawn', ['request_number', 'link']),
+  'cleaning.payment_left_in_wallet.customer': spec('ksp_cleaning_payment_left_in_wallet', [
+    'amount',
+    'object',
+    'reason',
+    'link',
+  ]),
+  'cleaning.visit_missed.customer': spec('ksp_cleaning_visit_missed', [
+    'request_number',
+    'date',
+    'visit_fee',
+    'pay_before',
+    'link',
+  ]),
+  'cleaning.claim_opened.customer': spec('ksp_cleaning_claim_opened', ['link']),
+  'cleaning.claim_resolved.customer': {
+    name: (v) =>
+      v['case'] === 'free_redo'
+        ? 'ksp_cleaning_claim_free_redo'
+        : v['case'] === 'wallet_credit'
+          ? v['amount']
+            ? 'ksp_cleaning_claim_credit_amount'
+            : 'ksp_cleaning_claim_credit'
+          : 'ksp_cleaning_claim_rejected',
+    parameters: (v) => [
+      name(v),
+      ...(v['case'] === 'wallet_credit' && v['amount'] ? [v['amount']] : []),
+      v['link'] ?? '',
+    ],
+  },
+  // Agents (application agent, sans lien ni montant).
+  'cleaning.visit_rescheduled.agent': spec('ksp_cleaning_agent_visit_rescheduled', [
+    'request_number',
+    'date',
+    'previous_date',
+  ]),
+  'cleaning.visit_released.agent': spec('ksp_cleaning_agent_visit_released', ['date', 'request_number']),
+  'cleaning.session_assigned.agent': spec('ksp_cleaning_agent_session_assigned', ['session', 'date']),
+  'cleaning.sessions_assigned.agent': spec('ksp_cleaning_agent_sessions_assigned', [
+    'count',
+    'first_date',
+    'last_date',
+  ]),
+  'cleaning.session_rescheduled.agent': spec('ksp_cleaning_agent_session_rescheduled', [
+    'session',
+    'previous_date',
+    'date',
+  ]),
+  'cleaning.session_released.agent': spec('ksp_cleaning_agent_session_released', ['session', 'date']),
+  'cleaning.program_released.agent': spec('ksp_cleaning_agent_program_released', []),
+  'cleaning.session_reminder.agent': spec('ksp_cleaning_agent_session_reminder', ['session', 'date']),
+  'cleaning.agent_applied.agent': spec(
+    (v) =>
+      v['case'] === 'self' ? 'ksp_cleaning_agent_application_received' : 'ksp_cleaning_agent_profile_created',
+    [],
+  ),
+  'cleaning.agent_approved.agent': spec('ksp_cleaning_agent_approved', []),
+  // Personnel du back-office (le lien reste dans l'e-mail et l'espace KSP).
+  'cleaning.request_submitted.staff': spec('ksp_cleaning_staff_request_submitted', [
+    'request_number',
+    'place',
+  ]),
+  'cleaning.visit_fee_paid.staff': {
+    name: (v) =>
+      v['rank'] === '1' ? 'ksp_cleaning_staff_visit_fee_paid' : 'ksp_cleaning_staff_new_visit_fee_paid',
+    parameters: (v) => [name(v), v['request_number'] ?? '', ...(v['rank'] === '1' ? [] : [v['rank'] ?? ''])],
+  },
+  'cleaning.reactivation_requested.staff': spec('ksp_cleaning_staff_reactivation_requested', [
+    'request_number',
+  ]),
+  'cleaning.visit_missed.staff': spec('ksp_cleaning_staff_visit_missed', ['date', 'request_number']),
+  'cleaning.quote_accepted.staff': spec('ksp_cleaning_staff_quote_accepted', ['request_number']),
+  'cleaning.quote_declined.staff': spec('ksp_cleaning_staff_quote_declined', ['request_number', 'reason']),
+  'cleaning.quote_expired.staff': spec('ksp_cleaning_staff_quote_expired', ['request_number']),
+  'cleaning.program_suspended.staff': spec('ksp_cleaning_staff_program_suspended', ['causes']),
+  'cleaning.program_suspension_updated.staff': spec(
+    (v) =>
+      v['case'] === 'cause_added'
+        ? 'ksp_cleaning_staff_ksp_suspension_added'
+        : 'ksp_cleaning_staff_ksp_suspension_lifted',
+    ['causes'],
+  ),
+  'cleaning.program_resumed.staff': spec('ksp_cleaning_staff_program_resumed', [
+    'cause',
+    'sessions_to_assign',
+    'catch_up',
+  ]),
+  'cleaning.unpaid_warning.staff': spec('ksp_cleaning_staff_unpaid_warning', [
+    'unpaid_count',
+    'suspension_threshold',
+  ]),
+  'cleaning.session_overdue.staff': spec('ksp_cleaning_staff_session_overdue', ['session', 'overdue_count']),
+  'cleaning.session_interrupted.staff': spec('ksp_cleaning_staff_session_interrupted', [
+    'session',
+    'category',
+  ]),
+  'cleaning.session_missed.staff': spec('ksp_cleaning_staff_session_missed', ['session', 'cause']),
+  'cleaning.staffing_alert.staff': spec(
+    (v) =>
+      v['case'] === 'unassigned_48h'
+        ? 'ksp_cleaning_staff_session_unstaffed'
+        : v['case'] === 'unassigned_at_start'
+          ? 'ksp_cleaning_staff_session_uncovered'
+          : 'ksp_cleaning_staff_agent_absent',
+    ['session', 'date', 'missing'],
+  ),
+  'cleaning.agent_applied.staff': spec('ksp_cleaning_staff_agent_applied', []),
+  'cleaning.claim_opened.staff': spec('ksp_cleaning_staff_claim_opened', ['category']),
+};
+
 export const WHATSAPP_EVENT_TEMPLATES: Readonly<Record<string, WhatsAppTemplateSpec>> = {
+  ...CLEANING_V2,
   'cleaning.visit_scheduled.customer': withService('ksp_cleaning_visit_scheduled', ['date', 'link']),
   'cleaning.visit_scheduled.agent': withService('ksp_cleaning_visit_assigned', ['date']),
   'cleaning.quote_sent.customer': withService('ksp_cleaning_quote_sent', ['total', 'valid_until', 'link']),
