@@ -13,6 +13,8 @@ import { NotificationHttpController } from '../src/interfaces/http/notification.
 import { OrganizationAdminHttpController } from '../src/interfaces/http/organizations-admin.controller';
 import { OrganizationHttpController } from '../src/interfaces/http/organizations.controller';
 import { PaymentHttpController } from '../src/interfaces/http/payment.controller';
+import { RecoveryAdminHttpController } from '../src/interfaces/http/recovery-admin.controller';
+import { RecoveryHttpController } from '../src/interfaces/http/recovery.controller';
 import { WalletHttpController } from '../src/interfaces/http/wallet.controller';
 import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
 
@@ -30,6 +32,8 @@ const CONTROLLERS = [
   FileHttpController,
   WalletHttpController,
   DocumentHttpController,
+  RecoveryHttpController,
+  RecoveryAdminHttpController,
 ];
 
 /** Routes dont le contrôleur lit l'en-tête Idempotency-Key, et leur ligne du manifeste. */

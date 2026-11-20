@@ -6,6 +6,7 @@ import {
   identityV1,
   notificationV1,
   paymentV1,
+  recoveryV1,
   walletV1,
 } from '@ksp/contracts';
 import {
@@ -28,6 +29,7 @@ import { type AccountAdminApi } from './application/identity/account-admin.ports
 import { type OrganizationsApi } from './application/identity/organizations.ports';
 import { type NotificationApi } from './application/notification/notification.ports';
 import { type DocumentApi } from './application/document/document.ports';
+import { type RecoveryApi } from './application/recovery/recovery.ports';
 import { type FileApi } from './application/file/file.ports';
 import { type PaymentApi } from './application/payment/payment.ports';
 import { type WalletApi } from './application/wallet/wallet.ports';
@@ -63,6 +65,7 @@ import { IdentityGrpcAdapter } from './infrastructure/grpc/identity-grpc.adapter
 import { OrganizationsGrpcAdapter } from './infrastructure/grpc/organizations-grpc.adapter';
 import { NotificationGrpcAdapter } from './infrastructure/grpc/notification-grpc.adapter';
 import { DocumentGrpcAdapter } from './infrastructure/grpc/document-grpc.adapter';
+import { RecoveryGrpcAdapter } from './infrastructure/grpc/recovery-grpc.adapter';
 import { FileGrpcAdapter } from './infrastructure/grpc/file-grpc.adapter';
 import { PaymentGrpcAdapter } from './infrastructure/grpc/payment-grpc.adapter';
 import { WalletGrpcAdapter } from './infrastructure/grpc/wallet-grpc.adapter';
@@ -82,6 +85,8 @@ import { OrganizationAdminHttpController } from './interfaces/http/organizations
 import { OrganizationHttpController } from './interfaces/http/organizations.controller';
 import { NotificationHttpController } from './interfaces/http/notification.controller';
 import { DocumentHttpController } from './interfaces/http/document.controller';
+import { RecoveryAdminHttpController } from './interfaces/http/recovery-admin.controller';
+import { RecoveryHttpController } from './interfaces/http/recovery.controller';
 import { FileHttpController } from './interfaces/http/file.controller';
 import { PaymentHttpController } from './interfaces/http/payment.controller';
 import { WalletHttpController } from './interfaces/http/wallet.controller';
@@ -96,6 +101,8 @@ import {
   CLOCK,
   DOCUMENT_API,
   DOCUMENT_GRPC_CLIENT,
+  RECOVERY_API,
+  RECOVERY_GRPC_CLIENT,
   FILE_API,
   FILE_GRPC_CLIENT,
   IDENTITY_GRPC_CLIENT,
@@ -134,6 +141,7 @@ export class AppModule {
           grpcClientOptions(FILE_GRPC_CLIENT, 'file', config.FILE_GRPC_URL),
           grpcClientOptions(WALLET_GRPC_CLIENT, 'wallet', config.WALLET_GRPC_URL),
           grpcClientOptions(DOCUMENT_GRPC_CLIENT, 'document', config.DOCUMENT_GRPC_URL),
+          grpcClientOptions(RECOVERY_GRPC_CLIENT, 'recovery', config.RECOVERY_GRPC_URL),
         ]),
       ],
       // Santé et métriques : port interne seulement (main.ts, ADR-051).
@@ -151,6 +159,8 @@ export class AppModule {
         FileHttpController,
         WalletHttpController,
         DocumentHttpController,
+        RecoveryHttpController,
+        RecoveryAdminHttpController,
       ],
       providers: [
         ReadinessRegistry,
@@ -378,6 +388,33 @@ export class AppModule {
               // Coupe-circuit propre à document : une panne n'affecte pas les autres routes (UC-GW-07).
               new GrpcCaller({
                 target: 'document',
+                defaultDeadlineMs: config.GRPC_DEADLINE_MS,
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        {
+          provide: RECOVERY_API,
+          inject: [RECOVERY_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
+          useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): RecoveryApi =>
+            new RecoveryGrpcAdapter(
+              {
+                creditor: grpc.getService<recoveryV1.RecoveryCreditorServiceClient>(
+                  recoveryV1.RECOVERY_CREDITOR_SERVICE_NAME,
+                ),
+                debtor: grpc.getService<recoveryV1.RecoveryDebtorServiceClient>(
+                  recoveryV1.RECOVERY_DEBTOR_SERVICE_NAME,
+                ),
+                partner: grpc.getService<recoveryV1.RecoveryPartnerServiceClient>(
+                  recoveryV1.RECOVERY_PARTNER_SERVICE_NAME,
+                ),
+                admin: grpc.getService<recoveryV1.RecoveryAdminServiceClient>(
+                  recoveryV1.RECOVERY_ADMIN_SERVICE_NAME,
+                ),
+              },
+              // Coupe-circuit propre à recovery : une panne n'affecte pas les autres routes (UC-GW-07).
+              new GrpcCaller({
+                target: 'recovery',
                 defaultDeadlineMs: config.GRPC_DEADLINE_MS,
                 ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
               }),

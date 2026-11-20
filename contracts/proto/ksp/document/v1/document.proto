@@ -19,7 +19,14 @@ package ksp.document.v1;
 //   recovery_mandate               v1  mandat de recouvrement, signé par le créancier    recovery
 //   recovery_formal_notice         v1  mise en demeure adressée au débiteur, sans signature   recovery
 //   recovery_settlement_agreement  v1  protocole d'accord et échéancier, signé par le débiteur  recovery
-//   generic                        v1  document de test (titre, paragraphes), désactivé en production
+//   Ajoutés par ADR-060 en complément d'ADR-044 (décision 1) ; préfixe du numéro, signature :
+//   recovery_settlement_certificate v1  ATS  none      attestation de solde remise au débiteur        recovery
+//   recovery_fee_quote             v1  DEV  optional  devis des frais (huissier, greffe, avocat),
+//                                                     accepté en ligne par le créancier              recovery
+//   recovery_evidence_log          v1  JDP  none      export du journal de preuve d'un dossier       recovery
+//   recovery_statement             v1  REL  none      relevé mensuel d'un dossier au créancier       recovery
+//   recovery_receipt               v1  RCU  none      reçu d'un paiement du débiteur                 recovery
+//   generic                       v1  document de test (titre, paragraphes), désactivé en production
 //
 // Statuts d'un document : "draft" (produit, aucune signature en cours), "pending_signature",
 // "signed", "expired" (la demande de signature a expiré ; une nouvelle peut être faite) ou

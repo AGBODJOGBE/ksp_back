@@ -4,6 +4,7 @@ import { type DocumentEventPayloads } from './document.events';
 import { type IdentityEventPayloads } from './identity.events';
 import { type NotificationEventPayloads } from './notification.events';
 import { type PaymentEventPayloads } from './payment.events';
+import { type RecoveryEventPayloads } from './recovery.events';
 import { type WalletEventPayloads } from './wallet.events';
 
 export * from './billing.events';
@@ -13,6 +14,7 @@ export * from './envelope';
 export * from './identity.events';
 export * from './notification.events';
 export * from './payment.events';
+export * from './recovery.events';
 export * from './wallet.events';
 
 /** Tous les événements connus de l'écosystème : type → contenu. Complété à chaque nouveau service. */
@@ -22,5 +24,6 @@ export type KspEventPayloads = IdentityEventPayloads &
   BillingEventPayloads &
   PaymentEventPayloads &
   DocumentEventPayloads &
-  WalletEventPayloads;
+  WalletEventPayloads &
+  RecoveryEventPayloads;
 export type KspEventType = keyof KspEventPayloads;

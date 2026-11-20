@@ -21,3 +21,5 @@ export const WALLET_GRPC_CLIENT = Symbol('WALLET_GRPC_CLIENT');
 export const WALLET_API = Symbol('WALLET_API');
 export const DOCUMENT_GRPC_CLIENT = Symbol('DOCUMENT_GRPC_CLIENT');
 export const DOCUMENT_API = Symbol('DOCUMENT_API');
+export const RECOVERY_GRPC_CLIENT = Symbol('RECOVERY_GRPC_CLIENT');
+export const RECOVERY_API = Symbol('RECOVERY_API');

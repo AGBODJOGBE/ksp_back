@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.partner.act_recorded.v1.schema.json",
+  "title": "recovery.partner.act_recorded",
+  "description": "Acte enregistré par un partenaire (R-HU-04) ; le créancier et le juriste sont prévenus. Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.partner.act_recorded",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "caseId",
+    "caseNumber",
+    "creditor",
+    "actId",
+    "assignmentId",
+    "partnerId",
+    "actType",
+    "actDate",
+    "cost",
+    "recordedAt"
+  ],
+  "$defs": {
+    "moneyOrZero": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "actId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "assignmentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "partnerId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "actType": {
+      "enum": [
+        "summons_to_pay",
+        "service",
+        "conservatory_measure",
+        "seizure",
+        "injunction_request",
+        "injunction_order",
+        "hearing",
+        "judgment",
+        "enforcement",
+        "insolvency_report",
+        "other"
+      ]
+    },
+    "actDate": {
+      "type": "string",
+      "format": "date"
+    },
+    "cost": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "recordedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

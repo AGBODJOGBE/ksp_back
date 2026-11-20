@@ -1,0 +1,2142 @@
+syntax = "proto3";
+
+package ksp.recovery.v1;
+
+import "ksp/common/v1/money.proto";
+
+// Contrats du service recovery : recouvrement de créances B2B, B2C et de loyers confié à KSP
+// (cahier des charges « Recouvrement et gestion locative » du 2026-11-19, parties 4 à 8 et 16 ;
+// ADR-060 service et argent, ADR-061 accès du débiteur, ADR-062 tarification).
+//
+// - RecoveryCreditorService : espace du créancier connecté (son compte, ou son organisation
+//   active), réservé à la gateway : dossiers, import, mandat, frais de dossier, décisions, arrêt,
+//   paiements directs, reversements, préférences.
+// - RecoveryDebtorService : débiteur sans compte, réservé à la gateway (routes publiques). Le jeton
+//   du lien personnel ouvre l'accès ; après le code reçu au téléphone, une session débiteur courte
+//   (métadonnée gRPC "x-debtor-session", transmise par la gateway, jamais journalisée) porte les
+//   autres appels. Il ne voit que son dossier (R-DB-01).
+// - RecoveryPartnerService : huissier ou avocat partenaire connecté, réservé à la gateway ; il ne
+//   voit que les dossiers qui lui sont assignés (R-AR-02).
+// - RecoveryAdminService : back-office (rôles du recouvrement, de la finance ; double
+//   authentification), réservé à la gateway : recevabilité, traitement, courriers, partenaires,
+//   paiements hors ligne, clôture, tarification, réglages.
+// - ObligationService (ksp.common.v1, obligation.proto) est aussi implémenté par recovery :
+//   obligation "open_recovery_case" tant qu'un dossier du compte n'est pas clos ou refusé.
+//
+// États (toute autre transition : RECOVERY_INVALID_TRANSITION) :
+//   dossier    draft → awaiting_fee → under_review ⇄ info_requested → active → closed ;
+//              under_review → rejected ; active ⇄ suspended (contestation) ; draft supprimé
+//              après le délai de paiement des frais (7 jours, réglable).
+//   étape      notice → payment_plan → amicable → formal_notice → bailiff → litigation ;
+//              notice → amicable (sans réponse) ; sauts tracés (R-PR-03). Dossier "rent" :
+//              étapes de la procédure locative ajoutées avec le lot G (ADR-060).
+//   échéancier proposed → pending_creditor → signed → completed | defaulted ;
+//              proposed | pending_creditor → rejected ; signé puis renégocié : cancelled.
+//
+// Argent (ADR-060) : le débiteur paie KSP par un lien de paiement (payment, ADR-040) plafonné au
+// montant dû ; chaque encaissement est imputé (frais de procédure refacturables, puis intérêts et
+// pénalités, puis principal), la commission est calculée par recovery selon la règle figée dans le
+// mandat, et wallet crédite le net au créancier dès l'encaissement confirmé (RecordCollection).
+//
+// Conventions : dates ISO 8601 en UTC (chaîne vide = absente) ; dates sans heure "AAAA-MM-JJ"
+// (heure du Bénin) ; montants entiers en XOF ; taux en points de base (1 000 = 10 %) ; valeurs
+// énumérées en snake_case, identiques à l'API REST. L'utilisateur connecté et son contexte actif ne
+// sont jamais dans les messages : la gateway les transmet dans les métadonnées gRPC. Coordonnées
+// des débiteurs : jamais dans les journaux ni dans les événements (identifiants seulement).
+//
+// Erreurs (code AppError → statut gRPC) :
+//   RECOVERY_VALIDATION_FAILED               INVALID_ARGUMENT    details.field
+//   RECOVERY_AMOUNT_BELOW_MINIMUM            INVALID_ARGUMENT    montant dû sous le minimum d'un dossier (details.minimum)
+//   RECOVERY_IMPORT_FILE_INVALID             INVALID_ARGUMENT    fichier d'import illisible ou hors modèle (details.reason)
+//   RECOVERY_CASE_NOT_FOUND                  NOT_FOUND           dossier inconnu ou hors du périmètre de l'appelant
+//   RECOVERY_IMPORT_NOT_FOUND                NOT_FOUND           import inconnu ou d'un autre créancier
+//   RECOVERY_DECISION_NOT_FOUND              NOT_FOUND           décision inconnue ou hors périmètre
+//   RECOVERY_PARTNER_NOT_FOUND               NOT_FOUND           partenaire inconnu
+//   RECOVERY_ASSIGNMENT_NOT_FOUND            NOT_FOUND           assignation inconnue ou d'un autre partenaire
+//   RECOVERY_OFFLINE_PAYMENT_NOT_FOUND       NOT_FOUND           paiement hors ligne inconnu
+//   RECOVERY_PRICING_RULE_NOT_FOUND          NOT_FOUND           règle tarifaire inconnue
+//   RECOVERY_DEBTOR_LINK_INVALID             NOT_FOUND           lien du débiteur inconnu, mal formé ou expiré (aucun indice)
+//   RECOVERY_INVALID_TRANSITION              FAILED_PRECONDITION action impossible dans l'état du dossier (details.status,
+//                                                                details.stage)
+//   RECOVERY_CASE_SUSPENDED                  FAILED_PRECONDITION dossier suspendu par une contestation
+//   RECOVERY_MANDATE_NOT_SIGNED              FAILED_PRECONDITION frais demandés avant la signature du mandat
+//   RECOVERY_INSUFFICIENT_FUNDS              FAILED_PRECONDITION portefeuille prépayé insuffisant (details.missing) :
+//                                                                recharger puis rejouer avec la même clé
+//   RECOVERY_DECISION_CLOSED                 FAILED_PRECONDITION décision déjà prise ou expirée (details.status)
+//   RECOVERY_PLAN_OUT_OF_SCALE               FAILED_PRECONDITION échéancier hors barème là où le barème est exigé
+//                                                                (details.violations)
+//   RECOVERY_PLAN_RENEGOTIATION_EXHAUSTED    FAILED_PRECONDITION seconde renégociation refusée (6.1)
+//   RECOVERY_PAYMENT_AMOUNT_INVALID          FAILED_PRECONDITION montant nul ou au-delà du montant dû (details.due)
+//   RECOVERY_CONTACT_OUTSIDE_HOURS           FAILED_PRECONDITION contact hors des plages autorisées (details.nextAllowedAt)
+//   RECOVERY_STAGE_SKIP_NOT_ALLOWED          FAILED_PRECONDITION saut d'étape sans motif admis (R-PR-03)
+//   RECOVERY_CREDITOR_APPROVAL_REQUIRED      FAILED_PRECONDITION étape payante sans accord ni provision du créancier (R-PR-04)
+//   RECOVERY_PARTNER_NOT_ACTIVE              FAILED_PRECONDITION partenaire non vérifié ou suspendu
+//   RECOVERY_PRICING_RULE_INVALID            FAILED_PRECONDITION règle incomplète ou incohérente (details.violations)
+//   RECOVERY_PRICING_RULE_CONFLICT           FAILED_PRECONDITION une autre règle publiée couvre le même objet, la même
+//                                                                cible et la même période (details.ruleId)
+//   RECOVERY_SETTING_OUT_OF_BOUNDS           INVALID_ARGUMENT    réglage hors bornes (details.field, details.min, details.max)
+//   RECOVERY_APPROVAL_BY_REQUESTER           PERMISSION_DENIED   validation par l'auteur de la saisie (R-AR-03)
+//   RECOVERY_DEBTOR_SESSION_INVALID          UNAUTHENTICATED     session débiteur absente, expirée ou révoquée
+//   RECOVERY_DEBTOR_CODE_INVALID             INVALID_ARGUMENT    code faux (details.attemptsLeft)
+//   RECOVERY_DEBTOR_CODE_EXPIRED             FAILED_PRECONDITION aucun code valable : en demander un nouveau
+//   RECOVERY_DEBTOR_CODE_TOO_SOON            RESOURCE_EXHAUSTED  nouveau code trop tôt (details.retryAfterSeconds)
+//   RECOVERY_DEBTOR_LOCKED                   RESOURCE_EXHAUSTED  5 codes faux : accès bloqué une heure (details.retryAfterSeconds)
+//   RECOVERY_IDEMPOTENCY_KEY_REUSED          ALREADY_EXISTS      même clé déjà utilisée pour une autre opération
+//   RECOVERY_DEPENDENCY_UNAVAILABLE          UNAVAILABLE         wallet, payment, document, file, notification ou identity
+//                                                                injoignable : réessayer avec la même clé
+//   RECOVERY_CALLER_FORBIDDEN                PERMISSION_DENIED   méthode réservée à la gateway (ou à identity pour les obligations)
+//   AUTH_REQUIRED                            UNAUTHENTICATED
+//   AUTH_FORBIDDEN                           PERMISSION_DENIED   rôle manquant, membre lecteur (org_viewer), partenaire
+//                                                                hors de son assignation
+//   AUTH_MFA_REQUIRED                        PERMISSION_DENIED   double authentification absente ou trop ancienne
+
+// ---------------------------------------------------------------------------------------------
+// Services
+// ---------------------------------------------------------------------------------------------
+
+// Espace du créancier connecté (UC-RC-01 à 09).
+service RecoveryCreditorService {
+  // Frais de dossier et règle de commission applicables, avant l'envoi (R-TA-03).
+  rpc EstimateCaseFees(EstimateCaseFeesRequest) returns (EstimateCaseFeesResponse);
+  // Brouillon de dossier (formulaire en cinq étapes, UC-RC-01). Signale les dossiers ouverts
+  // semblables (même débiteur, mêmes références, R-SD-06) sans bloquer.
+  rpc CreateCase(CreateCaseRequest) returns (CreateCaseResponse);
+  // Modifie un brouillon, ou complète un dossier "info_requested" (UC-RC-04) ; un dossier
+  // complété repasse "under_review".
+  rpc UpdateCase(UpdateCaseRequest) returns (UpdateCaseResponse);
+  // Rattache un justificatif déjà envoyé par file (finalité recovery_evidence).
+  rpc AddCaseDocument(AddCaseDocumentRequest) returns (AddCaseDocumentResponse);
+  // Produit le mandat (document, modèle recovery_mandate) avec la tarification figée et demande sa
+  // signature par code au créancier connecté ; la signature se fait par la route de document
+  // (POST /api/v1/document/signatures/{id}/sign). Le dossier passe "awaiting_fee" à la signature.
+  rpc PrepareMandate(PrepareMandateRequest) returns (PrepareMandateResponse);
+  // Débite les frais de dossier du portefeuille prépayé (R-SD-04) ; le dossier passe "under_review".
+  rpc PayCaseFee(PayCaseFeeRequest) returns (PayCaseFeeResponse);
+  rpc ListMyCases(ListMyCasesRequest) returns (ListMyCasesResponse);
+  // Fiche du dossier : étapes, montant dû, paiements, échéancier, pièces, partenaire assigné.
+  rpc GetMyCase(GetMyCaseRequest) returns (GetMyCaseResponse);
+  // Journal du dossier sans les notes internes (R-PR-08).
+  rpc ListMyCaseJournal(ListMyCaseJournalRequest) returns (ListMyCaseJournalResponse);
+  // Import tableur (UC-RC-02) : contrôle ligne par ligne, puis confirmation.
+  rpc CreateCaseImport(CreateCaseImportRequest) returns (CreateCaseImportResponse);
+  rpc GetCaseImport(GetCaseImportRequest) returns (GetCaseImportResponse);
+  // Corrige une ligne en erreur avant confirmation.
+  rpc UpdateCaseImportLine(UpdateCaseImportLineRequest) returns (UpdateCaseImportLineResponse);
+  // Crée les brouillons (un par débiteur) à partir des lignes valides.
+  rpc ConfirmCaseImport(ConfirmCaseImportRequest) returns (ConfirmCaseImportResponse);
+  // Décisions à prendre (UC-RC-06, 07) : échéancier hors barème, remise, passage à l'huissier ou
+  // au judiciaire (devis et provision), réponse à une contestation.
+  rpc ListMyDecisions(ListMyDecisionsRequest) returns (ListMyDecisionsResponse);
+  rpc AnswerDecision(AnswerDecisionRequest) returns (AnswerDecisionResponse);
+  // Arrêt du dossier par le créancier (R-PR-06).
+  rpc StopCase(StopCaseRequest) returns (StopCaseResponse);
+  // Paiement reçu directement par le créancier (R-PR-07) : imputé, commission due.
+  rpc DeclareDirectPayment(DeclareDirectPaymentRequest) returns (DeclareDirectPaymentResponse);
+  // Encaissements crédités au portefeuille du créancier (net, commission, frais), par dossier.
+  rpc ListMyRemittances(ListMyRemittancesRequest) returns (ListMyRemittancesResponse);
+  // Relevés mensuels par dossier (R-CO-05).
+  rpc ListMyStatements(ListMyStatementsRequest) returns (ListMyStatementsResponse);
+  rpc GetMyDashboard(GetMyDashboardRequest) returns (GetMyDashboardResponse);
+  rpc GetMyPreferences(GetMyPreferencesRequest) returns (GetMyPreferencesResponse);
+  rpc UpdateMyPreferences(UpdateMyPreferencesRequest) returns (UpdateMyPreferencesResponse);
+}
+
+// Débiteur sans compte (partie 7, UC-RC-10 à 13 ; ADR-061).
+service RecoveryDebtorService {
+  // Aperçu du lien (jeton) : nom du créancier et téléphone masqué où partira le code.
+  rpc OpenDebtorAccess(OpenDebtorAccessRequest) returns (OpenDebtorAccessResponse);
+  rpc SendDebtorAccessCode(SendDebtorAccessCodeRequest) returns (SendDebtorAccessCodeResponse);
+  // Code juste : session débiteur (30 minutes, réglable), renvoyée une seule fois.
+  rpc VerifyDebtorAccessCode(VerifyDebtorAccessCodeRequest) returns (VerifyDebtorAccessCodeResponse);
+  rpc EndDebtorSession(EndDebtorSessionRequest) returns (EndDebtorSessionResponse);
+  // Situation : créancier, nature, références, montant dû détaillé, paiements, pièces choisies par
+  // KSP, échéancier, remise autorisée, barème du simulateur.
+  rpc GetDebtorCase(GetDebtorCaseRequest) returns (GetDebtorCaseResponse);
+  // Paiement de la totalité ou d'un montant libre (au plus le montant dû) : lien de paiement de ce
+  // montant (payment, ADR-040), l'éventuel lien précédent est révoqué.
+  rpc CreateDebtorPayment(CreateDebtorPaymentRequest) returns (CreateDebtorPaymentResponse);
+  // Échéancier calculé dans le barème, sans rien enregistrer.
+  rpc SimulateDebtorPaymentPlan(SimulateDebtorPaymentPlanRequest) returns (SimulateDebtorPaymentPlanResponse);
+  // Proposition : dans le barème, acceptée aussitôt et envoyée à la signature (lien de signature de
+  // document) ; hors barème, transmise au chargé.
+  rpc ProposeDebtorPaymentPlan(ProposeDebtorPaymentPlanRequest) returns (ProposeDebtorPaymentPlanResponse);
+  // Renvoie le lien de signature de l'échéancier au téléphone du débiteur (document, ADR-044).
+  rpc ResendDebtorPlanSignature(ResendDebtorPlanSignatureRequest) returns (ResendDebtorPlanSignatureResponse);
+  // Contestation (R-PR-02) : suspend le dossier.
+  rpc DisputeDebtorCase(DisputeDebtorCaseRequest) returns (DisputeDebtorCaseResponse);
+  // Pièce de la contestation envoyée par le débiteur, sans compte : adresse d'envoi présignée par
+  // file (finalité recovery_evidence), puis confirmation.
+  rpc CreateDebtorUpload(CreateDebtorUploadRequest) returns (CreateDebtorUploadResponse);
+  rpc CompleteDebtorUpload(CompleteDebtorUploadRequest) returns (CompleteDebtorUploadResponse);
+  rpc RequestDebtorCallback(RequestDebtorCallbackRequest) returns (RequestDebtorCallbackResponse);
+  // Reçu, échéancier signé, attestation de solde : adresse de lecture de courte durée.
+  rpc GetDebtorDocumentUrl(GetDebtorDocumentUrlRequest) returns (GetDebtorDocumentUrlResponse);
+}
+
+// Huissier ou avocat partenaire connecté (partie 8, UC-RC-21).
+service RecoveryPartnerService {
+  rpc ListMyAssignments(ListMyAssignmentsRequest) returns (ListMyAssignmentsResponse);
+  // Dossier prêt (R-HU-03) : mandat, pièces, échéancier signé, mise en demeure et preuve de remise,
+  // journal de preuve, coordonnées du débiteur.
+  rpc GetMyAssignment(GetMyAssignmentRequest) returns (GetMyAssignmentResponse);
+  rpc RecordLegalAct(RecordLegalActRequest) returns (RecordLegalActResponse);
+  // Somme encaissée par le partenaire (R-HU-05) : à virer à KSP, rapprochée par la finance.
+  rpc DeclarePartnerCollection(DeclarePartnerCollectionRequest) returns (DeclarePartnerCollectionResponse);
+}
+
+// Back-office (UC-RC-14 à 30, partie 14.6).
+service RecoveryAdminService {
+  rpc GetRecoveryOverview(GetRecoveryOverviewRequest) returns (GetRecoveryOverviewResponse);
+  // File de travail du chargé : rappels promis, échéances manquées, relances du jour.
+  rpc GetMyWorkQueue(GetMyWorkQueueRequest) returns (GetMyWorkQueueResponse);
+  rpc ListCases(ListCasesRequest) returns (ListCasesResponse);
+  rpc GetCase(GetCaseRequest) returns (GetCaseResponse);
+  // Journal complet, notes internes comprises.
+  rpc ListCaseJournal(ListCaseJournalRequest) returns (ListCaseJournalResponse);
+  // Recevabilité (UC-RC-14) : recevable (avec affectation), complément demandé, irrecevable.
+  rpc AssessCase(AssessCaseRequest) returns (AssessCaseResponse);
+  rpc AssignCase(AssignCaseRequest) returns (AssignCaseResponse);
+  // Contact (appel, message, courrier, visite) et son résultat ; promesse ; note interne.
+  rpc RecordContact(RecordContactRequest) returns (RecordContactResponse);
+  rpc RecordPromise(RecordPromiseRequest) returns (RecordPromiseResponse);
+  rpc AddInternalNote(AddInternalNoteRequest) returns (AddInternalNoteResponse);
+  // Message au débiteur depuis un modèle validé (action rapide de la fiche, relance amiable,
+  // UC-RC-18) : envoyé par notification au téléphone ou à l'e-mail du débiteur, dans les plages de
+  // contact (RECOVERY_CONTACT_OUTSIDE_HOURS sinon), écrit au journal avec son statut de remise. Un
+  // modèle qui porte le lien du débiteur le renouvelle (nouveau jeton, l'ancien révoqué, ADR-061).
+  rpc SendDebtorMessage(SendDebtorMessageRequest) returns (SendDebtorMessageResponse);
+  // Échéancier négocié par le chargé (ou renégociation, une seule) ; hors barème : superviseur puis
+  // créancier.
+  rpc ProposePaymentPlan(ProposePaymentPlanRequest) returns (ProposePaymentPlanResponse);
+  rpc ApprovePaymentPlan(ApprovePaymentPlanRequest) returns (ApprovePaymentPlanResponse);
+  // Remise pour paiement immédiat (R-PR-05) : dans le barème, proposée au débiteur ; au-delà,
+  // décision du créancier.
+  rpc ProposeSettlement(ProposeSettlementRequest) returns (ProposeSettlementResponse);
+  // Changement d'étape manuel (escalade validée, saut tracé R-PR-03). Un saut d'étape demande
+  // l'accord du créancier : il ouvre une décision "stage_skip" et l'étape ne change qu'à son
+  // acceptation (RECOVERY_CREDITOR_APPROVAL_REQUIRED tant qu'elle n'est pas prise).
+  rpc ChangeCaseStage(ChangeCaseStageRequest) returns (ChangeCaseStageResponse);
+  // Mise en demeure (UC-RC-19) : produite depuis le modèle, signée par le juriste, puis remise.
+  rpc IssueFormalNotice(IssueFormalNoticeRequest) returns (IssueFormalNoticeResponse);
+  rpc RecordNoticeDelivery(RecordNoticeDeliveryRequest) returns (RecordNoticeDeliveryResponse);
+  // Suite d'une contestation (R-PR-02) : reprise, montant corrigé, clôture.
+  rpc ResolveDispute(ResolveDisputeRequest) returns (ResolveDisputeResponse);
+  // Devis des frais d'huissier ou de procédure soumis au créancier (R-PR-04).
+  rpc RequestEscalation(RequestEscalationRequest) returns (RequestEscalationResponse);
+  // Partenaires proposés pour un dossier (ressort, charge, efficacité, R-HU-02).
+  rpc SuggestPartners(SuggestPartnersRequest) returns (SuggestPartnersResponse);
+  rpc AssignPartner(AssignPartnerRequest) returns (AssignPartnerResponse);
+  rpc WithdrawPartner(WithdrawPartnerRequest) returns (WithdrawPartnerResponse);
+  // Paiement hors ligne (espèces, virement) ou encaissement déclaré par un partenaire : saisi par
+  // une personne, validé par une autre (R-EN-01, R-AR-03).
+  rpc RecordOfflinePayment(RecordOfflinePaymentRequest) returns (RecordOfflinePaymentResponse);
+  rpc ListOfflinePayments(ListOfflinePaymentsRequest) returns (ListOfflinePaymentsResponse);
+  rpc ApproveOfflinePayment(ApproveOfflinePaymentRequest) returns (ApproveOfflinePaymentResponse);
+  rpc RejectOfflinePayment(RejectOfflinePaymentRequest) returns (RejectOfflinePaymentResponse);
+  // Trop-perçu remboursé à la main par la finance (ADR-060) : référence du virement.
+  rpc RecordOverpaymentRefund(RecordOverpaymentRefundRequest) returns (RecordOverpaymentRefundResponse);
+  rpc CloseCase(CloseCaseRequest) returns (CloseCaseResponse);
+  // Journal de preuve en PDF (R-PR-08), pour l'huissier, l'avocat ou le juge.
+  rpc ExportCaseJournal(ExportCaseJournalRequest) returns (ExportCaseJournalResponse);
+  rpc ListPartners(ListPartnersRequest) returns (ListPartnersResponse);
+  rpc GetPartner(GetPartnerRequest) returns (GetPartnerResponse);
+  rpc CreatePartner(CreatePartnerRequest) returns (CreatePartnerResponse);
+  rpc UpdatePartner(UpdatePartnerRequest) returns (UpdatePartnerResponse);
+  // Tarification (ADR-062).
+  rpc ListPricingRules(ListPricingRulesRequest) returns (ListPricingRulesResponse);
+  rpc GetPricingRule(GetPricingRuleRequest) returns (GetPricingRuleResponse);
+  rpc CreatePricingRule(CreatePricingRuleRequest) returns (CreatePricingRuleResponse);
+  rpc UpdatePricingRule(UpdatePricingRuleRequest) returns (UpdatePricingRuleResponse);
+  // Publication ; une règle négociée pour un client précis attend la validation d'une seconde
+  // personne (R-TA-04).
+  rpc PublishPricingRule(PublishPricingRuleRequest) returns (PublishPricingRuleResponse);
+  rpc ApprovePricingRule(ApprovePricingRuleRequest) returns (ApprovePricingRuleResponse);
+  rpc ArchivePricingRule(ArchivePricingRuleRequest) returns (ArchivePricingRuleResponse);
+  // Effet d'une règle (publiée ou brouillon) sur un exemple (R-TA-01).
+  rpc SimulatePricing(SimulatePricingRequest) returns (SimulatePricingResponse);
+  rpc GetRecoverySettings(GetRecoverySettingsRequest) returns (GetRecoverySettingsResponse);
+  rpc UpdateRecoverySettings(UpdateRecoverySettingsRequest) returns (UpdateRecoverySettingsResponse);
+  // Jours fériés du Bénin, pour le calcul des jours ouvrés.
+  rpc ListHolidays(ListHolidaysRequest) returns (ListHolidaysResponse);
+  rpc SetHolidays(SetHolidaysRequest) returns (SetHolidaysResponse);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Types communs
+// ---------------------------------------------------------------------------------------------
+
+message Page {
+  // 20 par défaut, 100 au plus.
+  int32 limit = 1;
+  string cursor = 2;
+}
+
+// Personne qui a agi : agent ou membre de KSP, créancier, débiteur, partenaire ou système.
+message Actor {
+  // "staff", "creditor", "debtor", "partner" ou "system".
+  string type = 1;
+  // Compte KSP, vide pour le débiteur et le système.
+  string user_id = 2;
+  // Nom affiché (vide pour le système).
+  string display_name = 3;
+}
+
+// Titulaire côté créancier : un compte ("user") ou une organisation ("organization").
+message Party {
+  string type = 1;
+  string id = 2;
+  string display_name = 3;
+}
+
+message DebtorInput {
+  // "person" ou "company".
+  string kind = 1;
+  // "main" (débiteur principal), "co_debtor" ou "guarantor" (caution).
+  string role = 2;
+  // Personne physique.
+  string first_names = 3;
+  string last_name = 4;
+  // Personne morale.
+  string legal_name = 5;
+  string ifu = 6;
+  string rccm = 7;
+  string representative_name = 8;
+  // E.164 ; au moins un téléphone ou un e-mail.
+  repeated string phones = 9;
+  repeated string emails = 10;
+  string address = 11;
+  // Commune (clé de commune de geo), facultative.
+  string commune_key = 12;
+}
+
+message Debtor {
+  string id = 1;
+  string kind = 2;
+  string role = 3;
+  string first_names = 4;
+  string last_name = 5;
+  string legal_name = 6;
+  string ifu = 7;
+  string rccm = 8;
+  string representative_name = 9;
+  repeated string phones = 10;
+  repeated string emails = 11;
+  string address = 12;
+  string commune_key = 13;
+  // Nom affiché : raison sociale, ou prénoms et nom.
+  string display_name = 14;
+}
+
+message ClaimInput {
+  // Numéro de facture ou autre référence (1 à 60 caractères).
+  string reference = 1;
+  ksp.common.v1.Money amount = 2;
+  string due_date = 3;
+  string description = 4;
+}
+
+message Claim {
+  string id = 1;
+  string reference = 2;
+  ksp.common.v1.Money amount = 3;
+  string due_date = 4;
+  string description = 5;
+}
+
+// Démarches déjà faites par le créancier (étape 5 du formulaire).
+message PriorEffort {
+  int32 reminders_count = 1;
+  string last_reminder_date = 2;
+  // "phone", "sms", "whatsapp", "email", "letter", "visit".
+  repeated string channels = 3;
+  bool debt_acknowledged = 4;
+  // Preuve de la reconnaissance (fichier recovery_evidence), vide sinon.
+  string acknowledgment_file_id = 5;
+  string promises_received = 6;
+  bool preserve_relationship = 7;
+}
+
+// Barème d'échéancier : valeurs du créancier pour ses dossiers (sinon celles du barème de KSP).
+message PlanScale {
+  bool accepts_payment_plan = 1;
+  int32 max_duration_months = 2;
+  // Premier versement : au moins ce taux du montant dû, sous ce nombre de jours.
+  int32 min_first_payment_bps = 3;
+  int32 first_payment_within_days = 4;
+  ksp.common.v1.Money min_installment = 5;
+  // Remise maximale accordée pour un paiement immédiat (0 = aucune).
+  int32 max_discount_bps = 6;
+}
+
+message CaseAmounts {
+  ksp.common.v1.Money principal = 1;
+  // Intérêts et pénalités prévus au contrat.
+  ksp.common.v1.Money interests = 2;
+  // Frais de procédure refacturables au débiteur.
+  ksp.common.v1.Money costs = 3;
+  ksp.common.v1.Money paid = 4;
+  // Remise accordée (accord transactionnel exécuté) ou montant corrigé à la baisse.
+  ksp.common.v1.Money waived = 5;
+  // principal + intérêts + frais − payé − remise ; jamais négatif.
+  ksp.common.v1.Money due = 6;
+  // Reçu au-delà du montant dû, à rembourser au débiteur (ADR-060).
+  ksp.common.v1.Money overpaid = 7;
+}
+
+message CaseDocument {
+  string id = 1;
+  // "evidence", "mandate", "payment_plan", "formal_notice", "notice_delivery_proof",
+  // "settlement_certificate", "fee_quote", "legal_act", "evidence_log", "receipt", "statement",
+  // "dispute_evidence".
+  string kind = 2;
+  // Fichier (file) ou document (document) : l'un des deux.
+  string file_id = 3;
+  string document_id = 4;
+  string label = 5;
+  Actor added_by = 6;
+  string added_at = 7;
+  // Montré au débiteur dans son espace (choisi par KSP).
+  bool visible_to_debtor = 8;
+}
+
+message Installment {
+  string id = 1;
+  int32 rank = 2;
+  string due_date = 3;
+  ksp.common.v1.Money amount = 4;
+  ksp.common.v1.Money paid_amount = 5;
+  // "upcoming", "due", "paid", "partial", "missed".
+  string status = 6;
+  string paid_at = 7;
+}
+
+// Conditions d'un échéancier proposé : premier versement, rythme, nombre d'échéances ; le reste est
+// réparti également, la dernière échéance absorbe l'arrondi.
+message PlanTerms {
+  ksp.common.v1.Money first_amount = 1;
+  string first_due_date = 2;
+  // "weekly", "biweekly" ou "monthly".
+  string rhythm = 3;
+  // Échéances après le premier versement (1 à 52).
+  int32 installments_count = 4;
+}
+
+message PaymentPlan {
+  string id = 1;
+  // "proposed", "pending_creditor", "signed", "completed", "defaulted", "rejected", "cancelled".
+  string status = 2;
+  PlanTerms terms = 3;
+  ksp.common.v1.Money total = 4;
+  repeated Installment installments = 5;
+  bool within_scale = 6;
+  // Écarts au barème, si hors barème : "duration", "first_payment", "installment_minimum".
+  repeated string violations = 7;
+  // "debtor" ou "agent".
+  string proposed_by = 8;
+  bool renegotiation = 9;
+  // Protocole d'accord signé par le débiteur (modèle recovery_settlement_agreement).
+  string document_id = 10;
+  string signed_at = 11;
+  int32 missed_count = 12;
+  string created_at = 13;
+}
+
+message PromiseToPay {
+  string id = 1;
+  ksp.common.v1.Money amount = 2;
+  string due_date = 3;
+  // "pending", "kept", "broken", "cancelled".
+  string status = 4;
+  Actor recorded_by = 5;
+  string created_at = 6;
+}
+
+message Collection {
+  string id = 1;
+  // "payment_link", "offline_cash", "offline_transfer", "partner", "direct_to_creditor".
+  string source = 2;
+  ksp.common.v1.Money gross = 3;
+  // Imputation (R-EN-03).
+  ksp.common.v1.Money allocated_costs = 4;
+  ksp.common.v1.Money allocated_interests = 5;
+  ksp.common.v1.Money allocated_principal = 6;
+  ksp.common.v1.Money overpaid = 7;
+  ksp.common.v1.Money commission = 8;
+  // Crédité au créancier (zéro pour un paiement direct : la commission lui est facturée).
+  ksp.common.v1.Money net_to_creditor = 9;
+  // Étape atteinte à l'encaissement (base de la commission par étape).
+  string stage = 10;
+  string received_at = 11;
+  // Écriture du grand livre de wallet, vide pour un paiement direct.
+  string wallet_transaction_id = 12;
+  // Reçu remis au débiteur (document).
+  string receipt_document_id = 13;
+}
+
+message Dispute {
+  string id = 1;
+  // "already_paid", "wrong_amount", "service_not_rendered", "wrong_person", "other".
+  string reason = 2;
+  string text = 3;
+  repeated string file_ids = 4;
+  // "open", "creditor_answered", "upheld", "rejected", "amount_corrected".
+  string status = 5;
+  string opened_at = 6;
+  string creditor_answer_due_at = 7;
+  string creditor_answer = 8;
+  repeated string creditor_file_ids = 9;
+  string resolution_note = 10;
+  string resolved_at = 11;
+}
+
+message FormalNotice {
+  string id = 1;
+  string document_id = 2;
+  // "issued" (produite et signée par le juriste), "delivered".
+  string status = 3;
+  Actor signed_by = 4;
+  string issued_at = 5;
+  // "hand_delivery", "registered_mail", "bailiff", "email".
+  string delivery_method = 6;
+  string delivered_at = 7;
+  string proof_file_id = 8;
+  // Fin du délai laissé au débiteur après réception.
+  string deadline_at = 9;
+}
+
+message FeeQuoteLine {
+  string label = 1;
+  ksp.common.v1.Money amount = 2;
+}
+
+// Devis des frais d'une étape payante (R-PR-04) : à accepter, puis provision payée.
+message FeeQuote {
+  string id = 1;
+  // "bailiff" ou "litigation".
+  string stage = 2;
+  PartnerRef partner = 3;
+  repeated FeeQuoteLine lines = 4;
+  ksp.common.v1.Money total = 5;
+  // Provision débitée du portefeuille prépayé du créancier à l'acceptation.
+  ksp.common.v1.Money provision = 6;
+  string document_id = 7;
+  string valid_until = 8;
+}
+
+message PartnerRef {
+  string id = 1;
+  // "bailiff" ou "lawyer".
+  string kind = 2;
+  string name = 3;
+  string office = 4;
+}
+
+message LegalAct {
+  string id = 1;
+  // "summons_to_pay", "service", "conservatory_measure", "seizure", "injunction_request",
+  // "injunction_order", "hearing", "judgment", "enforcement", "insolvency_report", "other".
+  string type = 2;
+  string act_date = 3;
+  ksp.common.v1.Money cost = 4;
+  string file_id = 5;
+  string note = 6;
+  string recorded_at = 7;
+  // Prochaine échéance annoncée (audience…), vide sinon.
+  string next_step_date = 8;
+}
+
+message PartnerAssignment {
+  string id = 1;
+  string case_id = 2;
+  string case_number = 3;
+  PartnerRef partner = 4;
+  // "active", "withdrawn", "completed".
+  string status = 5;
+  string assigned_at = 6;
+  string withdrawn_at = 7;
+  string withdrawal_reason = 8;
+  repeated LegalAct acts = 9;
+  string last_update_at = 10;
+}
+
+message Provision {
+  string id = 1;
+  string fee_quote_id = 2;
+  ksp.common.v1.Money amount = 3;
+  ksp.common.v1.Money used = 4;
+  // "paid", "settled" (rapprochée avec les honoraires), "refunded" (reste rendu au créancier).
+  string status = 5;
+  string paid_at = 6;
+}
+
+message CaseFee {
+  ksp.common.v1.Money amount = 1;
+  // "unpaid", "paid", "refunded".
+  string status = 2;
+  string paid_at = 3;
+  // Remboursé au portefeuille si le dossier est irrecevable (frais moins le forfait d'étude).
+  ksp.common.v1.Money refunded_amount = 4;
+  string wallet_transaction_id = 5;
+}
+
+// Tarification figée dans le mandat (R-CO-02).
+message FrozenPricing {
+  string fee_rule_id = 1;
+  int32 fee_rule_version = 2;
+  string commission_rule_id = 3;
+  int32 commission_rule_version = 4;
+  // Description lisible de la commission (« 10 % à l'amiable, 15 % après mise en demeure… »).
+  string commission_summary = 5;
+}
+
+message Mandate {
+  string document_id = 1;
+  string signature_request_id = 2;
+  // "pending_signature", "signed".
+  string status = 3;
+  string signed_at = 4;
+}
+
+message StageTransition {
+  string from_stage = 1;
+  string to_stage = 2;
+  string at = 3;
+  Actor by = 4;
+  string reason = 5;
+  // Saut d'étape tracé (R-PR-03) : "prescription_near" ou "asset_flight_risk".
+  string skip_reason = 6;
+}
+
+message Deadline {
+  // "notice_response", "plan_installment", "amicable_end", "formal_notice_end",
+  // "creditor_decision", "dispute_answer", "fee_payment", "info_completion", "review",
+  // "prescription", "promise", "partner_update".
+  string kind = 1;
+  string due_at = 2;
+}
+
+message Closure {
+  // "paid", "settlement_executed", "dispute_upheld", "abandoned_by_creditor", "unrecoverable",
+  // "prescribed".
+  string reason = 1;
+  string note = 2;
+  string closed_at = 3;
+  Actor closed_by = 4;
+  // Attestation de solde (payé), vide sinon.
+  string settlement_certificate_document_id = 5;
+}
+
+message RecoveryCase {
+  string id = 1;
+  // "RC-000123".
+  string number = 2;
+  // "b2b", "b2c" ou "rent".
+  string kind = 3;
+  // "unpaid_invoice", "loan", "acknowledgment_of_debt", "bounced_cheque", "service", "sale",
+  // "rent", "other".
+  string nature = 4;
+  // "draft", "awaiting_fee", "under_review", "info_requested", "active", "suspended", "closed",
+  // "rejected".
+  string status = 5;
+  // Étape d'un dossier actif ou suspendu : "notice", "payment_plan", "amicable", "formal_notice",
+  // "bailiff", "litigation" ; vide avant l'acceptation.
+  string stage = 6;
+  Party creditor = 7;
+  repeated Debtor debtors = 8;
+  repeated Claim claims = 9;
+  PriorEffort prior_effort = 10;
+  PlanScale plan_scale = 11;
+  CaseAmounts amounts = 12;
+  string prescription_date = 13;
+  // Score de recouvrabilité 0 à 100 (R-SD-07), -1 avant l'examen.
+  int32 score = 14;
+  Actor assigned_agent = 15;
+  PartnerAssignment partner_assignment = 16;
+  Mandate mandate = 17;
+  CaseFee fee = 18;
+  FrozenPricing pricing = 19;
+  PaymentPlan current_plan = 20;
+  repeated PromiseToPay promises = 21;
+  repeated Collection collections = 22;
+  repeated CaseDocument documents = 23;
+  repeated Dispute disputes = 24;
+  repeated FormalNotice notices = 25;
+  repeated FeeQuote fee_quotes = 26;
+  repeated Provision provisions = 27;
+  repeated StageTransition stage_history = 28;
+  Deadline next_deadline = 29;
+  // Motif du complément demandé ou du refus.
+  string review_note = 30;
+  Closure closure = 31;
+  // "form", "import", "rental".
+  string source = 32;
+  // Montant fixé par le créancier pour une remise immédiate autorisée, 0 sinon.
+  int32 max_discount_bps = 33;
+  string created_at = 34;
+  string submitted_at = 35;
+  string accepted_at = 36;
+  string updated_at = 37;
+  // Dossier "rejected" : motif d'AssessCase ("prescribed", "illegal", "no_evidence",
+  // "debtor_unreachable", "other"), ou "incomplete" (complément non fourni dans le délai, dossier
+  // classé par la tâche des échéances, partie 4.4) ; vide sinon.
+  string rejection_reason = 38;
+}
+
+message CaseSummary {
+  string id = 1;
+  string number = 2;
+  string kind = 3;
+  string status = 4;
+  string stage = 5;
+  Party creditor = 6;
+  // Nom affiché du débiteur principal.
+  string debtor_name = 7;
+  ksp.common.v1.Money due = 8;
+  ksp.common.v1.Money paid = 9;
+  int32 score = 10;
+  Actor assigned_agent = 11;
+  Deadline next_deadline = 12;
+  string last_action_at = 13;
+  string created_at = 14;
+}
+
+message JournalEntry {
+  string id = 1;
+  // "contact", "message_sent", "letter", "promise", "payment", "plan", "decision",
+  // "stage_changed", "status_changed", "dispute", "document", "partner_act", "note", "system".
+  string kind = 2;
+  // Contact : "phone", "sms", "whatsapp", "email", "letter", "visit".
+  string channel = 3;
+  // "outbound" ou "inbound".
+  string direction = 4;
+  // Résultat d'un contact : "reached", "no_answer", "wrong_number", "refused", "promise",
+  // "callback_requested", "delivered", "failed".
+  string outcome = 5;
+  // Statut de remise d'un message : "sent", "delivered", "read", "failed".
+  string delivery_status = 6;
+  string summary = 7;
+  ksp.common.v1.Money amount = 8;
+  Actor author = 9;
+  // Note interne : jamais montrée au créancier ni au débiteur.
+  bool internal = 10;
+  string document_id = 11;
+  string file_id = 12;
+  string occurred_at = 13;
+}
+
+message Decision {
+  string id = 1;
+  string case_id = 2;
+  string case_number = 3;
+  // "plan_off_scale", "settlement_discount", "bailiff_escalation", "litigation_escalation",
+  // "dispute_response", "stage_skip" (saut d'étape tracé, R-PR-03).
+  string kind = 4;
+  // "pending", "approved", "rejected", "answered", "expired".
+  string status = 5;
+  string created_at = 6;
+  // Sans réponse à cette date : refus (échéancier, remise) ou abandon du dossier (étape payante).
+  string expires_at = 7;
+  // Selon le type : échéancier, remise, devis, contestation.
+  PaymentPlan payment_plan = 8;
+  Settlement settlement = 9;
+  FeeQuote fee_quote = 10;
+  Dispute dispute = 11;
+  string answered_at = 12;
+}
+
+message Settlement {
+  string id = 1;
+  // Montant à payer tout de suite, contre abandon du reste.
+  ksp.common.v1.Money pay_now = 2;
+  ksp.common.v1.Money waived = 3;
+  int32 discount_bps = 4;
+  string valid_until = 5;
+  // "proposed", "pending_creditor", "accepted", "rejected", "executed", "expired".
+  string status = 6;
+}
+
+message Remittance {
+  string collection_id = 1;
+  string case_id = 2;
+  string case_number = 3;
+  string source = 4;
+  ksp.common.v1.Money gross = 5;
+  ksp.common.v1.Money commission = 6;
+  ksp.common.v1.Money net = 7;
+  string credited_at = 8;
+  string wallet_transaction_id = 9;
+}
+
+message Statement {
+  string id = 1;
+  // Mois "AAAA-MM".
+  string period = 2;
+  string case_id = 3;
+  string case_number = 4;
+  ksp.common.v1.Money collected = 5;
+  ksp.common.v1.Money commission = 6;
+  ksp.common.v1.Money costs = 7;
+  ksp.common.v1.Money remitted = 8;
+  string document_id = 9;
+  // Facture de commission émise par billing, vide si aucune.
+  string invoice_id = 10;
+  string issued_at = 11;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Créancier
+// ---------------------------------------------------------------------------------------------
+
+message EstimateCaseFeesRequest {
+  // "b2b", "b2c" ou "rent".
+  string kind = 1;
+  ksp.common.v1.Money amount_due = 2;
+  string commune_key = 3;
+}
+
+message EstimateCaseFeesResponse {
+  ksp.common.v1.Money case_fee = 1;
+  string commission_summary = 2;
+  // Commission par étape atteinte, en points de base (vide si la règle n'est pas par étape).
+  repeated StageRate stage_rates = 3;
+  ksp.common.v1.Money minimum_amount_due = 4;
+  FrozenPricing pricing = 5;
+}
+
+message CaseInput {
+  string kind = 1;
+  string nature = 2;
+  repeated DebtorInput debtors = 3;
+  repeated ClaimInput claims = 4;
+  ksp.common.v1.Money interests = 5;
+  // Paiements partiels déjà reçus par le créancier avant la soumission.
+  ksp.common.v1.Money already_paid = 6;
+  PriorEffort prior_effort = 7;
+  // Facultatif : sinon le barème par défaut du créancier ou de KSP.
+  PlanScale plan_scale = 8;
+  // Justificatifs déjà envoyés par file (finalité recovery_evidence), au moins un.
+  repeated string evidence_file_ids = 9;
+}
+
+message CreateCaseRequest {
+  string idempotency_key = 1;
+  CaseInput input = 2;
+}
+
+message CreateCaseResponse {
+  RecoveryCase case = 1;
+  // Dossiers ouverts semblables du même créancier (R-SD-06) : à confirmer avant l'envoi.
+  repeated CaseSummary possible_duplicates = 2;
+  bool created = 3;
+}
+
+message UpdateCaseRequest {
+  string case_id = 1;
+  CaseInput input = 2;
+  // Dossier "info_requested" : réponse au complément demandé.
+  string completion_note = 3;
+}
+
+message UpdateCaseResponse {
+  RecoveryCase case = 1;
+}
+
+message AddCaseDocumentRequest {
+  string case_id = 1;
+  string file_id = 2;
+  string label = 3;
+}
+
+message AddCaseDocumentResponse {
+  CaseDocument document = 1;
+}
+
+message PrepareMandateRequest {
+  string case_id = 1;
+  // Le créancier a confirmé les dossiers semblables signalés (R-SD-06).
+  bool duplicates_acknowledged = 2;
+}
+
+message PrepareMandateResponse {
+  RecoveryCase case = 1;
+  string document_id = 2;
+  // Demande de signature (document) : code envoyé au créancier connecté.
+  string signature_request_id = 3;
+}
+
+message PayCaseFeeRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+}
+
+message PayCaseFeeResponse {
+  RecoveryCase case = 1;
+}
+
+message CaseFilter {
+  repeated string statuses = 1;
+  repeated string stages = 2;
+  repeated string kinds = 3;
+  // Numéro ou nom du débiteur (3 caractères au moins).
+  string search = 4;
+}
+
+message ListMyCasesRequest {
+  CaseFilter filter = 1;
+  Page page = 2;
+}
+
+message ListMyCasesResponse {
+  repeated CaseSummary cases = 1;
+  string next_cursor = 2;
+  int32 total = 3;
+}
+
+message GetMyCaseRequest {
+  string case_id = 1;
+}
+
+message GetMyCaseResponse {
+  RecoveryCase case = 1;
+}
+
+message ListMyCaseJournalRequest {
+  string case_id = 1;
+  Page page = 2;
+}
+
+message ListMyCaseJournalResponse {
+  repeated JournalEntry entries = 1;
+  string next_cursor = 2;
+}
+
+message ImportLine {
+  int32 row = 1;
+  // "valid", "invalid", "ignored".
+  string status = 2;
+  // Valeurs lues (texte), dans l'ordre du modèle de tableur.
+  ImportLineValues values = 3;
+  // Erreurs : "phone_invalid", "due_date_missing", "amount_invalid", "debtor_name_missing"…
+  repeated ImportLineError errors = 4;
+}
+
+message ImportLineValues {
+  string debtor_kind = 1;
+  string debtor_name = 2;
+  string debtor_first_names = 3;
+  string debtor_ifu = 4;
+  string debtor_phone = 5;
+  string debtor_email = 6;
+  string debtor_address = 7;
+  string invoice_reference = 8;
+  string amount = 9;
+  string due_date = 10;
+  string description = 11;
+  string nature = 12;
+}
+
+message ImportLineError {
+  string field = 1;
+  string code = 2;
+}
+
+message CaseImport {
+  string id = 1;
+  // "checked" (contrôlé, à confirmer), "confirmed", "expired".
+  string status = 2;
+  string kind = 3;
+  int32 lines_total = 4;
+  int32 lines_valid = 5;
+  int32 lines_invalid = 6;
+  // Dossiers prévus : un par débiteur.
+  int32 cases_planned = 7;
+  repeated ImportLine lines = 8;
+  // Dossiers créés à la confirmation (brouillons).
+  repeated string case_ids = 9;
+  string created_at = 10;
+}
+
+message CreateCaseImportRequest {
+  string idempotency_key = 1;
+  // "b2b" ou "b2c".
+  string kind = 2;
+  // Tableur envoyé par file (finalité recovery_import).
+  string file_id = 3;
+  // Facultatif : archive des justificatifs (finalité recovery_evidence_archive), fichiers nommés
+  // par numéro de facture.
+  string evidence_archive_file_id = 4;
+}
+
+message CreateCaseImportResponse {
+  CaseImport import = 1;
+}
+
+message GetCaseImportRequest {
+  string import_id = 1;
+}
+
+message GetCaseImportResponse {
+  CaseImport import = 1;
+}
+
+message UpdateCaseImportLineRequest {
+  string import_id = 1;
+  int32 row = 2;
+  ImportLineValues values = 3;
+  // Ignorer la ligne au lieu de la corriger.
+  bool ignore = 4;
+}
+
+message UpdateCaseImportLineResponse {
+  CaseImport import = 1;
+}
+
+message ConfirmCaseImportRequest {
+  string import_id = 1;
+  string idempotency_key = 2;
+}
+
+message ConfirmCaseImportResponse {
+  CaseImport import = 1;
+}
+
+message ListMyDecisionsRequest {
+  // "pending" par défaut.
+  repeated string statuses = 1;
+  string case_id = 2;
+  Page page = 3;
+}
+
+message ListMyDecisionsResponse {
+  repeated Decision decisions = 1;
+  string next_cursor = 2;
+}
+
+message AnswerDecisionRequest {
+  string decision_id = 1;
+  string idempotency_key = 2;
+  // "approve" ou "reject" (échéancier, remise, devis) ; "answer" (contestation).
+  string answer = 3;
+  string comment = 4;
+  // Contestation : pièces du créancier (fichiers recovery_evidence).
+  repeated string file_ids = 5;
+}
+
+message AnswerDecisionResponse {
+  Decision decision = 1;
+  RecoveryCase case = 2;
+}
+
+message StopCaseRequest {
+  string case_id = 1;
+  string reason = 2;
+}
+
+message StopCaseResponse {
+  RecoveryCase case = 1;
+}
+
+message DeclareDirectPaymentRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  ksp.common.v1.Money amount = 3;
+  string received_on = 4;
+  string note = 5;
+  string proof_file_id = 6;
+}
+
+message DeclareDirectPaymentResponse {
+  RecoveryCase case = 1;
+  Collection collection = 2;
+}
+
+message ListMyRemittancesRequest {
+  string case_id = 1;
+  string from = 2;
+  string to = 3;
+  Page page = 4;
+}
+
+message ListMyRemittancesResponse {
+  repeated Remittance remittances = 1;
+  string next_cursor = 2;
+}
+
+message ListMyStatementsRequest {
+  // "AAAA-MM", facultatif.
+  string period = 1;
+  string case_id = 2;
+  Page page = 3;
+}
+
+message ListMyStatementsResponse {
+  repeated Statement statements = 1;
+  string next_cursor = 2;
+}
+
+message StageCount {
+  string stage = 1;
+  int32 count = 2;
+}
+
+message GetMyDashboardRequest {}
+
+message GetMyDashboardResponse {
+  ksp.common.v1.Money entrusted = 1;
+  ksp.common.v1.Money recovered = 2;
+  ksp.common.v1.Money outstanding = 3;
+  // Recouvré / confié, en points de base.
+  int32 recovery_rate_bps = 4;
+  repeated StageCount cases_by_stage = 5;
+  int32 pending_decisions = 6;
+  // Prochaines échéances des débiteurs.
+  repeated UpcomingInstallment upcoming_installments = 7;
+}
+
+message UpcomingInstallment {
+  string case_id = 1;
+  string case_number = 2;
+  string debtor_name = 3;
+  string due_date = 4;
+  ksp.common.v1.Money amount = 5;
+}
+
+message CreditorPreferences {
+  // Barème par défaut des nouveaux dossiers, par type d'offre.
+  PlanScale b2b_scale = 1;
+  PlanScale b2c_scale = 2;
+  // Comptes du créancier à prévenir (membres de l'organisation).
+  repeated string notify_user_ids = 3;
+}
+
+message GetMyPreferencesRequest {}
+
+message GetMyPreferencesResponse {
+  CreditorPreferences preferences = 1;
+}
+
+message UpdateMyPreferencesRequest {
+  CreditorPreferences preferences = 1;
+}
+
+message UpdateMyPreferencesResponse {
+  CreditorPreferences preferences = 1;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Débiteur
+// ---------------------------------------------------------------------------------------------
+
+message OpenDebtorAccessRequest {
+  // Jeton du lien personnel (secret, jamais journalisé).
+  string token = 1;
+}
+
+message OpenDebtorAccessResponse {
+  string creditor_name = 1;
+  // Téléphone où partira le code, masqué (« +229 01 ** ** ** 45 ») ; débiteur sans téléphone :
+  // adresse e-mail masquée, le code part par e-mail (ADR-061).
+  string phone_masked = 2;
+  string link_expires_at = 3;
+}
+
+message SendDebtorAccessCodeRequest {
+  string token = 1;
+}
+
+message SendDebtorAccessCodeResponse {
+  // "whatsapp", "sms" ou "email".
+  string channel = 1;
+  string code_expires_at = 2;
+  int32 retry_after_seconds = 3;
+}
+
+message VerifyDebtorAccessCodeRequest {
+  string token = 1;
+  string code = 2;
+}
+
+message VerifyDebtorAccessCodeResponse {
+  // Session débiteur (secret, 43 caractères), à renvoyer dans l'en-tête X-Debtor-Session ; seule
+  // son empreinte est gardée.
+  string session_token = 1;
+  string session_expires_at = 2;
+}
+
+message EndDebtorSessionRequest {}
+
+message EndDebtorSessionResponse {
+  string ended_at = 1;
+}
+
+message DebtorPayment {
+  ksp.common.v1.Money amount = 1;
+  string paid_at = 2;
+  // "online", "cash", "transfer", "partner", "creditor".
+  string channel = 3;
+  string receipt_document_id = 4;
+}
+
+message DebtorDocument {
+  string document_id = 1;
+  string file_id = 2;
+  string label = 3;
+  string kind = 4;
+}
+
+message DebtorCaseView {
+  string case_number = 1;
+  string creditor_name = 2;
+  string nature = 3;
+  repeated string references = 4;
+  CaseAmounts amounts = 5;
+  repeated DebtorPayment payments = 6;
+  repeated DebtorDocument documents = 7;
+  PaymentPlan plan = 8;
+  // Remise autorisée par le créancier pour un paiement immédiat (R-PR-05), absente sinon.
+  Settlement settlement_offer = 9;
+  // Barème du simulateur ; accepts_payment_plan faux : pas de proposition possible.
+  PlanScale plan_scale = 10;
+  // "active", "suspended", "closed".
+  string status = 11;
+  repeated Dispute disputes = 12;
+  // Lien de paiement en cours (adresse du portail /payer/<jeton>), vide sinon.
+  string pending_payment_url = 13;
+  string settlement_certificate_document_id = 14;
+}
+
+message GetDebtorCaseRequest {}
+
+message GetDebtorCaseResponse {
+  DebtorCaseView case = 1;
+}
+
+message CreateDebtorPaymentRequest {
+  string idempotency_key = 1;
+  // 1 à montant dû (ou montant de la remise acceptée).
+  ksp.common.v1.Money amount = 2;
+  // Paiement de la remise proposée, au lieu d'un montant libre.
+  string settlement_id = 3;
+}
+
+message CreateDebtorPaymentResponse {
+  // Adresse de la page de paiement par lien (payment, ADR-040).
+  string payment_url = 1;
+  ksp.common.v1.Money amount = 2;
+  string expires_at = 3;
+}
+
+message SimulateDebtorPaymentPlanRequest {
+  PlanTerms terms = 1;
+}
+
+message SimulateDebtorPaymentPlanResponse {
+  repeated Installment installments = 1;
+  ksp.common.v1.Money total = 2;
+  bool within_scale = 3;
+  repeated string violations = 4;
+}
+
+message ProposeDebtorPaymentPlanRequest {
+  string idempotency_key = 1;
+  PlanTerms terms = 2;
+  string message = 3;
+}
+
+message ProposeDebtorPaymentPlanResponse {
+  PaymentPlan plan = 1;
+}
+
+message ResendDebtorPlanSignatureRequest {
+  string plan_id = 1;
+}
+
+message ResendDebtorPlanSignatureResponse {
+  string signature_expires_at = 1;
+}
+
+message DisputeDebtorCaseRequest {
+  string idempotency_key = 1;
+  string reason = 2;
+  string text = 3;
+  repeated string file_ids = 4;
+}
+
+message DisputeDebtorCaseResponse {
+  Dispute dispute = 1;
+}
+
+message CreateDebtorUploadRequest {
+  string file_name = 1;
+  string content_type = 2;
+  int64 size_bytes = 3;
+}
+
+message CreateDebtorUploadResponse {
+  string file_id = 1;
+  string upload_url = 2;
+  string upload_expires_at = 3;
+  // En-têtes à envoyer avec le contenu.
+  map<string, string> upload_headers = 4;
+}
+
+message CompleteDebtorUploadRequest {
+  string file_id = 1;
+}
+
+message CompleteDebtorUploadResponse {
+  string file_id = 1;
+  // "available" ou "rejected".
+  string status = 2;
+}
+
+message RequestDebtorCallbackRequest {
+  // Créneau souhaité, dans les plages de contact.
+  string preferred_from = 1;
+  string preferred_to = 2;
+  string message = 3;
+}
+
+message RequestDebtorCallbackResponse {
+  string requested_at = 1;
+}
+
+message GetDebtorDocumentUrlRequest {
+  string document_id = 1;
+}
+
+message GetDebtorDocumentUrlResponse {
+  string url = 1;
+  string expires_at = 2;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Partenaire
+// ---------------------------------------------------------------------------------------------
+
+message ListMyAssignmentsRequest {
+  // "active" par défaut.
+  repeated string statuses = 1;
+  Page page = 2;
+}
+
+message ListMyAssignmentsResponse {
+  repeated PartnerAssignment assignments = 1;
+  string next_cursor = 2;
+}
+
+message GetMyAssignmentRequest {
+  string assignment_id = 1;
+}
+
+message AssignmentFile {
+  PartnerAssignment assignment = 1;
+  repeated Debtor debtors = 2;
+  repeated Claim claims = 3;
+  CaseAmounts amounts = 4;
+  // Pièces nécessaires à la mission seulement (R-AR-02).
+  repeated CaseDocument documents = 5;
+  PaymentPlan signed_plan = 6;
+  repeated FormalNotice notices = 7;
+  Party creditor = 8;
+}
+
+message GetMyAssignmentResponse {
+  AssignmentFile file = 1;
+}
+
+message RecordLegalActRequest {
+  string assignment_id = 1;
+  string idempotency_key = 2;
+  string type = 3;
+  string act_date = 4;
+  ksp.common.v1.Money cost = 5;
+  string file_id = 6;
+  string note = 7;
+  string next_step_date = 8;
+}
+
+message RecordLegalActResponse {
+  LegalAct act = 1;
+}
+
+message DeclarePartnerCollectionRequest {
+  string assignment_id = 1;
+  string idempotency_key = 2;
+  ksp.common.v1.Money amount = 3;
+  string received_on = 4;
+  string proof_file_id = 5;
+  string note = 6;
+}
+
+message DeclarePartnerCollectionResponse {
+  OfflinePayment payment = 1;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Back-office
+// ---------------------------------------------------------------------------------------------
+
+message GetRecoveryOverviewRequest {
+  // Zone (clé de commune), facultative.
+  string commune_key = 1;
+}
+
+message AgentPerformance {
+  Actor agent = 1;
+  int32 open_cases = 2;
+  ksp.common.v1.Money recovered = 3;
+  int32 recovery_rate_bps = 4;
+}
+
+message GetRecoveryOverviewResponse {
+  repeated StageCount cases_by_stage = 1;
+  repeated StageCount cases_by_kind = 2;
+  ksp.common.v1.Money entrusted = 3;
+  ksp.common.v1.Money recovered = 4;
+  int32 recovery_rate_bps = 5;
+  repeated StageCount recovery_rate_by_stage_bps = 6;
+  repeated AgentPerformance agents = 7;
+  int32 installments_due_today = 8;
+  int32 promises_to_check = 9;
+  // Dossiers sans action depuis 7 jours.
+  int32 idle_cases = 10;
+  int32 prescriptions_near = 11;
+  int32 review_queue = 12;
+  int32 offline_payments_to_approve = 13;
+}
+
+message WorkItem {
+  // "promised_callback", "broken_promise", "missed_installment", "reminder_due", "callback_request",
+  // "dispute", "plan_to_validate".
+  string kind = 1;
+  CaseSummary case = 2;
+  string due_at = 3;
+  string note = 4;
+}
+
+message GetMyWorkQueueRequest {
+  // Jour "AAAA-MM-JJ", aujourd'hui par défaut.
+  string day = 1;
+}
+
+message GetMyWorkQueueResponse {
+  repeated WorkItem items = 1;
+}
+
+message AdminCaseFilter {
+  repeated string statuses = 1;
+  repeated string stages = 2;
+  repeated string kinds = 3;
+  string assigned_agent_id = 4;
+  string creditor_id = 5;
+  string partner_id = 6;
+  string commune_key = 7;
+  // Numéro, nom du débiteur ou du créancier (3 caractères au moins).
+  string search = 8;
+  // Sans action depuis au moins ce nombre de jours.
+  int32 idle_days = 9;
+  bool prescription_near = 10;
+}
+
+message ListCasesRequest {
+  AdminCaseFilter filter = 1;
+  Page page = 2;
+}
+
+message ListCasesResponse {
+  repeated CaseSummary cases = 1;
+  string next_cursor = 2;
+  int32 total = 3;
+}
+
+message GetCaseRequest {
+  string case_id = 1;
+}
+
+message GetCaseResponse {
+  RecoveryCase case = 1;
+  // Détail du score (critère, valeur, points).
+  repeated ScoreFactor score_factors = 2;
+  // Critères de l'injonction de payer (certaine, liquide, exigible) réunis.
+  bool injunction_eligible = 3;
+}
+
+message ScoreFactor {
+  string criterion = 1;
+  string value = 2;
+  int32 points = 3;
+}
+
+message ListCaseJournalRequest {
+  string case_id = 1;
+  bool include_internal = 2;
+  Page page = 3;
+}
+
+message ListCaseJournalResponse {
+  repeated JournalEntry entries = 1;
+  string next_cursor = 2;
+}
+
+message AssessCaseRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  // "accept", "request_info" ou "reject".
+  string decision = 3;
+  // Motif écrit (complément demandé, refus) ; transmis au créancier.
+  string note = 4;
+  // Accepté : chargé affecté (facultatif, sinon affectation plus tard).
+  string agent_user_id = 5;
+  // Refus : "prescribed", "illegal", "no_evidence", "debtor_unreachable", "other" ("incomplete" est
+  // réservé au classement automatique d'un complément non fourni).
+  string rejection_reason = 6;
+}
+
+message AssessCaseResponse {
+  RecoveryCase case = 1;
+}
+
+message AssignCaseRequest {
+  string case_id = 1;
+  string agent_user_id = 2;
+}
+
+message AssignCaseResponse {
+  RecoveryCase case = 1;
+}
+
+message RecordContactRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  string debtor_id = 3;
+  string channel = 4;
+  string direction = 5;
+  string outcome = 6;
+  string note = 7;
+  string occurred_at = 8;
+  // Rappel promis au débiteur, facultatif.
+  string callback_at = 9;
+  string file_id = 10;
+}
+
+message RecordContactResponse {
+  JournalEntry entry = 1;
+}
+
+message RecordPromiseRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  ksp.common.v1.Money amount = 3;
+  string due_date = 4;
+  string note = 5;
+}
+
+message RecordPromiseResponse {
+  PromiseToPay promise = 1;
+}
+
+message AddInternalNoteRequest {
+  string case_id = 1;
+  string text = 2;
+}
+
+message AddInternalNoteResponse {
+  JournalEntry entry = 1;
+}
+
+message SendDebtorMessageRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  string debtor_id = 3;
+  // Modèle validé du recouvrement : "reminder" (relance), "payment_link" (lien de l'espace du
+  // débiteur, renouvelé), "plan_reminder" (prochaine échéance), "callback_missed" (rappel manqué).
+  string template = 4;
+  // "whatsapp", "sms" ou "email" ; vide = canal par défaut du débiteur.
+  string channel = 5;
+}
+
+message SendDebtorMessageResponse {
+  // Entrée "message_sent" du journal, avec son statut de remise.
+  JournalEntry entry = 1;
+}
+
+message ProposePaymentPlanRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  PlanTerms terms = 3;
+  string note = 4;
+}
+
+message ProposePaymentPlanResponse {
+  PaymentPlan plan = 1;
+}
+
+message ApprovePaymentPlanRequest {
+  string plan_id = 1;
+  // "approve" (transmis au créancier si hors barème) ou "reject".
+  string decision = 2;
+  string note = 3;
+}
+
+message ApprovePaymentPlanResponse {
+  PaymentPlan plan = 1;
+}
+
+message ProposeSettlementRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  ksp.common.v1.Money pay_now = 3;
+  string valid_until = 4;
+  string note = 5;
+}
+
+message ProposeSettlementResponse {
+  Settlement settlement = 1;
+}
+
+message ChangeCaseStageRequest {
+  string case_id = 1;
+  string to_stage = 2;
+  string reason = 3;
+  // Saut d'étape (R-PR-03) : "prescription_near" ou "asset_flight_risk".
+  string skip_reason = 4;
+}
+
+message ChangeCaseStageResponse {
+  RecoveryCase case = 1;
+}
+
+message IssueFormalNoticeRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  // Délai laissé au débiteur après réception, en jours (15 par défaut, 8 à 60).
+  int32 deadline_days = 3;
+}
+
+message IssueFormalNoticeResponse {
+  FormalNotice notice = 1;
+}
+
+message RecordNoticeDeliveryRequest {
+  string case_id = 1;
+  string notice_id = 2;
+  string delivery_method = 3;
+  string delivered_at = 4;
+  string proof_file_id = 5;
+}
+
+message RecordNoticeDeliveryResponse {
+  FormalNotice notice = 1;
+}
+
+message ResolveDisputeRequest {
+  string case_id = 1;
+  string dispute_id = 2;
+  // "resume" (contestation rejetée), "correct_amount" ou "close" (contestation fondée).
+  string resolution = 3;
+  // Montant dû corrigé (correct_amount).
+  ksp.common.v1.Money corrected_due = 4;
+  string note = 5;
+}
+
+message ResolveDisputeResponse {
+  RecoveryCase case = 1;
+}
+
+message RequestEscalationRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  // "bailiff" ou "litigation".
+  string stage = 3;
+  string partner_id = 4;
+  repeated FeeQuoteLine lines = 5;
+  string valid_until = 6;
+  string note = 7;
+}
+
+message RequestEscalationResponse {
+  FeeQuote fee_quote = 1;
+  Decision decision = 2;
+}
+
+message SuggestPartnersRequest {
+  string case_id = 1;
+  // "bailiff" ou "lawyer".
+  string kind = 2;
+}
+
+message PartnerSuggestion {
+  Partner partner = 1;
+  // Classement : ressort couvert, charge, délai moyen, taux de succès.
+  int32 rank = 2;
+  bool covers_debtor_area = 3;
+}
+
+message SuggestPartnersResponse {
+  repeated PartnerSuggestion suggestions = 1;
+}
+
+message AssignPartnerRequest {
+  string case_id = 1;
+  string partner_id = 2;
+  string note = 3;
+}
+
+message AssignPartnerResponse {
+  PartnerAssignment assignment = 1;
+}
+
+message WithdrawPartnerRequest {
+  string case_id = 1;
+  string assignment_id = 2;
+  string reason = 3;
+}
+
+message WithdrawPartnerResponse {
+  PartnerAssignment assignment = 1;
+}
+
+message OfflinePayment {
+  string id = 1;
+  string case_id = 2;
+  string case_number = 3;
+  // "cash", "transfer" ou "partner".
+  string source = 4;
+  ksp.common.v1.Money amount = 5;
+  string received_on = 6;
+  // Référence du virement ou du reçu de caisse.
+  string reference = 7;
+  string proof_file_id = 8;
+  // "pending_approval", "approved", "rejected".
+  string status = 9;
+  Actor recorded_by = 10;
+  Actor approved_by = 11;
+  string rejection_reason = 12;
+  // Encaissement créé à la validation.
+  string collection_id = 13;
+  string created_at = 14;
+  string partner_assignment_id = 15;
+}
+
+message RecordOfflinePaymentRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  string source = 3;
+  ksp.common.v1.Money amount = 4;
+  string received_on = 5;
+  string reference = 6;
+  string proof_file_id = 7;
+}
+
+message RecordOfflinePaymentResponse {
+  OfflinePayment payment = 1;
+}
+
+message ListOfflinePaymentsRequest {
+  // "pending_approval" par défaut.
+  repeated string statuses = 1;
+  string case_id = 2;
+  Page page = 3;
+}
+
+message ListOfflinePaymentsResponse {
+  repeated OfflinePayment payments = 1;
+  string next_cursor = 2;
+}
+
+message ApproveOfflinePaymentRequest {
+  string offline_payment_id = 1;
+}
+
+message ApproveOfflinePaymentResponse {
+  OfflinePayment payment = 1;
+  Collection collection = 2;
+}
+
+message RejectOfflinePaymentRequest {
+  string offline_payment_id = 1;
+  string reason = 2;
+}
+
+message RejectOfflinePaymentResponse {
+  OfflinePayment payment = 1;
+}
+
+message RecordOverpaymentRefundRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+  ksp.common.v1.Money amount = 3;
+  // Référence du virement ou du transfert Mobile Money fait par la finance.
+  string reference = 4;
+  string note = 5;
+}
+
+message RecordOverpaymentRefundResponse {
+  RecoveryCase case = 1;
+}
+
+message CloseCaseRequest {
+  string case_id = 1;
+  string reason = 2;
+  string note = 3;
+  // Constat d'insolvabilité ou de disparition (irrecouvrable), facultatif.
+  string proof_file_id = 4;
+}
+
+message CloseCaseResponse {
+  RecoveryCase case = 1;
+}
+
+message ExportCaseJournalRequest {
+  string case_id = 1;
+  string idempotency_key = 2;
+}
+
+message ExportCaseJournalResponse {
+  // Document "recovery_evidence_log" produit par document.
+  string document_id = 1;
+}
+
+message PartnerFee {
+  // Type d'acte (LegalAct.type) ou "hourly", "flat_case".
+  string act_type = 1;
+  ksp.common.v1.Money amount = 2;
+}
+
+message Partner {
+  string id = 1;
+  string kind = 2;
+  string name = 3;
+  string office = 4;
+  // Ressort : clés de commune de geo.
+  repeated string commune_keys = 5;
+  repeated string phones = 6;
+  string email = 7;
+  // Compte KSP du partenaire (accès partenaire), vide tant qu'il n'est pas invité.
+  string user_id = 8;
+  repeated PartnerFee fees = 9;
+  // "pending_verification", "active", "suspended".
+  string status = 10;
+  // Vérification (nomination, inscription au barreau) : pièce et auteur.
+  string verification_file_id = 11;
+  Actor verified_by = 12;
+  string verified_at = 13;
+  // Délai moyen observé et taux de succès ; -1 = absent (aucun dossier terminé).
+  int32 average_delay_days = 14;
+  int32 success_rate_bps = 15;
+  int32 open_assignments = 16;
+  string created_at = 17;
+}
+
+message PartnerInput {
+  string kind = 1;
+  string name = 2;
+  string office = 3;
+  repeated string commune_keys = 4;
+  repeated string phones = 5;
+  string email = 6;
+  string user_id = 7;
+  repeated PartnerFee fees = 8;
+  string verification_file_id = 9;
+}
+
+message ListPartnersRequest {
+  string kind = 1;
+  repeated string statuses = 2;
+  string commune_key = 3;
+  Page page = 4;
+}
+
+message ListPartnersResponse {
+  repeated Partner partners = 1;
+  string next_cursor = 2;
+}
+
+message GetPartnerRequest {
+  string partner_id = 1;
+}
+
+message GetPartnerResponse {
+  Partner partner = 1;
+}
+
+message CreatePartnerRequest {
+  string idempotency_key = 1;
+  PartnerInput input = 2;
+}
+
+message CreatePartnerResponse {
+  Partner partner = 1;
+}
+
+message UpdatePartnerRequest {
+  string partner_id = 1;
+  PartnerInput input = 2;
+  // "active" (après vérification), "suspended" ; vide : inchangé.
+  string status = 3;
+  string status_reason = 4;
+}
+
+message UpdatePartnerResponse {
+  Partner partner = 1;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tarification (ADR-062)
+// ---------------------------------------------------------------------------------------------
+
+message PricingTier {
+  // Borne haute de la tranche, incluse ; absente = sans limite (dernière tranche seulement).
+  ksp.common.v1.Money up_to = 1;
+  int32 rate_bps = 2;
+  ksp.common.v1.Money fixed_amount = 3;
+}
+
+message StageRate {
+  // "amicable" (notification, échéancier, relance), "formal_notice", "litigation" (huissier et
+  // judiciaire).
+  string stage_group = 1;
+  int32 rate_bps = 2;
+}
+
+message PricingTarget {
+  // "b2b", "b2c", "rent" ou "any".
+  string offer = 1;
+  // Clé de commune, vide = toutes.
+  string commune_key = 2;
+  // Tarif négocié pour un client précis, vide sinon.
+  Party creditor = 3;
+}
+
+message PricingRule {
+  string id = 1;
+  // "case_fee", "recovery_commission" ou "study_fee".
+  string object = 2;
+  // "fixed", "percentage", "tiered" ou "by_stage". "tiered" : pour la commission, calcul progressif
+  // sur le cumul encaissé du dossier (chaque part au taux de sa tranche, la commission d'un
+  // encaissement est celle du cumul après lui moins celle du cumul avant lui) ; pour les frais de
+  // dossier, montant fixe de la tranche où tombe le montant dû (ADR-062). Une règle "tiered" porte soit des taux (rate_bps), soit des montants (fixed_amount), le même
+  // choix pour toutes ses tranches. Modes admis par objet : case_fee "fixed" ou "tiered" en
+  // montants ; study_fee "fixed" ; recovery_commission "fixed", "percentage", "tiered" en taux ou
+  // "by_stage" (RECOVERY_PRICING_RULE_INVALID sinon).
+  string mode = 3;
+  ksp.common.v1.Money fixed_amount = 4;
+  // Taux du mode "percentage" ; -1 = absent (autres modes).
+  int32 rate_bps = 5;
+  repeated PricingTier tiers = 6;
+  repeated StageRate stage_rates = 7;
+  // Bornes facultatives (absentes = sans borne). Commission : maximum par encaissement, minimum au
+  // cumul du dossier (complété sur les encaissements suivants). Frais et forfait : montant calculé.
+  ksp.common.v1.Money minimum = 8;
+  ksp.common.v1.Money maximum = 9;
+  PricingTarget target = 10;
+  string valid_from = 11;
+  string valid_until = 12;
+  int32 version = 13;
+  // "draft", "pending_approval", "published", "archived".
+  string status = 14;
+  string label = 15;
+  Actor created_by = 16;
+  Actor approved_by = 17;
+  string published_at = 18;
+  // Règle dont celle-ci est la nouvelle version, vide pour une première version.
+  string previous_version_id = 19;
+}
+
+message PricingRuleInput {
+  string object = 1;
+  string mode = 2;
+  ksp.common.v1.Money fixed_amount = 3;
+  int32 rate_bps = 4;
+  repeated PricingTier tiers = 5;
+  repeated StageRate stage_rates = 6;
+  // Bornes facultatives, comme PricingRule.minimum et maximum.
+  ksp.common.v1.Money minimum = 7;
+  ksp.common.v1.Money maximum = 8;
+  PricingTarget target = 9;
+  string valid_from = 10;
+  string valid_until = 11;
+  string label = 12;
+  // Nouvelle version d'une règle publiée, vide pour une nouvelle règle.
+  string previous_version_id = 13;
+}
+
+message ListPricingRulesRequest {
+  string object = 1;
+  repeated string statuses = 2;
+  string offer = 3;
+  string creditor_id = 4;
+  Page page = 5;
+}
+
+message ListPricingRulesResponse {
+  repeated PricingRule rules = 1;
+  string next_cursor = 2;
+}
+
+message GetPricingRuleRequest {
+  string rule_id = 1;
+}
+
+message GetPricingRuleResponse {
+  PricingRule rule = 1;
+}
+
+message CreatePricingRuleRequest {
+  string idempotency_key = 1;
+  PricingRuleInput input = 2;
+}
+
+message CreatePricingRuleResponse {
+  PricingRule rule = 1;
+}
+
+message UpdatePricingRuleRequest {
+  string rule_id = 1;
+  PricingRuleInput input = 2;
+}
+
+message UpdatePricingRuleResponse {
+  PricingRule rule = 1;
+}
+
+message PublishPricingRuleRequest {
+  string rule_id = 1;
+}
+
+message PublishPricingRuleResponse {
+  PricingRule rule = 1;
+}
+
+message ApprovePricingRuleRequest {
+  string rule_id = 1;
+}
+
+message ApprovePricingRuleResponse {
+  PricingRule rule = 1;
+}
+
+message ArchivePricingRuleRequest {
+  string rule_id = 1;
+  string reason = 2;
+}
+
+message ArchivePricingRuleResponse {
+  PricingRule rule = 1;
+}
+
+message SimulatePricingRequest {
+  // Règle à essayer (brouillon compris) ; vide = règle publiée applicable à la cible.
+  string rule_id = 1;
+  string object = 2;
+  PricingTarget target = 3;
+  // Montant de base : montant dû (frais de dossier) ou encaissement (commission).
+  ksp.common.v1.Money base_amount = 4;
+  // Étape atteinte (commission par étape).
+  string stage = 5;
+}
+
+message PricingLine {
+  string label = 1;
+  ksp.common.v1.Money base = 2;
+  // -1 = absent (ligne à montant fixe).
+  int32 rate_bps = 3;
+  ksp.common.v1.Money amount = 4;
+}
+
+message SimulatePricingResponse {
+  ksp.common.v1.Money amount = 1;
+  string rule_id = 2;
+  int32 rule_version = 3;
+  repeated PricingLine lines = 4;
+  // "minimum", "maximum" ou vide.
+  string bound_applied = 5;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Réglages (partie 17.1)
+// ---------------------------------------------------------------------------------------------
+
+message ContactWindow {
+  // Heures locales (Bénin), "HH:MM".
+  string start = 1;
+  string end = 2;
+  // Jours ISO autorisés (1 = lundi … 7 = dimanche).
+  repeated int32 days = 3;
+}
+
+message ScoreWeights {
+  int32 debt_age = 1;
+  int32 written_acknowledgment = 2;
+  int32 evidence_quality = 3;
+  int32 amount = 4;
+  int32 valid_contacts = 5;
+  int32 partial_payments = 6;
+}
+
+message RecoverySettings {
+  ksp.common.v1.Money minimum_case_amount = 1;
+  int32 fee_payment_days = 2;
+  int32 review_business_days = 3;
+  int32 info_completion_days = 4;
+  int32 notice_response_days = 5;
+  int32 installment_grace_days = 6;
+  int32 missed_installments_before_amicable = 7;
+  int32 amicable_duration_days = 8;
+  int32 formal_notice_days = 9;
+  int32 creditor_approval_days = 10;
+  int32 dispute_answer_days = 11;
+  int32 prescription_alert_days = 12;
+  ContactWindow contact_window = 13;
+  int32 debtor_link_days = 14;
+  int32 remittance_business_days = 15;
+  int32 closed_case_retention_years = 16;
+  PlanScale default_b2b_scale = 17;
+  PlanScale default_b2c_scale = 18;
+  PlanScale default_rent_scale = 19;
+  ScoreWeights score_weights = 20;
+  int32 plan_creditor_approval_days = 21;
+  int32 partner_silence_alert_days = 22;
+  int32 debtor_session_minutes = 23;
+  int32 unrecoverable_after_months = 24;
+  string updated_at = 25;
+  Actor updated_by = 26;
+}
+
+message GetRecoverySettingsRequest {}
+
+message GetRecoverySettingsResponse {
+  RecoverySettings settings = 1;
+}
+
+message UpdateRecoverySettingsRequest {
+  RecoverySettings settings = 1;
+}
+
+message UpdateRecoverySettingsResponse {
+  RecoverySettings settings = 1;
+}
+
+message Holiday {
+  string date = 1;
+  string label = 2;
+}
+
+message ListHolidaysRequest {
+  int32 year = 1;
+}
+
+message ListHolidaysResponse {
+  repeated Holiday holidays = 1;
+}
+
+message SetHolidaysRequest {
+  int32 year = 1;
+  // Remplace la liste de l'année.
+  repeated Holiday holidays = 2;
+}
+
+message SetHolidaysResponse {
+  repeated Holiday holidays = 1;
+}
