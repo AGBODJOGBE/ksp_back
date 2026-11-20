@@ -1,8 +1,13 @@
 import { type Block } from '../content';
 import { genericV1 } from './generic.v1';
+import { recoveryEvidenceLogV1 } from './recovery-evidence-log.v1';
+import { recoveryFeeQuoteV1 } from './recovery-fee-quote.v1';
 import { recoveryFormalNoticeV1 } from './recovery-formal-notice.v1';
 import { recoveryMandateV1 } from './recovery-mandate.v1';
+import { recoveryReceiptV1 } from './recovery-receipt.v1';
 import { recoverySettlementAgreementV1 } from './recovery-settlement-agreement.v1';
+import { recoverySettlementCertificateV1 } from './recovery-settlement-certificate.v1';
+import { recoveryStatementV1 } from './recovery-statement.v1';
 import { type DocumentTemplate, type TemplateContext } from './template';
 
 /** Description d'un modèle, sans ses variables. */
@@ -69,6 +74,11 @@ const CATALOG: readonly CatalogEntry[] = [
   entry(recoveryMandateV1),
   entry(recoveryFormalNoticeV1),
   entry(recoverySettlementAgreementV1),
+  entry(recoverySettlementCertificateV1),
+  entry(recoveryFeeQuoteV1),
+  entry(recoveryEvidenceLogV1),
+  entry(recoveryStatementV1),
+  entry(recoveryReceiptV1),
   entry(genericV1),
 ];
 
