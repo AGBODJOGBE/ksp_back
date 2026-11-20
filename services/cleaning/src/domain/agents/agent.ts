@@ -17,15 +17,14 @@ export const AGENT_STATUSES: readonly AgentStatus[] = [
 ];
 
 /**
- * Transitions autorisées, lues dans le tableau de 15.2 (« toute autre répond
- * CLEANING_INVALID_TRANSITION ») : applicant → under_review → active ⇄ suspended → deactivated ;
- * under_review → rejected. Le texte de 9.1 cite aussi « candidat → refusé » et ne dit pas si un
- * agent actif se désactive sans suspension : on s'en tient au tableau, plus restrictif.
+ * Transitions autorisées (15.2, décision du 20 novembre 2026 ; « toute autre répond
+ * CLEANING_INVALID_TRANSITION ») : applicant → under_review → active ⇄ suspended ; active ou
+ * suspended → deactivated ; applicant ou under_review → rejected.
  */
 const AGENT_TRANSITIONS: Readonly<Record<AgentStatus, readonly AgentStatus[]>> = {
-  applicant: ['under_review'],
+  applicant: ['under_review', 'rejected'],
   under_review: ['active', 'rejected'],
-  active: ['suspended'],
+  active: ['suspended', 'deactivated'],
   suspended: ['active', 'deactivated'],
   deactivated: [],
   rejected: [],
@@ -74,11 +73,27 @@ export function checkDeactivation(input: {
   reassign: boolean;
   now: Date;
 }): Decision<{ toReassign: string[] }> {
-  const upcoming = input.assignments
-    .filter((assignment) => isUpcoming(assignment, input.now))
-    .map((assignment) => assignment.assignmentId);
+  const upcoming = upcomingAssignmentIds(input.assignments, input.now);
   if (upcoming.length && !input.reassign) {
     return refused(planningError('CLEANING_AGENT_HAS_ASSIGNMENTS', { assignments: upcoming }));
   }
   return accepted({ toReassign: upcoming });
+}
+
+/**
+ * Suspension (R-AG-03, décision du 20 novembre 2026 : même règle que la désactivation avec
+ * réaffectation) : ses affectations à venir, en cours comprise, sont retirées et la planification
+ * les réattribue. Le contrat (SuspendAgentRequest) n'a pas d'option « reassign » : la suspension
+ * n'est jamais refusée pour ce motif.
+ */
+export function suspensionRelease(input: { assignments: readonly AgentAssignmentRef[]; now: Date }): {
+  toRelease: string[];
+} {
+  return { toRelease: upcomingAssignmentIds(input.assignments, input.now) };
+}
+
+function upcomingAssignmentIds(assignments: readonly AgentAssignmentRef[], now: Date): string[] {
+  return assignments
+    .filter((assignment) => isUpcoming(assignment, now))
+    .map((assignment) => assignment.assignmentId);
 }

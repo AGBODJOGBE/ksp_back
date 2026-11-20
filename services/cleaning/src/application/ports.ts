@@ -132,3 +132,14 @@ export interface Clock {
 export interface IdGenerator {
   next(): string;
 }
+
+/**
+ * Chiffrement des données personnelles en base (partie 16.3) : pièce d'identité, personne à
+ * prévenir, numéro Mobile Money d'un agent, position d'un lieu. Le contexte (objet et champ) lie le
+ * chiffré à sa ligne : recopié ailleurs, il ne se déchiffre pas.
+ */
+export interface FieldCipher {
+  encrypt(plaintext: string, context: string): string;
+  /** Lève une erreur si le chiffré est illisible (autre clé, autre contexte, modifié). */
+  decrypt(ciphertext: string, context: string): string;
+}

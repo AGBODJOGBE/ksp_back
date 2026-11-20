@@ -1,5 +1,7 @@
+import { type PlanningRepository, type TravelTimes } from './planning/planning.ports';
 import {
   type Clock,
+  type FieldCipher,
   type IdGenerator,
   type PeopleDirectory,
   type PhotoStore,
@@ -19,6 +21,11 @@ export interface CleaningDeps {
   wallet: WalletLedger;
   photos: PhotoStore;
   geocoder: ReverseGeocoder;
+  /** Lot D : agents, disponibilités, équipes et affectations. */
+  planning: PlanningRepository;
+  /** Temps de trajet entre lieux (geo, R-ZN-02). */
+  travel: TravelTimes;
+  cipher: FieldCipher;
   clock: Clock;
   ids: IdGenerator;
 }

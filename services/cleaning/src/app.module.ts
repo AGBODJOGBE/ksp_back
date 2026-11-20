@@ -10,10 +10,14 @@ import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { CLEANING_DEPS, type CleaningDeps } from './application/deps';
 import { type ServiceConfig } from './config';
+import { AesGcmFieldCipher } from './infrastructure/crypto/aes-gcm-field-cipher';
 import { GrpcPhotoStore } from './infrastructure/file/grpc-photo-store';
 import { GeoServiceGeocoder } from './infrastructure/geocoding/geo-service.geocoder';
+import { GeoTravelTimes } from './infrastructure/geo/geo-travel-times';
 import { IdentityPeopleDirectory } from './infrastructure/identity/identity-people-directory';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
+import { PrismaPlaceLocations } from './infrastructure/persistence/places/prisma-place-locations';
+import { PrismaPlanningRepository } from './infrastructure/persistence/planning/prisma-planning.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { GrpcWalletLedger } from './infrastructure/wallet/grpc-wallet-ledger';
@@ -49,6 +53,7 @@ export class AppModule {
         {
           provide: CLEANING_DEPS,
           inject: [
+            PrismaService,
             IDENTITY_CLIENT,
             WALLET_CLIENT,
             FILE_CLIENT,
@@ -56,6 +61,7 @@ export class AppModule {
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
           ],
           useFactory: (
+            prisma: PrismaService,
             identityGrpc: ClientGrpc,
             walletGrpc: ClientGrpc,
             fileGrpc: ClientGrpc,
@@ -69,6 +75,12 @@ export class AppModule {
             }
             const caller = (target: string) =>
               new GrpcCaller({ target, ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}) });
+            const clock = new SystemClock();
+            const ids = new UuidV7Generator();
+            const cipher = AesGcmFieldCipher.fromConfig(
+              config.CLEANING_FIELD_ENCRYPTION_KEY,
+              config.NODE_ENV,
+            );
             return {
               people: new IdentityPeopleDirectory(
                 identityGrpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
@@ -88,8 +100,16 @@ export class AppModule {
                 caller('geo'),
                 2 * config.GEOCODING_TIMEOUT_MS + 1_000,
               ),
-              clock: new SystemClock(),
-              ids: new UuidV7Generator(),
+              planning: new PrismaPlanningRepository(prisma, clock, ids),
+              travel: new GeoTravelTimes(
+                new PrismaPlaceLocations(prisma, cipher),
+                geoGrpc.getService<geoV1.GeoServiceClient>(geoV1.GEO_SERVICE_NAME),
+                caller('geo'),
+                config.TRAVEL_TIME_TIMEOUT_MS,
+              ),
+              cipher,
+              clock,
+              ids,
             };
           },
         },

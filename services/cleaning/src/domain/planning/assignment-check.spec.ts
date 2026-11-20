@@ -128,6 +128,30 @@ describe('contrôle d’une affectation : cas nominal (9.4)', () => {
       }),
     );
   });
+
+  it('indépendant : échéance au plus tard au début de la cible (décision du 20 novembre 2026)', () => {
+    const soon = session({ start: at('2026-11-20T15:00:00+01:00'), end: at('2026-11-20T17:00:00+01:00') });
+    const result = check(soon, [agent('x', { employmentKind: 'independent' })]);
+    expect(result.agentChecks[0]!.respondBefore).toEqual(at('2026-11-20T15:00:00+01:00'));
+  });
+
+  it('le trajet ne compte ni dans la disponibilité ni dans la charge, seulement dans le conflit', () => {
+    // Plage du lundi exactement 9 h – 11 h ; 6 h déjà prévues ce jour-là ailleurs, finies à 8 h 30.
+    const before = entry('e1', 'place-b', '2026-11-23T02:30:00+01:00', '2026-11-23T08:30:00+01:00');
+    const tight = agent('x', {
+      weekly: [{ weekday: 1, startMinute: h(2), endMinute: h(11) }],
+      maxHoursPerDay: 8,
+      agenda: [before],
+    });
+    const result = check(session(), [tight]);
+    const results = Object.fromEntries(result.agentChecks[0]!.results.map((r) => [r.check, r.passed]));
+    expect(result.agentChecks[0]!.travelMinutes).toBe(30);
+    expect(results).toMatchObject({ availability: true, load: true, conflict: true });
+    // Même charge, finie une minute plus tard : seul le contrôle « Aucun conflit » échoue.
+    const shifted = entry('e1', 'place-b', '2026-11-23T02:31:00+01:00', '2026-11-23T08:31:00+01:00');
+    const late = check(session(), [{ ...tight, agenda: [shifted] }]);
+    expect(codes(late)).toEqual(['CLEANING_SCHEDULE_CONFLICT']);
+  });
 });
 
 describe('contrôle d’une affectation : tous les motifs de refus, avec les codes du contrat', () => {

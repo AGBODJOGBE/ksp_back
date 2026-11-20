@@ -15,14 +15,59 @@ import { NestFactory } from '@nestjs/core';
 import { type ClientGrpc, ClientProxyFactory, type MicroserviceOptions } from '@nestjs/microservices';
 import { type Metadata } from '@grpc/grpc-js';
 import { type Observable } from 'rxjs';
+import { CLEANING_DEPS } from '../src/application/deps';
 import { CLEANING_GRPC_CONTROLLERS } from '../src/interfaces/grpc/controllers';
 
 /**
  * Squelette v2 (ADR-054) sur un vrai serveur gRPC : chaque RPC des services lus dans les .proto
- * (ksp.cleaning.v1, plus ksp.common.v1.ObligationService) est exposée et répond UNIMPLEMENTED avec
- * le code CLEANING_NOT_IMPLEMENTED. Une méthode absente du serveur répondrait aussi UNIMPLEMENTED,
- * mais sans ce code : le test la repère.
+ * (ksp.cleaning.v1, plus ksp.common.v1.ObligationService) est exposée. Les RPC livrées (lot D)
+ * exigent une connexion : appelées sans utilisateur, elles répondent AUTH_REQUIRED avant tout accès
+ * aux données. Les autres répondent UNIMPLEMENTED avec le code CLEANING_NOT_IMPLEMENTED ; une
+ * méthode absente du serveur répondrait aussi UNIMPLEMENTED, mais sans ce code : le test la repère.
  */
+
+/** RPC branchées par le lot D (UC-NT-19 à 21, 34 à 37). */
+const LOT_D: Readonly<Record<string, readonly string[]>> = {
+  AgentService: [
+    'SubmitAgentApplication',
+    'GetMyAgentProfile',
+    'GetMyAvailability',
+    'SetMyAvailability',
+    'DeclareMyUnavailability',
+    'RemoveMyUnavailability',
+    'ListMyAssignments',
+    'AcceptAssignment',
+    'DeclineAssignment',
+  ],
+  AgentAdminService: [
+    'ListAgents',
+    'GetAgent',
+    'UpdateAgent',
+    'StartAgentReview',
+    'ApproveAgent',
+    'RejectAgent',
+    'SuspendAgent',
+    'ReactivateAgent',
+    'DeactivateAgent',
+    'GetAgentAvailability',
+    'SetAgentAvailability',
+    'DeclareAgentUnavailability',
+    'RemoveAgentUnavailability',
+    'ListTeams',
+    'CreateTeam',
+    'GetTeam',
+    'UpdateTeam',
+  ],
+  PlanningAdminService: [
+    'GetPlanning',
+    'ListUnassigned',
+    'CheckAssignment',
+    'CreateAssignments',
+    'UpdateAssignment',
+    'RemoveAssignment',
+  ],
+};
+const delivered = (service: string, rpc: string) => LOT_D[service]?.includes(rpc) ?? false;
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -48,6 +93,8 @@ function rpcsOf(pkg: PackageName): Array<[PackageName, string, string]> {
 }
 
 const RPCS = [...rpcsOf('cleaning'), ...rpcsOf('obligation')];
+const PENDING = RPCS.filter(([, service, rpc]) => !delivered(service, rpc));
+const DELIVERED = RPCS.filter(([, service, rpc]) => delivered(service, rpc));
 const camel = (name: string) => name[0]!.toLowerCase() + name.slice(1);
 
 describe('cleaning en gRPC : squelette v2', () => {
@@ -56,7 +103,11 @@ describe('cleaning en gRPC : squelette v2', () => {
   const caller = new GrpcCaller({ target: 'cleaning' });
 
   beforeAll(async () => {
-    @Module({ controllers: CLEANING_GRPC_CONTROLLERS, providers: [GrpcContextInterceptor] })
+    // Dépendances vides : une RPC livrée appelée sans utilisateur s'arrête au contrôle d'accès.
+    @Module({
+      controllers: CLEANING_GRPC_CONTROLLERS,
+      providers: [GrpcContextInterceptor, { provide: CLEANING_DEPS, useValue: {} }],
+    })
     class TestModule {}
 
     const port = await freePort();
@@ -87,14 +138,29 @@ describe('cleaning en gRPC : squelette v2', () => {
     expect(CLEANING_GRPC_CONTROLLERS).toHaveLength(services.size);
   });
 
-  it.each(RPCS)('%s : %s.%s répond UNIMPLEMENTED', async (pkg, service, rpc) => {
+  const call = (pkg: PackageName, service: string, rpc: string) => {
     const client = clients
       .get(pkg)!
       .getService<Record<string, (request: object, metadata: Metadata) => Observable<unknown>>>(service);
-    const failure = await runWithContext({ correlationId: '0192f1c4-0000-7000-8000-00000000c0de' }, () =>
+    return runWithContext({ correlationId: '0192f1c4-0000-7000-8000-00000000c0de' }, () =>
       caller.call(rpc, (metadata) => client[camel(rpc)]!({}, metadata)),
     ).catch((error: AppError) => error);
-    expect(failure).toMatchObject({
+  };
+
+  it('les RPC du lot D sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    for (const [service, rpcs] of Object.entries(LOT_D)) {
+      for (const rpc of rpcs) expect(all).toContain(`${service}.${rpc}`);
+    }
+    expect(DELIVERED).toHaveLength(32);
+  });
+
+  it.each(DELIVERED)('%s : %s.%s est branchée et exige une connexion', async (pkg, service, rpc) => {
+    expect(await call(pkg, service, rpc)).toMatchObject({ kind: 'UNAUTHENTICATED', code: 'AUTH_REQUIRED' });
+  });
+
+  it.each(PENDING)('%s : %s.%s répond UNIMPLEMENTED', async (pkg, service, rpc) => {
+    expect(await call(pkg, service, rpc)).toMatchObject({
       kind: 'NOT_IMPLEMENTED',
       code: 'CLEANING_NOT_IMPLEMENTED',
       message: `La méthode ${rpc} n'est pas encore disponible.`,

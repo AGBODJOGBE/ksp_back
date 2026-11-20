@@ -10,21 +10,36 @@ const at = (iso: string) => new Date(iso);
 const NOW = at('2026-11-20T08:00:00+01:00');
 
 describe('affectation : statut initial (R-PL-08)', () => {
+  const START = at('2026-11-22T09:00:00+01:00');
+
   it('salarié : confirmée d’office, sans échéance', () => {
-    expect(initialAssignmentStatus('employee', NOW, 12)).toEqual({
+    expect(initialAssignmentStatus('employee', NOW, 12, START)).toEqual({
       status: 'confirmed',
       respondBefore: null,
     });
   });
 
   it('indépendant : en attente de sa réponse, échéance à maintenant + délai réglé', () => {
-    expect(initialAssignmentStatus('independent', NOW, 12)).toEqual({
+    expect(initialAssignmentStatus('independent', NOW, 12, START)).toEqual({
       status: 'pending_confirmation',
       respondBefore: at('2026-11-20T20:00:00+01:00'),
     });
-    expect(initialAssignmentStatus('independent', NOW, 1).respondBefore).toEqual(
+    expect(initialAssignmentStatus('independent', NOW, 1, START).respondBefore).toEqual(
       at('2026-11-20T09:00:00+01:00'),
     );
+  });
+
+  it('indépendant : au plus tard au début de la cible (décision du 20 novembre 2026)', () => {
+    const soon = at('2026-11-20T14:00:00+01:00');
+    expect(initialAssignmentStatus('independent', NOW, 12, soon)).toEqual({
+      status: 'pending_confirmation',
+      respondBefore: soon,
+    });
+    const exactly = at('2026-11-20T20:00:00+01:00');
+    expect(initialAssignmentStatus('independent', NOW, 12, exactly).respondBefore).toEqual(exactly);
+    expect(
+      initialAssignmentStatus('independent', NOW, 12, at('2026-11-20T20:00:00.001+01:00')).respondBefore,
+    ).toEqual(at('2026-11-20T20:00:00+01:00'));
   });
 });
 

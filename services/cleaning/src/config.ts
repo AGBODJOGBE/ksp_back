@@ -20,6 +20,13 @@ export const configSchema = baseServiceConfigSchema
     GEO_GRPC_URL: z.string().min(1).default('localhost:50059'),
     /** Délai d'un fournisseur de géocodage chez geo (3 secondes) : l'appel à geo dure au plus 2 × ce délai + 1 s. */
     GEOCODING_TIMEOUT_MS: z.coerce.number().int().min(200).max(30_000).default(3_000),
+    /** Délai d'un calcul de trajets chez geo (DistanceMatrix, R-ZN-02) ; au-delà, trajet par défaut. */
+    TRAVEL_TIME_TIMEOUT_MS: z.coerce.number().int().min(200).max(30_000).default(2_000),
+    /**
+     * Clé de chiffrement des données personnelles (partie 16.3) : 32 octets en base64, du coffre à
+     * secrets. Obligatoire en production ; ailleurs, clé temporaire si absente.
+     */
+    CLEANING_FIELD_ENCRYPTION_KEY: z.string().optional(),
   })
   .refine(
     (cfg) =>
