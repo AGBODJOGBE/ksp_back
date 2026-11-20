@@ -19,6 +19,8 @@ const intent = (overrides: Partial<PaymentIntent> = {}): PaymentIntent => ({
   customerId: USER,
   organizationId: null,
   paymentLinkId: null,
+  target: null,
+  description: null,
   status: 'pending',
   provider: 'fedapay',
   providerTransactionId: '1',

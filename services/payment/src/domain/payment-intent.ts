@@ -63,6 +63,39 @@ export interface PaymentSubject {
   reference: string | null;
 }
 
+/**
+ * Objet visé par un paiement direct (v2, R-WL-05, ADR-055 décision 2) : la recharge `wallet_top_up`
+ * qui le porte crédite le portefeuille, puis le service demandeur débite l'objet. Il appartient au
+ * service demandeur, jamais à payment.
+ */
+export interface PaymentTarget {
+  /** Service demandeur (`cleaning`, `billing`), tiré de son jeton de service, jamais de la requête. */
+  service: string;
+  /** Type d'objet chez le service (`cleaning_session`, `billing_invoice`…). */
+  objectType: string;
+  objectId: string;
+  /** Part payée (mêmes valeurs que wallet), null sinon. */
+  part: string | null;
+  /** Référence lisible affichée au payeur (« séance 3/15 », « FAC-2026-000012 »). */
+  reference: string;
+}
+
+/** Même objet visé (service, type, identifiant, part). */
+export function sameTarget(a: PaymentTarget | null, b: PaymentTarget | null): boolean {
+  if (!a || !b) return a === b;
+  return (
+    a.service === b.service && a.objectType === b.objectType && a.objectId === b.objectId && a.part === b.part
+  );
+}
+
+/**
+ * Clé d'idempotence enregistrée d'un paiement direct : préfixée du service demandeur. Idempotence par
+ * (service, clé) ; jamais confondue avec la clé d'une recharge ordinaire du même payeur (sans « : »).
+ */
+export function directIdempotencyKey(service: string, key: string): string {
+  return `${service}:${key}`;
+}
+
 /** Traitement d'un écart de montant par la finance (ADR-032). */
 export interface MismatchResolution {
   resolvedAt: Date;
@@ -88,12 +121,17 @@ export interface PaymentIntent {
    * paiement a toujours un payeur connecté ou un lien, jamais les deux.
    */
   paymentLinkId: string | null;
+  /** Paiement direct (v2) : objet que la recharge doit régler aussitôt ; null sinon. */
+  target: PaymentTarget | null;
+  /** Paiement direct (v2) : libellé du service demandeur affiché au payeur ; null sinon. */
+  description: string | null;
   status: PaymentStatus;
   provider: ProviderName;
   /** Identifiant de la transaction chez le prestataire ; null tant qu'elle n'est pas créée. */
   providerTransactionId: string | null;
   providerReference: string | null;
   checkoutUrl: string | null;
+  /** Clé du payeur, ou `<service>:<clé>` pour un paiement direct (directIdempotencyKey). */
   idempotencyKey: string;
   failureReason: FailureReason | null;
   createdAt: Date;
@@ -246,8 +284,19 @@ export function sameSubject(a: PaymentSubject, b: Pick<PaymentSubject, 'type' | 
   return a.type === b.type && a.id === b.id && a.part === b.part;
 }
 
-/** Libellé du paiement chez le prestataire : aucune donnée personnelle, aucune adresse. */
-export function providerDescription(subject: PaymentSubject): string {
+/**
+ * Libellé du paiement chez le prestataire : aucune donnée personnelle, aucune adresse. Paiement
+ * direct : libellé du service demandeur, complété de la référence de l'objet s'il ne la contient pas.
+ */
+export function providerDescription(
+  intent: Pick<PaymentIntent, 'subject' | 'target' | 'description'>,
+): string {
+  const { subject, target, description } = intent;
+  if (target && description) {
+    return description.includes(target.reference)
+      ? `KSP - ${description}`
+      : `KSP - ${description} (${target.reference})`;
+  }
   if (subject.type === 'billing_invoice') return `KSP - Facture ${subject.reference ?? ''}`.trim();
   if (subject.type === 'wallet_top_up') return 'KSP - Recharge du portefeuille';
   // Lien de paiement : référence de l'émetteur (dossier, échéance), jamais le nom du payeur.

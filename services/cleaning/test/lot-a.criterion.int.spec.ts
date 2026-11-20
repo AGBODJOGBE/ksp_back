@@ -53,6 +53,13 @@ describeWithDatabase('critère du lot A (PostgreSQL)', () => {
       settings: new PrismaCatalogSettingsReader(db.prisma),
       communes: { listCommunes: async () => [{ key: 'cotonou', name: 'Cotonou' }] },
       idempotency: new PrismaIdempotencyStore(db.prisma),
+      // Lot C : hors du critère du lot A.
+      cases: {} as CleaningDeps['cases'],
+      clientPlaces: {} as CleaningDeps['clientPlaces'],
+      caseSettings: {} as CleaningDeps['caseSettings'],
+      communeResolver: {} as CleaningDeps['communeResolver'],
+      balances: {} as CleaningDeps['balances'],
+      directPayments: {} as CleaningDeps['directPayments'],
     };
     useCases = catalogUseCases(deps);
   }, HOOK_TIMEOUT_MS);

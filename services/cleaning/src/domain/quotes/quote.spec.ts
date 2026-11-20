@@ -27,6 +27,7 @@ import {
   type QuoteComposition,
   isReminderDue,
   requestNewVisit,
+  withdrawOnRequestClosed,
   sendQuote,
   updateQuoteDraft,
 } from './quote';
@@ -513,5 +514,34 @@ describe('nouvelle visite (R-VI-07)', () => {
   it('un devis retiré ne peut plus répondre', () => {
     const withdrawn: Quote = { ...sent, status: 'withdrawn' };
     expect(effectiveQuoteStatus(withdrawn, NOW)).toBe('withdrawn');
+  });
+});
+
+describe('demande annulée ou refusée : devis envoyé retiré (décision du responsable)', () => {
+  const sent = sendQuote({
+    quote: composeQuote(composition()),
+    requestStatus: 'visit_done',
+    previous: null,
+    ...sendSettings,
+    now: NOW,
+  }).quote;
+  const later = at('2026-11-23T12:00:00Z');
+
+  it('le devis encore valable passe « retiré », avec l’auteur et la cause', () => {
+    expect(withdrawOnRequestClosed(sent, 'cancelled', 'client-1', later)).toMatchObject({
+      status: 'withdrawn',
+      withdrawnAt: later,
+      withdrawnBy: 'client-1',
+      withdrawalReason: 'request_cancelled',
+    });
+    expect(withdrawOnRequestClosed(sent, 'rejected', 'sup-1', later)?.withdrawalReason).toBe(
+      'request_rejected',
+    );
+  });
+
+  it('rien à retirer : aucun devis, brouillon, ou devis déjà périmé', () => {
+    expect(withdrawOnRequestClosed(null, 'cancelled', 'client-1', later)).toBeNull();
+    expect(withdrawOnRequestClosed(composeQuote(composition()), 'cancelled', 'client-1', later)).toBeNull();
+    expect(withdrawOnRequestClosed(sent, 'rejected', 'sup-1', sent.validUntil as Date)).toBeNull();
   });
 });

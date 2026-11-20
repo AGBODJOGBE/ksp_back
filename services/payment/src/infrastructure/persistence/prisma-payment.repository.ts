@@ -36,6 +36,17 @@ function toDomain(row: PaymentRow): PaymentIntent {
     customerId: row.customerId,
     organizationId: row.organizationId,
     paymentLinkId: row.paymentLinkId,
+    target:
+      row.targetService && row.targetObjectType && row.targetObjectId && row.targetReference !== null
+        ? {
+            service: row.targetService,
+            objectType: row.targetObjectType,
+            objectId: row.targetObjectId,
+            part: row.targetPart,
+            reference: row.targetReference,
+          }
+        : null,
+    description: row.description,
     status: row.status as PaymentStatus,
     provider: row.provider as ProviderName,
     providerTransactionId: row.providerTransactionId,
@@ -115,6 +126,12 @@ export class PrismaPaymentRepository implements PaymentRepository {
           customerId: intent.customerId,
           organizationId: intent.organizationId,
           paymentLinkId: intent.paymentLinkId,
+          targetService: intent.target?.service ?? null,
+          targetObjectType: intent.target?.objectType ?? null,
+          targetObjectId: intent.target?.objectId ?? null,
+          targetPart: intent.target?.part ?? null,
+          targetReference: intent.target?.reference ?? null,
+          description: intent.description,
           provider: intent.provider,
           idempotencyKey: intent.idempotencyKey,
           createdAt: intent.createdAt,
@@ -129,9 +146,11 @@ export class PrismaPaymentRepository implements PaymentRepository {
       if (!isUniqueViolation(error)) throw error;
       const existing = intent.paymentLinkId
         ? await this.findByLinkKey(intent.paymentLinkId, intent.idempotencyKey)
-        : intent.customerId
-          ? await this.findByIdempotencyKey(intent.customerId, intent.idempotencyKey)
-          : null;
+        : intent.target
+          ? await this.findByServiceKey(intent.target.service, intent.idempotencyKey)
+          : intent.customerId
+            ? await this.findByIdempotencyKey(intent.customerId, intent.idempotencyKey)
+            : null;
       if (existing) return { created: false, intent: existing, conflict: 'idempotency_key' };
       // Une page en attente existe déjà pour l'objet ou le lien (index partiels, ADR-048).
       const open = await this.prisma.paymentIntent.findFirst({
@@ -203,6 +222,36 @@ export class PrismaPaymentRepository implements PaymentRepository {
         subjectType: input.subjectType,
         subjectId: input.subjectId,
         part: input.part,
+        // Page d'un paiement direct : elle reste à son objet (findOpenForTarget).
+        targetService: null,
+        status: 'pending',
+        expiresAt: { gt: input.now },
+      },
+      orderBy: { id: 'desc' },
+    });
+    return row ? toDomain(row) : null;
+  }
+
+  async findByServiceKey(service: string, idempotencyKey: string): Promise<PaymentIntent | null> {
+    const row = await this.prisma.paymentIntent.findFirst({
+      where: { targetService: service, idempotencyKey },
+    });
+    return row ? toDomain(row) : null;
+  }
+
+  async findOpenForTarget(input: {
+    service: string;
+    objectType: string;
+    objectId: string;
+    part: string | null;
+    now: Date;
+  }): Promise<PaymentIntent | null> {
+    const row = await this.prisma.paymentIntent.findFirst({
+      where: {
+        targetService: input.service,
+        targetObjectType: input.objectType,
+        targetObjectId: input.objectId,
+        targetPart: input.part,
         status: 'pending',
         expiresAt: { gt: input.now },
       },

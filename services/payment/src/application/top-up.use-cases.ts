@@ -30,7 +30,8 @@ export class GetTopUpPaymentUseCase {
  * (transmis dans les métadonnées) : objet `wallet_top_up`, identifiant = titulaire du portefeuille
  * (l'organisation active, sinon le payeur). Le montant est celui choisi par le client, contrôlé par
  * wallet. Idempotent par (payeur, clé) ; une page encore ouverte du payeur pour le même titulaire est
- * réutilisée pour le même montant, remplacée (annulée) sinon : une seule page payable à la fois.
+ * réutilisée pour le même montant, remplacée (annulée) sinon : une seule page payable à la fois. Les
+ * pages d'un paiement direct (objet visé, v2) n'en font pas partie : elles restent à leur objet.
  *
  * Les refus d'ADR-032 propres à un montant dû (paiement réussi pas encore enregistré, écart non
  * traité) ne s'appliquent pas : une recharge est toujours un nouvel argent, jamais un second
@@ -65,7 +66,7 @@ export class CreateTopUpPaymentUseCase {
     const replay = await this.deps.payments.findByIdempotencyKey(payer.userId, input.idempotencyKey);
     if (replay) {
       if (!same(replay)) throw PaymentErrors.keyReused();
-      return { payment: await this.withCheckout(replay), created: false };
+      return { payment: await this.sync.ensureCheckout(replay), created: false };
     }
     const now = this.deps.clock.now();
     const open = await this.deps.payments.findOpen({
@@ -75,7 +76,8 @@ export class CreateTopUpPaymentUseCase {
       part: null,
       now,
     });
-    if (open && open.amount === amount) return { payment: await this.withCheckout(open), created: false };
+    if (open && open.amount === amount)
+      return { payment: await this.sync.ensureCheckout(open), created: false };
     if (open) await this.sync.supersede(open);
 
     const stored = await this.deps.payments.create({
@@ -85,6 +87,8 @@ export class CreateTopUpPaymentUseCase {
       customerId: payer.userId,
       organizationId: payer.organizationId,
       paymentLinkId: null,
+      target: null,
+      description: null,
       status: 'pending',
       provider: this.deps.provider.name,
       providerTransactionId: null,
@@ -102,13 +106,6 @@ export class CreateTopUpPaymentUseCase {
       version: 0,
     });
     if (!stored.created && !same(stored.intent)) throw PaymentErrors.keyReused();
-    return { payment: await this.withCheckout(stored.intent), created: stored.created };
-  }
-
-  /** Paiement en attente sans page (prestataire en panne au premier essai) : nouvel essai. */
-  private withCheckout(intent: PaymentIntent): Promise<PaymentIntent> | PaymentIntent {
-    if (intent.status !== 'pending' || intent.checkoutUrl) return intent;
-    if (intent.expiresAt <= this.deps.clock.now()) return this.sync.expire(intent);
-    return this.sync.startCheckout(intent);
+    return { payment: await this.sync.ensureCheckout(stored.intent), created: stored.created };
   }
 }

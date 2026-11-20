@@ -27,6 +27,14 @@ export const configSchema = baseServiceConfigSchema
      * secrets. Obligatoire en production ; ailleurs, clé temporaire si absente.
      */
     CLEANING_FIELD_ENCRYPTION_KEY: z.string().optional(),
+    // --- Lot C ---
+    /** Adresse gRPC de payment : paiement direct par Mobile Money (CreatePaymentRequest, R-WL-05). */
+    PAYMENT_GRPC_URL: z.string().min(1).default('localhost:50055'),
+    /**
+     * Intervalle de la tâche des échéances du dossier (RV-13) : frais impayés, devis expirés, rappels,
+     * visites des demandes closes, opérations du wallet en cours. 0 : tâche désactivée.
+     */
+    CLEANING_DEADLINES_INTERVAL_MS: z.coerce.number().int().min(0).max(86_400_000).default(600_000),
   })
   .refine(
     (cfg) =>

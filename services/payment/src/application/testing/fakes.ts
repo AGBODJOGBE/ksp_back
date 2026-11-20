@@ -74,7 +74,9 @@ export class InMemoryPayments implements PaymentRepository {
   async create(intent: PaymentIntent): Promise<CreatedIntent> {
     const existing = intent.paymentLinkId
       ? await this.findByLinkKey(intent.paymentLinkId, intent.idempotencyKey)
-      : await this.findByIdempotencyKey(intent.customerId ?? '', intent.idempotencyKey);
+      : intent.target
+        ? await this.findByServiceKey(intent.target.service, intent.idempotencyKey)
+        : await this.findByIdempotencyKey(intent.customerId ?? '', intent.idempotencyKey);
     if (existing) return { created: false, intent: existing, conflict: 'idempotency_key' };
     // Index uniques partiels de la base (ADR-048) : une page en attente par objet dû et par lien.
     const open = [...this.rows.values()].find(
@@ -140,6 +142,33 @@ export class InMemoryPayments implements PaymentRepository {
           r.subject.type === input.subjectType &&
           r.subject.id === input.subjectId &&
           r.subject.part === input.part &&
+          r.target === null &&
+          r.status === 'pending' &&
+          r.expiresAt > input.now,
+      );
+    return row ? { ...row } : null;
+  }
+  async findByServiceKey(service: string, key: string) {
+    const row = [...this.rows.values()].find(
+      (r) => r.target?.service === service && r.idempotencyKey === key,
+    );
+    return row ? { ...row } : null;
+  }
+  async findOpenForTarget(input: {
+    service: string;
+    objectType: string;
+    objectId: string;
+    part: string | null;
+    now: Date;
+  }) {
+    const row = [...this.rows.values()]
+      .reverse()
+      .find(
+        (r) =>
+          r.target?.service === input.service &&
+          r.target.objectType === input.objectType &&
+          r.target.objectId === input.objectId &&
+          r.target.part === input.part &&
           r.status === 'pending' &&
           r.expiresAt > input.now,
       );
@@ -529,6 +558,7 @@ export function makeDeps(overrides: Partial<PaymentDeps> = {}) {
       linkIssuers: ['recovery'] as readonly string[],
       linkAttemptsPerHour: 10,
       payoutIssuers: ['wallet'] as readonly string[],
+      directCallers: ['cleaning', 'billing'] as readonly string[],
     },
     clock: new FixedClock(),
     ids: new SequenceIds(),

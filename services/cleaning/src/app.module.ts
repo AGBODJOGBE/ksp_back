@@ -1,4 +1,4 @@
-import { fileV1, geoV1, identityV1, walletV1 } from '@ksp/contracts';
+import { fileV1, geoV1, identityV1, paymentV1, walletV1 } from '@ksp/contracts';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -34,11 +34,26 @@ import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { GrpcWalletLedger } from './infrastructure/wallet/grpc-wallet-ledger';
 import { CLEANING_GRPC_CONTROLLERS } from './interfaces/grpc/controllers';
+// Lot C
+import { LOT_C_USE_CASES, lotCUseCases } from './application/requests/lot-c-use-cases';
+import { GeoServiceCommuneResolver } from './infrastructure/geocoding/geo-service.commune-resolver';
+import { MoneyEventsConsumer } from './infrastructure/messaging/money-events.consumer';
+import { GrpcDirectPayments } from './infrastructure/payment/grpc-direct-payments';
+import { PrismaCaseSettingsReader } from './infrastructure/persistence/requests/prisma-case-settings';
+import { PrismaCaseRepository } from './infrastructure/persistence/requests/prisma-case.repository';
+import { PrismaClientPlacesRepository } from './infrastructure/persistence/requests/prisma-client-places.repository';
+import {
+  CASE_DEADLINES_INTERVAL_MS,
+  CaseDeadlinesService,
+} from './infrastructure/scheduling/case-deadlines.service';
+import { GrpcPrepaidBalances } from './infrastructure/wallet/grpc-prepaid-balances';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
 const GEO_CLIENT = Symbol('GEO_CLIENT');
 const FILE_CLIENT = Symbol('FILE_CLIENT');
+// Lot C
+const PAYMENT_CLIENT = Symbol('PAYMENT_CLIENT');
 
 /**
  * Racine de composition : relie les ports à leurs adaptateurs. Le métier v2 (dépôts Prisma, cas
@@ -56,6 +71,8 @@ export class AppModule {
           grpcClientOptions(WALLET_CLIENT, 'wallet', config.WALLET_GRPC_URL),
           grpcClientOptions(FILE_CLIENT, 'file', config.FILE_GRPC_URL),
           grpcClientOptions(GEO_CLIENT, 'geo', config.GEO_GRPC_URL),
+          // Lot C
+          grpcClientOptions(PAYMENT_CLIENT, 'payment', config.PAYMENT_GRPC_URL),
         ]),
       ],
       controllers: CLEANING_GRPC_CONTROLLERS,
@@ -71,6 +88,8 @@ export class AppModule {
             FILE_CLIENT,
             GEO_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
+            // Lot C
+            PAYMENT_CLIENT,
           ],
           useFactory: (
             prisma: PrismaService,
@@ -79,6 +98,8 @@ export class AppModule {
             fileGrpc: ClientGrpc,
             geoGrpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
+            // Lot C
+            paymentGrpc: ClientGrpc,
           ): CleaningDeps => {
             if (!serviceTokens) {
               new Logger('Cleaning').warn(
@@ -128,10 +149,30 @@ export class AppModule {
               settings: new PrismaCatalogSettingsReader(prisma),
               communes: new GeoServiceCommuneDirectory(geo, caller('geo')),
               idempotency: new PrismaIdempotencyStore(prisma),
+              // --- Lot C : dossier, lieux du client, argent des frais de visite ---
+              cases: new PrismaCaseRepository(prisma, ids),
+              clientPlaces: new PrismaClientPlacesRepository(prisma, ids),
+              caseSettings: new PrismaCaseSettingsReader(prisma),
+              communeResolver: new GeoServiceCommuneResolver(geo, caller('geo')),
+              balances: new GrpcPrepaidBalances(
+                walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
+                caller('wallet'),
+              ),
+              directPayments: new GrpcDirectPayments(
+                paymentGrpc.getService<paymentV1.TopUpPaymentServiceClient>(
+                  paymentV1.TOP_UP_PAYMENT_SERVICE_NAME,
+                ),
+                caller('payment'),
+              ),
             };
           },
         },
         { provide: CATALOG_USE_CASES, inject: [CLEANING_DEPS], useFactory: catalogUseCases },
+        // --- Lot C : cas d'usage, tâche des échéances, événements d'argent ---
+        { provide: LOT_C_USE_CASES, inject: [CLEANING_DEPS], useFactory: lotCUseCases },
+        CaseDeadlinesService,
+        { provide: CASE_DEADLINES_INTERVAL_MS, useValue: config.CLEANING_DEADLINES_INTERVAL_MS },
+        MoneyEventsConsumer,
       ],
     };
   }

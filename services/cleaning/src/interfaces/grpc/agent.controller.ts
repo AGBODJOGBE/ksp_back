@@ -8,14 +8,20 @@ import { AvailabilityUseCases } from '../../application/agents/availability.use-
 import { CLEANING_DEPS, type CleaningDeps } from '../../application/deps';
 import { AgentAssignmentUseCases } from '../../application/planning/agent-assignments.use-cases';
 import { toAgent, toAvailability } from './agent-mappers';
+// Lot C
+import { requireUser } from '@ksp/platform';
+import { LOT_C_USE_CASES, type LotCUseCases } from '../../application/requests/lot-c-use-cases';
+import { type CaseRecord } from '../../application/requests/requests.ports';
+import { agentVisitAfter, presentAgentVisit } from './agent-visit.presenter';
+import { declaredFromProto } from './case-values.presenters';
 import { notImplemented } from './not-implemented';
 import { toAgentAssignmentPage, toAgentAssignmentView } from './planning-mappers';
 
 /**
  * Adaptateur gRPC d'AgentService — application agent : inscription, disponibilités, planning,
  * visites et séances (UC-NT-19 à 24). Lot D livré : inscription, profil, disponibilités, mon
- * planning, réponse aux affectations. Mon activité (séances réalisées) et le terrain (visites,
- * séances) arrivent avec les lots C et E et répondent encore NOT_IMPLEMENTED.
+ * planning, réponse aux affectations. Lot C : visites des lieux sur le terrain. Mon activité
+ * (séances réalisées) et les séances arrivent avec le lot E et répondent encore NOT_IMPLEMENTED.
  */
 @Controller()
 @cleaningV1.AgentServiceControllerMethods()
@@ -25,7 +31,11 @@ export class AgentGrpcController implements cleaningV1.AgentServiceController {
   private readonly availability: AvailabilityUseCases;
   private readonly assignments: AgentAssignmentUseCases;
 
-  constructor(@Inject(CLEANING_DEPS) deps: CleaningDeps) {
+  constructor(
+    @Inject(CLEANING_DEPS) private readonly deps: CleaningDeps,
+    // Lot C
+    @Inject(LOT_C_USE_CASES) private readonly lotC: LotCUseCases,
+  ) {
     this.submit = new SubmitAgentApplicationUseCase(deps);
     this.profile = new GetMyAgentProfileUseCase(deps);
     this.availability = new AvailabilityUseCases(deps);
@@ -88,32 +98,95 @@ export class AgentGrpcController implements cleaningV1.AgentServiceController {
     return { agentAssignmentView: toAgentAssignmentView(view) };
   }
 
-  getAgentVisit(): Promise<cleaningV1.GetAgentVisitResponse> {
-    return notImplemented('GetAgentVisit');
+  // --- Lot C : visite des lieux côté terrain (UC-NT-22) ---
+
+  /** Chef de la visite : affectation en vigueur marquée chef pour le compte connecté. */
+  private async isLead(visitId: string): Promise<boolean> {
+    const userId = requireUser().userId;
+    const agent = await this.deps.planning.agentByUserId(userId);
+    const [target] = await this.deps.planning.targets([{ kind: 'visit', id: visitId }]);
+    return (target?.assignments ?? []).some((item) => item.agentId === agent?.id && item.isLead);
   }
 
-  arriveAtVisit(): Promise<cleaningV1.ArriveAtVisitResponse> {
-    return notImplemented('ArriveAtVisit');
+  private async visitView(record: CaseRecord, visitId: string) {
+    return { agentVisitView: await agentVisitAfter(this.deps, record, visitId, await this.isLead(visitId)) };
   }
 
-  saveVisitObservations(): Promise<cleaningV1.SaveVisitObservationsResponse> {
-    return notImplemented('SaveVisitObservations');
+  async getAgentVisit(request: cleaningV1.GetAgentVisitRequest): Promise<cleaningV1.GetAgentVisitResponse> {
+    const view = await this.lotC.agentVisits.get(request.visitId);
+    return {
+      agentVisitView: await presentAgentVisit(this.deps, {
+        ...view,
+        isLead: await this.isLead(view.visit.id),
+      }),
+    };
   }
 
-  addVisitPhoto(): Promise<cleaningV1.AddVisitPhotoResponse> {
-    return notImplemented('AddVisitPhoto');
+  async arriveAtVisit(request: cleaningV1.ArriveAtVisitRequest): Promise<cleaningV1.ArriveAtVisitResponse> {
+    const record = await this.lotC.agentVisits.arrive({
+      visitId: request.visitId,
+      idempotencyKey: request.idempotencyKey,
+      latitude: request.latitude,
+      longitude: request.longitude,
+      accuracyMeters: request.accuracyMeters,
+      occurredAt: request.occurredAt,
+    });
+    return this.visitView(record, request.visitId);
   }
 
-  completeVisit(): Promise<cleaningV1.CompleteVisitResponse> {
-    return notImplemented('CompleteVisit');
+  async saveVisitObservations(
+    request: cleaningV1.SaveVisitObservationsRequest,
+  ): Promise<cleaningV1.SaveVisitObservationsResponse> {
+    const record = await this.lotC.agentVisits.saveObservations({
+      visitId: request.visitId,
+      idempotencyKey: request.idempotencyKey,
+      values: declaredFromProto(request.values),
+      note: request.note,
+      occurredAt: request.occurredAt,
+    });
+    return this.visitView(record, request.visitId);
   }
 
-  reportVisitMissed(): Promise<cleaningV1.ReportVisitMissedResponse> {
-    return notImplemented('ReportVisitMissed');
+  async addVisitPhoto(request: cleaningV1.AddVisitPhotoRequest): Promise<cleaningV1.AddVisitPhotoResponse> {
+    const record = await this.lotC.agentVisits.addPhoto({
+      visitId: request.visitId,
+      idempotencyKey: request.idempotencyKey,
+      fileId: request.fileId,
+      occurredAt: request.occurredAt,
+    });
+    return this.visitView(record, request.visitId);
   }
 
-  removeVisitPhoto(): Promise<cleaningV1.RemoveVisitPhotoResponse> {
-    return notImplemented('RemoveVisitPhoto');
+  async completeVisit(request: cleaningV1.CompleteVisitRequest): Promise<cleaningV1.CompleteVisitResponse> {
+    const record = await this.lotC.agentVisits.complete({
+      visitId: request.visitId,
+      idempotencyKey: request.idempotencyKey,
+      occurredAt: request.occurredAt,
+    });
+    return this.visitView(record, request.visitId);
+  }
+
+  async reportVisitMissed(
+    request: cleaningV1.ReportVisitMissedRequest,
+  ): Promise<cleaningV1.ReportVisitMissedResponse> {
+    const record = await this.lotC.agentVisits.reportMissed({
+      visitId: request.visitId,
+      idempotencyKey: request.idempotencyKey,
+      photoFileId: request.photoFileId,
+      occurredAt: request.occurredAt,
+    });
+    return this.visitView(record, request.visitId);
+  }
+
+  async removeVisitPhoto(
+    request: cleaningV1.RemoveVisitPhotoRequest,
+  ): Promise<cleaningV1.RemoveVisitPhotoResponse> {
+    const record = await this.lotC.agentVisits.removePhoto({
+      visitId: request.visitId,
+      fileId: request.fileId,
+      idempotencyKey: request.idempotencyKey,
+    });
+    return this.visitView(record, request.visitId);
   }
 
   getAgentSession(): Promise<cleaningV1.GetAgentSessionResponse> {

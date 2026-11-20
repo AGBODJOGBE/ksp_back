@@ -267,7 +267,10 @@ export function requestReactivation(
 
 /**
  * R-AC-04 : le superviseur accepte (le dossier repasse « visite faite », un nouveau devis sera émis
- * aux tarifs du jour) ou refuse (le dossier reste expiré).
+ * aux tarifs du jour) ou refuse (le dossier reste expiré). Décision du responsable : les frais de
+ * visite restent déductibles du devis réactivé ; les frais les plus récents, conservés à
+ * l'expiration (`expireQuote`), redeviennent « payés ». Des frais plus anciens conservés après une
+ * absence du client le restent ; une visite gratuite (frais remboursés) n'a rien à déduire.
  */
 export function decideReactivation(
   request: RequestTimeline,
@@ -275,16 +278,28 @@ export function decideReactivation(
   decision: 'accept' | 'refuse',
   deciderId: string,
   now: Date,
-): { requestStatus: RequestStatus; reactivation: Reactivation } {
+  fees: readonly VisitFee[] = [],
+): { requestStatus: RequestStatus; reactivation: Reactivation; fees: VisitFee[] } {
   const status = effectiveRequestStatus(request, now);
   if (reactivation?.status !== 'pending') throw invalidTransition(status, status);
   const decided = { decidedAt: now, decidedBy: deciderId };
   if (decision === 'refuse') {
     if (status !== 'expired') throw invalidTransition(status, status);
-    return { requestStatus: status, reactivation: { ...reactivation, ...decided, status: 'refused' } };
+    return {
+      requestStatus: status,
+      reactivation: { ...reactivation, ...decided, status: 'refused' },
+      fees: [...fees],
+    };
   }
   assertRequestTransition(status, 'visit_done');
-  return { requestStatus: 'visit_done', reactivation: { ...reactivation, ...decided, status: 'accepted' } };
+  const latest = latestFee(fees);
+  return {
+    requestStatus: 'visit_done',
+    reactivation: { ...reactivation, ...decided, status: 'accepted' },
+    fees: fees.map((fee) =>
+      fee === latest && fee.status === 'retained' ? { ...fee, status: 'paid' as const } : fee,
+    ),
+  };
 }
 
 export type CaseProgramStatus = 'confirmed' | 'in_progress' | 'suspended' | 'completed' | 'cancelled';

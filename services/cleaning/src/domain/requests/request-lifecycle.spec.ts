@@ -25,7 +25,7 @@ import {
   submitRequest,
   validateVisitSlots,
 } from './request-lifecycle';
-import { type VisitFee } from './visit-fee';
+import { deductibleVisitFeeAmount, type VisitFee } from './visit-fee';
 
 const at = (iso: string) => new Date(iso);
 /** 10 h à Porto-Novo. */
@@ -330,6 +330,23 @@ describe('réactivation (R-AC-04)', () => {
     const refused = decideReactivation(expiredRequest, pending, 'refuse', 'sup-1', NOW);
     expect(refused.requestStatus).toBe('expired');
     expect(refused.reactivation.status).toBe('refused');
+  });
+
+  it('acceptée : les frais conservés à l’expiration redeviennent déductibles (décision du responsable)', () => {
+    const pending = requestReactivation(expiredRequest, null, 'user-1', NOW);
+    const missed: VisitFee = { ...paidFee, status: 'retained' };
+    const expiredFee: VisitFee = { ...paidFee, id: 'fee-2', rank: 2, status: 'retained' };
+    const accepted = decideReactivation(expiredRequest, pending, 'accept', 'sup-1', NOW, [
+      missed,
+      expiredFee,
+    ]);
+    expect(accepted.fees.map((fee) => fee.status)).toEqual(['retained', 'paid']);
+    expect(deductibleVisitFeeAmount(accepted.fees, true)).toBe(5_000);
+    const refused = decideReactivation(expiredRequest, pending, 'refuse', 'sup-1', NOW, [expiredFee]);
+    expect(refused.fees).toEqual([expiredFee]);
+    const free: VisitFee = { ...paidFee, status: 'refunded', refundedAt: NOW };
+    expect(decideReactivation(expiredRequest, pending, 'accept', 'sup-1', NOW, [free]).fees).toEqual([free]);
+    expect(decideReactivation(expiredRequest, pending, 'accept', 'sup-1', NOW).fees).toEqual([]);
   });
 
   it('rien à décider sans demande en attente, ni sur un dossier qui n’est plus expiré', () => {

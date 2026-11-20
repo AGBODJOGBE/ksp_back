@@ -410,3 +410,26 @@ export function requestNewVisit(input: {
     },
   };
 }
+
+/**
+ * Décision du responsable (15.2) : la demande annulée par le client ou refusée par KSP retire le devis
+ * envoyé encore valable (`withdrawn`), dans la même transaction ; il ne peut plus être accepté. La
+ * cause tient lieu de motif. Un devis périmé passe `expired` (tâche des échéances), un brouillon ne
+ * bouge pas : rien à retirer.
+ */
+export function withdrawOnRequestClosed(
+  quote: Quote | null,
+  closing: 'cancelled' | 'rejected',
+  actorId: string,
+  now: Date,
+): Quote | null {
+  if (!quote || effectiveQuoteStatus(quote, now) !== 'sent') return null;
+  assertQuoteTransition(quote.status, 'withdrawn');
+  return {
+    ...quote,
+    status: 'withdrawn',
+    withdrawnAt: now,
+    withdrawnBy: actorId,
+    withdrawalReason: closing === 'cancelled' ? 'request_cancelled' : 'request_rejected',
+  };
+}
