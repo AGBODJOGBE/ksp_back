@@ -21,6 +21,8 @@ import {
   type Tx,
   writeEvents,
 } from './mappers';
+import { issuanceColumns } from './issuance-mappers';
+import { type InvoiceIssuance } from '../../domain/issued-invoice';
 
 /** Annule la transaction d'un événement quand la facture a changé depuis sa lecture. */
 class ConcurrentInvoiceUpdate extends Error {}
@@ -80,6 +82,73 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
       await writeEvents(tx, events(invoice));
       return invoice;
     });
+  }
+
+  async issuePaid(
+    draft: Omit<Invoice, 'number'> & { issuance: InvoiceIssuance },
+    year: number,
+    events: (invoice: Invoice) => OutboxMessage[],
+  ): Promise<{ invoice: Invoice; created: boolean }> {
+    const { issuer, idempotencyKey } = draft.issuance;
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existing = await tx.invoiceIssuance.findUnique({
+          where: { issuer_idempotencyKey: { issuer, idempotencyKey } },
+          include: { invoice: { include: INVOICE_INCLUDE } },
+        });
+        if (existing) return { invoice: toInvoice(existing.invoice), created: false };
+        // Numéro tiré dans la même transaction : un échec, ou un appel simultané rejeté par la clé
+        // primaire (émetteur, clé) de l'émission, ne laisse pas de trou.
+        const [counter] = await tx.$queryRawUnsafe<{ last_number: number }[]>(
+          'INSERT INTO invoice_counters (year, last_number) VALUES ($1, 1) ' +
+            'ON CONFLICT (year) DO UPDATE SET last_number = invoice_counters.last_number + 1 ' +
+            'RETURNING last_number',
+          year,
+        );
+        const invoice: Invoice = {
+          ...draft,
+          number: formatInvoiceNumber(year, Number(counter!.last_number)),
+        };
+        await tx.invoice.create({
+          data: {
+            id: invoice.id,
+            number: invoice.number,
+            status: invoice.status,
+            customerId: invoice.customerId,
+            organizationId: invoice.organizationId,
+            source: invoice.source,
+            periodStart: invoice.periodStart,
+            periodEnd: invoice.periodEnd,
+            lines: json(invoice.lines),
+            total: invoice.total,
+            issuedAt: invoice.issuedAt,
+            dueAt: invoice.dueAt,
+            paidAt: invoice.paidAt,
+            kind: invoice.kind ?? null,
+            ...invoiceOrganizationColumns(invoice.organization),
+          },
+        });
+        for (const payment of invoice.payments) {
+          await tx.invoicePayment.create({ data: { ...payment, invoiceId: invoice.id } });
+        }
+        await tx.invoiceIssuance.create({ data: issuanceColumns(invoice.id, draft.issuance) });
+        await writeEvents(tx, events(invoice));
+        return { invoice, created: true };
+      });
+    } catch (error) {
+      // Clé primaire (émetteur, clé) : un appel simultané avec la même clé vient d'émettre la facture.
+      const existing = await this.findByIssueKey(issuer, idempotencyKey);
+      if (existing) return { invoice: existing, created: false };
+      throw error;
+    }
+  }
+
+  async findByIssueKey(issuer: string, idempotencyKey: string): Promise<Invoice | null> {
+    const row = await this.prisma.invoiceIssuance.findUnique({
+      where: { issuer_idempotencyKey: { issuer, idempotencyKey } },
+      include: { invoice: { include: INVOICE_INCLUDE } },
+    });
+    return row ? toInvoice(row.invoice) : null;
   }
 
   async findById(id: string): Promise<Invoice | null> {

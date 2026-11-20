@@ -76,6 +76,8 @@ describe('configuration', () => {
       FILE_GRPC_URL: 'dns:///file-headless:50056',
       WALLET_GRPC_URL: 'dns:///wallet-headless:50057',
       GEO_GRPC_URL: 'dns:///geo-headless:50059',
+      // Lot E
+      BILLING_GRPC_URL: 'dns:///billing-headless:50054',
       // Lot C : paiement direct par Mobile Money.
       PAYMENT_GRPC_URL: 'dns:///payment-headless:50055',
     };

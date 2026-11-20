@@ -1,4 +1,5 @@
 import { beninDay, type BillingSource, type ContractPeriod } from './contract';
+import { type InvoiceIssuance } from './issued-invoice';
 
 /**
  * Facture (CDC Nettoyage, partie 10) : « en attente de paiement » jusqu'à l'échéance
@@ -101,6 +102,8 @@ export interface Invoice {
   dueAt: Date;
   paidAt: Date | null;
   payments: InvoicePayment[];
+  /** Lot E : émission au paiement par cleaning (séance, frais de visite) ; absente sinon. */
+  issuance?: InvoiceIssuance | null;
   /** En-tête de l'organisation facturée ; null pour une facture émise avant son enregistrement. */
   organization: InvoiceOrganization | null;
   version: number;

@@ -35,6 +35,14 @@ export const configSchema = baseServiceConfigSchema
      * visites des demandes closes, opérations du wallet en cours. 0 : tâche désactivée.
      */
     CLEANING_DEADLINES_INTERVAL_MS: z.coerce.number().int().min(0).max(86_400_000).default(600_000),
+    // Lot E : paiement par séance et tâches planifiées.
+    /** Adresse gRPC de billing : facture de séance (InvoiceIssuanceService.IssueInvoice, R-PP-06). */
+    BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
+    /**
+     * Intervalle des tâches du lot E (retards, couverture, rappels, factures, reprise des débits),
+     * en millisecondes ; 0 : tâches désactivées.
+     */
+    CLEANING_EXECUTION_TASKS_INTERVAL_MS: z.coerce.number().int().min(0).max(86_400_000).default(60_000),
   })
   .refine(
     (cfg) =>

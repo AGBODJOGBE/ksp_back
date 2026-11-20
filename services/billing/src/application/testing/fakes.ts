@@ -19,6 +19,7 @@ import {
   type WalletDebit,
   type WalletLedger,
 } from '../ports';
+import { type InvoiceIssuance } from '../../domain/issued-invoice';
 
 /** Doublures en mémoire des ports de billing, pour les tests de l'application. */
 export class FixedClock implements Clock {
@@ -97,6 +98,28 @@ export class InMemoryInvoices implements InvoiceRepository {
     this.invoices.set(invoice.id, invoice);
     this.recorder.record(events(invoice));
     return invoice;
+  }
+  /** Lot E : facture émise au paiement, idempotente par (émetteur, clé). */
+  async issuePaid(
+    draft: Omit<Invoice, 'number'> & { issuance: InvoiceIssuance },
+    year: number,
+    events: (invoice: Invoice) => OutboxMessage[],
+  ) {
+    const existing = await this.findByIssueKey(draft.issuance.issuer, draft.issuance.idempotencyKey);
+    if (existing) return { invoice: existing, created: false };
+    const next = (this.sequence.get(year) ?? 0) + 1;
+    this.sequence.set(year, next);
+    const invoice = { ...draft, number: formatInvoiceNumber(year, next) };
+    this.invoices.set(invoice.id, invoice);
+    this.recorder.record(events(invoice));
+    return { invoice, created: true };
+  }
+  async findByIssueKey(issuer: string, idempotencyKey: string) {
+    return (
+      [...this.invoices.values()].find(
+        (i) => i.issuance?.issuer === issuer && i.issuance.idempotencyKey === idempotencyKey,
+      ) ?? null
+    );
   }
   async findById(id: string) {
     return this.invoices.get(id) ?? null;

@@ -2,6 +2,7 @@ import { appendToOutbox, createEnvelope, type SqlExecutor } from '@ksp/platform'
 import {
   type BillingContract as ContractRow,
   type Invoice as InvoiceRow,
+  type InvoiceIssuance as IssuanceRow,
   type InvoicePayment as PaymentRow,
   type Prisma,
 } from '../../../prisma/generated';
@@ -15,6 +16,7 @@ import {
   type InvoiceStatus,
   type PaymentMethod,
 } from '../../domain/invoice';
+import { issuedInvoiceFields } from './issuance-mappers';
 
 export type Tx = Prisma.TransactionClient;
 export const json = (value: unknown) => value as Prisma.InputJsonValue;
@@ -79,9 +81,12 @@ export function contractColumns(contract: BillingContract) {
   };
 }
 
-export const INVOICE_INCLUDE = { payments: { orderBy: { recordedAt: 'asc' as const } } };
+// Lot E : émission au paiement chargée avec la facture.
+export const INVOICE_INCLUDE = { payments: { orderBy: { recordedAt: 'asc' as const } }, issuance: true };
 
-export function toInvoice(row: InvoiceRow & { payments: PaymentRow[] }): Invoice {
+export function toInvoice(
+  row: InvoiceRow & { payments: PaymentRow[]; issuance?: IssuanceRow | null },
+): Invoice {
   return {
     id: row.id,
     number: row.number,
@@ -98,6 +103,8 @@ export function toInvoice(row: InvoiceRow & { payments: PaymentRow[] }): Invoice
     issuedAt: row.issuedAt,
     dueAt: row.dueAt,
     paidAt: row.paidAt,
+    // Lot E : nature et émission au paiement.
+    ...issuedInvoiceFields(row),
     payments: row.payments.map((payment) => ({
       id: payment.id,
       amount: payment.amount,

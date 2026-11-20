@@ -1,6 +1,7 @@
 import { type billingV1 } from '@ksp/contracts';
 import { type StoredBillingSettings } from '../../application/ports';
 import { balance, type Invoice, paidAmount } from '../../domain/invoice';
+import { presentIssuance } from './issued-presenters';
 
 const money = (amount: number) => ({ amount, currency: 'XOF' });
 const iso = (date: Date | null) => (date ? date.toISOString() : '');
@@ -36,6 +37,8 @@ export function presentInvoice(invoice: Invoice): billingV1.Invoice {
     issuedAt: iso(invoice.issuedAt),
     dueAt: iso(invoice.dueAt),
     paidAt: iso(invoice.paidAt),
+    // Lot E : objet facturé et références d'une facture émise au paiement.
+    ...presentIssuance(invoice),
     payments: invoice.payments.map((payment) => ({
       id: payment.id,
       amount: money(payment.amount),

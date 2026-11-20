@@ -14,14 +14,18 @@ import { LOT_C_USE_CASES, type LotCUseCases } from '../../application/requests/l
 import { type CaseRecord } from '../../application/requests/requests.ports';
 import { agentVisitAfter, presentAgentVisit } from './agent-visit.presenter';
 import { declaredFromProto } from './case-values.presenters';
-import { notImplemented } from './not-implemented';
 import { toAgentAssignmentPage, toAgentAssignmentView } from './planning-mappers';
+// Lot E
+import { AgentActivityUseCase } from '../../application/execution/agent-activity.use-cases';
+import { FieldSessionUseCases } from '../../application/execution/field.use-cases';
+import { type ExecutionDeps } from '../../application/deps';
+import { presentActivity, presentAgentSession } from './execution-presenters';
 
 /**
  * Adaptateur gRPC d'AgentService — application agent : inscription, disponibilités, planning,
  * visites et séances (UC-NT-19 à 24). Lot D livré : inscription, profil, disponibilités, mon
- * planning, réponse aux affectations. Lot C : visites des lieux sur le terrain. Mon activité
- * (séances réalisées) et les séances arrivent avec le lot E et répondent encore NOT_IMPLEMENTED.
+ * planning, réponse aux affectations. Lot C livré : visites des lieux sur le terrain. Lot E livré :
+ * séances sur le terrain et mon activité (séances réalisées).
  */
 @Controller()
 @cleaningV1.AgentServiceControllerMethods()
@@ -30,6 +34,9 @@ export class AgentGrpcController implements cleaningV1.AgentServiceController {
   private readonly profile: GetMyAgentProfileUseCase;
   private readonly availability: AvailabilityUseCases;
   private readonly assignments: AgentAssignmentUseCases;
+  // Lot E : séance sur le terrain et mon activité.
+  private readonly field: FieldSessionUseCases;
+  private readonly activity: AgentActivityUseCase;
 
   constructor(
     @Inject(CLEANING_DEPS) private readonly deps: CleaningDeps,
@@ -40,6 +47,9 @@ export class AgentGrpcController implements cleaningV1.AgentServiceController {
     this.profile = new GetMyAgentProfileUseCase(deps);
     this.availability = new AvailabilityUseCases(deps);
     this.assignments = new AgentAssignmentUseCases(deps);
+    // Lot E
+    this.field = new FieldSessionUseCases(deps as ExecutionDeps);
+    this.activity = new AgentActivityUseCase(deps as ExecutionDeps);
   }
 
   async submitAgentApplication(
@@ -52,8 +62,8 @@ export class AgentGrpcController implements cleaningV1.AgentServiceController {
     return { agent: toAgent(await this.profile.execute()) };
   }
 
-  getMyActivity(): Promise<cleaningV1.GetMyActivityResponse> {
-    return notImplemented('GetMyActivity');
+  async getMyActivity(): Promise<cleaningV1.GetMyActivityResponse> {
+    return { agentActivity: presentActivity(await this.activity.execute()) };
   }
 
   async getMyAvailability(): Promise<cleaningV1.GetMyAvailabilityResponse> {
@@ -189,39 +199,55 @@ export class AgentGrpcController implements cleaningV1.AgentServiceController {
     return this.visitView(record, request.visitId);
   }
 
-  getAgentSession(): Promise<cleaningV1.GetAgentSessionResponse> {
-    return notImplemented('GetAgentSession');
+  async getAgentSession(
+    request: cleaningV1.GetAgentSessionRequest,
+  ): Promise<cleaningV1.GetAgentSessionResponse> {
+    return { agentSessionView: presentAgentSession(await this.field.get(request.sessionId)) };
   }
 
-  arriveAtSession(): Promise<cleaningV1.ArriveAtSessionResponse> {
-    return notImplemented('ArriveAtSession');
+  async arriveAtSession(
+    request: cleaningV1.ArriveAtSessionRequest,
+  ): Promise<cleaningV1.ArriveAtSessionResponse> {
+    return { agentSessionView: presentAgentSession(await this.field.arrive(request)) };
   }
 
-  startSession(): Promise<cleaningV1.StartSessionResponse> {
-    return notImplemented('StartSession');
+  async startSession(request: cleaningV1.StartSessionRequest): Promise<cleaningV1.StartSessionResponse> {
+    return { agentSessionView: presentAgentSession(await this.field.start(request)) };
   }
 
-  updateSessionChecklist(): Promise<cleaningV1.UpdateSessionChecklistResponse> {
-    return notImplemented('UpdateSessionChecklist');
+  async updateSessionChecklist(
+    request: cleaningV1.UpdateSessionChecklistRequest,
+  ): Promise<cleaningV1.UpdateSessionChecklistResponse> {
+    return { agentSessionView: presentAgentSession(await this.field.updateChecklist(request)) };
   }
 
-  addSessionPhoto(): Promise<cleaningV1.AddSessionPhotoResponse> {
-    return notImplemented('AddSessionPhoto');
+  async addSessionPhoto(
+    request: cleaningV1.AddSessionPhotoRequest,
+  ): Promise<cleaningV1.AddSessionPhotoResponse> {
+    return { agentSessionView: presentAgentSession(await this.field.addPhoto(request)) };
   }
 
-  reportSessionIncident(): Promise<cleaningV1.ReportSessionIncidentResponse> {
-    return notImplemented('ReportSessionIncident');
+  async reportSessionIncident(
+    request: cleaningV1.ReportSessionIncidentRequest,
+  ): Promise<cleaningV1.ReportSessionIncidentResponse> {
+    return { agentSessionView: presentAgentSession(await this.field.reportIncident(request)) };
   }
 
-  completeSession(): Promise<cleaningV1.CompleteSessionResponse> {
-    return notImplemented('CompleteSession');
+  async completeSession(
+    request: cleaningV1.CompleteSessionRequest,
+  ): Promise<cleaningV1.CompleteSessionResponse> {
+    return { agentSessionView: presentAgentSession(await this.field.complete(request)) };
   }
 
-  reportSessionMissed(): Promise<cleaningV1.ReportSessionMissedResponse> {
-    return notImplemented('ReportSessionMissed');
+  async reportSessionMissed(
+    request: cleaningV1.ReportSessionMissedRequest,
+  ): Promise<cleaningV1.ReportSessionMissedResponse> {
+    return { agentSessionView: presentAgentSession(await this.field.reportMissed(request)) };
   }
 
-  removeSessionPhoto(): Promise<cleaningV1.RemoveSessionPhotoResponse> {
-    return notImplemented('RemoveSessionPhoto');
+  async removeSessionPhoto(
+    request: cleaningV1.RemoveSessionPhotoRequest,
+  ): Promise<cleaningV1.RemoveSessionPhotoResponse> {
+    return { agentSessionView: presentAgentSession(await this.field.removePhoto(request)) };
   }
 }

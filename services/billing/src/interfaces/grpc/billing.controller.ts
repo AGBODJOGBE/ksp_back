@@ -195,16 +195,21 @@ export class WalletDebitCheckGrpcController implements billingV1.WalletDebitChec
 
 /**
  * InvoiceIssuanceService (v2) : émission des factures de séance, des reçus de frais de visite et des
- * avoirs, réservée à cleaning. IssueInvoice pas encore livré (lot E) : réponse NOT_IMPLEMENTED.
+ * avoirs, réservée à cleaning (appelant contrôlé par le cas d'usage). IssueInvoice : lot E ;
+ * avoirs : lot F.
  */
 @Controller()
 @billingV1.InvoiceIssuanceServiceControllerMethods()
 export class InvoiceIssuanceGrpcController implements billingV1.InvoiceIssuanceServiceController {
-  // Lot F : avoirs demandés par cleaning.
-  constructor(@Inject(MONTHLY_USE_CASES) private readonly monthly: MonthlyBillingUseCases) {}
+  constructor(
+    @Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases,
+    // Lot F : avoirs demandés par cleaning.
+    @Inject(MONTHLY_USE_CASES) private readonly monthly: MonthlyBillingUseCases,
+  ) {}
 
-  issueInvoice(): Promise<billingV1.IssueInvoiceResponse> {
-    return notImplemented('IssueInvoice');
+  async issueInvoice(request: billingV1.IssueInvoiceRequest): Promise<billingV1.IssueInvoiceResponse> {
+    const { invoice, created } = await this.useCases.issueInvoice.execute(request);
+    return { invoice: presentInvoice(invoice), created };
   }
 
   // Lot F (R-PE-07, R-RC-03).

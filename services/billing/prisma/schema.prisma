@@ -122,6 +122,8 @@ model Invoice {
   billableSessions      BillableSession[]
   reminders             InvoiceReminder[]
   creditNotes           CreditNote[]
+  /// Lot E : émission au paiement par cleaning (séance, frais de visite) ; absente sinon.
+  issuance              InvoiceIssuance?
 
   @@unique([contractId, periodIndex])
   @@index([customerId, id])
@@ -147,6 +149,31 @@ model InvoicePayment {
   @@unique([invoiceId, idempotencyKey])
   @@index([invoiceId])
   @@map("invoice_payments")
+}
+
+/// Lot E — émission d'une facture au paiement par un service métier (InvoiceIssuanceService.IssueInvoice ;
+/// ADR-055, R-PP-06, R-FV-04) : une seule par (émetteur, clé d'idempotence), et une seule par facture.
+/// Porte l'objet facturé et ses références lisibles (jamais d'adresse ni de position).
+model InvoiceIssuance {
+  /// Service appelant (jeton de service) : "cleaning".
+  issuer           String
+  idempotencyKey   String    @map("idempotency_key")
+  invoiceId        String    @unique @map("invoice_id") @db.Uuid
+  /// Empreinte SHA-256 du contenu de la requête : la même clé avec un autre contenu est refusée.
+  fingerprint      String
+  sourceObjectType String    @map("source_object_type")
+  sourceObjectId   String    @map("source_object_id") @db.Uuid
+  requestNumber    String?   @map("request_number")
+  programNumber    String?   @map("program_number")
+  sessionRank      String?   @map("session_rank")
+  placeLabel       String?   @map("place_label")
+  /// Jour de la séance (heure du Bénin) ; null pour des frais de visite.
+  serviceDate      DateTime? @map("service_date") @db.Date
+  createdAt        DateTime  @map("created_at") @db.Timestamptz(3)
+  invoice          Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@id([issuer, idempotencyKey])
+  @@map("invoice_issuances")
 }
 
 /// Compteur des numéros de facture, par année : numérotation continue, sans trou.

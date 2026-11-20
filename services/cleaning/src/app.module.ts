@@ -1,4 +1,4 @@
-import { fileV1, geoV1, identityV1, paymentV1, walletV1 } from '@ksp/contracts';
+import { billingV1, fileV1, geoV1, identityV1, paymentV1, walletV1 } from '@ksp/contracts';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -47,12 +47,26 @@ import {
   CaseDeadlinesService,
 } from './infrastructure/scheduling/case-deadlines.service';
 import { GrpcPrepaidBalances } from './infrastructure/wallet/grpc-prepaid-balances';
+// Lot E
+import {
+  GrpcDirectPaymentGateway,
+  GrpcInvoiceIssuer,
+  GrpcWalletBalances,
+} from './infrastructure/execution/grpc-execution-adapters';
+import { WalletEventsConsumer } from './infrastructure/messaging/wallet-events.consumer';
+import { PrismaExecutionRepository } from './infrastructure/persistence/execution/prisma-execution.repository';
+import {
+  EXECUTION_TASKS_INTERVAL_MS,
+  ExecutionSchedulerService,
+} from './infrastructure/scheduling/execution-scheduler.service';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
 const GEO_CLIENT = Symbol('GEO_CLIENT');
 const FILE_CLIENT = Symbol('FILE_CLIENT');
-// Lot C
+// Lot E
+const BILLING_CLIENT = Symbol('BILLING_CLIENT');
+// Lots C et E
 const PAYMENT_CLIENT = Symbol('PAYMENT_CLIENT');
 
 /**
@@ -71,7 +85,9 @@ export class AppModule {
           grpcClientOptions(WALLET_CLIENT, 'wallet', config.WALLET_GRPC_URL),
           grpcClientOptions(FILE_CLIENT, 'file', config.FILE_GRPC_URL),
           grpcClientOptions(GEO_CLIENT, 'geo', config.GEO_GRPC_URL),
-          // Lot C
+          // Lot E
+          grpcClientOptions(BILLING_CLIENT, 'billing', config.BILLING_GRPC_URL),
+          // Lots C et E
           grpcClientOptions(PAYMENT_CLIENT, 'payment', config.PAYMENT_GRPC_URL),
         ]),
       ],
@@ -88,7 +104,9 @@ export class AppModule {
             FILE_CLIENT,
             GEO_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
-            // Lot C
+            // Lot E
+            BILLING_CLIENT,
+            // Lots C et E
             PAYMENT_CLIENT,
           ],
           useFactory: (
@@ -98,7 +116,9 @@ export class AppModule {
             fileGrpc: ClientGrpc,
             geoGrpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
-            // Lot C
+            // Lot E
+            billingGrpc: ClientGrpc,
+            // Lots C et E
             paymentGrpc: ClientGrpc,
           ): CleaningDeps => {
             if (!serviceTokens) {
@@ -158,12 +178,32 @@ export class AppModule {
                 walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
                 caller('wallet'),
               ),
+              // Lot E
+              execution: new PrismaExecutionRepository(prisma, clock, ids),
+              walletBalances: new GrpcWalletBalances(
+                walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
+                caller('wallet'),
+              ),
+              invoices: new GrpcInvoiceIssuer(
+                billingGrpc.getService<billingV1.InvoiceIssuanceServiceClient>(
+                  billingV1.INVOICE_ISSUANCE_SERVICE_NAME,
+                ),
+                caller('billing'),
+              ),
+              sessionPayments: new GrpcDirectPaymentGateway(
+                paymentGrpc.getService<paymentV1.TopUpPaymentServiceClient>(
+                  paymentV1.TOP_UP_PAYMENT_SERVICE_NAME,
+                ),
+                caller('payment'),
+              ),
+              // Lot C : paiement direct des frais de visite.
               directPayments: new GrpcDirectPayments(
                 paymentGrpc.getService<paymentV1.TopUpPaymentServiceClient>(
                   paymentV1.TOP_UP_PAYMENT_SERVICE_NAME,
                 ),
                 caller('payment'),
               ),
+              placePoints: new PrismaPlaceLocations(prisma, cipher),
             };
           },
         },
@@ -173,6 +213,10 @@ export class AppModule {
         CaseDeadlinesService,
         { provide: CASE_DEADLINES_INTERVAL_MS, useValue: config.CLEANING_DEADLINES_INTERVAL_MS },
         MoneyEventsConsumer,
+        // Lot E
+        WalletEventsConsumer,
+        ExecutionSchedulerService,
+        { provide: EXECUTION_TASKS_INTERVAL_MS, useValue: config.CLEANING_EXECUTION_TASKS_INTERVAL_MS },
       ],
     };
   }

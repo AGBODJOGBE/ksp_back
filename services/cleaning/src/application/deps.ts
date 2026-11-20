@@ -12,6 +12,7 @@ import {
 import {
   type Clock,
   type FieldCipher,
+  type GeoPoint,
   type IdempotencyStore,
   type IdGenerator,
   type PeopleDirectory,
@@ -27,6 +28,13 @@ import {
   type CommuneResolver,
   type PlaceRepository,
 } from './requests/requests.ports';
+// Lot E
+import {
+  type DirectPaymentGateway,
+  type ExecutionRepository,
+  type InvoiceIssuer,
+  type WalletBalances,
+} from './execution/execution.ports';
 
 /** Jeton d'injection des dépendances des cas d'usage (racine de composition : app.module.ts). */
 export const CLEANING_DEPS = Symbol('CLEANING_DEPS');
@@ -69,4 +77,22 @@ export interface CleaningDeps {
   balances: PrepaidBalances;
   /** Paiement direct par Mobile Money (payment.CreatePaymentRequest, R-WL-05). */
   directPayments: DirectPayments;
+  // Lot E : programmes, séances, paiement par séance (facultatifs pour les lots qui ne s'en
+  // servent pas ; les cas d'usage du lot E les exigent par ExecutionDeps).
+  /** Programmes et séances, paiements et opérations de wallet. */
+  execution?: ExecutionRepository;
+  /** Solde prépayé lu par le lot E (wallet.GetPrepaidBalance). */
+  walletBalances?: WalletBalances;
+  /** Facture de séance (billing.IssueInvoice). */
+  invoices?: InvoiceIssuer;
+  /** Paiement direct Mobile Money d'une séance (payment.CreatePaymentRequest). */
+  sessionPayments?: DirectPaymentGateway;
+  /** Position des lieux (contrôle d'arrivée), déchiffrée à la demande. */
+  placePoints?: { points(placeIds: readonly string[]): Promise<Map<string, GeoPoint>> };
 }
+
+/** Dépendances des cas d'usage du lot E. */
+export type ExecutionDeps = CleaningDeps &
+  Required<
+    Pick<CleaningDeps, 'execution' | 'walletBalances' | 'invoices' | 'sessionPayments' | 'placePoints'>
+  >;
