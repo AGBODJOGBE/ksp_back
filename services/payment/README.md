@@ -4,8 +4,7 @@ Paiement en ligne par Mobile Money (MTN, Moov) via FedaPay : reste dû d'une fac
 du portefeuille prépayé, liens de paiement et reversements. Décision :
 `docs/adr/0031-paiement-mobile-money-fedapay.md`. L'acompte et le solde d'une mission du Nettoyage v1
 (`cleaning_mission`, montant lu dans cleaning) sont retirés avec la v1 (ADR-054) ; le paiement direct
-d'un objet du Nettoyage v2 (`CreatePaymentRequest`, ADR-055) répond `PAYMENT_NOT_IMPLEMENTED` jusqu'à
-sa livraison.
+d'un objet du Nettoyage v2 passe par `CreatePaymentRequest` (ADR-055, ci-dessous).
 Contrat gRPC : `contracts/proto/ksp/payment/v1/`. Événements : `contracts/events/payment/`.
 
 ## Démarrer en local
@@ -73,6 +72,17 @@ page réutilisée pour le même montant, remplacée sinon. Confirmation par le c
 publie `payment.intent.succeeded`, sur lequel wallet crédite le portefeuille. Les refus d'ADR-032 liés à
 un montant dû ne s'appliquent pas. `POST /api/v1/payment/payments` (facture) est **déprécié**
 au profit du portefeuille, mais reste fonctionnel.
+
+## Paiement direct d'un objet (v2, ADR-055)
+
+`TopUpPaymentService.CreatePaymentRequest`, réservé aux services de `PAYMENT_DIRECT_CALLERS` (`cleaning`
+et `billing` par défaut, jeton de service) : recharge `wallet_top_up` du titulaire (organisation si
+`organization_id` est renseigné, sinon `customer_id`) qui porte l'objet visé (`target`, service tiré du
+jeton). Montant exact fixé par le demandeur ; échéance facultative (15 minutes à 7 jours). Idempotent
+par (service, clé) : clé enregistrée `<service>:<clé>`. Une page encore ouverte pour le même objet, le
+même montant et le même payeur est réutilisée ; sinon elle est remplacée. La réussite publie
+`payment.intent.succeeded` avec `target` : wallet crédite le portefeuille (`wallet.prepaid.credited`
+avec `forObject`), puis le service débite l'objet. Colonnes `target_*` et `description` : migration 0009.
 
 ## Liens de paiement (ADR-040)
 

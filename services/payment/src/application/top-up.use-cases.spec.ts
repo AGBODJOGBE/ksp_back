@@ -63,6 +63,8 @@ describe('recharge du portefeuille prépayé (ADR-046)', () => {
       organizationId: null,
       status: 'pending',
       checkoutUrl: expect.stringContaining('https://'),
+      target: null,
+      description: null,
     });
     expect(provider().checkouts.at(-1)?.description).toBe('KSP - Recharge du portefeuille');
     const again = await topUp();
@@ -100,6 +102,8 @@ describe('recharge du portefeuille prépayé (ADR-046)', () => {
       type: 'payment.intent.succeeded',
       payload: { subjectType: 'wallet_top_up', subjectId: CUSTOMER_ID, part: null, amount: { amount: 5000 } },
     });
+    // Recharge ordinaire : aucun objet visé (réservé au paiement direct, v2).
+    expect(payments().outbox.at(-1)?.payload).not.toHaveProperty('target');
   });
 
   describe('relecture par wallet avant tout crédit (ADR-048)', () => {

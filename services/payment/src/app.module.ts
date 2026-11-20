@@ -171,6 +171,7 @@ export class AppModule {
                 linkIssuers: config.PAYMENT_LINK_ISSUERS,
                 linkAttemptsPerHour: config.PAYMENT_LINK_ATTEMPTS_PER_HOUR,
                 payoutIssuers: config.PAYMENT_PAYOUT_ISSUERS,
+                directCallers: config.PAYMENT_DIRECT_CALLERS,
               },
               clock: new SystemClock(),
               ids: new UuidV7Generator(),

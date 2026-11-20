@@ -63,6 +63,8 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
       customerId: CUSTOMER,
       organizationId: null,
       paymentLinkId: null,
+      target: null,
+      description: null,
       status: 'pending',
       provider: 'fedapay',
       providerTransactionId: null,
@@ -376,6 +378,97 @@ describeWithDatabase('dépôts payment (PostgreSQL)', () => {
     await expect(
       payments.save({ ...mismatch, mismatchResolution: { ...resolution, note: 'x'.repeat(501) } }, []),
     ).rejects.toThrow();
+  });
+
+  describe('paiement direct d’un objet (v2, migration 0009)', () => {
+    const SESSION = '0192f1c4-0000-7000-8000-0000000e0001';
+    const OTHER = '0192f1c4-0000-7000-8000-00000000c002';
+    const target = {
+      service: 'cleaning',
+      objectType: 'cleaning_session',
+      objectId: SESSION,
+      part: null,
+      reference: 'séance 3/15',
+    };
+    const direct = (key: string, overrides: Partial<PaymentIntent> = {}) =>
+      draft(`cleaning:${key}`, {
+        subject: { type: 'wallet_top_up', id: CUSTOMER, part: null, reference: null },
+        amount: 12000,
+        target,
+        description: 'Nettoyage — séance 3/15',
+        ...overrides,
+      });
+
+    it('objet visé et libellé gardés ; idempotent par (service, clé) quel que soit le payeur', async () => {
+      const results = await Promise.all([
+        payments.create(direct('session:1')),
+        payments.create(direct('session:1', { customerId: OTHER })),
+      ]);
+      expect(results.filter((r) => r.created)).toHaveLength(1);
+      expect(results[0]!.intent.id).toBe(results[1]!.intent.id);
+      expect(results.find((r) => !r.created)).toMatchObject({ conflict: 'idempotency_key' });
+      const stored = (await payments.findByServiceKey('cleaning', 'cleaning:session:1'))!;
+      expect(stored).toMatchObject({ target, description: 'Nettoyage — séance 3/15', amount: 12000 });
+      expect(await payments.findById(stored.id)).toMatchObject({ target });
+      expect(await payments.findByServiceKey('billing', 'cleaning:session:1')).toBeNull();
+      // Même clé du demandeur pour un autre service (clé enregistrée « billing:… ») : autre paiement.
+      const billing = await payments.create({
+        ...direct('session:1', { target: { ...target, service: 'billing' } }),
+        idempotencyKey: 'billing:session:1',
+      });
+      expect(billing.created).toBe(true);
+      expect((await payments.findByServiceKey('billing', 'billing:session:1'))?.id).toBe(billing.intent.id);
+    });
+
+    it('page ouverte d’un objet visé : trouvée par objet et part ; jamais prise pour une recharge ordinaire', async () => {
+      const now = new Date();
+      const objectId = '0192f1c4-0000-7000-8000-0000000e0002';
+      const page = (await payments.create(direct('open:1', { target: { ...target, objectId } }))).intent;
+      const find = (overrides: Partial<{ objectId: string; part: string | null; service: string }> = {}) =>
+        payments.findOpenForTarget({
+          service: 'cleaning',
+          objectType: 'cleaning_session',
+          objectId,
+          part: null,
+          now,
+          ...overrides,
+        });
+      expect((await find())?.id).toBe(page.id);
+      expect(await find({ part: 'deposit' })).toBeNull();
+      expect(await find({ service: 'billing' })).toBeNull();
+      expect(await find({ objectId: SESSION.replace('e0001', 'e0003') })).toBeNull();
+      expect(
+        await payments.findOpen({
+          customerId: CUSTOMER,
+          subjectType: 'wallet_top_up',
+          subjectId: CUSTOMER,
+          part: null,
+          now,
+        }),
+      ).toBeNull();
+      await payments.save({ ...page, status: 'cancelled', completedAt: now }, []);
+      expect(await find()).toBeNull();
+    });
+
+    it('objet visé incomplet, ou sur un autre objet qu’une recharge : refusé par la base', async () => {
+      await expect(payments.create(direct('bad:1', { description: null }))).rejects.toThrow();
+      await expect(
+        payments.create(direct('bad:2', { target: { ...target, objectType: 'AB' } })),
+      ).rejects.toThrow();
+      await expect(
+        payments.create(
+          direct('bad:3', {
+            subject: { type: 'billing_invoice', id: MISSION, part: null, reference: 'FAC-2026-000001' },
+          }),
+        ),
+      ).rejects.toThrow();
+      await expect(
+        payments.create(direct('bad:4', { target: { ...target, reference: '' } })),
+      ).rejects.toThrow();
+      await expect(
+        payments.create(direct('bad:5', { target: { ...target, part: 'Acompte' } })),
+      ).rejects.toThrow();
+    });
   });
 
   it('montant nul refusé par la base', async () => {

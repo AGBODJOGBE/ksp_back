@@ -8,6 +8,8 @@ const intent = (overrides: Partial<PaymentIntent> = {}): PaymentIntent => ({
   customerId: 'u1',
   organizationId: 'o1',
   paymentLinkId: null,
+  target: null,
+  description: null,
   status: 'pending',
   provider: 'fedapay',
   providerTransactionId: null,
@@ -44,6 +46,34 @@ describe('présentation d’un paiement', () => {
 
   it('espace client : aucun nom', () => {
     expect(presentPayment(intent())).toMatchObject({ customerName: '', organizationName: '' });
+  });
+
+  it('paiement direct (v2) : objet visé et page de paiement ; absent pour tout autre paiement', () => {
+    const direct = intent({
+      subject: { type: 'wallet_top_up', id: 'u1', part: null, reference: null },
+      organizationId: null,
+      checkoutUrl: 'https://process.fedapay.com/tok1',
+      target: {
+        service: 'cleaning',
+        objectType: 'cleaning_session',
+        objectId: 's1',
+        part: null,
+        reference: 'séance 3/15',
+      },
+      description: 'Nettoyage — séance 3/15',
+    });
+    expect(presentPayment(direct)).toMatchObject({
+      subject: { type: 'wallet_top_up', id: 'u1', part: '', reference: '' },
+      checkoutUrl: 'https://process.fedapay.com/tok1',
+      target: {
+        service: 'cleaning',
+        objectType: 'cleaning_session',
+        objectId: 's1',
+        part: '',
+        reference: 'séance 3/15',
+      },
+    });
+    expect(presentPayment(intent()).target).toBeUndefined();
   });
 
   const resolved = {

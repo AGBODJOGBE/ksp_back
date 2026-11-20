@@ -1,16 +1,9 @@
-import { AllowedCallers, AppError } from '@ksp/platform';
+import { AllowedCallers } from '@ksp/platform';
 import { commonV1, paymentV1 } from '@ksp/contracts';
 import { Controller, Inject, Logger } from '@nestjs/common';
 import { parsePage } from '../../application/shared/validation';
 import { PAYMENT_USE_CASES, type PaymentUseCases } from '../../application/use-cases';
 import { presentAdminPayment, presentPayment } from './presenters';
-
-/** Méthodes du contrat v2 (CDC Nettoyage v2) pas encore livrées : réponse NOT_IMPLEMENTED. */
-function notImplemented(method: string): Promise<never> {
-  return Promise.reject(
-    AppError.notImplemented('PAYMENT_NOT_IMPLEMENTED', `La méthode ${method} n'est pas encore disponible.`),
-  );
-}
 
 /** Adaptateur gRPC de l'espace client. Aucune règle métier ici. */
 @Controller()
@@ -55,7 +48,10 @@ export class PaymentGrpcController implements paymentV1.PaymentServiceController
   }
 }
 
-/** Recharge du portefeuille prépayé, réservée à wallet (ADR-046). */
+/**
+ * Recharge du portefeuille prépayé, réservée à wallet (ADR-046) ; paiement direct d'un objet (v2),
+ * réservé à cleaning et billing. Appelants contrôlés par les cas d'usage.
+ */
 @Controller()
 @paymentV1.TopUpPaymentServiceControllerMethods()
 export class TopUpPaymentGrpcController implements paymentV1.TopUpPaymentServiceController {
@@ -81,8 +77,20 @@ export class TopUpPaymentGrpcController implements paymentV1.TopUpPaymentService
     };
   }
 
-  createPaymentRequest(): Promise<paymentV1.CreatePaymentRequestResponse> {
-    return notImplemented('CreatePaymentRequest');
+  /** Paiement direct d'un objet (v2), réservé aux services de PAYMENT_DIRECT_CALLERS. */
+  async createPaymentRequest(
+    request: paymentV1.CreatePaymentRequestRequest,
+  ): Promise<paymentV1.CreatePaymentRequestResponse> {
+    const result = await this.useCases.createPaymentRequest.execute({
+      idempotencyKey: request.idempotencyKey,
+      customerId: request.customerId,
+      organizationId: request.organizationId,
+      amount: request.amount,
+      target: request.target,
+      description: request.description,
+      expiresAt: request.expiresAt,
+    });
+    return { payment: presentPayment(result.payment), created: result.created };
   }
 }
 

@@ -1,3 +1,4 @@
+import { CreatePaymentRequestUseCase } from './payment-request.use-cases';
 import { CreateTopUpPaymentUseCase, GetTopUpPaymentUseCase } from './top-up.use-cases';
 import {
   CreatePaymentUseCase,
@@ -32,6 +33,7 @@ export function createUseCases(deps: PaymentDeps) {
   return {
     createTopUpPayment: new CreateTopUpPaymentUseCase(deps),
     getTopUpPayment: new GetTopUpPaymentUseCase(deps),
+    createPaymentRequest: new CreatePaymentRequestUseCase(deps),
     createPayment: new CreatePaymentUseCase(deps),
     getMyPayment: new GetMyPaymentUseCase(deps),
     listMyPayments: new ListMyPaymentsUseCase(deps),

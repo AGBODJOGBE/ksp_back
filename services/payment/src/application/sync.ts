@@ -81,6 +81,9 @@ export function transitionEvents(transition: NonNullable<Transition>): OutboxMes
           method: ONLINE_METHOD,
           providerReference: intent.providerReference,
           succeededAt: (intent.completedAt ?? intent.updatedAt).toISOString(),
+          // Paiement direct (v2) : wallet crédite la recharge avec l'objet visé, puis le service
+          // demandeur le débite. Absent pour une recharge ordinaire.
+          ...(intent.target ? { target: { ...intent.target } } : {}),
         },
       },
     ];
@@ -252,6 +255,16 @@ export class PaymentSync {
   }
 
   /**
+   * Paiement en attente sans page (prestataire en panne au premier essai) : nouvel essai ; au-delà
+   * de son délai, il est expiré. Sinon, le paiement tel quel.
+   */
+  ensureCheckout(intent: PaymentIntent): Promise<PaymentIntent> | PaymentIntent {
+    if (intent.status !== 'pending' || intent.checkoutUrl) return intent;
+    if (intent.expiresAt <= this.deps.clock.now()) return this.expire(intent);
+    return this.startCheckout(intent);
+  }
+
+  /**
    * Crée la transaction et sa page de paiement chez le prestataire. Panne du prestataire : le
    * paiement reste en attente sans page ; le client renvoie la création avec la même clé. Retour du
    * payeur : `returnUrl` (page publique d'un lien), sinon <PAYMENT_RETURN_URL>/<id du paiement>.
@@ -263,7 +276,7 @@ export class PaymentSync {
         paymentId: intent.id,
         amount: intent.amount,
         currency: 'XOF',
-        description: providerDescription(intent.subject),
+        description: providerDescription(intent),
         returnUrl: returnUrl ?? `${this.deps.settings.returnUrl.replace(/\/+$/, '')}/${intent.id}`,
       });
     } catch (error) {

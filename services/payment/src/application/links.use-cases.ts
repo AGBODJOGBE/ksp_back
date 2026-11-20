@@ -343,6 +343,8 @@ export class PayPaymentLinkUseCase {
       customerId: null,
       organizationId: null,
       paymentLinkId: link.id,
+      target: null,
+      description: null,
       status: 'pending',
       provider: this.deps.provider.name,
       providerTransactionId: null,

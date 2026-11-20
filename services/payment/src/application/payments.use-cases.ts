@@ -131,6 +131,8 @@ export class CreatePaymentUseCase {
       customerId: payer.userId,
       organizationId,
       paymentLinkId: null,
+      target: null,
+      description: null,
       status: 'pending',
       provider: this.deps.provider.name,
       providerTransactionId: null,
