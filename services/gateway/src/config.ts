@@ -70,6 +70,8 @@ export const configSchema = z
     WALLET_GRPC_URL: z.string().min(1).default('localhost:50057'),
     /** Adresse gRPC de document (documents et signature par code, ADR-044). */
     DOCUMENT_GRPC_URL: z.string().min(1).default('localhost:50058'),
+    /** Adresse gRPC de recovery (recouvrement, ADR-060) ; injoignable : ses routes répondent 503. */
+    RECOVERY_GRPC_URL: z.string().min(1).default('localhost:50060'),
     JWKS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(600),
     JWKS_RELOAD_COOLDOWN_SECONDS: z.coerce.number().int().nonnegative().default(30),
 
@@ -134,6 +136,19 @@ export const configSchema = z
     RATE_LIMIT_DOCUMENT_LINK_CODE_VERIFY_PER_MINUTE: perMinute(
       DEFAULT_RATE_LIMITS.document_link_code_verify.limit,
     ),
+    RATE_LIMIT_RECOVERY_DEBTOR_LINK_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.recovery_debtor_link.limit),
+    RATE_LIMIT_RECOVERY_DEBTOR_CODE_REQUEST_PER_MINUTE: perMinute(
+      DEFAULT_RATE_LIMITS.recovery_debtor_code_request.limit,
+    ),
+    RATE_LIMIT_RECOVERY_DEBTOR_CODE_VERIFY_PER_MINUTE: perMinute(
+      DEFAULT_RATE_LIMITS.recovery_debtor_code_verify.limit,
+    ),
+    RATE_LIMIT_RECOVERY_DEBTOR_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.recovery_debtor.limit),
+    RATE_LIMIT_RECOVERY_DEBTOR_PAYMENT_PER_MINUTE: perMinute(
+      DEFAULT_RATE_LIMITS.recovery_debtor_payment.limit,
+    ),
+    RATE_LIMIT_RECOVERY_DEBTOR_UPLOAD_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.recovery_debtor_upload.limit),
+    RATE_LIMIT_RECOVERY_IMPORT_PER_MINUTE: perMinute(DEFAULT_RATE_LIMITS.recovery_import.limit),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV !== 'production') return;
@@ -250,6 +265,34 @@ export function rateLimitsFrom(config: GatewayConfig): RateLimitTable {
     document_link_code_verify: {
       ...DEFAULT_RATE_LIMITS.document_link_code_verify,
       limit: config.RATE_LIMIT_DOCUMENT_LINK_CODE_VERIFY_PER_MINUTE,
+    },
+    recovery_debtor_link: {
+      ...DEFAULT_RATE_LIMITS.recovery_debtor_link,
+      limit: config.RATE_LIMIT_RECOVERY_DEBTOR_LINK_PER_MINUTE,
+    },
+    recovery_debtor_code_request: {
+      ...DEFAULT_RATE_LIMITS.recovery_debtor_code_request,
+      limit: config.RATE_LIMIT_RECOVERY_DEBTOR_CODE_REQUEST_PER_MINUTE,
+    },
+    recovery_debtor_code_verify: {
+      ...DEFAULT_RATE_LIMITS.recovery_debtor_code_verify,
+      limit: config.RATE_LIMIT_RECOVERY_DEBTOR_CODE_VERIFY_PER_MINUTE,
+    },
+    recovery_debtor: {
+      ...DEFAULT_RATE_LIMITS.recovery_debtor,
+      limit: config.RATE_LIMIT_RECOVERY_DEBTOR_PER_MINUTE,
+    },
+    recovery_debtor_payment: {
+      ...DEFAULT_RATE_LIMITS.recovery_debtor_payment,
+      limit: config.RATE_LIMIT_RECOVERY_DEBTOR_PAYMENT_PER_MINUTE,
+    },
+    recovery_debtor_upload: {
+      ...DEFAULT_RATE_LIMITS.recovery_debtor_upload,
+      limit: config.RATE_LIMIT_RECOVERY_DEBTOR_UPLOAD_PER_MINUTE,
+    },
+    recovery_import: {
+      ...DEFAULT_RATE_LIMITS.recovery_import,
+      limit: config.RATE_LIMIT_RECOVERY_IMPORT_PER_MINUTE,
     },
   };
 }

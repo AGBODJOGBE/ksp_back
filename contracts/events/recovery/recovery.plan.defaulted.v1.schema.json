@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.plan.defaulted.v1.schema.json",
+  "title": "recovery.plan.defaulted",
+  "description": "Échéancier rompu (2 échéances manquées, ou 1 après une renégociation) : le dossier passe en relance amiable. Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.plan.defaulted",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["caseId", "caseNumber", "creditor", "planId", "missedCount", "defaultedAt"],
+  "$defs": {
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "planId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "missedCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "defaultedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

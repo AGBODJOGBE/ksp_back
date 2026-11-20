@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.case.stage_changed.v1.schema.json",
+  "title": "recovery.case.stage_changed",
+  "description": "Étape du dossier changée (partie 5) : avancement automatique à l’échéance, escalade décidée, ou saut tracé (R-PR-03). Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.case.stage_changed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "caseId",
+    "caseNumber",
+    "creditor",
+    "kind",
+    "fromStage",
+    "toStage",
+    "skipReason",
+    "changedBy",
+    "changedAt"
+  ],
+  "$defs": {
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "kind": {
+      "enum": ["b2b", "b2c", "rent"],
+      "description": "Offre : entreprise, particulier ou loyers"
+    },
+    "fromStage": {
+      "anyOf": [
+        {
+          "enum": ["notice", "payment_plan", "amicable", "formal_notice", "bailiff", "litigation"]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "null : première étape"
+    },
+    "toStage": {
+      "enum": ["notice", "payment_plan", "amicable", "formal_notice", "bailiff", "litigation"]
+    },
+    "skipReason": {
+      "enum": ["prescription_near", "asset_flight_risk", null]
+    },
+    "changedBy": {
+      "enum": ["system", "staff"]
+    },
+    "changedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

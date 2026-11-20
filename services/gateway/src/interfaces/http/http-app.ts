@@ -39,7 +39,8 @@ export function configureHttpApp(app: NestExpressApplication, config: GatewayCon
     origin: allowed.length > 0 ? allowed : false,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Version', 'Idempotency-Key'],
+    // X-Debtor-Session : session du débiteur sans compte (ADR-061).
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Version', 'Idempotency-Key', 'X-Debtor-Session'],
     exposedHeaders: [CORRELATION_HEADER, 'Retry-After'],
     maxAge: 600,
   });

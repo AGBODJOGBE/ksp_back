@@ -25,6 +25,10 @@ package ksp.file.v1;
 //   cleaning_intervention_photo   JPEG, PNG, WebP         8 Mo   services : cleaning
 //   generated_document            PDF                    20 Mo   services : document (envoi par le service seul)
 //   avatar                        JPEG, PNG, WebP         2 Mo   services : identity
+//   Prévues par ADR-060 (ajoutées au code de file et à l'API avec l'import des dossiers) :
+//   recovery_import               XLSX, CSV               5 Mo   services : recovery
+//   recovery_evidence_archive     ZIP                    50 Mo   services : recovery (archive décompressée par
+//                                                                recovery avec limites de taille et de nombre)
 //
 // Conventions : dates ISO 8601 en UTC (chaîne vide = absente) ; tailles en octets ; valeurs
 // énumérées en snake_case, identiques à l'API REST. Les adresses présignées sont des secrets à

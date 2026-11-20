@@ -3,7 +3,12 @@ import { type DynamicModule, Module } from '@nestjs/common';
 import { type ServiceConfig } from './config';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
-import { RecoveryGrpcController } from './interfaces/grpc/recovery.controller';
+import {
+  RecoveryAdminGrpcController,
+  RecoveryCreditorGrpcController,
+  RecoveryDebtorGrpcController,
+  RecoveryPartnerGrpcController,
+} from './interfaces/grpc/recovery.controller';
 
 @Module({})
 export class AppModule {
@@ -11,7 +16,12 @@ export class AppModule {
     return {
       module: AppModule,
       imports: [PlatformModule.forRoot(config)],
-      controllers: [RecoveryGrpcController],
+      controllers: [
+        RecoveryCreditorGrpcController,
+        RecoveryDebtorGrpcController,
+        RecoveryPartnerGrpcController,
+        RecoveryAdminGrpcController,
+      ],
       providers: [PrismaService, OutboxRelayService],
     };
   }
