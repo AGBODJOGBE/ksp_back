@@ -14,7 +14,8 @@ import { type BillingSettings } from '../domain/settings';
  * même transaction, d'où les fabriques d'événements passées aux adaptateurs.
  */
 export type OutboxMessage = {
-  [K in BillingEventType]: { type: K; payload: BillingEventPayloads[K] };
+  // Lot F : `version` 2 pour un événement de facture v2, sans contrat (RV-98) ; absente : 1.
+  [K in BillingEventType]: { type: K; payload: BillingEventPayloads[K]; version?: 1 | 2 };
 }[BillingEventType];
 
 export interface PageRequest {

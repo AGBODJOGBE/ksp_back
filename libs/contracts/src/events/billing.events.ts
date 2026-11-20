@@ -2,6 +2,11 @@
  * Événements publiés par billing (facturation mensuelle des contrats d'entreprise, CDC
  * Nettoyage partie 10). Source de vérité : contracts/events/billing/*.schema.json. Identifiants
  * et montants seulement.
+ *
+ * `billing.invoice.issued`, `.overdue` et `.paid` existent en versions 1 et 2 (RV-98) : la v1 porte
+ * le contrat (facture v1) ; la v2, publiée pour toute facture v2 (séance, frais de visite, facture
+ * mensuelle d'organisation), n'a pas de contrat et porte toujours `kind`, le compte des impayés du
+ * titulaire et, pour `paid`, `settledBy`. Un consommateur déclare `versions: [1, 2]`.
  */
 export interface BillingMoney {
   amount: number;
@@ -23,8 +28,8 @@ interface InvoiceRef {
   customerId: string;
   organizationId: string | null;
   source: BillingSource;
-  /** Contrat chez le service source (pour cleaning : la mission). */
-  contractId: string;
+  /** v1 seulement : contrat chez le service source (pour cleaning : la mission). Absent en v2. */
+  contractId?: string;
   total: BillingMoney;
 }
 
@@ -40,7 +45,7 @@ export interface BillingEventPayloads {
   };
   'billing.invoice.overdue': InvoiceRef & {
     dueAt: string;
-    /** Factures impayées du contrat, celle-ci comprise. */
+    /** Factures impayées du contrat (v1) ou du titulaire (v2), celle-ci comprise. */
     overdueCount: number;
     kind?: InvoiceKind;
     /** v2 : factures impayées du titulaire, celle-ci comprise ; information seulement (cleaning tient son propre compte). */
@@ -48,7 +53,7 @@ export interface BillingEventPayloads {
   };
   'billing.invoice.paid': InvoiceRef & {
     paidAt: string;
-    /** Factures du contrat encore impayées après ce règlement. */
+    /** Factures du contrat (v1) ou du titulaire (v2) encore impayées après ce règlement. */
     overdueCount: number;
     kind?: InvoiceKind;
     /** v2 : factures du titulaire encore impayées après ce règlement ; information seulement (cleaning tient son propre compte). */

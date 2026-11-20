@@ -6,6 +6,7 @@ import {
   type Prisma,
 } from '../../../prisma/generated';
 import { type OutboxMessage } from '../../application/ports';
+import { invoiceV2Fields } from './monthly-mappers';
 import { type BillingContract, type SuspensionInterval } from '../../domain/contract';
 import {
   type Invoice,
@@ -23,7 +24,11 @@ export async function writeEvents(tx: Tx, events: OutboxMessage[]): Promise<void
   for (const event of events) {
     await appendToOutbox(
       tx as unknown as SqlExecutor,
-      createEnvelope(event.type, event.payload as never, { producer: 'billing' }),
+      // Lot F : version de l'événement (2 pour une facture v2, RV-98).
+      createEnvelope(event.type, event.payload as never, {
+        producer: 'billing',
+        ...(event.version ? { version: event.version } : {}),
+      }),
     );
   }
 }
@@ -104,6 +109,8 @@ export function toInvoice(row: InvoiceRow & { payments: PaymentRow[] }): Invoice
     })),
     organization: toInvoiceOrganization(row),
     version: row.version,
+    // Lot F : nature, règlement et avoirs d'une facture v2.
+    ...invoiceV2Fields(row),
   };
 }
 

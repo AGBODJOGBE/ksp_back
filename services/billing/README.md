@@ -56,6 +56,39 @@ partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/bill
   effacer à `identity.user.deleted` : la facture ne garde que l'identifiant du compte et l'en-tête de
   l'organisation (document comptable).
 
+## Facture mensuelle des organisations (lot F, CDC Nettoyage v2 partie 11.2, ADR-055)
+
+- **Lignes apprises par événement** : `cleaning.session.completed` et `cleaning.session.missed` d'une
+  organisation (`payerKind = organization`) donnent une séance facturable (`billable_sessions`, inbox) ;
+  le montant dû vient de l'événement, billing ne rappelle jamais cleaning. Séance d'un particulier :
+  ignorée (payée une par une).
+- **Émission** le 1er du mois à 00:00 (heure du Bénin), au premier passage de la tâche : une facture
+  par organisation (`kind = monthly`, sans contrat) avec ses séances non facturées réalisées avant la fin
+  du mois écoulé, groupées par programme puis par lieu, avec la date de chaque séance ; déduction des
+  frais de visite en ligne négative ; total nul : émise payée. Mois d'une séance : mois civil à
+  Porto-Novo de sa réalisation (ou de l'absence constatée) ; année du numéro : celle de la période. Une
+  séance arrivée après l'émission part sur la facture suivante. En-tête figé (identity) : jamais de
+  facture sans en-tête (identity indisponible : passage suivant ; organisation introuvable : reportée,
+  alerte). Une seule facture par organisation et par mois (index unique partiel, verrou de
+  l'organisation) ; lots de 200.
+- **Échéance** : émission + délai de règlement (10 jours) ; « impayée » le lendemain de l'échéance
+  (`billing.invoice.overdue` v2, impayées de l'organisation celle-ci comprise) ; relances −3, 0, +3,
+  +7 jours (`billing.invoice.reminded`, une fois chacune, une relance plus ancienne non envoyée est
+  sautée).
+- **Règlement** : portefeuille de l'organisation (`PayMyInvoiceFromWallet`), ou crédit du portefeuille
+  destiné à la facture (`wallet.prepaid.credited` v2, `forObject` « billing_invoice », versions 1 et 2
+  lues) débité aussitôt ; paiement hors ligne refusé sur une facture v2 (`wallet_path_required`).
+  Facture soldée : `billing.invoice.paid` v2 avec `settledBy` (paiement, avoir, annulation).
+- **Avoirs** (`IssueCreditNote` réservé à cleaning, `IssueAdminCreditNote` finance avec double
+  authentification récente) : numéro `AV-<année>-<000001>`, imputés sur le reste dû puis crédités au
+  portefeuille (wallet.Credit, billing à ajouter à `WALLET_CREDIT_CALLERS`), jamais au-delà du total ;
+  idempotents par (émetteur, clé). **Annulation** d'une facture ouverte sans paiement (cas d'usage
+  seul : pas de méthode au contrat), séances remises à facturer si demandé.
+- **Événements v2** (RV-98) : une facture v2 publie `billing.invoice.issued`, `.overdue` et `.paid` en
+  version 2, sans `contractId` ; une facture v1 garde la version 1.
+- **Tâche planifiée** (`BILLING_SCHEDULER_INTERVAL_MS`) : émission, impayées, relances, sous un verrou
+  consultatif PostgreSQL (`pg_try_advisory_xact_lock`) : une seule réplique fait le passage.
+
 ## Paiement par le portefeuille prépayé (ADR-046)
 
 `BillingService.PayMyInvoiceFromWallet` (`POST /api/v1/billing/invoices/{id}/pay`) : portefeuille de

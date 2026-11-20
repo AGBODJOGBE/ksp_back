@@ -1,21 +1,13 @@
 import { type BillingContract, type ContractPeriod, duePeriods } from '../domain/contract';
 import { dueDate, type Invoice, type InvoiceOrganization, isOverdue, periodLines } from '../domain/invoice';
+import { invoiceRef } from './monthly/invoice-events';
 import { type BillingDeps } from './ports';
 
-const xof = (amount: number) => ({ amount, currency: 'XOF' as const });
-
-/** Champs communs des événements de facture : identifiants et montant, jamais d'adresse. */
-export function invoiceReference(invoice: Invoice) {
-  return {
-    invoiceId: invoice.id,
-    invoiceNumber: invoice.number,
-    customerId: invoice.customerId,
-    organizationId: invoice.organizationId,
-    source: invoice.source,
-    contractId: invoice.contractId,
-    total: xof(invoice.total),
-  };
-}
+/**
+ * Champs communs des événements de facture : identifiants et montant, jamais d'adresse. Lot F : le
+ * contrat pour une facture v1, la nature pour une facture v2 (RV-98).
+ */
+export const invoiceReference = (invoice: Invoice) => invoiceRef(invoice);
 
 /**
  * Tâche planifiée : émet les factures des mois terminés (billing.invoice.issued). Idempotente

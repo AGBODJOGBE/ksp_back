@@ -9,6 +9,7 @@ import {
 import { type BillingContract } from '../../domain/contract';
 import { formatInvoiceNumber, type Invoice, type InvoicePayment, invoiceYear } from '../../domain/invoice';
 import { PrismaService } from '../prisma/prisma.service';
+import { overdueScopeWhere, paymentState } from './monthly-mappers';
 import {
   INVOICE_INCLUDE,
   invoiceOrganizationColumns,
@@ -108,7 +109,8 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
 
   async listPastDue(now: Date): Promise<Invoice[]> {
     const rows = await this.prisma.invoice.findMany({
-      where: { status: 'pending_payment', dueAt: { lte: now } },
+      // Lot F : une facture v2 passe impayée le lendemain de l'échéance (MonthlyInvoiceRepository).
+      where: { status: 'pending_payment', dueAt: { lte: now }, kind: null },
       include: INVOICE_INCLUDE,
       orderBy: { dueAt: 'asc' },
     });
@@ -131,7 +133,7 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
         data: { status: 'overdue', version: { increment: 1 } },
       });
       if (count === 0) return false;
-      await writeEvents(tx, events(await this.countOverdue(tx, invoice.contractId)));
+      await writeEvents(tx, events(await this.countOverdue(tx, invoice)));
       return true;
     });
   }
@@ -153,12 +155,12 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
         if (inserted === 0) return 'duplicate' as const;
         const { count } = await tx.invoice.updateMany({
           where: { id: invoice.id, version: invoice.version },
-          data: { status: invoice.status, paidAt: invoice.paidAt, version: { increment: 1 } },
+          data: { ...paymentState(invoice), version: { increment: 1 } },
         });
         // Version changée : annule aussi la marque de l'inbox (le message sera retraité).
         if (count === 0) throw new ConcurrentInvoiceUpdate();
         await tx.invoicePayment.create({ data: { ...payment, invoiceId: invoice.id } });
-        await writeEvents(tx, events(await this.countOverdue(tx, invoice.contractId)));
+        await writeEvents(tx, events(await this.countOverdue(tx, invoice)));
         return 'saved' as const;
       });
     } catch (error) {
@@ -175,16 +177,17 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
     return this.prisma.$transaction(async (tx) => {
       const { count } = await tx.invoice.updateMany({
         where: { id: invoice.id, version: invoice.version },
-        data: { status: invoice.status, paidAt: invoice.paidAt, version: { increment: 1 } },
+        data: { ...paymentState(invoice), version: { increment: 1 } },
       });
       if (count === 0) return false;
       await tx.invoicePayment.create({ data: { ...payment, invoiceId: invoice.id } });
-      await writeEvents(tx, events(await this.countOverdue(tx, invoice.contractId)));
+      await writeEvents(tx, events(await this.countOverdue(tx, invoice)));
       return true;
     });
   }
 
-  private countOverdue(tx: Tx, contractId: string): Promise<number> {
-    return tx.invoice.count({ where: { contractId, status: 'overdue' } });
+  /** Impayées du contrat (v1) ou, lot F, du titulaire (v2). */
+  private countOverdue(tx: Tx, invoice: Invoice): Promise<number> {
+    return tx.invoice.count({ where: { ...overdueScopeWhere(invoice), status: 'overdue' } });
   }
 }

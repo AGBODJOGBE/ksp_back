@@ -10,6 +10,13 @@ import {
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { BILLING_USE_CASES, createUseCases } from './application/use-cases';
+// Lot F : facture mensuelle des organisations, relances, avoirs.
+import { createMonthlyUseCases, MONTHLY_USE_CASES } from './application/monthly/use-cases';
+import { MonthlyEventsConsumer } from './infrastructure/messaging/monthly-events.consumer';
+import { PrismaMonthlyInvoiceRepository } from './infrastructure/persistence/prisma-monthly-invoice.repository';
+import { MonthlyBillingSchedulerService } from './infrastructure/scheduling/monthly-billing-scheduler.service';
+import { PgRunLock } from './infrastructure/scheduling/pg-run-lock';
+import { GrpcWalletCredits } from './infrastructure/wallet/grpc-wallet-credits';
 import { type ServiceConfig } from './config';
 import { IdentityOrganizationDirectory } from './infrastructure/identity/identity-organization-directory';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
@@ -114,6 +121,51 @@ export class AppModule {
                   ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
                 }),
               ),
+              clock: new SystemClock(),
+              ids: new UuidV7Generator(),
+            });
+          },
+        },
+        // Lot F : facture mensuelle des organisations (CDC Nettoyage v2, partie 11.2), mêmes
+        // adaptateurs que les cas d'usage existants, plus le dépôt mensuel et wallet.Credit.
+        PrismaMonthlyInvoiceRepository,
+        PgRunLock,
+        MonthlyEventsConsumer,
+        MonthlyBillingSchedulerService,
+        {
+          provide: MONTHLY_USE_CASES,
+          inject: [
+            PrismaContractRepository,
+            PrismaInvoiceRepository,
+            PrismaSettingsRepository,
+            PrismaMonthlyInvoiceRepository,
+            IDENTITY_CLIENT,
+            WALLET_CLIENT,
+            { token: SERVICE_TOKEN_PROVIDER, optional: true },
+          ],
+          useFactory: (
+            contracts: PrismaContractRepository,
+            invoices: PrismaInvoiceRepository,
+            settings: PrismaSettingsRepository,
+            monthly: PrismaMonthlyInvoiceRepository,
+            grpc: ClientGrpc,
+            walletGrpc: ClientGrpc,
+            serviceTokens: ServiceTokenProvider | undefined,
+          ) => {
+            const caller = (target: string) =>
+              new GrpcCaller({ target, ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}) });
+            const wallet = walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME);
+            return createMonthlyUseCases({
+              contracts,
+              invoices,
+              settings,
+              monthly,
+              organizations: new IdentityOrganizationDirectory(
+                grpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
+                caller('identity'),
+              ),
+              wallet: new GrpcWalletLedger(wallet, caller('wallet')),
+              walletCredits: new GrpcWalletCredits(wallet, caller('wallet')),
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
             });

@@ -78,7 +78,7 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     world.clock.current = new Date('2027-01-01T09:00:00Z');
     await useCases.issueDueInvoices.execute();
     const [november, december] = [...world.invoices.invoices.values()].sort(
-      (a, b) => a.periodIndex - b.periodIndex,
+      (a, b) => (a.periodIndex ?? 0) - (b.periodIndex ?? 0),
     );
     expect(november?.organization).toEqual({
       legalName: 'SARL Bénin Propre',
