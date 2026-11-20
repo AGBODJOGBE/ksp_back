@@ -2,17 +2,19 @@ import { type AgendaEntry } from '../planning/agenda';
 import {
   balanceFactor,
   BALANCE_REFERENCE_HOURS,
-  compareIds,
   compareScores,
   continuityFactor,
   DEFAULT_SCORE_WEIGHTS,
+  EMPTY_PROGRAM_HISTORY,
   hasPreviousSameDay,
   plannedMinutesInWeek,
   PROXIMITY_ZERO_MINUTES,
   proximityFactor,
   ratingFactor,
   scoreCandidate,
+  type ProgramHistory,
   type ScoreInput,
+  withRetainedTeam,
 } from './score';
 
 const at = (iso: string) => new Date(iso);
@@ -43,7 +45,7 @@ function input(extra: Partial<ScoreInput> = {}, agent: Partial<ScoreInput['agent
       start: at('2026-11-23T09:00:00+01:00'),
       end: at('2026-11-23T11:00:00+01:00'),
     },
-    programAgentIds: new Set<string>(),
+    programHistory: EMPTY_PROGRAM_HISTORY,
     travelMinutes: 0,
     now: NOW,
     weights: DEFAULT_SCORE_WEIGHTS,
@@ -59,15 +61,49 @@ describe('R-PL-03 : poids par défaut', () => {
   });
 });
 
-describe('R-PL-03 continuité : agent déjà venu sur ce programme', () => {
-  it('cas nominal : agent déjà venu, tout le poids', () => {
-    expect(continuityFactor('a1', new Set(['a1', 'a2']))).toBe(1);
-    expect(scoreCandidate(input({ programAgentIds: new Set(['a1']) })).continuity).toBe(40);
+/** Historique : séances réalisées (agent → nombre) et affectations en vigueur. */
+const history = (
+  completed: Record<string, number>,
+  sessions: number,
+  inForce: Record<string, number> = {},
+  covered = 0,
+): ProgramHistory => ({
+  completed: { sessions, byAgent: completed },
+  inForce: { sessions: covered, byAgent: inForce },
+});
+
+describe('R-PL-03 continuité graduée : part des séances du programme faites par l’agent', () => {
+  it('cas nominal : agent venu à chaque séance réalisée, tout le poids ; à la moitié, la moitié', () => {
+    expect(continuityFactor('a1', history({ a1: 4, a2: 2 }, 4))).toBe(1);
+    expect(continuityFactor('a2', history({ a1: 4, a2: 2 }, 4))).toBe(0.5);
+    expect(scoreCandidate(input({ programHistory: history({ a1: 3 }, 3) })).continuity).toBe(40);
+    expect(scoreCandidate(input({ programHistory: history({ a1: 1 }, 4) })).continuity).toBe(10);
   });
 
   it('cas limite : jamais venu, ou programme sans historique : 0', () => {
-    expect(continuityFactor('a1', new Set(['a2']))).toBe(0);
+    expect(continuityFactor('a1', history({ a2: 3 }, 3))).toBe(0);
+    expect(continuityFactor('a1', EMPTY_PROGRAM_HISTORY)).toBe(0);
     expect(scoreCandidate(input()).continuity).toBe(0);
+  });
+
+  it('cas limite : sans séance réalisée, part des séances couvertes par ses affectations en vigueur', () => {
+    expect(continuityFactor('a1', history({}, 0, { a1: 2, a2: 1 }, 2))).toBe(1);
+    expect(continuityFactor('a2', history({}, 0, { a1: 2, a2: 1 }, 2))).toBe(0.5);
+    // Des séances réalisées : les affectations en vigueur ne comptent plus.
+    expect(continuityFactor('a2', history({ a1: 1 }, 1, { a2: 5 }, 5))).toBe(0);
+  });
+
+  it('l’agent habituel reprend la main après un remplaçant d’un jour', () => {
+    const regular = history({ a1: 5 }, 5);
+    const afterReplacement = withRetainedTeam(regular, ['a2']);
+    expect(continuityFactor('a1', afterReplacement)).toBe(1);
+    expect(continuityFactor('a2', afterReplacement)).toBe(0);
+  });
+
+  it('withRetainedTeam : une séance couverte de plus, sans modifier l’historique reçu', () => {
+    const before = history({}, 0, { a1: 1 }, 1);
+    expect(withRetainedTeam(before, ['a1', 'a2'])).toEqual(history({}, 0, { a1: 2, a2: 1 }, 2));
+    expect(before).toEqual(history({}, 0, { a1: 1 }, 1));
   });
 });
 
@@ -173,7 +209,7 @@ describe('R-PL-03 note moyenne des clients', () => {
 
 describe('R-PL-03 poids réglables et total', () => {
   it('le total est la somme des critères pondérés', () => {
-    const score = scoreCandidate(input({ programAgentIds: new Set(['a1']) }, { ratingAverage: 5 }));
+    const score = scoreCandidate(input({ programHistory: history({ a1: 1 }, 1) }, { ratingAverage: 5 }));
     expect(score).toEqual({
       agentId: 'a1',
       continuity: 40,
@@ -187,7 +223,7 @@ describe('R-PL-03 poids réglables et total', () => {
   it('cas limite : un poids à 0 annule son critère', () => {
     const weights = { continuity: 100, proximity: 0, balance: 0, rating: 0 };
     expect(scoreCandidate(input({ weights })).total).toBe(0);
-    expect(scoreCandidate(input({ weights, programAgentIds: new Set(['a1']) })).total).toBe(100);
+    expect(scoreCandidate(input({ weights, programHistory: history({ a1: 1 }, 1) })).total).toBe(100);
   });
 });
 
@@ -207,8 +243,7 @@ describe('ordre des candidats', () => {
   });
 
   it('cas limite : identifiants comparés par points de code, sans dépendre de la langue', () => {
-    expect(compareIds('a', 'a')).toBe(0);
-    expect(compareIds('B', 'a')).toBe(-1);
-    expect(compareIds('é', 'f')).toBe(1);
+    const ranked = [score('é', 10), score('a', 10), score('B', 10)].sort(compareScores);
+    expect(ranked.map((s) => s.agentId)).toEqual(['B', 'a', 'é']);
   });
 });

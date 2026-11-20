@@ -108,6 +108,10 @@ class FakeWallet {
         this.debits.set(input.idempotencyKey, debit);
         return { ...debit, created: true };
       },
+      // Lot G : crédit d'une réclamation, hors du lot C.
+      credit: async () => {
+        throw new Error('Crédit du wallet hors du lot C');
+      },
       refund: async () => undefined,
     };
   }
@@ -212,6 +216,10 @@ describeWithDatabase('critère du lot C : de la demande au programme confirmé (
           };
         },
       },
+      // Lot G : hors du dossier.
+      autoPlanning: {} as CleaningDeps['autoPlanning'],
+      moduleSettings: {} as CleaningDeps['moduleSettings'],
+      claims: {} as CleaningDeps['claims'],
     };
     useCases = lotCUseCases(deps);
     expect(LOT_C_USE_CASES).toBeDefined();

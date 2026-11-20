@@ -24,7 +24,7 @@ Aucun contrôle n'est contourné.
 | R-PL-01 Cibles                   | —                                                         | `modes.spec` « une séance à affecter, à venir »                                                      | « séance planifiée, visite, ou début égal à maintenant », filtres de zone et de programme                                |
 | R-PL-02 Filtre, jamais forcé     | `no_candidate`                                            | `team-choice.spec` « un agent qui passe tout »                                                       | « hors zone ou hors plages : jamais forcé », « en congé ou suspendu » ; `auto-planning.spec` « seul candidat hors zone » |
 | R-PL-03 Poids                    | —                                                         | `score.spec` « continuité 40, proximité 25… »                                                        | « un poids à 0 annule son critère »                                                                                      |
-| R-PL-03 Continuité               | —                                                         | `score.spec` « agent déjà venu »                                                                     | « jamais venu » ; `auto-planning.spec` « ne comptent pas pour un autre programme »                                       |
+| R-PL-03 Continuité (graduée)     | —                                                         | `score.spec` « agent venu à chaque séance réalisée »                                                 | « jamais venu », « sans séance réalisée », « reprend la main » ; `auto-planning.spec` « autre programme »                |
 | R-PL-03 Proximité, R-ZN-02       | —                                                         | `score.spec` « même lieu, trajet nul », « le trajet réduit »                                         | « 60 min ou plus », « la veille, finie à minuit pile », « retirée ou postérieure », « hors zone »                        |
 | R-PL-03 Équilibre                | —                                                         | `score.spec` « aucune heure ; 24 h »                                                                 | « 48 h ou plus », « semaine ISO à Porto-Novo », « le trajet ne compte pas »                                              |
 | R-PL-03 Note                     | —                                                         | `score.spec` « 5 étoiles ; 1 étoile »                                                                | « agent sans note »                                                                                                      |
@@ -49,8 +49,14 @@ Aucun contrôle n'est contourné.
 - `balanceFactor` : heures de la semaine ISO, cible seule, rapportées à `BALANCE_REFERENCE_HOURS`
   (48 h), la même pour tous les agents.
 - `ratingFactor` : un agent sans note reçoit le milieu de l'échelle (3 étoiles).
-- `continuityFactor` et `AutoPlanningInput.programAgents` : binaire ; les agents retenus par le
-  passage comptent pour les séances suivantes du même programme.
+- `continuityFactor` et `AutoPlanningInput.programHistory` : gradué (décision du responsable), pour
+  que l'agent habituel reprenne la main après un remplaçant d'un jour : part des séances réalisées du
+  programme faites par l'agent ; à défaut de séance réalisée, part des séances couvertes par ses
+  affectations en vigueur. Les équipes retenues par le passage comptent pour les séances suivantes du
+  même programme (`withRetainedTeam`).
+- `runMode` : un passage qui couvre plusieurs zones rend le mode le plus prudent, `proposal` dès
+  qu'une séance traitée est en mode proposition.
+- Ordres communs (`compareIds`, `comparePlanningOrder`) : exportés par `../planning/order.ts`.
 - `compareLeadCandidates` : « le mieux noté » = la note moyenne des clients ; noté avant non noté,
   puis le score, puis l'identifiant.
 - `chooseTeam` : équipes essayées dans l'ordre lexicographique des rangs (le moins bien classé est

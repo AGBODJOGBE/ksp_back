@@ -96,6 +96,10 @@ export class FakeWallet {
         this.debits.set(input.idempotencyKey, debit);
         return { ...debit, created: true };
       },
+      // Lot G : crédit d'une réclamation, hors du lot C.
+      credit: async () => {
+        throw new Error('Crédit du wallet hors du lot C');
+      },
       refund: async ({ transactionId }) => {
         if (this.refunds.includes(transactionId)) return;
         const debit = [...this.debits.values()].find((item) => item.transactionId === transactionId);
@@ -210,6 +214,10 @@ export async function openLotCBench(prefix: string): Promise<LotCBench> {
         };
       },
     },
+    // Lot G : hors du dossier.
+    autoPlanning: {} as CleaningDeps['autoPlanning'],
+    moduleSettings: {} as CleaningDeps['moduleSettings'],
+    claims: {} as CleaningDeps['claims'],
   };
   const useCases = lotCUseCases(deps);
   const setNow = (iso: string) => {

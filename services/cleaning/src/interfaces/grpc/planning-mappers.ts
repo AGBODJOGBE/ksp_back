@@ -34,7 +34,7 @@ export function toAgentCheck(check: AgentCheckView): cleaningV1.AgentCheck {
   };
 }
 
-function toAssignment(view: AssignmentView): cleaningV1.Assignment {
+export function toAssignment(view: AssignmentView): cleaningV1.Assignment {
   const name = splitName(view.agentName);
   return {
     id: view.id,

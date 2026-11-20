@@ -283,7 +283,7 @@ describe('de la proposition à la validation', () => {
     const run = runAutoPlanning({
       targets,
       agents,
-      programAgents: {},
+      programHistory: {},
       scope: {
         window: { start: at('2026-11-20T00:00:00Z'), end: at('2026-12-01T00:00:00Z') },
         zoneKey: null,

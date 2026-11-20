@@ -5,7 +5,13 @@ import { type AssignmentState } from '../planning/assignment-status';
 import { type PlanningError } from '../planning/errors';
 import { type Period } from '../planning/time';
 import { type AutoTarget, type PlanningMode, selectTargets, type TargetScope, type ZoneModes } from './modes';
-import { type CandidateScore, type ScoreWeights } from './score';
+import {
+  type CandidateScore,
+  EMPTY_PROGRAM_HISTORY,
+  type ProgramHistory,
+  type ScoreWeights,
+  withRetainedTeam,
+} from './score';
 import { type AutoAgent, chooseTeam, type FailureReason, missingAgents } from './team-choice';
 
 /**
@@ -18,10 +24,10 @@ export interface AutoPlanningInput {
   targets: readonly AutoTarget[];
   agents: readonly AutoAgent[];
   /**
-   * Agents déjà venus sur chaque programme (continuité, R-PL-03). Les agents retenus par le passage
-   * s'y ajoutent pour les séances suivantes du même programme.
+   * Historique de chaque programme (continuité, R-PL-03) ; un programme absent n'en a pas. Les
+   * équipes retenues par le passage s'y ajoutent pour les séances suivantes du même programme.
    */
-  programAgents: Readonly<Record<string, readonly string[]>>;
+  programHistory: Readonly<Record<string, ProgramHistory>>;
   scope: Omit<TargetScope, 'now'>;
   modes: ZoneModes;
   weights: Readonly<ScoreWeights>;
@@ -89,15 +95,9 @@ export function runAutoPlanning(input: AutoPlanningInput): AutoPlanningResult {
     input.agents.map((agent) => [agent.agentId, { ...agent, agenda: [...agent.agenda] }]),
   );
   const roster = [...agents.values()];
-  const programAgents = new Map<string, Set<string>>();
-  const historyOf = (programId: string) => {
-    let history = programAgents.get(programId);
-    if (!history) {
-      history = new Set(input.programAgents[programId] ?? []);
-      programAgents.set(programId, history);
-    }
-    return history;
-  };
+  const histories = new Map<string, ProgramHistory>();
+  const historyOf = (programId: string) =>
+    histories.get(programId) ?? input.programHistory[programId] ?? EMPTY_PROGRAM_HISTORY;
 
   const proposals: AutoProposal[] = [];
   const failures: AutoFailure[] = [];
@@ -108,7 +108,7 @@ export function runAutoPlanning(input: AutoPlanningInput): AutoPlanningResult {
     const choice = chooseTeam({
       target,
       agents: roster,
-      programAgentIds: history,
+      programHistory: history,
       weights: input.weights,
       context,
     });
@@ -123,7 +123,6 @@ export function runAutoPlanning(input: AutoPlanningInput): AutoPlanningResult {
       const state = autoAssignmentState(mode, agentCheck);
       const row = rows[index]!;
       agents.get(agentCheck.agentId)!.agenda.push({ ...row.entry, ...state });
-      history.add(agentCheck.agentId);
       return {
         agentId: agentCheck.agentId,
         isLead: row.isLead,
@@ -133,6 +132,13 @@ export function runAutoPlanning(input: AutoPlanningInput): AutoPlanningResult {
         score: scores.get(agentCheck.agentId)!,
       };
     });
+    histories.set(
+      target.programId,
+      withRetainedTeam(
+        history,
+        assignments.map((a) => a.agentId),
+      ),
+    );
     proposals.push({ ...ref, assignments, check: choice.check });
   }
   return { proposals, failures };

@@ -59,6 +59,14 @@ import {
   EXECUTION_TASKS_INTERVAL_MS,
   ExecutionSchedulerService,
 } from './infrastructure/scheduling/execution-scheduler.service';
+// Lot G
+import { PrismaAutoPlanningRepository } from './infrastructure/persistence/auto-planning/prisma-auto-planning.repository';
+import { PrismaSettingsRepository } from './infrastructure/persistence/settings/prisma-settings.repository';
+import { PrismaClaimRepository } from './infrastructure/persistence/claims/prisma-claim.repository';
+import {
+  AUTO_PLANNING_INTERVAL_MS,
+  AutoPlanningScheduler,
+} from './infrastructure/scheduling/auto-planning.scheduler';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
@@ -204,6 +212,10 @@ export class AppModule {
                 caller('payment'),
               ),
               placePoints: new PrismaPlaceLocations(prisma, cipher),
+              // --- Lot G ---------------------------------------------------------------------
+              autoPlanning: new PrismaAutoPlanningRepository(prisma, clock, ids),
+              moduleSettings: new PrismaSettingsRepository(prisma, ids),
+              claims: new PrismaClaimRepository(prisma, ids),
             };
           },
         },
@@ -217,6 +229,9 @@ export class AppModule {
         WalletEventsConsumer,
         ExecutionSchedulerService,
         { provide: EXECUTION_TASKS_INTERVAL_MS, useValue: config.CLEANING_EXECUTION_TASKS_INTERVAL_MS },
+        // --- Lot G : passage régulier de la planification automatique ------------------------
+        { provide: AUTO_PLANNING_INTERVAL_MS, useValue: config.CLEANING_AUTO_PLANNING_INTERVAL_MS },
+        AutoPlanningScheduler,
       ],
     };
   }

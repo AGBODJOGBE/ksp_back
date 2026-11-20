@@ -2,8 +2,14 @@ import { type PlanningContext } from '../planning/assignment-check';
 import { type DeclaredUnavailability } from '../planning/availability';
 import { type AutoPlanningResult, runAutoPlanning } from './auto-planning';
 import { type AutoTarget } from './modes';
-import { DEFAULT_SCORE_WEIGHTS } from './score';
+import { DEFAULT_SCORE_WEIGHTS, type ProgramHistory } from './score';
 import { type AutoAgent } from './team-choice';
+
+/** Programme déjà commencé : chaque séance réalisée faite par les mêmes agents. */
+const doneBy = (agentIds: string[], sessions = 1): ProgramHistory => ({
+  completed: { sessions, byAgent: Object.fromEntries(agentIds.map((id) => [id, sessions])) },
+  inForce: { sessions: 0, byAgent: {} },
+});
 
 /**
  * Critère du lot G (partie 18) : « Sur un jeu de 50 séances et 10 agents, l'automatique affecte
@@ -175,7 +181,7 @@ function run(targets = SESSIONS, agents = AGENTS): AutoPlanningResult {
     targets,
     agents,
     // p1 et p2 ont déjà commencé : leurs équipes habituelles sont connues. p3 à p5 se forment au passage.
-    programAgents: { p1: ['a01'], p2: ['a02', 'a03'] },
+    programHistory: { p1: doneBy(['a01'], 3), p2: doneBy(['a02', 'a03'], 3) },
     scope: {
       window: { start: CONTEXT.now, end: at('2026-12-05T00:00:00+01:00') },
       zoneKey: null,

@@ -32,7 +32,7 @@ import { CLEANING_GRPC_CONTROLLERS } from '../src/interfaces/grpc/controllers';
  * Service cleaning sur un vrai serveur gRPC. Chaque RPC des services lus dans les .proto
  * (ksp.cleaning.v1, plus ksp.common.v1.ObligationService) est exposée (ADR-054).
  * - Lot A : CatalogService et CatalogAdminService répondent avec leurs cas d'usage (faux en mémoire).
- * - Lots C et D : les RPC livrées exigent une connexion ; appelées sans utilisateur, elles
+ * - Lots C, D, E et G : les RPC livrées exigent une connexion ; appelées sans utilisateur, elles
  *   répondent AUTH_REQUIRED avant tout accès aux données.
  * - Toute autre RPC répond UNIMPLEMENTED avec le code CLEANING_NOT_IMPLEMENTED. Une méthode absente du
  *   serveur répondrait aussi UNIMPLEMENTED, mais sans ce code : le test la repère.
@@ -173,8 +173,17 @@ const LOT_E: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 const SERVICE_ONLY = [['WalletDebitCheckService', 'GetWalletDebitStatus']];
+/** RPC branchées par le lot G (UC-NT-17, 18, 38, 40, 43, 45). */
+const LOT_G: Readonly<Record<string, readonly string[]>> = {
+  PlanningAdminService: ['RunAutoPlanning', 'ListProposals', 'ApproveProposals'],
+  SettingsAdminService: ['GetSettings', 'UpdateSettings'],
+  ProgramService: ['OpenClaim', 'ListMyClaims', 'GetMyClaim', 'AddClaimMessage'],
+  ClaimAdminService: ['ListClaims', 'GetClaim', 'UpdateClaim', 'DecideClaim', 'ApproveClaimCredit'],
+};
+const inLot = (lot: Readonly<Record<string, readonly string[]>>, service: string, rpc: string) =>
+  lot[service]?.includes(rpc) ?? false;
 const delivered = (service: string, rpc: string) =>
-  [LOT_D, LOT_C, LOT_E].some((lot) => lot[service]?.includes(rpc) ?? false);
+  [LOT_D, LOT_C, LOT_E, LOT_G].some((lot) => inLot(lot, service, rpc));
 const serviceOnly = (service: string, rpc: string) =>
   SERVICE_ONLY.some(([s, r]) => s === service && r === rpc);
 
@@ -318,7 +327,7 @@ describe('cleaning en gRPC', () => {
     for (const [service, rpcs] of Object.entries(LOT_C)) {
       for (const rpc of rpcs) expect(all).toContain(`${service}.${rpc}`);
     }
-    expect(DELIVERED).toHaveLength(32 + 44 + 33);
+    expect(DELIVERED).toHaveLength(32 + 44 + 33 + 14);
   });
 
   it('les RPC du lot E sont toutes dans le contrat', () => {
@@ -334,6 +343,13 @@ describe('cleaning en gRPC', () => {
         call('cleaning', 'WalletDebitCheckService', 'GetWalletDebitStatus', { objectType: 'autre' }),
       ),
     ).toMatchObject({ recorded: false, status: 'not_recorded' });
+  });
+
+  it('les RPC du lot G sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    const lotG = Object.entries(LOT_G).flatMap(([service, rpcs]) => rpcs.map((rpc) => `${service}.${rpc}`));
+    for (const rpc of lotG) expect(all).toContain(rpc);
+    expect(RPCS.filter(([, service, rpc]) => inLot(LOT_G, service, rpc))).toHaveLength(lotG.length);
   });
 
   it.each(DELIVERED)('%s : %s.%s est branchée et exige une connexion', async (pkg, service, rpc) => {

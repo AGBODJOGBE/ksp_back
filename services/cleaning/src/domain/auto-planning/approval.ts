@@ -3,8 +3,8 @@ import { planAssignments } from '../planning/assignment-batch';
 import { type PlanningAgent, type PlanningContext, type PlanningTarget } from '../planning/assignment-check';
 import { type AssignmentState, effectiveAssignmentStatus } from '../planning/assignment-status';
 import { type PlanningError, planningError } from '../planning/errors';
+import { comparePlanningOrder } from '../planning/order';
 import { type Period } from '../planning/time';
-import { comparePlanningOrder } from './modes';
 
 /**
  * Validation des propositions par le superviseur (R-PL-05, ApproveProposals) : les contrôles de 9.4

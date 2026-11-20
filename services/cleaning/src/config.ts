@@ -43,6 +43,13 @@ export const configSchema = baseServiceConfigSchema
      * en millisecondes ; 0 : tâches désactivées.
      */
     CLEANING_EXECUTION_TASKS_INTERVAL_MS: z.coerce.number().int().min(0).max(86_400_000).default(60_000),
+    // --- Lot G ---------------------------------------------------------------------------------
+    /**
+     * Intervalle du passage régulier de la planification automatique (UC-NT-45, R-PL-01), en ms :
+     * une heure par défaut, pour reprendre vite les séances libérées (désaffectation, congé) ;
+     * 0 = tâche désactivée.
+     */
+    CLEANING_AUTO_PLANNING_INTERVAL_MS: z.coerce.number().int().min(0).default(3_600_000),
   })
   .refine(
     (cfg) =>

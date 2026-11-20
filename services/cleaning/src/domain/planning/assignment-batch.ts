@@ -8,6 +8,7 @@ import {
   type TargetCheck,
 } from './assignment-check';
 import { type PlanningError, planningError } from './errors';
+import { comparePlanningOrder } from './order';
 
 /**
  * Affectation d'une ou plusieurs cibles par un même appel (9.5, R-PL-11) : CheckAssignment,
@@ -47,15 +48,6 @@ function requestErrors(request: AssignmentRequest): PlanningError[] {
     errors.push(planningError('CLEANING_VALIDATION_FAILED', { field: 'agentIds', reason: 'required' }));
   }
   return errors;
-}
-
-/** Ordre de contrôle des cibles : début, puis type, puis identifiant (stable d'un appel à l'autre). */
-function chronological(a: PlanningTarget, b: PlanningTarget): number {
-  return (
-    a.start.getTime() - b.start.getTime() ||
-    a.target.kind.localeCompare(b.target.kind) ||
-    a.target.id.localeCompare(b.target.id)
-  );
 }
 
 /**
@@ -102,7 +94,7 @@ export function planAssignments(request: AssignmentRequest, context: PlanningCon
     request.agents.map((agent) => [agent.agentId, { ...agent, agenda: [...agent.agenda] }]),
   );
   const checks: TargetCheck[] = [];
-  for (const target of [...request.targets].sort(chronological)) {
+  for (const target of [...request.targets].sort(comparePlanningOrder)) {
     const check = checkTarget({
       target,
       agents: request.agents.map((agent) => agents.get(agent.agentId)!),

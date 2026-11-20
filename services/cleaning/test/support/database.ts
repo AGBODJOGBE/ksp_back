@@ -13,6 +13,13 @@ export const databaseUrl = process.env.TEST_DATABASE_URL;
 export const describeWithDatabase = databaseUrl ? describe : describe.skip;
 /** Délai des crochets : migration complète et connexion. */
 export const HOOK_TIMEOUT_MS = 60_000;
+/**
+ * Délai des tests sur vraie base : les 5 s par défaut ne tiennent plus quand toutes les suites
+ * d'intégration du service tournent en parallèle sur le même PostgreSQL. Posé au chargement du
+ * fichier de test : jest ne lit ce réglage qu'avant le premier test du fichier.
+ */
+export const DATABASE_TEST_TIMEOUT_MS = 30_000;
+jest.setTimeout(DATABASE_TEST_TIMEOUT_MS);
 
 const MIGRATIONS = join(__dirname, '..', '..', 'prisma', 'migrations');
 /** Clé du verrou consultatif des migrations de test (valeur arbitraire, propre à cleaning). */

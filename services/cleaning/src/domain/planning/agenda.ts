@@ -1,4 +1,5 @@
 import { type AssignmentState, isInForce } from './assignment-status';
+import { compareIds } from './order';
 import { addMinutes, overlaps, type Period } from './time';
 
 /**
@@ -127,7 +128,7 @@ export function scheduleConflicts(
     }
   }
   conflicts.sort(
-    (a, b) => a.start.getTime() - b.start.getTime() || a.assignmentId.localeCompare(b.assignmentId),
+    (a, b) => a.start.getTime() - b.start.getTime() || compareIds(a.assignmentId, b.assignmentId),
   );
   return { travelMinutes: travelBefore, occupied, conflicts };
 }

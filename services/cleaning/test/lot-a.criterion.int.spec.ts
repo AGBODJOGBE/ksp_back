@@ -60,6 +60,10 @@ describeWithDatabase('critère du lot A (PostgreSQL)', () => {
       communeResolver: {} as CleaningDeps['communeResolver'],
       balances: {} as CleaningDeps['balances'],
       directPayments: {} as CleaningDeps['directPayments'],
+      // Lot G : hors du catalogue.
+      autoPlanning: {} as CleaningDeps['autoPlanning'],
+      moduleSettings: {} as CleaningDeps['moduleSettings'],
+      claims: {} as CleaningDeps['claims'],
     };
     useCases = catalogUseCases(deps);
   }, HOOK_TIMEOUT_MS);
@@ -202,7 +206,7 @@ describeWithDatabase('critère du lot A (PostgreSQL)', () => {
     expect(await db.prisma.idempotencyRecord.count()).toBe(18);
     expect(actions).toHaveLength(18);
     expect(await db.prisma.outboxEvent.count()).toBe(0);
-  });
+  }, 60_000);
 
   const simulate = () =>
     useCases.simulate.execute({

@@ -204,6 +204,10 @@ export class CatalogMemory {
       communeResolver: {} as CleaningDeps['communeResolver'],
       balances: {} as CleaningDeps['balances'],
       directPayments: {} as CleaningDeps['directPayments'],
+      // Lot G : hors du catalogue.
+      autoPlanning: {} as CleaningDeps['autoPlanning'],
+      moduleSettings: {} as CleaningDeps['moduleSettings'],
+      claims: {} as CleaningDeps['claims'],
     };
   }
 

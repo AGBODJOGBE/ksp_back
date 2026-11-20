@@ -56,7 +56,7 @@ function run(targets: AutoTarget[], agents: AutoAgent[]) {
   return runAutoPlanning({
     targets,
     agents,
-    programAgents: {},
+    programHistory: {},
     scope: { window: WINDOW, zoneKey: null, programId: null },
     modes: { defaultMode: 'automatic', byZone: { 'porto-novo': 'proposal' } },
     weights: DEFAULT_SCORE_WEIGHTS,

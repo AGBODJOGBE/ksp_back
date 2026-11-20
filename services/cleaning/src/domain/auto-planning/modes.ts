@@ -1,7 +1,7 @@
 import { type PlanningTarget } from '../planning/assignment-check';
 import { accepted, type Decision, planningError, refused } from '../planning/errors';
+import { comparePlanningOrder } from '../planning/order';
 import { addMinutes, type Period } from '../planning/time';
-import { compareIds } from './score';
 
 /**
  * Modes de la planification automatique (R-PL-05), période d'un passage (R-PL-01) et cibles
@@ -65,15 +65,6 @@ export function isAutoPlannable(target: PlanningTarget, now: Date): boolean {
   return target.target.kind === 'session' && target.status === 'to_assign' && target.start > now;
 }
 
-/** Ordre de traitement : début, puis type, puis identifiant (le même que l'affectation en lot, R-PL-11). */
-export function comparePlanningOrder(a: PlanningTarget, b: PlanningTarget): number {
-  return (
-    a.start.getTime() - b.start.getTime() ||
-    compareIds(a.target.kind, b.target.kind) ||
-    compareIds(a.target.id, b.target.id)
-  );
-}
-
 export interface TargetScope {
   /** Période semi-ouverte : une séance compte si son début y tombe. */
   window: Period;
@@ -99,4 +90,21 @@ export function selectTargets(
     selected.push({ target, mode });
   }
   return selected;
+}
+
+/**
+ * Mode rendu pour un passage (AutoPlanningRun.mode), qui peut couvrir des zones de modes différents :
+ * le plus prudent, « proposal » dès qu'une séance traitée est en mode proposition. Passage sans
+ * séance : le mode de la zone demandée, sinon le réglage général ; un mode manuel se rend
+ * « proposal » (le contrat n'a que deux valeurs, et rien n'est appliqué).
+ */
+export function runMode(
+  treated: readonly Exclude<PlanningMode, 'manual'>[],
+  modes: ZoneModes,
+  zoneKey: string | null,
+): Exclude<PlanningMode, 'manual'> {
+  if (treated.includes('proposal')) return 'proposal';
+  if (treated.length) return 'automatic';
+  const fallback = zoneKey === null ? modes.defaultMode : effectiveMode(zoneKey, modes);
+  return fallback === 'automatic' ? 'automatic' : 'proposal';
 }
