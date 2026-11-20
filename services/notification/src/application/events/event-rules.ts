@@ -36,6 +36,10 @@ export interface RuleContext {
   cleaningTeamUserIds: readonly string[];
   /** Comptes de l'équipe KSP qui valide les comptes entreprise (peut être vide). */
   accountsTeamUserIds: readonly string[];
+  /** Superviseurs du recouvrement, prévenus de chaque nouveau dossier à examiner (peut être vide). */
+  recoverySupervisorUserIds: readonly string[];
+  /** Juristes du recouvrement, prévenus des contestations et des actes des partenaires (peut être vide). */
+  recoveryLegalUserIds: readonly string[];
 }
 
 export type EventRule<T extends KspEventType> = (

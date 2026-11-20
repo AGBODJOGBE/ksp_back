@@ -357,10 +357,24 @@ describe('SendNotificationUseCase — refus avant tout envoi', () => {
       rejects(otp({ callerService }), { code: 'NOTIFICATION_CALLER_FORBIDDEN', kind: 'PERMISSION_DENIED' }),
   );
 
-  it.each(['identity', 'document', null])('appelant %p accepté', async (callerService) => {
+  it.each(['identity', null])('appelant %p accepté pour identity.otp', async (callerService) => {
     const { useCase } = setup();
     await expect(useCase.execute(otp({ callerService }))).resolves.toMatchObject({ status: 'accepted' });
   });
+
+  it.each(['document', 'recovery'])(
+    '%s ne peut pas envoyer identity.otp : NOTIFICATION_CALLER_FORBIDDEN, rien n’est envoyé',
+    async (callerService) => {
+      const whatsapp = new FakeProvider('whatsapp');
+      const { notifications, useCase } = setup([whatsapp]);
+      await expect(useCase.execute(otp({ callerService }))).rejects.toMatchObject({
+        code: 'NOTIFICATION_CALLER_FORBIDDEN',
+        kind: 'PERMISSION_DENIED',
+      });
+      expect(notifications.rows).toHaveLength(0);
+      expect(whatsapp.sent).toHaveLength(0);
+    },
+  );
 });
 
 describe('SendNotificationUseCase — code de confirmation de l’e-mail (identity.email_verification)', () => {
@@ -461,10 +475,89 @@ describe('SendNotificationUseCase — codes de signature de document (ADR-044)',
     expect(JSON.stringify(notifications.rows)).not.toContain('246810');
   });
 
-  it('un autre service ne peut pas envoyer de code de signature', async () => {
-    const { useCase } = setup();
-    await expect(useCase.execute(signatureCode({ callerService: 'cleaning' }))).rejects.toMatchObject({
-      code: 'NOTIFICATION_CALLER_FORBIDDEN',
+  it.each(['cleaning', 'identity', 'recovery'])(
+    '%s ne peut pas envoyer de code de signature',
+    async (callerService) => {
+      const { useCase } = setup();
+      await expect(useCase.execute(signatureCode({ callerService }))).rejects.toMatchObject({
+        code: 'NOTIFICATION_CALLER_FORBIDDEN',
+      });
+    },
+  );
+});
+
+describe('SendNotificationUseCase — messages au débiteur du recouvrement (ADR-061)', () => {
+  const accessCode = (overrides: Partial<SendNotificationInput> = {}): SendNotificationInput =>
+    otp({
+      callerService: 'recovery',
+      templateCode: 'recovery.debtor_access_code',
+      channel: 'whatsapp',
+      // L'e-mail n'est demandé en repli que si recovery connaît l'adresse du débiteur.
+      fallbackChannels: [],
+      recipient: { userId: '', phoneE164: '+2290197000045', email: '' },
+      variables: { code: '135790', expires_in_minutes: '10' },
+      idempotencyKey: 'recovery.access:1',
+      ttlSeconds: 600,
+      ...overrides,
     });
+
+  it('recovery envoie le code d’accès à un débiteur sans compte, sans rien conserver du code', async () => {
+    const whatsapp = new FakeProvider('whatsapp', [{ accepted: true, providerMessageId: 'wamid.7' }]);
+    const { notifications, useCase } = setup([whatsapp]);
+    await expect(useCase.execute(accessCode())).resolves.toMatchObject({ channelUsed: 'whatsapp' });
+    expect(whatsapp.sent[0]).toMatchObject({ templateCode: 'recovery.debtor_access_code' });
+    expect(JSON.stringify(notifications.rows)).not.toContain('135790');
+    expect(notifications.rows[0]!.targetMasked).toBe('+229********45');
+  });
+
+  it('débiteur sans téléphone : code par e-mail, sans le code dans l’objet', async () => {
+    const email = new FakeProvider('email', [{ accepted: true, providerMessageId: 'brevo-7' }]);
+    const { useCase } = setup([email]);
+    await useCase.execute(
+      accessCode({
+        channel: 'email',
+        fallbackChannels: [],
+        recipient: { userId: '', phoneE164: '', email: 'debiteur@example.com' },
+      }),
+    );
+    expect(email.sent[0]!.content!.subject).not.toContain('135790');
+    expect(email.sent[0]!.content!.text).toContain('135790');
+  });
+
+  it('lien personnel du débiteur : modèle secret, le lien n’est pas conservé', async () => {
+    const { notifications, useCase } = setup([new FakeProvider('whatsapp')]);
+    await useCase.execute(
+      accessCode({
+        templateCode: 'recovery.debtor_reminder',
+        fallbackChannels: [],
+        variables: {
+          creditor_name: 'SARL Bénin Propre',
+          case_number: 'RC-000123',
+          amount_due: '150\u00a0000\u00a0FCFA',
+          link: 'https://ksp.bj/recouvrement/jeton-personnel',
+        },
+      }),
+    );
+    expect(JSON.stringify(notifications.rows)).not.toContain('jeton-personnel');
+  });
+
+  it.each(['identity', 'document'])(
+    '%s ne peut pas écrire au débiteur : NOTIFICATION_CALLER_FORBIDDEN',
+    async (callerService) => {
+      const whatsapp = new FakeProvider('whatsapp');
+      const { notifications, useCase } = setup([whatsapp]);
+      await expect(useCase.execute(accessCode({ callerService }))).rejects.toMatchObject({
+        code: 'NOTIFICATION_CALLER_FORBIDDEN',
+      });
+      expect(notifications.rows).toHaveLength(0);
+      expect(whatsapp.sent).toHaveLength(0);
+    },
+  );
+
+  it('un message d’événement du recouvrement ne s’envoie pas par appel direct', async () => {
+    const { useCase } = setup();
+    await expect(
+      useCase.execute(accessCode({ templateCode: 'recovery.case_accepted.customer' })),
+    ).rejects.toMatchObject({ code: 'NOTIFICATION_TEMPLATE_UNKNOWN' });
   });
 });

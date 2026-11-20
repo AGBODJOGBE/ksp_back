@@ -184,6 +184,8 @@ export class AppModule {
                 timeZone: config.NOTIFICATION_TIME_ZONE,
                 cleaningTeamUserIds: config.NOTIFICATION_CLEANING_TEAM_USER_IDS,
                 accountsTeamUserIds: config.NOTIFICATION_ACCOUNTS_TEAM_USER_IDS,
+                recoverySupervisorUserIds: config.NOTIFICATION_RECOVERY_SUPERVISOR_USER_IDS,
+                recoveryLegalUserIds: config.NOTIFICATION_RECOVERY_LEGAL_USER_IDS,
               },
             );
           },
