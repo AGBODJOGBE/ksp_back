@@ -33,6 +33,7 @@ import {
   type OrganizationDirectory,
   type RecipientContact,
   type RecipientDirectory,
+  type StaffDirectory,
 } from '../events/event-notification.ports';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 
@@ -182,6 +183,23 @@ export class FakeOrganizations implements OrganizationDirectory {
     this.lookups.push([...organizationIds]);
     if (this.unavailable) throw new Error('identity indisponible');
     return this.organizations.filter((organization) => organizationIds.includes(organization.organizationId));
+  }
+}
+
+/**
+ * Personnel scripté par permission et par zone (clé `<permission>@<zone>`, zone vide : attributions
+ * globales) ; `unavailable` simule une panne d'identity.
+ */
+export class FakeStaff implements StaffDirectory {
+  readonly lookups: { permission: string; zoneKey: string | null }[] = [];
+  unavailable = false;
+
+  constructor(readonly staff: Readonly<Record<string, readonly string[]>> = {}) {}
+
+  async findStaff(permission: string, zoneKey: string | null): Promise<string[]> {
+    this.lookups.push({ permission, zoneKey });
+    if (this.unavailable) throw new Error('identity indisponible');
+    return [...(this.staff[`${permission}@${zoneKey ?? ''}`] ?? [])];
   }
 }
 

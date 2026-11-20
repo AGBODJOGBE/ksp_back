@@ -4,6 +4,7 @@ import {
   FakeDirectory,
   FakeOrganizations,
   FakeProvider,
+  FakeStaff,
   FixedClock,
   InMemoryInbox,
   InMemoryNotifications,
@@ -50,6 +51,7 @@ function setup(
     new MessageDispatcher(notifications, providers, clock),
     directory,
     organizations,
+    new FakeStaff(),
     preferences,
     inbox,
     clock,
@@ -193,14 +195,14 @@ describe('NotifyEventUseCase — messages des événements du Nettoyage gardés 
   });
 
   it.each([
-    ['request_cancelled', 2],
-    ['request_rejected', 2],
-    ['slot_changed', 0],
-    ['ksp', 0],
-    ['agent_no_show', 0],
+    ['request_cancelled', 'cleaning.visit_cancelled.agent', 0],
+    ['request_rejected', 'cleaning.visit_cancelled.agent', 0],
+    ['slot_changed', 'cleaning.visit_released.agent', 1],
+    ['ksp', 'cleaning.visit_released.agent', 1],
+    ['agent_no_show', 'cleaning.visit_released.agent', 1],
   ] as const)(
-    'cleaning.visit.cancelled (%s) : les agents libérés, seulement quand la demande est close',
-    async (cause, messages) => {
+    'cleaning.visit.cancelled (%s) : les agents libérés ; le client, sauf quand sa demande est close',
+    async (cause, agentTemplate, customerMessages) => {
       const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(AGENT_1), contact(AGENT_2)]);
       await useCase.execute(
         event('cleaning.visit.cancelled', {
@@ -217,13 +219,15 @@ describe('NotifyEventUseCase — messages des événements du Nettoyage gardés 
           cancelledAt: '2026-11-10T08:00:00Z',
         }),
       );
-      expect(whatsapp.sent).toHaveLength(messages);
-      for (const message of whatsapp.sent) {
-        expect(message.templateCode).toBe('cleaning.visit_cancelled.agent');
-        expect(message.content!.text).toContain(
-          `La visite technique prévue le jeudi 12 novembre 2026 à 09:00 (dossier ${REQUEST_NUMBER}) est annulée`,
-        );
+      const toAgents = whatsapp.sent.filter((message) => message.templateCode.endsWith('.agent'));
+      expect(toAgents.map((message) => message.templateCode)).toEqual([agentTemplate, agentTemplate]);
+      for (const message of toAgents) {
+        expect(message.content!.text).toContain('jeudi 12 novembre 2026 à 09:00');
+        expect(message.content!.text).toContain(REQUEST_NUMBER);
       }
+      expect(
+        whatsapp.sent.filter((message) => message.templateCode === 'cleaning.visit_cancelled.customer'),
+      ).toHaveLength(customerMessages);
     },
   );
 
@@ -294,10 +298,10 @@ describe('NotifyEventUseCase — messages des événements du Nettoyage gardés 
     );
   });
 
-  it('autre événement du Nettoyage v2 : pas encore écouté (lot G)', async () => {
+  it('événement inconnu : pas écouté', async () => {
     const { useCase, directory } = setup();
     await expect(
-      useCase.execute({ eventId: EVENT_ID, type: 'cleaning.request.submitted', payload: {} }),
+      useCase.execute({ eventId: EVENT_ID, type: 'cleaning.unknown.event', payload: {} }),
     ).resolves.toMatchObject({ status: 'ignored' });
     expect(directory.lookups).toHaveLength(0);
   });

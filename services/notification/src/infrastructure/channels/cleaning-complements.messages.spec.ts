@@ -54,7 +54,7 @@ describe('messages des compléments du Nettoyage (ADR-053), sur les événements
     expect(message.whatsapp).toBe('ksp_cleaning_quote_expiry_reminder');
   });
 
-  it('devis expiré : un message, lien vers la demande', () => {
+  it('devis expiré : un message au client, lien vers la demande', () => {
     const event: CleaningEventPayloads['cleaning.quote.expired'] = {
       quoteId: QUOTE,
       requestId: REQUEST,
@@ -68,7 +68,10 @@ describe('messages des compléments du Nettoyage (ADR-053), sur les événements
       placeTypeName: 'Maison',
       cleaningTypeNames: ['Sol', 'Vitres'],
     };
-    const intents = CLEANING_RULES['cleaning.quote.expired'](event, CONTEXT);
+    // Le superviseur de la zone est prévenu à part (cleaning.rules.spec.ts).
+    const intents = CLEANING_RULES['cleaning.quote.expired'](event, CONTEXT).filter(
+      (intent) => !intent.staff,
+    );
     expect(intents).toHaveLength(1);
     expect(intents[0]!.link).toBe(`https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST}`);
     const message = render(intents[0]!);

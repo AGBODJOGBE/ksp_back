@@ -18,23 +18,20 @@ const envelope = {
 describe('EventNotificationsConsumer', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('s’abonne aux 6 événements du Nettoyage gardés par la refonte v2, aux 3 de la facturation, aux 5 des comptes entreprise, aux 2 de la suppression du compte, à la réinitialisation de la double authentification, au paiement en ligne et aux 2 du portefeuille (files notification.<événement>)', async () => {
+  it('s’abonne aux 45 événements du Nettoyage v2, aux 3 de la facturation, aux 5 des comptes entreprise, aux 2 de la suppression du compte, à la réinitialisation de la double authentification, au paiement en ligne et aux 2 du portefeuille (files notification.<événement>)', async () => {
     const subscribed: [string, readonly number[] | undefined][] = [];
     const consumer = {
       subscribe: async (type: string, _handler: unknown, options: { versions?: readonly number[] }) =>
         void subscribed.push([type, options.versions]),
     } as unknown as RabbitMqConsumer;
     await new EventNotificationsConsumer(consumer, {} as NotifyEventUseCase).onApplicationBootstrap();
-    expect(subscribed.map(([type]) => type).sort()).toEqual([
+    const types = subscribed.map(([type]) => type).sort();
+    // Nettoyage : liste détaillée dans cleaning.rules.spec.ts (tableau 16.2).
+    expect(types.filter((type) => type.startsWith('cleaning.'))).toHaveLength(45);
+    expect(types.filter((type) => !type.startsWith('cleaning.'))).toEqual([
       'billing.invoice.issued',
       'billing.invoice.overdue',
       'billing.invoice.paid',
-      'cleaning.quote.expired',
-      'cleaning.quote.expiry_reminded',
-      'cleaning.quote.sent',
-      'cleaning.request.cancelled',
-      'cleaning.visit.cancelled',
-      'cleaning.visit.scheduled',
       'identity.organization.created',
       'identity.organization.reactivated',
       'identity.organization.rejected',

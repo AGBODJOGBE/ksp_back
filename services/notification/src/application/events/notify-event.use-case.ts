@@ -18,6 +18,7 @@ import {
   type OrganizationDirectory,
   type RecipientContact,
   type RecipientDirectory,
+  type StaffDirectory,
 } from './event-notification.ports';
 import { type EventRule, type EventRules, type NotificationIntent, type RuleContext } from './event-rules';
 
@@ -57,7 +58,8 @@ const LOCALE = 'fr';
  * `notification.<événement>`).
  *
  * 1. Un événement déjà traité (inbox) est ignoré.
- * 2. La règle de l'événement donne les messages à envoyer ; les coordonnées des destinataires sont
+ * 2. La règle de l'événement donne les messages à envoyer ; le personnel visé (superviseur de la
+ *    zone, admin) est lu dans identity (ListStaffByPermission, RV-62), et les coordonnées des destinataires sont
  *    lues dans identity, ainsi que l'e-mail de facturation des organisations concernées (factures
  *    d'une entreprise : il remplace l'adresse du destinataire pour l'e-mail seulement). Une panne
  *    d'identity lève une erreur : l'événement est repris plus tard (file de reprise, puis file
@@ -75,6 +77,7 @@ export class NotifyEventUseCase {
     private readonly dispatcher: MessageDispatcher,
     private readonly directory: RecipientDirectory,
     private readonly organizations: OrganizationDirectory,
+    private readonly staff: StaffDirectory,
     private readonly preferences: RecipientPreferences,
     private readonly inbox: EventInbox,
     private readonly clock: Clock,
@@ -97,7 +100,7 @@ export class NotifyEventUseCase {
     if (!rule) return { ...result, status: 'ignored' };
     if (await this.inbox.isProcessed(event.eventId)) return { ...result, status: 'duplicate' };
 
-    const intents = rule(event.payload as never, this.context);
+    const intents = await this.withStaff(rule(event.payload as never, this.context));
     const organizations = await this.findOrganizations(intents);
     const deliveries = recipientsOf(intents, organizations);
     result.recipientsNotFound += deliveries.missingOrganizations;
@@ -220,6 +223,31 @@ export class NotifyEventUseCase {
     }
   }
 
+  /**
+   * Messages au personnel : un message par compte que rend identity pour la permission et la zone ;
+   * personne : le repli configuré pour la permission, sinon l'équipe Nettoyage (RV-62).
+   */
+  private async withStaff(intents: readonly NotificationIntent[]): Promise<NotificationIntent[]> {
+    const lookups = new Map<string, Promise<string[]>>();
+    const resolved: NotificationIntent[] = [];
+    for (const intent of intents) {
+      if (!intent.staff) {
+        resolved.push(intent);
+        continue;
+      }
+      const { staff, ...message } = intent;
+      const key = `${staff.permission}@${staff.zoneKey ?? ''}`;
+      if (!lookups.has(key)) lookups.set(key, this.staff.findStaff(staff.permission, staff.zoneKey));
+      const found = await lookups.get(key)!;
+      const userIds =
+        found.length > 0
+          ? found
+          : (this.context.cleaningStaffFallback?.[staff.permission] ?? this.context.cleaningTeamUserIds);
+      resolved.push(...userIds.map((userId) => ({ ...message, userId })));
+    }
+    return resolved;
+  }
+
   private async findContacts(intents: readonly NotificationIntent[]): Promise<Map<string, RecipientContact>> {
     const userIds = [...new Set(intents.map((intent) => intent.userId.toLowerCase()))];
     if (userIds.length === 0) return new Map();
@@ -284,8 +312,10 @@ function prepare(
 
 /**
  * Destinataires des messages : un message adressé à une organisation (`organizationId`) va à chacun
- * de ses administrateurs actuels, et donne une copie pour son e-mail de facturation (ADR-050) ;
- * organisation introuvable : personne. Les autres messages vont à leur `userId`.
+ * de ses administrateurs actuels, et donne une copie pour son e-mail de facturation (ADR-050), sauf
+ * `billingEmailCopy: false` (chaque administrateur par ses canaux) ; organisation introuvable :
+ * personne. Les autres messages vont à leur `userId`. Un même modèle ne part qu'une fois par
+ * destinataire (personnel de la zone et attributions globales, client administrateur).
  */
 function recipientsOf(
   intents: readonly NotificationIntent[],
@@ -304,8 +334,20 @@ function recipientsOf(
       missingOrganizations += 1;
       continue;
     }
+    if (intent.billingEmailCopy === false) {
+      const { organizationId: _organization, billingEmailCopy: _copy, ...personal } = intent;
+      expanded.push(...organization.adminUserIds.map((userId) => ({ ...personal, userId })));
+      continue;
+    }
     expanded.push(...organization.adminUserIds.map((userId) => ({ ...intent, userId })));
     if (organization.billingEmail) organizationCopies.push(intent);
   }
-  return { intents: expanded, organizationCopies, missingOrganizations };
+  const seen = new Set<string>();
+  const unique = expanded.filter((intent) => {
+    const key = `${intent.templateCode}:${intent.userId.toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { intents: unique, organizationCopies, missingOrganizations };
 }
