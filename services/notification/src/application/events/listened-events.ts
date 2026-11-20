@@ -5,6 +5,7 @@ import { CLEANING_RULES } from './cleaning.rules';
 import { type EventRules } from './event-rules';
 import { ORGANIZATION_RULES } from './organization.rules';
 import { PAYMENT_RULES } from './payment.rules';
+import { RECOVERY_RULES } from './recovery.rules';
 import { WALLET_RULES } from './wallet.rules';
 
 /**
@@ -24,6 +25,8 @@ import { WALLET_RULES } from './wallet.rules';
  * Paiement en ligne (ADR-031) : reçu au payeur (payment.intent.succeeded), recharge du portefeuille
  * comprise (ADR-046).
  * Portefeuille prépayé (ADR-046) : paiement effectué depuis le portefeuille, portefeuille crédité.
+ * Recouvrement (ADR-060, partie 17.2) : 16 événements `recovery.*` (tous sauf
+ * `recovery.case.stage_changed`), vers le créancier, le chargé, le partenaire et les équipes.
  */
 export const EVENT_RULES: EventRules = {
   ...CLEANING_RULES,
@@ -32,6 +35,7 @@ export const EVENT_RULES: EventRules = {
   ...ACCOUNT_RULES,
   ...PAYMENT_RULES,
   ...WALLET_RULES,
+  ...RECOVERY_RULES,
 };
 
 export const LISTENED_EVENTS = Object.keys(EVENT_RULES) as KspEventType[];

@@ -18,7 +18,7 @@ const envelope = {
 describe('EventNotificationsConsumer', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('s’abonne aux 20 événements du Nettoyage, aux 3 de la facturation, aux 5 des comptes entreprise, aux 2 de la suppression du compte, à la réinitialisation de la double authentification, au paiement en ligne et aux 2 du portefeuille (files notification.<événement>)', async () => {
+  it('s’abonne aux 20 événements du Nettoyage, aux 3 de la facturation, aux 5 des comptes entreprise, aux 2 de la suppression du compte, à la réinitialisation de la double authentification, au paiement en ligne, aux 2 du portefeuille et aux 16 du recouvrement (files notification.<événement>)', async () => {
     const subscribed: string[] = [];
     const consumer = {
       subscribe: async (type: string) => void subscribed.push(type),
@@ -57,6 +57,22 @@ describe('EventNotificationsConsumer', () => {
       'identity.user.deletion_requested',
       'identity.user.mfa_reset',
       'payment.intent.succeeded',
+      'recovery.case.accepted',
+      'recovery.case.closed',
+      'recovery.case.info_requested',
+      'recovery.case.rejected',
+      'recovery.case.resumed',
+      'recovery.case.submitted',
+      'recovery.case.suspended',
+      'recovery.decision.requested',
+      'recovery.notice.issued',
+      'recovery.partner.act_recorded',
+      'recovery.partner.assigned',
+      'recovery.payment.collected',
+      'recovery.plan.defaulted',
+      'recovery.plan.installment_missed',
+      'recovery.plan.signed',
+      'recovery.remittance.paid',
       'wallet.prepaid.credited',
       'wallet.prepaid.debited',
     ]);

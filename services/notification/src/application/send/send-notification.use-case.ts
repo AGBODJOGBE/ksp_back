@@ -1,4 +1,4 @@
-import { isDirectSendCaller } from '../../domain/caller-policy';
+import { isDirectSendCaller, mayCallerSendTemplate } from '../../domain/caller-policy';
 import { channelPlan, type ChannelName, DEFAULT_CHANNEL, isPhoneChannel } from '../../domain/channel';
 import { expiryOf } from '../../domain/delivery';
 import { EmailAddress, parseRecipientUserId, PhoneNumber } from '../../domain/recipient';
@@ -41,8 +41,10 @@ const DEFAULT_LOCALE = 'fr';
 
 /**
  * Envoi direct d'une notification (contrat SendNotification) : codes de connexion d'identity
- * (ADR-014) et code de confirmation de l'e-mail du profil, puis codes de signature de document.
+ * (ADR-014) et code de confirmation de l'e-mail du profil, codes de signature de document, messages
+ * de recovery au débiteur (ADR-061).
  *
+ * - Chaque appelant n'envoie que ses modèles (`identity.*`, `document.*`, `recovery.*`).
  * - Idempotent : deux appels avec la même clé ne produisent qu'un envoi, le second reçoit la réponse du premier.
  * - Canal demandé (WhatsApp par défaut), puis les canaux de bascule dans l'ordre ; un canal sans
  *   prestataire configuré est sauté (aucun prestataire SMS au lancement, ADR-021).
@@ -69,6 +71,10 @@ export class SendNotificationUseCase {
     // Les modèles des événements métier ne s'envoient pas par appel direct.
     const template = findTemplate(input.templateCode);
     if (!template || isEventTemplate(template)) throw NotificationErrors.templateUnknown();
+    // Chaque appelant est limité à ses propres modèles (`<service>.*`).
+    if (input.callerService !== null && !mayCallerSendTemplate(input.callerService, template.code)) {
+      throw NotificationErrors.callerForbidden();
+    }
     const plan = channelPlan(input.channel, input.fallbackChannels, template.channels);
     if (plan.length === 0) throw NotificationErrors.templateUnknown();
 

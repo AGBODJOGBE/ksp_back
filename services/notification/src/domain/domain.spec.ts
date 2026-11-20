@@ -1,4 +1,4 @@
-import { isDirectSendCaller } from './caller-policy';
+import { isDirectSendCaller, mayCallerSendTemplate } from './caller-policy';
 import { channelPlan, isPhoneChannel } from './channel';
 import { type ChannelAttempt, expiryOf, isExpired, summarizeFailure } from './delivery';
 import { parseRecipientUserId, PhoneNumber } from './recipient';
@@ -141,11 +141,34 @@ describe('summarizeFailure', () => {
 });
 
 describe('appelants autorisés', () => {
-  it.each(['identity', 'document'])('%s peut envoyer directement', (service) => {
+  it.each(['identity', 'document', 'recovery'])('%s peut envoyer directement', (service) => {
     expect(isDirectSendCaller(service)).toBe(true);
   });
 
   it.each(['gateway', 'payment', ''])('%p ne le peut pas', (service) => {
     expect(isDirectSendCaller(service)).toBe(false);
+  });
+
+  it.each([
+    ['identity', 'identity.otp'],
+    ['identity', 'identity.email_verification'],
+    ['identity', 'identity.organization_email_verification'],
+    ['document', 'document.signature_code'],
+    ['document', 'document.signature_requested'],
+    ['recovery', 'recovery.debtor_access_code'],
+    ['recovery', 'recovery.debtor_reminder'],
+  ])('%s envoie son modèle %s', (service, templateCode) => {
+    expect(mayCallerSendTemplate(service, templateCode)).toBe(true);
+  });
+
+  it.each([
+    ['recovery', 'identity.otp'],
+    ['document', 'identity.otp'],
+    ['identity', 'document.signature_code'],
+    ['document', 'recovery.debtor_access_code'],
+    ['recovery', 'recoveryx.debtor_reminder'],
+    ['gateway', 'gateway.anything'],
+  ])('%s ne peut pas envoyer %s', (service, templateCode) => {
+    expect(mayCallerSendTemplate(service, templateCode)).toBe(false);
   });
 });

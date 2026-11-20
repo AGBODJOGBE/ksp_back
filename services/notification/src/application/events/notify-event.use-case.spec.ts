@@ -38,6 +38,8 @@ function setup(
   cleaningTeamUserIds: string[] = [],
   accountsTeamUserIds: string[] = [],
   billingContacts: OrganizationBillingContact[] = [],
+  recoverySupervisorUserIds: string[] = [],
+  recoveryLegalUserIds: string[] = [],
 ) {
   const notifications = new InMemoryNotifications();
   const directory = new FakeDirectory(contacts);
@@ -59,6 +61,8 @@ function setup(
       timeZone: 'Africa/Porto-Novo',
       cleaningTeamUserIds,
       accountsTeamUserIds,
+      recoverySupervisorUserIds,
+      recoveryLegalUserIds,
     },
   );
   const [whatsapp, email] = providers as [FakeProvider, FakeProvider];
@@ -1451,5 +1455,108 @@ describe('NotifyEventUseCase — préférences de canaux (ADR-039)', () => {
       'cleaning.mission_scheduled.agent',
       'cleaning.mission_scheduled.agent',
     ]);
+  });
+});
+
+describe('NotifyEventUseCase — recouvrement (ADR-060, partie 17.2)', () => {
+  const ORG = '0192f1c4-0000-7000-8000-0000000b0001';
+  const ADMIN = '0192f1c4-0000-7000-8000-0000000ad001';
+  const SUPERVISOR = '0192f1c4-0000-7000-8000-0000000005a1';
+  const CASE = '0192f1c4-0000-7000-8000-00000000d001';
+  const DECISION = '0192f1c4-0000-7000-8000-00000000d0d1';
+  const CASE_LINK = `https://ksp.bj/mon-espace/recouvrement/dossiers/${CASE}`;
+  const withEmail = contact(CUSTOMER, { email: 'koffi@example.com' });
+  const ref = (creditor: { type: 'user' | 'organization'; id: string }) => ({
+    caseId: CASE,
+    caseNumber: 'RC-000123',
+    creditor,
+  });
+  const submitted = (
+    creditor: { type: 'user' | 'organization'; id: string } = { type: 'user', id: CUSTOMER },
+  ) =>
+    event('recovery.case.submitted', {
+      ...ref(creditor),
+      kind: 'b2c',
+      amountDue: { amount: 150000, currency: 'XOF' },
+      source: 'form',
+      submittedAt: '2026-10-23T09:00:00Z',
+    });
+
+  it('dossier reçu : le créancier par WhatsApp et dans son espace, les superviseurs configurés', async () => {
+    const { useCase, whatsapp, inbox } = setup(
+      [contact(CUSTOMER), contact(SUPERVISOR, { phoneE164: '+2290197000049' })],
+      undefined,
+      [],
+      [],
+      [],
+      [SUPERVISOR],
+    );
+    await expect(useCase.execute(submitted())).resolves.toMatchObject({ accepted: 2, inApp: 2 });
+    expect(whatsapp.sent.map((message) => [message.templateCode, message.phoneE164])).toEqual([
+      ['recovery.case_submitted.customer', '+2290197000045'],
+      ['recovery.case_submitted.team', '+2290197000049'],
+    ]);
+    expect(inbox.inApp.map((item) => [item.userId, item.link])).toEqual([
+      [CUSTOMER, CASE_LINK],
+      [SUPERVISOR, null],
+    ]);
+    expect(whatsapp.sent[0]!.variables).toMatchObject({
+      first_name: 'Koffi',
+      case_number: 'RC-000123',
+      amount_due: `150${NBSP}000${NBSP}FCFA`,
+    });
+  });
+
+  it('créancier organisation : ses administrateurs, l’e-mail de facturation une fois, lien dans son contexte', async () => {
+    const admin = contact(ADMIN, { firstName: 'Awa', phoneE164: '+2290197000046', email: 'awa@example.com' });
+    const { useCase, whatsapp, email, inbox } = setup(
+      [admin],
+      undefined,
+      [],
+      [],
+      [
+        {
+          organizationId: ORG,
+          legalName: 'SARL Bénin Propre',
+          billingEmail: 'compta@bp.bj',
+          adminUserIds: [ADMIN],
+        },
+      ],
+    );
+    await useCase.execute(submitted({ type: 'organization', id: ORG }));
+    expect(inbox.inApp.map((item) => [item.userId, item.link])).toEqual([
+      [ADMIN, `${CASE_LINK}?organisation=${ORG}`],
+    ]);
+    expect(email.sent).toEqual([expect.objectContaining({ email: 'compta@bp.bj' })]);
+    expect(email.sent[0]!.content!.subject).toBe('Dossier RC-000123 reçu — SARL Bénin Propre');
+    expect(whatsapp.sent.map((message) => message.phoneE164)).toEqual(['+2290197000046']);
+  });
+
+  it('événement livré deux fois : un seul envoi', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(submitted());
+    await expect(useCase.execute(submitted())).resolves.toMatchObject({ status: 'duplicate' });
+    expect(whatsapp.sent).toHaveLength(1);
+  });
+
+  it('décision à prendre : message important, par WhatsApp et par e-mail, malgré les préférences', async () => {
+    const { useCase, whatsapp, email, preferences } = setup([withEmail]);
+    await preferences.save(CUSTOMER, { whatsapp: false, email: false }, NOW);
+    await expect(
+      useCase.execute(
+        event('recovery.decision.requested', {
+          ...ref({ type: 'user', id: CUSTOMER }),
+          decisionId: DECISION,
+          kind: 'dispute_response',
+          expiresAt: '2026-11-02T10:00:00Z',
+          requestedAt: '2026-10-23T10:00:00Z',
+        }),
+      ),
+    ).resolves.toMatchObject({ accepted: 2, optedOut: 0 });
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(email.sent[0]!.content!.text).toContain('répondre à la contestation du débiteur');
+    expect(email.sent[0]!.variables['link']).toBe(
+      `https://ksp.bj/mon-espace/recouvrement/decisions/${DECISION}`,
+    );
   });
 });
