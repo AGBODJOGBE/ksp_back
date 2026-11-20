@@ -18,6 +18,7 @@ import {
   type WalletDebit,
   type WalletLedger,
 } from '../ports';
+import { type InvoiceIssuance } from '../../domain/issued-invoice';
 
 /** Doublures en mémoire des ports de billing, pour les tests de l'application. */
 export class FixedClock implements Clock {
@@ -60,7 +61,8 @@ export class InMemoryContracts implements ContractRepository {
         contract,
         invoicedIndexes: [...this.invoices.invoices.values()]
           .filter((invoice) => invoice.contractId === contract.id)
-          .map((invoice) => invoice.periodIndex),
+          .map((invoice) => invoice.periodIndex)
+          .filter((index): index is number => index !== null),
       }))
       .filter(({ contract, invoicedIndexes }) => invoicedIndexes.length < contractPeriods(contract).length);
   }
@@ -95,6 +97,28 @@ export class InMemoryInvoices implements InvoiceRepository {
     this.invoices.set(invoice.id, invoice);
     this.recorder.record(events(invoice));
     return invoice;
+  }
+  /** Lot E : facture émise au paiement, idempotente par (émetteur, clé). */
+  async issuePaid(
+    draft: Omit<Invoice, 'number'> & { issuance: InvoiceIssuance },
+    year: number,
+    events: (invoice: Invoice) => OutboxMessage[],
+  ) {
+    const existing = await this.findByIssueKey(draft.issuance.issuer, draft.issuance.idempotencyKey);
+    if (existing) return { invoice: existing, created: false };
+    const next = (this.sequence.get(year) ?? 0) + 1;
+    this.sequence.set(year, next);
+    const invoice = { ...draft, number: formatInvoiceNumber(year, next) };
+    this.invoices.set(invoice.id, invoice);
+    this.recorder.record(events(invoice));
+    return { invoice, created: true };
+  }
+  async findByIssueKey(issuer: string, idempotencyKey: string) {
+    return (
+      [...this.invoices.values()].find(
+        (i) => i.issuance?.issuer === issuer && i.issuance.idempotencyKey === idempotencyKey,
+      ) ?? null
+    );
   }
   async findById(id: string) {
     return this.invoices.get(id) ?? null;
@@ -156,7 +180,8 @@ export class InMemoryInvoices implements InvoiceRepository {
     this.processed.add(key);
     return 'saved' as const;
   }
-  private countOverdue(contractId: string) {
+  private countOverdue(contractId: string | null) {
+    if (contractId === null) return 0;
     return [...this.invoices.values()].filter((i) => i.contractId === contractId && i.status === 'overdue')
       .length;
   }

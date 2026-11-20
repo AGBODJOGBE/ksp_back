@@ -7,6 +7,7 @@ import {
   type InvoiceStatus,
 } from '../domain/invoice';
 import { type BillingSettings } from '../domain/settings';
+import { type InvoiceIssuance } from '../domain/issued-invoice';
 
 /**
  * Ports du service billing. Les événements sont écrits dans l'outbox, dans la transaction de
@@ -73,6 +74,20 @@ export interface InvoiceRepository {
     draft: (contract: BillingContract) => Omit<Invoice, 'number'> | null,
     events: (invoice: Invoice) => OutboxMessage[],
   ): Promise<Invoice | null>;
+  /**
+   * Lot E (ADR-055) : enregistre une facture émise au paiement (séance, frais de visite), déjà
+   * payée. Numéro tiré du compteur de l'année `year` (sans trou), facture (nature posée), paiement
+   * (`draft.payments`), émission (`draft.issuance`) et événements dans la même transaction. Une
+   * facture déjà émise avec le même couple (émetteur, clé), y compris par un appel simultané, est
+   * renvoyée telle quelle (`created: false`) : rien n'est écrit.
+   */
+  issuePaid(
+    draft: Omit<Invoice, 'number'> & { issuance: InvoiceIssuance },
+    year: number,
+    events: (invoice: Invoice) => OutboxMessage[],
+  ): Promise<{ invoice: Invoice; created: boolean }>;
+  /** Lot E : facture émise par cet émetteur avec cette clé d'idempotence, ou null. */
+  findByIssueKey(issuer: string, idempotencyKey: string): Promise<Invoice | null>;
   findById(id: string): Promise<Invoice | null>;
   list(filter: InvoiceFilter, page: PageRequest): Promise<PageResult<Invoice>>;
   /** Factures en attente de paiement dont l'échéance est passée. */

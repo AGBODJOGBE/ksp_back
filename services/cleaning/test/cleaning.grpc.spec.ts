@@ -78,7 +78,56 @@ const LOT_D: Readonly<Record<string, readonly string[]>> = {
     'RemoveAssignment',
   ],
 };
-const delivered = (service: string, rpc: string) => LOT_D[service]?.includes(rpc) ?? false;
+/**
+ * RPC branchées par le lot E (UC-NT-11 à 14, 16, 23, 24, 46). GetWalletDebitStatus, réservée à
+ * wallet, est testée à part (pas de compte connecté).
+ */
+const LOT_E: Readonly<Record<string, readonly string[]>> = {
+  ProgramService: [
+    'ListMyPrograms',
+    'GetMyProgram',
+    'ListMyProgramSessions',
+    'GetMySession',
+    'RescheduleSession',
+    'CancelSession',
+    'StopProgram',
+    'PaySession',
+    'RateSession',
+  ],
+  AgentService: [
+    'GetMyActivity',
+    'GetAgentSession',
+    'ArriveAtSession',
+    'StartSession',
+    'UpdateSessionChecklist',
+    'AddSessionPhoto',
+    'ReportSessionIncident',
+    'CompleteSession',
+    'ReportSessionMissed',
+    'RemoveSessionPhoto',
+  ],
+  ProgramAdminService: [
+    'ListPrograms',
+    'GetProgram',
+    'ListProgramSessions',
+    'GetSession',
+    'SuspendProgram',
+    'ResumeProgram',
+    'CancelProgram',
+    'ApproveProgramCancellation',
+    'RescheduleSessionAsKsp',
+    'CancelSessionAsKsp',
+    'ResumeSession',
+    'CompleteSessionAsKsp',
+    'ReportSessionMissedAsKsp',
+    'RemoveSessionPhotoAsKsp',
+  ],
+};
+const SERVICE_ONLY = [['WalletDebitCheckService', 'GetWalletDebitStatus']];
+const delivered = (service: string, rpc: string) =>
+  (LOT_D[service]?.includes(rpc) ?? false) || (LOT_E[service]?.includes(rpc) ?? false);
+const serviceOnly = (service: string, rpc: string) =>
+  SERVICE_ONLY.some(([s, r]) => s === service && r === rpc);
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -109,7 +158,8 @@ const RPCS = [...rpcsOf('cleaning'), ...rpcsOf('obligation')];
 const LOT_A = RPCS.filter(([, service]) => LOT_A_SERVICES.includes(service));
 const DELIVERED = RPCS.filter(([, service, rpc]) => delivered(service, rpc));
 const NOT_IMPLEMENTED = RPCS.filter(
-  ([, service, rpc]) => !LOT_A_SERVICES.includes(service) && !delivered(service, rpc),
+  ([, service, rpc]) =>
+    !LOT_A_SERVICES.includes(service) && !delivered(service, rpc) && !serviceOnly(service, rpc),
 );
 const camel = (name: string) => name[0]!.toLowerCase() + name.slice(1);
 
@@ -209,7 +259,22 @@ describe('cleaning en gRPC', () => {
     for (const [service, rpcs] of Object.entries(LOT_D)) {
       for (const rpc of rpcs) expect(all).toContain(`${service}.${rpc}`);
     }
-    expect(DELIVERED).toHaveLength(32);
+    expect(DELIVERED).toHaveLength(32 + 33);
+  });
+
+  it('les RPC du lot E sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    for (const [service, rpcs] of Object.entries(LOT_E)) {
+      for (const rpc of rpcs) expect(all).toContain(`${service}.${rpc}`);
+    }
+  });
+
+  it('WalletDebitCheckService.GetWalletDebitStatus est branchée (lot E, réservée à wallet)', async () => {
+    expect(
+      await anonymous(() =>
+        call('cleaning', 'WalletDebitCheckService', 'GetWalletDebitStatus', { objectType: 'autre' }),
+      ),
+    ).toMatchObject({ recorded: false, status: 'not_recorded' });
   });
 
   it.each(DELIVERED)('%s : %s.%s est branchée et exige une connexion', async (pkg, service, rpc) => {

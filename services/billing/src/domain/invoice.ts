@@ -1,4 +1,5 @@
 import { beninDay, type BillingSource, type ContractPeriod } from './contract';
+import { type InvoiceIssuance } from './issued-invoice';
 
 /**
  * Facture (CDC Nettoyage, partie 10) : « en attente de paiement » jusqu'à l'échéance
@@ -37,7 +38,24 @@ export interface InvoiceLine {
   quantity: number;
   unitPrice: number;
   amount: number;
+  // Lot F — champs v2 d'une ligne (billing.proto, InvoiceLine), absents d'une ligne v1.
+  /** session, missed_session, late_cancellation, visit_fee, visit_fee_deduction ou adjustment. */
+  kind?: InvoiceLineKind;
+  /** Date de la séance (AAAA-MM-JJ, heure du Bénin). */
+  serviceDate?: string;
+  programNumber?: string;
+  placeLabel?: string;
+  /** Objet facturé chez le service source (séance). */
+  sourceObjectId?: string;
 }
+
+// Lot F — nature d'une facture v2 et façon dont elle a été soldée (RV-87).
+export type InvoiceLineKind =
+  'session' | 'missed_session' | 'late_cancellation' | 'visit_fee' | 'visit_fee_deduction' | 'adjustment';
+/** v2 : facture de séance, reçu des frais de visite, facture mensuelle d'organisation. */
+export type InvoiceKind = 'session' | 'visit_fee' | 'monthly';
+/** v2 : paiement, avoir qui ramène le reste dû à 0, ou annulation. */
+export type InvoiceSettlement = 'payment' | 'credit_note' | 'cancellation';
 
 export interface InvoicePayment {
   id: string;
@@ -69,11 +87,13 @@ export interface Invoice {
   id: string;
   number: string;
   status: InvoiceStatus;
-  contractId: string;
+  /** Contrat v1 ; null pour une facture v2 (lot F, RV-98). */
+  contractId: string | null;
   customerId: string;
   organizationId: string | null;
   source: BillingSource;
-  periodIndex: number;
+  /** Rang du mois dans le contrat v1 ; null pour une facture v2. */
+  periodIndex: number | null;
   periodStart: Date;
   periodEnd: Date;
   lines: InvoiceLine[];
@@ -82,9 +102,18 @@ export interface Invoice {
   dueAt: Date;
   paidAt: Date | null;
   payments: InvoicePayment[];
+  /** Lot E : émission au paiement par cleaning (séance, frais de visite) ; absente sinon. */
+  issuance?: InvoiceIssuance | null;
   /** En-tête de l'organisation facturée ; null pour une facture émise avant son enregistrement. */
   organization: InvoiceOrganization | null;
   version: number;
+  // Lot F — facture v2 : nature, règlement, avoirs (absents ou nuls pour une facture v1).
+  kind?: InvoiceKind | null;
+  settledBy?: InvoiceSettlement | null;
+  /** Part des avoirs imputée sur le reste dû (R-PE-07). */
+  creditedAmount?: number;
+  /** Total des avoirs émis sur la facture (jamais au-delà de son total). */
+  creditNotesTotal?: number;
 }
 
 const DAY_MS = 86_400_000;

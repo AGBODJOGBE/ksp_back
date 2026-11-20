@@ -20,4 +20,9 @@ export const BillingErrors = {
       'BILLING_CONCURRENT_UPDATE',
       'La facture a été modifiée en même temps par un autre appel. Réessayez.',
     ),
+  idempotencyKeyReused: () =>
+    AppError.conflict(
+      'BILLING_IDEMPOTENCY_KEY_REUSED',
+      'Cette clé d’idempotence a déjà servi pour une autre facture.',
+    ),
 };

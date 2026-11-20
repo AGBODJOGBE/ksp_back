@@ -1,4 +1,4 @@
-import { fileV1, geoV1, identityV1, walletV1 } from '@ksp/contracts';
+import { billingV1, fileV1, geoV1, identityV1, paymentV1, walletV1 } from '@ksp/contracts';
 import {
   GrpcCaller,
   grpcClientOptions,
@@ -34,11 +34,26 @@ import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { GrpcWalletLedger } from './infrastructure/wallet/grpc-wallet-ledger';
 import { CLEANING_GRPC_CONTROLLERS } from './interfaces/grpc/controllers';
+// Lot E
+import {
+  GrpcDirectPaymentGateway,
+  GrpcInvoiceIssuer,
+  GrpcWalletBalances,
+} from './infrastructure/execution/grpc-execution-adapters';
+import { WalletEventsConsumer } from './infrastructure/messaging/wallet-events.consumer';
+import { PrismaExecutionRepository } from './infrastructure/persistence/execution/prisma-execution.repository';
+import {
+  EXECUTION_TASKS_INTERVAL_MS,
+  ExecutionSchedulerService,
+} from './infrastructure/scheduling/execution-scheduler.service';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
 const GEO_CLIENT = Symbol('GEO_CLIENT');
 const FILE_CLIENT = Symbol('FILE_CLIENT');
+// Lot E
+const BILLING_CLIENT = Symbol('BILLING_CLIENT');
+const PAYMENT_CLIENT = Symbol('PAYMENT_CLIENT');
 
 /**
  * Racine de composition : relie les ports à leurs adaptateurs. Le métier v2 (dépôts Prisma, cas
@@ -56,6 +71,9 @@ export class AppModule {
           grpcClientOptions(WALLET_CLIENT, 'wallet', config.WALLET_GRPC_URL),
           grpcClientOptions(FILE_CLIENT, 'file', config.FILE_GRPC_URL),
           grpcClientOptions(GEO_CLIENT, 'geo', config.GEO_GRPC_URL),
+          // Lot E
+          grpcClientOptions(BILLING_CLIENT, 'billing', config.BILLING_GRPC_URL),
+          grpcClientOptions(PAYMENT_CLIENT, 'payment', config.PAYMENT_GRPC_URL),
         ]),
       ],
       controllers: CLEANING_GRPC_CONTROLLERS,
@@ -71,6 +89,9 @@ export class AppModule {
             FILE_CLIENT,
             GEO_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
+            // Lot E
+            BILLING_CLIENT,
+            PAYMENT_CLIENT,
           ],
           useFactory: (
             prisma: PrismaService,
@@ -79,6 +100,9 @@ export class AppModule {
             fileGrpc: ClientGrpc,
             geoGrpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
+            // Lot E
+            billingGrpc: ClientGrpc,
+            paymentGrpc: ClientGrpc,
           ): CleaningDeps => {
             if (!serviceTokens) {
               new Logger('Cleaning').warn(
@@ -128,10 +152,33 @@ export class AppModule {
               settings: new PrismaCatalogSettingsReader(prisma),
               communes: new GeoServiceCommuneDirectory(geo, caller('geo')),
               idempotency: new PrismaIdempotencyStore(prisma),
+              // Lot E
+              execution: new PrismaExecutionRepository(prisma, clock, ids),
+              balances: new GrpcWalletBalances(
+                walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
+                caller('wallet'),
+              ),
+              invoices: new GrpcInvoiceIssuer(
+                billingGrpc.getService<billingV1.InvoiceIssuanceServiceClient>(
+                  billingV1.INVOICE_ISSUANCE_SERVICE_NAME,
+                ),
+                caller('billing'),
+              ),
+              directPayments: new GrpcDirectPaymentGateway(
+                paymentGrpc.getService<paymentV1.TopUpPaymentServiceClient>(
+                  paymentV1.TOP_UP_PAYMENT_SERVICE_NAME,
+                ),
+                caller('payment'),
+              ),
+              placePoints: new PrismaPlaceLocations(prisma, cipher),
             };
           },
         },
         { provide: CATALOG_USE_CASES, inject: [CLEANING_DEPS], useFactory: catalogUseCases },
+        // Lot E
+        WalletEventsConsumer,
+        ExecutionSchedulerService,
+        { provide: EXECUTION_TASKS_INTERVAL_MS, useValue: config.CLEANING_EXECUTION_TASKS_INTERVAL_MS },
       ],
     };
   }

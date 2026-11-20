@@ -1,6 +1,7 @@
 import { type billingV1 } from '@ksp/contracts';
 import { type StoredBillingSettings } from '../../application/ports';
 import { balance, type Invoice, paidAmount } from '../../domain/invoice';
+import { presentIssuance } from './issued-presenters';
 
 const money = (amount: number) => ({ amount, currency: 'XOF' });
 const iso = (date: Date | null) => (date ? date.toISOString() : '');
@@ -13,8 +14,9 @@ export function presentInvoice(invoice: Invoice): billingV1.Invoice {
     customerId: invoice.customerId,
     organizationId: invoice.organizationId ?? '',
     source: invoice.source,
-    contractId: invoice.contractId,
-    periodIndex: invoice.periodIndex,
+    // Lot F : une facture v2 n'a ni contrat ni rang de mois.
+    contractId: invoice.contractId ?? '',
+    periodIndex: invoice.periodIndex ?? 0,
     periodStart: iso(invoice.periodStart),
     periodEnd: iso(invoice.periodEnd),
     lines: invoice.lines.map((line) => ({
@@ -22,6 +24,12 @@ export function presentInvoice(invoice: Invoice): billingV1.Invoice {
       quantity: line.quantity,
       unitPrice: money(line.unitPrice),
       amount: money(line.amount),
+      // Lot F : champs v2 d'une ligne, absents d'une ligne v1.
+      ...(line.kind ? { kind: line.kind } : {}),
+      ...(line.serviceDate ? { serviceDate: line.serviceDate } : {}),
+      ...(line.programNumber ? { programNumber: line.programNumber } : {}),
+      ...(line.placeLabel ? { placeLabel: line.placeLabel } : {}),
+      ...(line.sourceObjectId ? { sourceObjectId: line.sourceObjectId } : {}),
     })),
     total: money(invoice.total),
     paid: money(paidAmount(invoice)),
@@ -29,6 +37,8 @@ export function presentInvoice(invoice: Invoice): billingV1.Invoice {
     issuedAt: iso(invoice.issuedAt),
     dueAt: iso(invoice.dueAt),
     paidAt: iso(invoice.paidAt),
+    // Lot E : objet facturé et références d'une facture émise au paiement.
+    ...presentIssuance(invoice),
     payments: invoice.payments.map((payment) => ({
       id: payment.id,
       amount: money(payment.amount),
@@ -46,6 +56,8 @@ export function presentInvoice(invoice: Invoice): billingV1.Invoice {
           rccm: invoice.organization.rccm ?? '',
         }
       : undefined,
+    // Lot F : nature d'une facture v2.
+    ...(invoice.kind ? { kind: invoice.kind } : {}),
   };
 }
 

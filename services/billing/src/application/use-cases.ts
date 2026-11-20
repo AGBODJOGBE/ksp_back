@@ -15,6 +15,7 @@ import {
   RecordOnlineInvoicePaymentUseCase,
 } from './online-payments.use-cases';
 import { HasPendingObligationsUseCase } from './obligations.use-cases';
+import { IssueInvoiceUseCase } from './session-invoices.use-cases';
 import { type BillingDeps } from './ports';
 
 /** Cas d'usage du service (une classe chacun), reliés aux mêmes dépendances. */
@@ -34,6 +35,7 @@ export function createUseCases(deps: BillingDeps) {
     getWalletDebitStatus: new GetWalletDebitStatusUseCase(deps),
     recordOnlinePayment: new RecordOnlineInvoicePaymentUseCase(deps),
     hasPendingObligations: new HasPendingObligationsUseCase(deps),
+    issueInvoice: new IssueInvoiceUseCase(deps),
   };
 }
 

@@ -179,13 +179,17 @@ export class WalletDebitCheckGrpcController implements billingV1.WalletDebitChec
 
 /**
  * InvoiceIssuanceService (v2) : émission des factures de séance, des reçus de frais de visite et des
- * avoirs, réservée à cleaning. Pas encore livré : réponse NOT_IMPLEMENTED.
+ * avoirs, réservée à cleaning (appelant contrôlé par le cas d'usage). Avoirs pas encore livrés :
+ * réponse NOT_IMPLEMENTED.
  */
 @Controller()
 @billingV1.InvoiceIssuanceServiceControllerMethods()
 export class InvoiceIssuanceGrpcController implements billingV1.InvoiceIssuanceServiceController {
-  issueInvoice(): Promise<billingV1.IssueInvoiceResponse> {
-    return notImplemented('IssueInvoice');
+  constructor(@Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases) {}
+
+  async issueInvoice(request: billingV1.IssueInvoiceRequest): Promise<billingV1.IssueInvoiceResponse> {
+    const { invoice, created } = await this.useCases.issueInvoice.execute(request);
+    return { invoice: presentInvoice(invoice), created };
   }
 
   issueCreditNote(): Promise<billingV1.IssueCreditNoteResponse> {

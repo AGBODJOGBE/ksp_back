@@ -21,7 +21,9 @@ export class PrismaContractRepository implements ContractRepository {
     return rows
       .map(({ invoices, ...row }) => ({
         contract: toContract(row),
-        invoicedIndexes: invoices.map((invoice) => invoice.periodIndex),
+        invoicedIndexes: invoices
+          .map((invoice) => invoice.periodIndex)
+          .filter((index): index is number => index !== null),
       }))
       .filter(({ contract, invoicedIndexes }) => invoicedIndexes.length < contractPeriods(contract).length);
   }

@@ -27,6 +27,16 @@ export const configSchema = baseServiceConfigSchema
      * secrets. Obligatoire en production ; ailleurs, clé temporaire si absente.
      */
     CLEANING_FIELD_ENCRYPTION_KEY: z.string().optional(),
+    // Lot E : paiement par séance et tâches planifiées.
+    /** Adresse gRPC de billing : facture de séance (InvoiceIssuanceService.IssueInvoice, R-PP-06). */
+    BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
+    /** Adresse gRPC de payment : paiement direct par Mobile Money (CreatePaymentRequest, R-WL-05). */
+    PAYMENT_GRPC_URL: z.string().min(1).default('localhost:50055'),
+    /**
+     * Intervalle des tâches du lot E (retards, couverture, rappels, factures, reprise des débits),
+     * en millisecondes ; 0 : tâches désactivées.
+     */
+    CLEANING_EXECUTION_TASKS_INTERVAL_MS: z.coerce.number().int().min(0).max(86_400_000).default(60_000),
   })
   .refine(
     (cfg) =>

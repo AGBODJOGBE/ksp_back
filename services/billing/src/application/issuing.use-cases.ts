@@ -12,7 +12,8 @@ export function invoiceReference(invoice: Invoice) {
     customerId: invoice.customerId,
     organizationId: invoice.organizationId,
     source: invoice.source,
-    contractId: invoice.contractId,
+    // Facture v2 : pas de contrat (le lot F publie alors la version 2 de l'événement, sans contrat).
+    contractId: invoice.contractId ?? '',
     total: xof(invoice.total),
   };
 }
