@@ -244,10 +244,12 @@ export interface ListMessageTemplatesResponse {
 
 /**
  * Envoi direct d'une notification. Utilisé pour les envois prioritaires dont l'appelant
- * doit connaître le résultat immédiatement : codes de vérification d'identity (ADR-014)
- * et codes de signature de document. Les autres notifications passent par les événements.
+ * doit connaître le résultat immédiatement : codes de vérification d'identity (ADR-014),
+ * codes de signature de document, et messages de recovery au débiteur sans compte (ADR-061).
+ * Les autres notifications passent par les événements.
  *
- * Appelants autorisés : identity et document uniquement (jeton de service, ADR-013).
+ * Appelants autorisés : identity, document et recovery uniquement (jeton de service, ADR-013),
+ * chacun limité à ses propres modèles (identity.*, document.*, recovery.*).
  *
  * Modèles utilisés par ces appels :
  *   identity.otp   variables : code, expires_in_minutes. Modèle secret : l'historique des envois
@@ -262,6 +264,16 @@ export interface ListMessageTemplatesResponse {
  *   document.signature_requested
  *                  WhatsApp puis e-mail ; variables : document_title, link (lien personnel de
  *                  signature, porte un jeton), expires_on, first_name facultatif. Modèle secret.
+ *   recovery.debtor_access_code
+ *                  WhatsApp (modèle d'authentification, comme identity.otp) puis e-mail ; variables :
+ *                  code (6 chiffres), expires_in_minutes. Code d'accès du débiteur à son dossier
+ *                  (ADR-061). Modèle secret.
+ *   recovery.debtor_mandate_notice, recovery.debtor_reminder, recovery.debtor_installment_reminder,
+ *   recovery.debtor_payment_link, recovery.debtor_plan_confirmed, recovery.debtor_formal_notice,
+ *   recovery.debtor_settlement_certificate, recovery.debtor_dispute_received
+ *                  WhatsApp puis e-mail ; messages au débiteur (lien personnel, porte un jeton),
+ *                  first_name facultatif ; variables détaillées dans le README du service
+ *                  notification. Modèles secrets.
  *
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
@@ -269,7 +281,8 @@ export interface ListMessageTemplatesResponse {
  *   NOTIFICATION_CHANNELS_EXHAUSTED   UNAVAILABLE       tous les canaux ont échoué (details.channelsTried)
  *   NOTIFICATION_VARIABLES_INVALID    INVALID_ARGUMENT  variables du modèle absentes ou mal formées
  *                                                       (details.invalidVariables : noms seuls, jamais les valeurs)
- *   NOTIFICATION_CALLER_FORBIDDEN     PERMISSION_DENIED service appelant non autorisé
+ *   NOTIFICATION_CALLER_FORBIDDEN     PERMISSION_DENIED service appelant non autorisé, ou modèle
+ *                                                       d'un autre service
  *   NOTIFICATION_ALREADY_IN_PROGRESS  ALREADY_EXISTS    envoi en cours avec la même idempotency_key
  *
  * Le reste du contrat (appareils push, édition des modèles, notification en direct) sera écrit
@@ -282,10 +295,12 @@ export interface NotificationServiceClient {
 
 /**
  * Envoi direct d'une notification. Utilisé pour les envois prioritaires dont l'appelant
- * doit connaître le résultat immédiatement : codes de vérification d'identity (ADR-014)
- * et codes de signature de document. Les autres notifications passent par les événements.
+ * doit connaître le résultat immédiatement : codes de vérification d'identity (ADR-014),
+ * codes de signature de document, et messages de recovery au débiteur sans compte (ADR-061).
+ * Les autres notifications passent par les événements.
  *
- * Appelants autorisés : identity et document uniquement (jeton de service, ADR-013).
+ * Appelants autorisés : identity, document et recovery uniquement (jeton de service, ADR-013),
+ * chacun limité à ses propres modèles (identity.*, document.*, recovery.*).
  *
  * Modèles utilisés par ces appels :
  *   identity.otp   variables : code, expires_in_minutes. Modèle secret : l'historique des envois
@@ -300,6 +315,16 @@ export interface NotificationServiceClient {
  *   document.signature_requested
  *                  WhatsApp puis e-mail ; variables : document_title, link (lien personnel de
  *                  signature, porte un jeton), expires_on, first_name facultatif. Modèle secret.
+ *   recovery.debtor_access_code
+ *                  WhatsApp (modèle d'authentification, comme identity.otp) puis e-mail ; variables :
+ *                  code (6 chiffres), expires_in_minutes. Code d'accès du débiteur à son dossier
+ *                  (ADR-061). Modèle secret.
+ *   recovery.debtor_mandate_notice, recovery.debtor_reminder, recovery.debtor_installment_reminder,
+ *   recovery.debtor_payment_link, recovery.debtor_plan_confirmed, recovery.debtor_formal_notice,
+ *   recovery.debtor_settlement_certificate, recovery.debtor_dispute_received
+ *                  WhatsApp puis e-mail ; messages au débiteur (lien personnel, porte un jeton),
+ *                  first_name facultatif ; variables détaillées dans le README du service
+ *                  notification. Modèles secrets.
  *
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
@@ -307,7 +332,8 @@ export interface NotificationServiceClient {
  *   NOTIFICATION_CHANNELS_EXHAUSTED   UNAVAILABLE       tous les canaux ont échoué (details.channelsTried)
  *   NOTIFICATION_VARIABLES_INVALID    INVALID_ARGUMENT  variables du modèle absentes ou mal formées
  *                                                       (details.invalidVariables : noms seuls, jamais les valeurs)
- *   NOTIFICATION_CALLER_FORBIDDEN     PERMISSION_DENIED service appelant non autorisé
+ *   NOTIFICATION_CALLER_FORBIDDEN     PERMISSION_DENIED service appelant non autorisé, ou modèle
+ *                                                       d'un autre service
  *   NOTIFICATION_ALREADY_IN_PROGRESS  ALREADY_EXISTS    envoi en cours avec la même idempotency_key
  *
  * Le reste du contrat (appareils push, édition des modèles, notification en direct) sera écrit

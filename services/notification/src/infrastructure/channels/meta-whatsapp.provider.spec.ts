@@ -179,6 +179,17 @@ describe('MetaWhatsAppProvider', () => {
     });
   });
 
+  it('code d’accès du débiteur au recouvrement : modèle d’authentification (ADR-061)', async () => {
+    const { calls, whatsapp } = provider(() => json(200, { messages: [{ id: 'wamid.3' }] }));
+    await whatsapp.send({
+      ...message,
+      templateCode: 'recovery.debtor_access_code',
+      variables: { code: '135790', expires_in_minutes: '10' },
+    });
+    const body = JSON.parse(String(calls[0]!.init.body)) as { template: { name: string } };
+    expect(body.template.name).toBe('ksp_otp');
+  });
+
   it('invitation à signer : modèle « utility », titre, date limite et lien', async () => {
     const { calls, whatsapp } = provider(() => json(200, { messages: [{ id: 'wamid.3' }] }));
     await whatsapp.send({
