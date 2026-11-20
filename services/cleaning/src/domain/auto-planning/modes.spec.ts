@@ -1,14 +1,15 @@
 import {
   type AutoTarget,
-  comparePlanningOrder,
   DEFAULT_HORIZON_DAYS,
   DEFAULT_PLANNING_MODE,
   effectiveMode,
   isAutoPlannable,
   planningWindow,
+  runMode,
   selectTargets,
   type ZoneModes,
 } from './modes';
+import { comparePlanningOrder } from '../planning/order';
 
 const at = (iso: string) => new Date(iso);
 const NOW = at('2026-11-20T08:00:00+01:00');
@@ -122,5 +123,23 @@ describe('sélection des cibles d’un passage', () => {
     expect(order.map((t) => t.target.target.id)).toEqual(['c', 'a', 'b']);
     const visit = session('a', '2026-11-23T09:00:00+01:00', { target: { kind: 'visit', id: 'a' } });
     expect(comparePlanningOrder(targets[2]!, visit)).toBeLessThan(0);
+  });
+});
+
+describe('mode rendu d’un passage qui couvre plusieurs zones', () => {
+  it('cas nominal : le plus prudent, proposition dès qu’une séance est en mode proposition', () => {
+    expect(runMode(['automatic', 'proposal', 'automatic'], MODES, null)).toBe('proposal');
+    expect(runMode(['automatic', 'automatic'], MODES, null)).toBe('automatic');
+  });
+
+  it('cas limite : passage sans séance : mode de la zone demandée, sinon réglage général ; manuel rendu proposition', () => {
+    const modes: ZoneModes = {
+      defaultMode: 'automatic',
+      byZone: { cotonou: 'manual', 'porto-novo': 'proposal' },
+    };
+    expect(runMode([], modes, null)).toBe('automatic');
+    expect(runMode([], modes, 'porto-novo')).toBe('proposal');
+    expect(runMode([], modes, 'cotonou')).toBe('proposal');
+    expect(runMode([], { defaultMode: 'manual', byZone: {} }, null)).toBe('proposal');
   });
 });

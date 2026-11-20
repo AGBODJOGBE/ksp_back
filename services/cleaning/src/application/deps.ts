@@ -1,3 +1,6 @@
+import { type AutoPlanningRepository } from './auto-planning/auto-planning.ports';
+import { type SettingsRepository } from './settings/settings.use-cases';
+import { type ClaimRepository } from './claims/claims.ports';
 import { type PlanningRepository, type TravelTimes } from './planning/planning.ports';
 import {
   type CatalogSettingsReader,
@@ -49,4 +52,11 @@ export interface CleaningDeps {
   settings: CatalogSettingsReader;
   communes: CommuneDirectory;
   idempotency: IdempotencyStore;
+  // --- Lot G : planification automatique, réglages, réclamations, renouvellement ---------------
+  /** Planification automatique (UC-NT-38, UC-NT-45). */
+  autoPlanning: AutoPlanningRepository;
+  /** Réglages du module (UC-NT-43). */
+  moduleSettings: SettingsRepository;
+  /** Réclamations (UC-NT-17, UC-NT-40). */
+  claims: ClaimRepository;
 }

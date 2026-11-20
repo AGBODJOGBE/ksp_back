@@ -1,5 +1,10 @@
 import { cleaningV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
+import { RunAutoPlanningUseCase } from '../../application/auto-planning/auto-planning.use-cases';
+import {
+  ApproveProposalsUseCase,
+  ListProposalsUseCase,
+} from '../../application/auto-planning/proposals.use-cases';
 import { CLEANING_DEPS, type CleaningDeps } from '../../application/deps';
 import {
   CheckAssignmentUseCase,
@@ -8,13 +13,17 @@ import {
   UpdateAssignmentUseCase,
 } from '../../application/planning/assignment.use-cases';
 import { PlanningViewUseCases } from '../../application/planning/planning-view.use-cases';
-import { notImplemented } from './not-implemented';
-import { toAgentCheck, toAgentLoad, toAssignmentBatch, toPlanningItem } from './planning-mappers';
+import {
+  toAgentCheck,
+  toAgentLoad,
+  toAssignment,
+  toAssignmentBatch,
+  toPlanningItem,
+} from './planning-mappers';
 
 /**
  * Adaptateur gRPC de PlanningAdminService — back-office : planning et affectations manuelles
- * (UC-NT-37, lot D). La planification automatique (UC-NT-38) relève du lot G et répond encore
- * NOT_IMPLEMENTED.
+ * (UC-NT-37, lot D), et planification automatique avec ses propositions (UC-NT-38, lot G).
  */
 @Controller()
 @cleaningV1.PlanningAdminServiceControllerMethods()
@@ -24,6 +33,10 @@ export class PlanningAdminGrpcController implements cleaningV1.PlanningAdminServ
   private readonly create: CreateAssignmentsUseCase;
   private readonly update: UpdateAssignmentUseCase;
   private readonly remove: RemoveAssignmentUseCase;
+  // Lot G : planification automatique.
+  private readonly autoRun: RunAutoPlanningUseCase;
+  private readonly proposals: ListProposalsUseCase;
+  private readonly approve: ApproveProposalsUseCase;
 
   constructor(@Inject(CLEANING_DEPS) deps: CleaningDeps) {
     this.view = new PlanningViewUseCases(deps);
@@ -31,6 +44,9 @@ export class PlanningAdminGrpcController implements cleaningV1.PlanningAdminServ
     this.create = new CreateAssignmentsUseCase(deps);
     this.update = new UpdateAssignmentUseCase(deps);
     this.remove = new RemoveAssignmentUseCase(deps);
+    this.autoRun = new RunAutoPlanningUseCase(deps);
+    this.proposals = new ListProposalsUseCase(deps);
+    this.approve = new ApproveProposalsUseCase(deps);
   }
 
   async getPlanning(request: cleaningV1.GetPlanningRequest): Promise<cleaningV1.GetPlanningResponse> {
@@ -85,15 +101,29 @@ export class PlanningAdminGrpcController implements cleaningV1.PlanningAdminServ
     return {};
   }
 
-  runAutoPlanning(): Promise<cleaningV1.RunAutoPlanningResponse> {
-    return notImplemented('RunAutoPlanning');
+  async runAutoPlanning(
+    request: cleaningV1.RunAutoPlanningRequest,
+  ): Promise<cleaningV1.RunAutoPlanningResponse> {
+    return { autoPlanningRun: await this.autoRun.execute(request) };
   }
 
-  listProposals(): Promise<cleaningV1.ListProposalsResponse> {
-    return notImplemented('ListProposals');
+  async listProposals(request: cleaningV1.ListProposalsRequest): Promise<cleaningV1.ListProposalsResponse> {
+    const result = await this.proposals.execute({
+      zoneKey: request.zoneKey ?? null,
+      ...(request.limit !== undefined ? { limit: request.limit } : {}),
+      ...(request.cursor !== undefined ? { cursor: request.cursor } : {}),
+      ...(request.sort !== undefined ? { sort: request.sort } : {}),
+    });
+    return {
+      items: result.items.map(toAssignment),
+      nextCursor: result.nextCursor ?? '',
+      total: result.total,
+    };
   }
 
-  approveProposals(): Promise<cleaningV1.ApproveProposalsResponse> {
-    return notImplemented('ApproveProposals');
+  async approveProposals(
+    request: cleaningV1.ApproveProposalsRequest,
+  ): Promise<cleaningV1.ApproveProposalsResponse> {
+    return { assignmentBatch: toAssignmentBatch(await this.approve.execute(request)) };
   }
 }

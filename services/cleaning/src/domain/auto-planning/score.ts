@@ -1,6 +1,7 @@
 import { type AgendaEntry } from '../planning/agenda';
 import { isInForce } from '../planning/assignment-status';
 import { workedPeriod } from '../planning/availability';
+import { compareIds } from '../planning/order';
 import { addDays, isoWeekMonday, localDayStart, localPosition, overlapMinutes } from '../planning/time';
 
 /**
@@ -53,8 +54,8 @@ export interface ScoredAgent {
 export interface ScoreInput {
   agent: ScoredAgent;
   target: { placeId: string; communeKey: string; start: Date; end: Date };
-  /** Agents déjà venus sur le programme de la séance (voir continuityFactor). */
-  programAgentIds: ReadonlySet<string>;
+  /** Historique du programme de la séance (voir continuityFactor). */
+  programHistory: ProgramHistory;
   /** Trajet compté avant la cible par les contrôles (AgentCheck.travelMinutes, R-ZN-02). */
   travelMinutes: number;
   now: Date;
@@ -73,9 +74,49 @@ export interface CandidateScore {
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
-/** Continuité : 1 si l'agent est déjà venu sur ce programme, sinon 0. */
-export function continuityFactor(agentId: string, programAgentIds: ReadonlySet<string>): number {
-  return programAgentIds.has(agentId) ? 1 : 0;
+/** Séances comptées et, par agent, celles où il figure. */
+export interface SessionTally {
+  sessions: number;
+  byAgent: Readonly<Record<string, number>>;
+}
+
+/** Historique d'un programme lu par la continuité (R-PL-03). */
+export interface ProgramHistory {
+  /** Séances réalisées du programme ; par agent, celles qu'il a faites. */
+  completed: SessionTally;
+  /** Séances du programme qui ont des affectations en vigueur ; par agent, ses affectations en vigueur. */
+  inForce: SessionTally;
+}
+
+/** Programme sans historique : aucune séance réalisée, aucune affectation en vigueur. */
+export const EMPTY_PROGRAM_HISTORY: ProgramHistory = {
+  completed: { sessions: 0, byAgent: {} },
+  inForce: { sessions: 0, byAgent: {} },
+};
+
+const share = (tally: SessionTally, agentId: string) =>
+  clamp01((tally.byAgent[agentId] ?? 0) / tally.sessions);
+
+/**
+ * Continuité : « agent déjà venu sur ce programme ». Facteur gradué, pour que l'agent habituel
+ * reprenne la main après un remplaçant d'un jour : la part des séances réalisées du programme faites
+ * par l'agent ; à défaut de séance réalisée, la part des séances couvertes par ses affectations en
+ * vigueur sur le programme ; programme sans historique, 0.
+ */
+export function continuityFactor(agentId: string, history: ProgramHistory): number {
+  if (history.completed.sessions > 0) return share(history.completed, agentId);
+  if (history.inForce.sessions > 0) return share(history.inForce, agentId);
+  return 0;
+}
+
+/**
+ * Historique après une équipe retenue par le passage : une séance couverte de plus, une affectation
+ * en vigueur de plus pour chacun de ses agents. L'historique reçu n'est pas modifié.
+ */
+export function withRetainedTeam(history: ProgramHistory, agentIds: readonly string[]): ProgramHistory {
+  const byAgent = { ...history.inForce.byAgent };
+  for (const agentId of agentIds) byAgent[agentId] = (byAgent[agentId] ?? 0) + 1;
+  return { completed: history.completed, inForce: { sessions: history.inForce.sessions + 1, byAgent } };
 }
 
 /**
@@ -134,7 +175,7 @@ export function ratingFactor(ratingAverage: number | null): number {
 /** Score d'un candidat pour une cible (R-PL-03). */
 export function scoreCandidate(input: ScoreInput): CandidateScore {
   const { agent, target, weights, now } = input;
-  const continuity = weights.continuity * continuityFactor(agent.agentId, input.programAgentIds);
+  const continuity = weights.continuity * continuityFactor(agent.agentId, input.programHistory);
   const proximity =
     weights.proximity *
     proximityFactor({
@@ -152,12 +193,6 @@ export function scoreCandidate(input: ScoreInput): CandidateScore {
     rating,
     total: continuity + proximity + balance + rating,
   };
-}
-
-/** Comparaison d'identifiants par points de code, indépendante de la langue de l'hôte. */
-export function compareIds(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
 }
 
 /** Ordre des candidats : meilleur score d'abord ; à égalité, identifiant croissant (départage stable). */

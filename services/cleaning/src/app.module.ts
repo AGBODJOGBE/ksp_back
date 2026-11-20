@@ -34,6 +34,14 @@ import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { GrpcWalletLedger } from './infrastructure/wallet/grpc-wallet-ledger';
 import { CLEANING_GRPC_CONTROLLERS } from './interfaces/grpc/controllers';
+// Lot G
+import { PrismaAutoPlanningRepository } from './infrastructure/persistence/auto-planning/prisma-auto-planning.repository';
+import { PrismaSettingsRepository } from './infrastructure/persistence/settings/prisma-settings.repository';
+import { PrismaClaimRepository } from './infrastructure/persistence/claims/prisma-claim.repository';
+import {
+  AUTO_PLANNING_INTERVAL_MS,
+  AutoPlanningScheduler,
+} from './infrastructure/scheduling/auto-planning.scheduler';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
@@ -128,10 +136,17 @@ export class AppModule {
               settings: new PrismaCatalogSettingsReader(prisma),
               communes: new GeoServiceCommuneDirectory(geo, caller('geo')),
               idempotency: new PrismaIdempotencyStore(prisma),
+              // --- Lot G ---------------------------------------------------------------------
+              autoPlanning: new PrismaAutoPlanningRepository(prisma, clock, ids),
+              moduleSettings: new PrismaSettingsRepository(prisma, ids),
+              claims: new PrismaClaimRepository(prisma, ids),
             };
           },
         },
         { provide: CATALOG_USE_CASES, inject: [CLEANING_DEPS], useFactory: catalogUseCases },
+        // --- Lot G : passage régulier de la planification automatique ------------------------
+        { provide: AUTO_PLANNING_INTERVAL_MS, useValue: config.CLEANING_AUTO_PLANNING_INTERVAL_MS },
+        AutoPlanningScheduler,
       ],
     };
   }

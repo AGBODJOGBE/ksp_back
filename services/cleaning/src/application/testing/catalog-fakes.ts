@@ -197,6 +197,10 @@ export class CatalogMemory {
       idempotency: {
         find: async (ref) => this.records.get(`${ref.actorId}|${ref.operation}|${ref.key}`) ?? null,
       },
+      // Lot G : hors du catalogue.
+      autoPlanning: {} as CleaningDeps['autoPlanning'],
+      moduleSettings: {} as CleaningDeps['moduleSettings'],
+      claims: {} as CleaningDeps['claims'],
     };
   }
 

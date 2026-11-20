@@ -1,5 +1,9 @@
 import { cleaningV1 } from '@ksp/contracts';
-import { Controller } from '@nestjs/common';
+import { Controller, Inject } from '@nestjs/common';
+// Lot G
+import { ClaimUseCases } from '../../application/claims/claims.use-cases';
+import { CLEANING_DEPS, type CleaningDeps } from '../../application/deps';
+import { toClaim, toClaimPage } from './claim.presenters';
 import { notImplemented } from './not-implemented';
 
 /**
@@ -46,20 +50,45 @@ export class ProgramGrpcController implements cleaningV1.ProgramServiceControlle
     return notImplemented('RateSession');
   }
 
-  openClaim(): Promise<cleaningV1.OpenClaimResponse> {
-    return notImplemented('OpenClaim');
+  // --- Lot G : réclamations (UC-NT-17) ---------------------------------------------------------
+  // Dépendances injectées par propriété : le constructeur reste libre pour les autres lots.
+  @Inject(CLEANING_DEPS) private readonly lotGDeps!: CleaningDeps;
+
+  async openClaim(request: cleaningV1.OpenClaimRequest): Promise<cleaningV1.OpenClaimResponse> {
+    const view = await new ClaimUseCases(this.lotGDeps).open({
+      sessionId: request.sessionId,
+      idempotencyKey: request.idempotencyKey,
+      category: request.category,
+      text: request.text,
+      photoFileIds: request.photoFileIds,
+    });
+    return { claim: toClaim(view) };
   }
 
-  listMyClaims(): Promise<cleaningV1.ListMyClaimsResponse> {
-    return notImplemented('ListMyClaims');
+  async listMyClaims(request: cleaningV1.ListMyClaimsRequest): Promise<cleaningV1.ListMyClaimsResponse> {
+    return toClaimPage(
+      await new ClaimUseCases(this.lotGDeps).listMine({
+        ...(request.status ? { status: request.status } : {}),
+        ...(request.limit !== undefined ? { limit: request.limit } : {}),
+        ...(request.cursor ? { cursor: request.cursor } : {}),
+        ...(request.sort ? { sort: request.sort } : {}),
+      }),
+    );
   }
 
-  getMyClaim(): Promise<cleaningV1.GetMyClaimResponse> {
-    return notImplemented('GetMyClaim');
+  async getMyClaim(request: cleaningV1.GetMyClaimRequest): Promise<cleaningV1.GetMyClaimResponse> {
+    return { claim: toClaim(await new ClaimUseCases(this.lotGDeps).getMine(request.claimId)) };
   }
 
-  addClaimMessage(): Promise<cleaningV1.AddClaimMessageResponse> {
-    return notImplemented('AddClaimMessage');
+  async addClaimMessage(
+    request: cleaningV1.AddClaimMessageRequest,
+  ): Promise<cleaningV1.AddClaimMessageResponse> {
+    const view = await new ClaimUseCases(this.lotGDeps).addMessage({
+      claimId: request.claimId,
+      idempotencyKey: request.idempotencyKey,
+      text: request.text,
+    });
+    return { claim: toClaim(view) };
   }
 
   renewProgram(): Promise<cleaningV1.RenewProgramResponse> {

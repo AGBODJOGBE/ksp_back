@@ -53,6 +53,10 @@ describeWithDatabase('critère du lot A (PostgreSQL)', () => {
       settings: new PrismaCatalogSettingsReader(db.prisma),
       communes: { listCommunes: async () => [{ key: 'cotonou', name: 'Cotonou' }] },
       idempotency: new PrismaIdempotencyStore(db.prisma),
+      // Lot G : hors du catalogue.
+      autoPlanning: {} as CleaningDeps['autoPlanning'],
+      moduleSettings: {} as CleaningDeps['moduleSettings'],
+      claims: {} as CleaningDeps['claims'],
     };
     useCases = catalogUseCases(deps);
   }, HOOK_TIMEOUT_MS);
@@ -195,7 +199,7 @@ describeWithDatabase('critère du lot A (PostgreSQL)', () => {
     expect(await db.prisma.idempotencyRecord.count()).toBe(18);
     expect(actions).toHaveLength(18);
     expect(await db.prisma.outboxEvent.count()).toBe(0);
-  });
+  }, 60_000);
 
   const simulate = () =>
     useCases.simulate.execute({

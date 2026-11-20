@@ -61,7 +61,10 @@ function choose(target: AutoTarget, agents: AutoAgent[], history: string[] = [],
   return chooseTeam({
     target,
     agents,
-    programAgentIds: new Set(history),
+    programHistory: {
+      completed: { sessions: 1, byAgent: Object.fromEntries(history.map((id) => [id, 1])) },
+      inForce: { sessions: 0, byAgent: {} },
+    },
     weights: DEFAULT_SCORE_WEIGHTS,
     context: CONTEXT,
     maxAttempts,

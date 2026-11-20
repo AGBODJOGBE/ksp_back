@@ -91,6 +91,18 @@ export interface WalletLedger {
     description: string;
   }): Promise<WalletDebit>;
   refund(input: { transactionId: string; reason: string }): Promise<void>;
+  /**
+   * Lot G : crédit du wallet d'un titulaire (wallet.Credit), idempotent par clé fixe (RV-81) :
+   * rejouable jusqu'au succès, jamais versé deux fois.
+   */
+  credit(input: {
+    idempotencyKey: string;
+    holder: { type: 'user' | 'organization'; id: string };
+    amount: number;
+    object: { objectType: string; objectId: string; part: string };
+    kind: 'commercial_gesture' | 'refund';
+    description: string;
+  }): Promise<{ transactionId: string; created: boolean }>;
 }
 
 /** Types d'objet des fichiers du Nettoyage chez file (reprise RV-102). */

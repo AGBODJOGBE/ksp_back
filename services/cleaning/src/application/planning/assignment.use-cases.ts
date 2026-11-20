@@ -243,6 +243,20 @@ async function writeAssignments(
   now: Date,
 ): Promise<{ events: OutboxMessage[]; batchId: string | null }> {
   await tx.insertAssignments(rows);
+  return announceAssignments(deps, tx, rows, now);
+}
+
+/**
+ * Suite d'affectations enregistrées (créées, ou propositions validées) : séances planifiées,
+ * événements (un récapitulatif par programme dès deux séances, R-PL-11), avec la source des lignes.
+ */
+export async function announceAssignments(
+  deps: Pick<CleaningDeps, 'ids'>,
+  tx: PlanningTx,
+  rows: readonly Pick<NewAssignment, 'target' | 'agentId' | 'source'>[],
+  now: Date,
+): Promise<{ events: OutboxMessage[]; batchId: string | null }> {
+  const source = rows[0]?.source ?? 'manual';
   const refs = rows.map((r) => r.target).filter((t, i, all) => all.findIndex((o) => sameTarget(o, t)) === i);
   for (const ref of refs) if (ref.kind === 'session') await tx.setSessionStatus(ref.id, 'assigned', now);
   const targets = (await tx.targets(refs)).sort((a, b) => a.start.getTime() - b.start.getTime());
@@ -255,7 +269,7 @@ async function writeAssignments(
   for (const [programId, sessions] of batches)
     if (sessions.length > 1) batchIds.set(programId, deps.ids.next());
   const events = targets.map((t) =>
-    assignedEvent(t, now, (t.programId && batchIds.get(t.programId)) ?? null),
+    assignedEvent(t, now, (t.programId && batchIds.get(t.programId)) ?? null, source),
   );
   for (const [programId, batchId] of batchIds) {
     const sessions = batches.get(programId)!;
@@ -277,7 +291,7 @@ async function writeAssignments(
         lastStart: sessions.at(-1)!.start.toISOString(),
         agentIds,
         leadAgentId: sessions[0]!.assignments.find((a) => a.isLead)?.agentId ?? null,
-        source: 'manual',
+        source,
         assignedAt: now.toISOString(),
       },
     });

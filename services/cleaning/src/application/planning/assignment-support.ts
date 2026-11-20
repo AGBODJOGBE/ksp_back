@@ -14,6 +14,7 @@ import { cleaningErrors, refusal } from '../shared/errors';
 import { type AuditEntry, type OutboxMessage } from '../ports';
 import {
   type AssignmentRecord,
+  type AssignmentSource,
   type PlanningReader,
   type PlanningTx,
   type TargetRecord,
@@ -234,7 +235,12 @@ function team(target: TargetRecord) {
 }
 
 /** Agents d'une séance (cleaning.session.assigned) ou d'une visite (cleaning.visit.scheduled). */
-export function assignedEvent(target: TargetRecord, now: Date, batchId: string | null): OutboxMessage {
+export function assignedEvent(
+  target: TargetRecord,
+  now: Date,
+  batchId: string | null,
+  source: AssignmentSource = 'manual',
+): OutboxMessage {
   const { agentIds, leadAgentId } = team(target);
   if (target.target.kind === 'visit') return visitScheduled(target, []);
   return {
@@ -248,7 +254,7 @@ export function assignedEvent(target: TargetRecord, now: Date, batchId: string |
       scheduledStart: target.start.toISOString(),
       agentIds,
       leadAgentId,
-      source: 'manual',
+      source,
       assignedAt: now.toISOString(),
       programNumber: target.number,
       sessionsCount: target.sessionsCount!,

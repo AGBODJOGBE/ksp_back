@@ -78,7 +78,8 @@ export interface NewAssignment {
   travelMinutes: number;
   overrides: OverridableCheck[];
   reason: string | null;
-  createdBy: string;
+  /** null pour la planification automatique (source auto). */
+  createdBy: string | null;
   createdAt: Date;
 }
 

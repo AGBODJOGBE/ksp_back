@@ -27,6 +27,13 @@ export const configSchema = baseServiceConfigSchema
      * secrets. Obligatoire en production ; ailleurs, clé temporaire si absente.
      */
     CLEANING_FIELD_ENCRYPTION_KEY: z.string().optional(),
+    // --- Lot G ---------------------------------------------------------------------------------
+    /**
+     * Intervalle du passage régulier de la planification automatique (UC-NT-45, R-PL-01), en ms :
+     * une heure par défaut, pour reprendre vite les séances libérées (désaffectation, congé) ;
+     * 0 = tâche désactivée.
+     */
+    CLEANING_AUTO_PLANNING_INTERVAL_MS: z.coerce.number().int().min(0).default(3_600_000),
   })
   .refine(
     (cfg) =>

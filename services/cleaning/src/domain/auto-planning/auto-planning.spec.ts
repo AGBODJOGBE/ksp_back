@@ -2,8 +2,14 @@ import { type AgendaEntry, travelFromMatrix } from '../planning/agenda';
 import { type PlanningContext } from '../planning/assignment-check';
 import { autoAssignmentState, type AutoPlanningInput, runAutoPlanning } from './auto-planning';
 import { type AutoTarget } from './modes';
-import { DEFAULT_SCORE_WEIGHTS } from './score';
+import { DEFAULT_SCORE_WEIGHTS, type ProgramHistory } from './score';
 import { type AutoAgent } from './team-choice';
+
+/** Programme déjà commencé : chaque séance réalisée faite par les mêmes agents. */
+const doneBy = (agentIds: string[], sessions = 1): ProgramHistory => ({
+  completed: { sessions, byAgent: Object.fromEntries(agentIds.map((id) => [id, sessions])) },
+  inForce: { sessions: 0, byAgent: {} },
+});
 
 const at = (iso: string) => new Date(iso);
 const h = (hours: number) => hours * 60;
@@ -60,7 +66,7 @@ function input(targets: AutoTarget[], agents: AutoAgent[], extra: Partial<AutoPl
   const value: AutoPlanningInput = {
     targets,
     agents,
-    programAgents: {},
+    programHistory: {},
     scope: {
       window: { start: CONTEXT.now, end: at('2026-12-04T08:00:00+01:00') },
       zoneKey: null,
@@ -169,7 +175,7 @@ describe('R-PL-07 : ne déplace jamais une affectation faite, ne remplit que les
   it('cas nominal : l’agent déjà pris garde son affectation, un autre est choisi', () => {
     const busy = agent('a1', { agenda: [existing], ratingAverage: 5 });
     const result = runAutoPlanning(
-      input([session('s1')], [busy, agent('a2')], { programAgents: { p1: ['a1'] } }),
+      input([session('s1')], [busy, agent('a2')], { programHistory: { p1: doneBy(['a1']) } }),
     );
     expect(teams(result)).toEqual({ s1: ['a2'] });
     expect(busy.agenda).toEqual([existing]);
@@ -243,7 +249,7 @@ describe('R-PL-04 et R-PL-03 : continuité de l’équipe au fil du passage', ()
       agent('a1'),
       agent('a2'),
     ];
-    const result = runAutoPlanning(input(targets, agents, { programAgents: { p1: ['a1', 'a2'] } }));
+    const result = runAutoPlanning(input(targets, agents, { programHistory: { p1: doneBy(['a1', 'a2']) } }));
     expect(teams(result)).toEqual({ s23: ['a1', 'a2'], s24: ['a1', 'a2'], s25: ['a1', 'a2'] });
     expect(result.proposals.map((p) => p.check.leadAgentId)).toEqual(['a1', 'a1', 'a1']);
   });
@@ -260,7 +266,7 @@ describe('R-PL-04 et R-PL-03 : continuité de l’équipe au fil du passage', ()
       }),
       agent('a3', { ratingAverage: 3 }),
     ];
-    const result = runAutoPlanning(input(targets, agents, { programAgents: { p1: ['a1', 'a2'] } }));
+    const result = runAutoPlanning(input(targets, agents, { programHistory: { p1: doneBy(['a1', 'a2']) } }));
     expect(teams(result)).toEqual({ s23: ['a1', 'a2'], s24: ['a1', 'a3'], s25: ['a1', 'a2'] });
   });
 
@@ -270,7 +276,7 @@ describe('R-PL-04 et R-PL-03 : continuité de l’équipe au fil du passage', ()
       session('s2', { programId: 'p2', ...day(24, '09:00', '11:00') }),
     ];
     const agents = [agent('a1', { ratingAverage: 2 }), agent('a2', { ratingAverage: 4 })];
-    const result = runAutoPlanning(input(targets, agents, { programAgents: { p1: ['a1'] } }));
+    const result = runAutoPlanning(input(targets, agents, { programHistory: { p1: doneBy(['a1']) } }));
     expect(teams(result)).toEqual({ s1: ['a1'], s2: ['a2'] });
   });
 });

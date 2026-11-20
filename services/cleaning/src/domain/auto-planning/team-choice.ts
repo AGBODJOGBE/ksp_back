@@ -6,8 +6,15 @@ import {
   type TargetCheck,
 } from '../planning/assignment-check';
 import { type PlanningError } from '../planning/errors';
+import { compareIds } from '../planning/order';
 import { type AutoTarget } from './modes';
-import { type CandidateScore, compareIds, compareScores, scoreCandidate, type ScoreWeights } from './score';
+import {
+  type CandidateScore,
+  compareScores,
+  type ProgramHistory,
+  scoreCandidate,
+  type ScoreWeights,
+} from './score';
 
 /**
  * Choix de l'équipe d'une séance par la planification automatique (R-PL-02, R-PL-04). Les contrôles
@@ -106,7 +113,7 @@ const leadMissing = (error: PlanningError) =>
 export function chooseTeam(input: {
   target: AutoTarget;
   agents: readonly AutoAgent[];
-  programAgentIds: ReadonlySet<string>;
+  programHistory: ProgramHistory;
   weights: Readonly<ScoreWeights>;
   context: PlanningContext;
   maxAttempts?: number | undefined;
@@ -128,7 +135,7 @@ export function chooseTeam(input: {
       scoreCandidate({
         agent: byId.get(agentCheck.agentId)!,
         target,
-        programAgentIds: input.programAgentIds,
+        programHistory: input.programHistory,
         travelMinutes: agentCheck.travelMinutes,
         now: context.now,
         weights: input.weights,
