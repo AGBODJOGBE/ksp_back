@@ -42,6 +42,15 @@ describe('configuration en production (ADR-050)', () => {
     ).toThrow(/IDENTITY_MFA_ENCRYPTION_KEY/);
   });
 
+  it('refuse en production une clé de chiffrement absente, dès la lecture de la configuration', () => {
+    const { IDENTITY_MFA_ENCRYPTION_KEY: _omitted, ...withoutKey } = production;
+    expect(() => loadConfig(configSchema, withoutKey)).toThrow(/IDENTITY_MFA_ENCRYPTION_KEY/);
+    expect(() => loadConfig(configSchema, { ...production, IDENTITY_MFA_ENCRYPTION_KEY: ' ' })).toThrow(
+      /IDENTITY_MFA_ENCRYPTION_KEY/,
+    );
+    expect(loadConfig(configSchema, { ...withoutKey, NODE_ENV: 'development' }).NODE_ENV).toBe('development');
+  });
+
   it('accepte des secrets propres à la production ; le développement garde ceux du .env.example', () => {
     expect(loadConfig(configSchema, production).NODE_ENV).toBe('production');
     const development = loadConfig(configSchema, {

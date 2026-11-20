@@ -10,7 +10,7 @@ import {
   SearchAccountsUseCase,
 } from './application/account-admin/account-admin.use-cases';
 import { commonV1, notificationV1 } from '@ksp/contracts';
-import { GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
+import { FieldCipher, GrpcCaller, grpcClientOptions, PlatformModule } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import {
   type ClientGrpc,
@@ -79,7 +79,6 @@ import {
 import { NotificationEmailCodeSender } from './infrastructure/email/notification-email-code-sender';
 import { PrismaEmailVerificationRepository } from './infrastructure/email/prisma-email-verification.repository';
 import { PrismaAccountAdminRepository } from './infrastructure/account-admin/prisma-account-admin.repository';
-import { AesGcmSecretCipher } from './infrastructure/mfa/aes-gcm-secret-cipher';
 import { CryptoMfaTokenGenerator, CryptoRecoveryCodes } from './infrastructure/mfa/crypto-mfa-secrets';
 import { HmacTotpGenerator } from './infrastructure/mfa/hmac-totp-generator';
 import { PrismaMfaRepository } from './infrastructure/mfa/prisma-mfa.repository';
@@ -229,17 +228,16 @@ export class AppModule {
         PrismaRoleRepository,
         PrismaMfaRepository,
         {
-          // Chargée au démarrage : une clé absente en production empêche le service de démarrer.
+          // Chargée au démarrage : une clé absente en production empêche le service de démarrer ; ailleurs,
+          // le kit journalise un avertissement (clé temporaire : applications d'authentification perdues
+          // au redémarrage).
           provide: SECRET_CIPHER,
-          useFactory: () => {
-            const cipher = AesGcmSecretCipher.fromConfig(config.IDENTITY_MFA_ENCRYPTION_KEY, config.NODE_ENV);
-            if (cipher.ephemeral) {
-              new Logger('AesGcmSecretCipher').warn(
-                "Aucune clé de chiffrement configurée : clé temporaire, les applications d'authentification configurées ne survivront pas au redémarrage.",
-              );
-            }
-            return cipher;
-          },
+          useFactory: () =>
+            FieldCipher.fromConfig(
+              config.IDENTITY_MFA_ENCRYPTION_KEY,
+              config.NODE_ENV,
+              'IDENTITY_MFA_ENCRYPTION_KEY',
+            ),
         },
         {
           provide: OpenMfaChallenge,
@@ -287,7 +285,7 @@ export class AppModule {
         {
           provide: EnrollTotpUseCase,
           inject: [MfaStepGuard, PrismaMfaRepository, SECRET_CIPHER],
-          useFactory: (guard: MfaStepGuard, mfa: PrismaMfaRepository, cipher: AesGcmSecretCipher) =>
+          useFactory: (guard: MfaStepGuard, mfa: PrismaMfaRepository, cipher: FieldCipher) =>
             new EnrollTotpUseCase(
               guard,
               mfa,
@@ -304,7 +302,7 @@ export class AppModule {
           useFactory: (
             guard: MfaStepGuard,
             mfa: PrismaMfaRepository,
-            cipher: AesGcmSecretCipher,
+            cipher: FieldCipher,
             opener: BackofficeSessionOpener,
           ) => {
             const recoveryCodes = new CryptoRecoveryCodes(config.OTP_HMAC_SECRET);
@@ -328,7 +326,7 @@ export class AppModule {
           useFactory: (
             guard: MfaStepGuard,
             mfa: PrismaMfaRepository,
-            cipher: AesGcmSecretCipher,
+            cipher: FieldCipher,
             opener: BackofficeSessionOpener,
           ) =>
             new VerifyMfaUseCase(
