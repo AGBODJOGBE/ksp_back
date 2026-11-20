@@ -244,7 +244,12 @@ function individualCheck(
     ],
     travelMinutes: schedule.travelMinutes,
     occupied: schedule.occupied,
-    ...initialAssignmentStatus(agent.employmentKind, context.now, context.assignmentResponseHours),
+    ...initialAssignmentStatus(
+      agent.employmentKind,
+      context.now,
+      context.assignmentResponseHours,
+      target.start,
+    ),
   };
 }
 

@@ -3,6 +3,7 @@ import {
   type AgentStatus,
   canTransitionAgent,
   checkDeactivation,
+  suspensionRelease,
   transitionAgent,
   validatedSkillCodes,
 } from './agent';
@@ -10,12 +11,17 @@ import {
 const at = (iso: string) => new Date(iso);
 const NOW = at('2026-11-20T08:00:00+01:00');
 
-/** Transitions de 15.2, recopiées telles quelles : toute autre est interdite. */
+/**
+ * Transitions de 15.2 (décision du 20 novembre 2026), recopiées telles quelles : toute autre est
+ * interdite.
+ */
 const ALLOWED: [AgentStatus, AgentStatus][] = [
   ['applicant', 'under_review'],
+  ['applicant', 'rejected'],
   ['under_review', 'active'],
   ['under_review', 'rejected'],
   ['active', 'suspended'],
+  ['active', 'deactivated'],
   ['suspended', 'active'],
   ['suspended', 'deactivated'],
 ];
@@ -42,8 +48,9 @@ describe('agent : transitions de statut (9.1, 15.2)', () => {
   });
 
   it('cas limites : candidat refusé sans vérification, actif désactivé sans suspension, retour d’un refusé', () => {
-    expect(canTransitionAgent('applicant', 'rejected')).toBe(false);
-    expect(canTransitionAgent('active', 'deactivated')).toBe(false);
+    expect(canTransitionAgent('applicant', 'rejected')).toBe(true);
+    expect(canTransitionAgent('active', 'deactivated')).toBe(true);
+    expect(canTransitionAgent('applicant', 'active')).toBe(false);
     expect(canTransitionAgent('rejected', 'under_review')).toBe(false);
     expect(canTransitionAgent('deactivated', 'active')).toBe(false);
   });
@@ -54,6 +61,10 @@ describe('agent : transitions de statut (9.1, 15.2)', () => {
       errors: [{ code: 'CLEANING_REASON_REQUIRED', details: { field: 'reason' } }],
     });
     expect(transitionAgent('under_review', 'rejected', '   ')).toEqual({
+      ok: false,
+      errors: [{ code: 'CLEANING_REASON_REQUIRED', details: { field: 'reason' } }],
+    });
+    expect(transitionAgent('applicant', 'rejected', '')).toEqual({
       ok: false,
       errors: [{ code: 'CLEANING_REASON_REQUIRED', details: { field: 'reason' } }],
     });
@@ -124,5 +135,32 @@ describe('agent : désactivation (R-AG-03)', () => {
         now: NOW,
       }),
     ).toEqual({ ok: true, value: { toReassign: ['a1'] } });
+  });
+});
+
+describe('agent : suspension (R-AG-03, décision du 20 novembre 2026)', () => {
+  const assignment = (id: string, end: string, status: 'confirmed' | 'declined' = 'confirmed') => ({
+    assignmentId: id,
+    status,
+    respondBefore: null,
+    end: at(end),
+  });
+
+  it('retire les affectations à venir, en cours comprise ; la planification les réattribue', () => {
+    expect(
+      suspensionRelease({
+        assignments: [
+          assignment('a1', '2026-11-20T08:00:00+01:00'),
+          assignment('a2', '2026-11-20T08:00:01+01:00'),
+          assignment('a3', '2026-11-25T10:00:00+01:00', 'declined'),
+          assignment('a4', '2026-11-26T10:00:00+01:00'),
+        ],
+        now: NOW,
+      }),
+    ).toEqual({ toRelease: ['a2', 'a4'] });
+  });
+
+  it('sans affectation à venir : rien à retirer', () => {
+    expect(suspensionRelease({ assignments: [], now: NOW })).toEqual({ toRelease: [] });
   });
 });

@@ -70,7 +70,7 @@ export class ParametersUseCases {
   async create(
     input: ParameterFields & { idempotencyKey: string; code: string; kind: string; label: string },
   ): Promise<Parameter> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({
@@ -125,7 +125,7 @@ export class ParametersUseCases {
   }
 
   async update(input: ParameterFields & { id: string; active?: boolean | undefined }): Promise<Parameter> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const before = await this.deps.parameters.getParameter(input.id);
     if (!before) throw CleaningErrors.parameterNotFound();
     const now = this.deps.clock.now();

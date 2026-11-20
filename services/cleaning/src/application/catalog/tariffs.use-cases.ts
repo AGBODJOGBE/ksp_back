@@ -57,7 +57,7 @@ export class TariffsUseCases {
   async createDraft(
     input: TariffFields & { offerId: string; idempotencyKey: string },
   ): Promise<TariffVersion> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({
@@ -86,7 +86,7 @@ export class TariffsUseCases {
   }
 
   async updateDraft(input: TariffFields & { offerId: string; version: number }): Promise<TariffVersion> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const offer = await this.offer(input.offerId);
     const current = await this.tariff(offer.id, input.version);
     if (current.status !== 'draft') throw CleaningErrors.invalidTransition(current.status, 'draft');
@@ -100,7 +100,7 @@ export class TariffsUseCases {
    * Rejouée par son auteur sur une version déjà publiée : état courant, sans nouvelle trace.
    */
   async publish(input: { offerId: string; version: number; idempotencyKey: string }): Promise<TariffVersion> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({

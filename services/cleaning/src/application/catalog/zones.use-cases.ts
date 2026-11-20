@@ -59,7 +59,7 @@ export class ZonesUseCases {
   }
 
   async create(input: ZoneFields & { idempotencyKey: string; communeKey: string }): Promise<ZoneView> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({
@@ -113,7 +113,7 @@ export class ZonesUseCases {
 
   /** Un nouveau coefficient ou une nouvelle majoration s'applique aux nouvelles demandes. */
   async update(input: ZoneFields & { zoneId: string }): Promise<ZoneView> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const before = await this.zone(input.zoneId);
     const now = this.deps.clock.now();
     const after: Zone = {
@@ -148,7 +148,7 @@ export class ZonesUseCases {
     active: boolean;
     confirm?: boolean | undefined;
   }): Promise<ZoneView> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({

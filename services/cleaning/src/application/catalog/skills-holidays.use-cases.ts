@@ -29,7 +29,7 @@ export class SkillsUseCases {
   }
 
   async create(input: { idempotencyKey: string; code: string; name: string }): Promise<Skill> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({
@@ -77,7 +77,7 @@ export class SkillsUseCases {
     name?: string | undefined;
     active?: boolean | undefined;
   }): Promise<Skill> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const before = await this.find(input.skillId);
     const now = this.deps.clock.now();
     const after: Skill = {
@@ -122,7 +122,7 @@ export class HolidaysUseCases {
   }
 
   async create(input: { idempotencyKey: string; date: string; name: string }): Promise<Holiday> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({
@@ -174,7 +174,7 @@ export class HolidaysUseCases {
   }
 
   async delete(holidayId: string): Promise<void> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const holiday = await this.deps.holidays.getHoliday(holidayId);
     if (!holiday) throw CleaningErrors.holidayNotFound();
     const now = this.deps.clock.now();

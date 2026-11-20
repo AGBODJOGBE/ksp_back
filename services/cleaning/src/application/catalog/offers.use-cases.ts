@@ -80,7 +80,7 @@ export class OffersUseCases {
   async create(
     input: OfferFields & { idempotencyKey: string; placeTypeId: string; cleaningTypeId: string },
   ): Promise<OfferView> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({
@@ -130,7 +130,7 @@ export class OffersUseCases {
   }
 
   async update(input: OfferFields & { id: string }): Promise<OfferView> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const before = await this.deps.offers.getOffer(input.id);
     if (!before) throw CleaningErrors.offerNotFound();
     const now = this.deps.clock.now();

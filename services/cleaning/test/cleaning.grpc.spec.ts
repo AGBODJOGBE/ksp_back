@@ -17,6 +17,7 @@ import { type Metadata } from '@grpc/grpc-js';
 import { type Observable } from 'rxjs';
 import { CATALOG_USE_CASES, catalogUseCases } from '../src/application/catalog/catalog-use-cases';
 import { TariffsUseCases } from '../src/application/catalog/tariffs.use-cases';
+import { CLEANING_DEPS } from '../src/application/deps';
 import { asStaff, CatalogMemory } from '../src/application/testing/catalog-fakes';
 import {
   type MaisonCatalog,
@@ -28,11 +29,56 @@ import { CLEANING_GRPC_CONTROLLERS } from '../src/interfaces/grpc/controllers';
 
 /**
  * Service cleaning sur un vrai serveur gRPC. Chaque RPC des services lus dans les .proto
- * (ksp.cleaning.v1, plus ksp.common.v1.ObligationService) est exposée. Lot A branché (ADR-054) :
- * CatalogService et CatalogAdminService répondent avec leurs cas d'usage (faux en mémoire ici) ;
- * toute autre RPC répond UNIMPLEMENTED avec le code CLEANING_NOT_IMPLEMENTED. Une méthode absente du
- * serveur répondrait aussi UNIMPLEMENTED, mais sans ce code : le test la repère.
+ * (ksp.cleaning.v1, plus ksp.common.v1.ObligationService) est exposée (ADR-054).
+ * - Lot A : CatalogService et CatalogAdminService répondent avec leurs cas d'usage (faux en mémoire).
+ * - Lot D : les RPC livrées exigent une connexion ; appelées sans utilisateur, elles répondent
+ *   AUTH_REQUIRED avant tout accès aux données.
+ * - Toute autre RPC répond UNIMPLEMENTED avec le code CLEANING_NOT_IMPLEMENTED. Une méthode absente du
+ *   serveur répondrait aussi UNIMPLEMENTED, mais sans ce code : le test la repère.
  */
+
+/** RPC branchées par le lot D (UC-NT-19 à 21, 34 à 37). */
+const LOT_D: Readonly<Record<string, readonly string[]>> = {
+  AgentService: [
+    'SubmitAgentApplication',
+    'GetMyAgentProfile',
+    'GetMyAvailability',
+    'SetMyAvailability',
+    'DeclareMyUnavailability',
+    'RemoveMyUnavailability',
+    'ListMyAssignments',
+    'AcceptAssignment',
+    'DeclineAssignment',
+  ],
+  AgentAdminService: [
+    'ListAgents',
+    'GetAgent',
+    'UpdateAgent',
+    'StartAgentReview',
+    'ApproveAgent',
+    'RejectAgent',
+    'SuspendAgent',
+    'ReactivateAgent',
+    'DeactivateAgent',
+    'GetAgentAvailability',
+    'SetAgentAvailability',
+    'DeclareAgentUnavailability',
+    'RemoveAgentUnavailability',
+    'ListTeams',
+    'CreateTeam',
+    'GetTeam',
+    'UpdateTeam',
+  ],
+  PlanningAdminService: [
+    'GetPlanning',
+    'ListUnassigned',
+    'CheckAssignment',
+    'CreateAssignments',
+    'UpdateAssignment',
+    'RemoveAssignment',
+  ],
+};
+const delivered = (service: string, rpc: string) => LOT_D[service]?.includes(rpc) ?? false;
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -61,7 +107,10 @@ function rpcsOf(pkg: PackageName): Array<[PackageName, string, string]> {
 const LOT_A_SERVICES = ['CatalogService', 'CatalogAdminService'];
 const RPCS = [...rpcsOf('cleaning'), ...rpcsOf('obligation')];
 const LOT_A = RPCS.filter(([, service]) => LOT_A_SERVICES.includes(service));
-const NOT_IMPLEMENTED = RPCS.filter(([, service]) => !LOT_A_SERVICES.includes(service));
+const DELIVERED = RPCS.filter(([, service, rpc]) => delivered(service, rpc));
+const NOT_IMPLEMENTED = RPCS.filter(
+  ([, service, rpc]) => !LOT_A_SERVICES.includes(service) && !delivered(service, rpc),
+);
 const camel = (name: string) => name[0]!.toLowerCase() + name.slice(1);
 
 const VILLA = {
@@ -120,6 +169,8 @@ describe('cleaning en gRPC', () => {
       providers: [
         GrpcContextInterceptor,
         { provide: CATALOG_USE_CASES, useValue: catalogUseCases(memory.deps()) },
+        // Dépendances vides : une RPC du lot D appelée sans utilisateur s'arrête au contrôle d'accès.
+        { provide: CLEANING_DEPS, useValue: {} },
       ],
     })
     class TestModule {}
@@ -151,6 +202,21 @@ describe('cleaning en gRPC', () => {
     expect(services.size).toBe(14);
     expect(CLEANING_GRPC_CONTROLLERS).toHaveLength(services.size);
     expect(LOT_A).toHaveLength(41);
+  });
+
+  it('les RPC du lot D sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    for (const [service, rpcs] of Object.entries(LOT_D)) {
+      for (const rpc of rpcs) expect(all).toContain(`${service}.${rpc}`);
+    }
+    expect(DELIVERED).toHaveLength(32);
+  });
+
+  it.each(DELIVERED)('%s : %s.%s est branchée et exige une connexion', async (pkg, service, rpc) => {
+    expect(await anonymous(() => call(pkg, service, rpc, {}))).toMatchObject({
+      kind: 'UNAUTHENTICATED',
+      code: 'AUTH_REQUIRED',
+    });
   });
 
   it.each(NOT_IMPLEMENTED)('%s : %s.%s répond UNIMPLEMENTED', async (pkg, service, rpc) => {

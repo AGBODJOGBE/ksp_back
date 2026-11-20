@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto';
+import { AppError } from '@ksp/platform';
+import { ConcurrentUpdateError } from '../agents/agent.ports';
+import {
+  type IdempotencyKeyRef,
+  type PlanningRepository,
+  ScheduleOverlapError,
+} from '../planning/planning.ports';
 import { DuplicateKeyError, type IdempotencyRecord, type IdempotencyStore } from '../ports';
-import { CleaningErrors } from './errors';
+import { CleaningErrors, cleaningErrors, planningAppError } from './errors';
 
 /**
  * Idempotence des créations et des validations (règle d'or n° 3, partie 15.3) : clé obligatoire,
@@ -61,4 +68,32 @@ export async function runIdempotent<T>(input: {
     if (concurrent === null) throw CleaningErrors.concurrentUpdate();
     return concurrent;
   }
+}
+
+// --- Agents et planification (lot D) ---------------------------------------------------------
+
+/**
+ * Requête idempotente (partie 15.3) : la même clé rejouée avec le même contenu rend la réponse du
+ * premier appel, sans refaire l'action ; avec un autre contenu, CLEANING_IDEMPOTENCY_KEY_REUSED. La
+ * réponse est enregistrée dans la transaction de l'action (PlanningTx.remember).
+ */
+export async function replayed<T>(
+  repository: Pick<PlanningRepository, 'idempotency'>,
+  ref: IdempotencyKeyRef,
+  requestHash: string,
+): Promise<T | null> {
+  const previous = await repository.idempotency(ref);
+  if (!previous) return null;
+  if (previous.requestHash !== requestHash) throw cleaningErrors.idempotencyKeyReused();
+  return previous.response as T;
+}
+
+/** Erreurs d'écriture du dépôt → erreurs du contrat ; les autres passent telles quelles. */
+export function writeError(error: unknown, agentIds: readonly string[] = []): unknown {
+  if (error instanceof AppError) return error;
+  if (error instanceof ScheduleOverlapError) {
+    return planningAppError({ code: 'CLEANING_SCHEDULE_CONFLICT', details: { agentIds: [...agentIds] } });
+  }
+  if (error instanceof ConcurrentUpdateError) return cleaningErrors.concurrentUpdate();
+  return error;
 }

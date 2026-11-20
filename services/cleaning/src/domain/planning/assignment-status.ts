@@ -46,14 +46,20 @@ export function isUpcoming(assignment: AssignmentState & { end: Date }, now: Dat
   return isInForce(assignment, now) && assignment.end > now;
 }
 
-/** Statut d'une affectation enregistrée : confirmée d'office pour un salarié, en attente pour un indépendant. */
+/**
+ * Statut d'une affectation enregistrée : confirmée d'office pour un salarié, en attente pour un
+ * indépendant. Échéance de réponse (décision du 20 novembre 2026) : maintenant + délai réglé, et
+ * au plus tard le début de la séance ou de la visite.
+ */
 export function initialAssignmentStatus(
   employmentKind: EmploymentKind,
   now: Date,
   responseHours: number,
+  targetStart: Date,
 ): AssignmentState {
   if (employmentKind === 'employee') return { status: 'confirmed', respondBefore: null };
-  return { status: 'pending_confirmation', respondBefore: new Date(now.getTime() + responseHours * HOUR_MS) };
+  const due = now.getTime() + responseHours * HOUR_MS;
+  return { status: 'pending_confirmation', respondBefore: new Date(Math.min(due, targetStart.getTime())) };
 }
 
 /** Acceptation ou refus de l'indépendant, seulement tant que l'affectation attend sa réponse. */

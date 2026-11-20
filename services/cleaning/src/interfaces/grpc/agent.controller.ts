@@ -1,53 +1,91 @@
 import { cleaningV1 } from '@ksp/contracts';
-import { Controller } from '@nestjs/common';
+import { Controller, Inject } from '@nestjs/common';
+import {
+  GetMyAgentProfileUseCase,
+  SubmitAgentApplicationUseCase,
+} from '../../application/agents/agent-registration.use-cases';
+import { AvailabilityUseCases } from '../../application/agents/availability.use-cases';
+import { CLEANING_DEPS, type CleaningDeps } from '../../application/deps';
+import { AgentAssignmentUseCases } from '../../application/planning/agent-assignments.use-cases';
+import { toAgent, toAvailability } from './agent-mappers';
 import { notImplemented } from './not-implemented';
+import { toAgentAssignmentPage, toAgentAssignmentView } from './planning-mappers';
 
 /**
  * Adaptateur gRPC d'AgentService — application agent : inscription, disponibilités, planning,
- * visites et séances (UC-NT-19 à 24). Métier v2 livré lot par lot (ADR-054) : chaque méthode pas
- * encore livrée répond NOT_IMPLEMENTED.
+ * visites et séances (UC-NT-19 à 24). Lot D livré : inscription, profil, disponibilités, mon
+ * planning, réponse aux affectations. Mon activité (séances réalisées) et le terrain (visites,
+ * séances) arrivent avec les lots C et E et répondent encore NOT_IMPLEMENTED.
  */
 @Controller()
 @cleaningV1.AgentServiceControllerMethods()
 export class AgentGrpcController implements cleaningV1.AgentServiceController {
-  submitAgentApplication(): Promise<cleaningV1.SubmitAgentApplicationResponse> {
-    return notImplemented('SubmitAgentApplication');
+  private readonly submit: SubmitAgentApplicationUseCase;
+  private readonly profile: GetMyAgentProfileUseCase;
+  private readonly availability: AvailabilityUseCases;
+  private readonly assignments: AgentAssignmentUseCases;
+
+  constructor(@Inject(CLEANING_DEPS) deps: CleaningDeps) {
+    this.submit = new SubmitAgentApplicationUseCase(deps);
+    this.profile = new GetMyAgentProfileUseCase(deps);
+    this.availability = new AvailabilityUseCases(deps);
+    this.assignments = new AgentAssignmentUseCases(deps);
   }
 
-  getMyAgentProfile(): Promise<cleaningV1.GetMyAgentProfileResponse> {
-    return notImplemented('GetMyAgentProfile');
+  async submitAgentApplication(
+    request: cleaningV1.SubmitAgentApplicationRequest,
+  ): Promise<cleaningV1.SubmitAgentApplicationResponse> {
+    return { agent: toAgent(await this.submit.execute(request)) };
+  }
+
+  async getMyAgentProfile(): Promise<cleaningV1.GetMyAgentProfileResponse> {
+    return { agent: toAgent(await this.profile.execute()) };
   }
 
   getMyActivity(): Promise<cleaningV1.GetMyActivityResponse> {
     return notImplemented('GetMyActivity');
   }
 
-  getMyAvailability(): Promise<cleaningV1.GetMyAvailabilityResponse> {
-    return notImplemented('GetMyAvailability');
+  async getMyAvailability(): Promise<cleaningV1.GetMyAvailabilityResponse> {
+    return { availability: toAvailability(await this.availability.getMine()) };
   }
 
-  setMyAvailability(): Promise<cleaningV1.SetMyAvailabilityResponse> {
-    return notImplemented('SetMyAvailability');
+  async setMyAvailability(
+    request: cleaningV1.SetMyAvailabilityRequest,
+  ): Promise<cleaningV1.SetMyAvailabilityResponse> {
+    return { availability: toAvailability(await this.availability.setMine(request)) };
   }
 
-  declareMyUnavailability(): Promise<cleaningV1.DeclareMyUnavailabilityResponse> {
-    return notImplemented('DeclareMyUnavailability');
+  async declareMyUnavailability(
+    request: cleaningV1.DeclareMyUnavailabilityRequest,
+  ): Promise<cleaningV1.DeclareMyUnavailabilityResponse> {
+    return { availability: toAvailability(await this.availability.declareMine(request)) };
   }
 
-  removeMyUnavailability(): Promise<cleaningV1.RemoveMyUnavailabilityResponse> {
-    return notImplemented('RemoveMyUnavailability');
+  async removeMyUnavailability(
+    request: cleaningV1.RemoveMyUnavailabilityRequest,
+  ): Promise<cleaningV1.RemoveMyUnavailabilityResponse> {
+    return { availability: toAvailability(await this.availability.removeMine(request.unavailabilityId)) };
   }
 
-  listMyAssignments(): Promise<cleaningV1.ListMyAssignmentsResponse> {
-    return notImplemented('ListMyAssignments');
+  async listMyAssignments(
+    request: cleaningV1.ListMyAssignmentsRequest,
+  ): Promise<cleaningV1.ListMyAssignmentsResponse> {
+    return toAgentAssignmentPage(await this.assignments.list(request));
   }
 
-  acceptAssignment(): Promise<cleaningV1.AcceptAssignmentResponse> {
-    return notImplemented('AcceptAssignment');
+  async acceptAssignment(
+    request: cleaningV1.AcceptAssignmentRequest,
+  ): Promise<cleaningV1.AcceptAssignmentResponse> {
+    const view = await this.assignments.respond({ ...request, answer: 'accept' });
+    return { agentAssignmentView: toAgentAssignmentView(view) };
   }
 
-  declineAssignment(): Promise<cleaningV1.DeclineAssignmentResponse> {
-    return notImplemented('DeclineAssignment');
+  async declineAssignment(
+    request: cleaningV1.DeclineAssignmentRequest,
+  ): Promise<cleaningV1.DeclineAssignmentResponse> {
+    const view = await this.assignments.respond({ ...request, answer: 'decline' });
+    return { agentAssignmentView: toAgentAssignmentView(view) };
   }
 
   getAgentVisit(): Promise<cleaningV1.GetAgentVisitResponse> {

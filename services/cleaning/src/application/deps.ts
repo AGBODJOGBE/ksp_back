@@ -1,3 +1,4 @@
+import { type PlanningRepository, type TravelTimes } from './planning/planning.ports';
 import {
   type CatalogSettingsReader,
   type CleaningTypeRepository,
@@ -10,6 +11,7 @@ import {
 } from './catalog/catalog.ports';
 import {
   type Clock,
+  type FieldCipher,
   type IdempotencyStore,
   type IdGenerator,
   type PeopleDirectory,
@@ -30,6 +32,11 @@ export interface CleaningDeps {
   wallet: WalletLedger;
   photos: PhotoStore;
   geocoder: ReverseGeocoder;
+  /** Lot D : agents, disponibilités, équipes et affectations. */
+  planning: PlanningRepository;
+  /** Temps de trajet entre lieux (geo, R-ZN-02). */
+  travel: TravelTimes;
+  cipher: FieldCipher;
   clock: Clock;
   ids: IdGenerator;
   /** Lot A : catalogue, zones, jours fériés, réglages lus par le simulateur. */

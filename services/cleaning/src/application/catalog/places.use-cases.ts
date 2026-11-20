@@ -121,7 +121,7 @@ export class PlaceCategoriesUseCases {
   }
 
   async create(input: CreateCategoryInput): Promise<PlaceCategory> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({
@@ -166,7 +166,7 @@ export class PlaceCategoriesUseCases {
   }
 
   async update(input: UpdateCategoryInput): Promise<PlaceCategory> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const before = await this.deps.places.getCategory(input.id);
     if (!before) throw CleaningErrors.placeCategoryNotFound();
     const now = this.deps.clock.now();
@@ -236,7 +236,7 @@ export class PlaceTypesUseCases {
   }
 
   async create(input: PlaceTypeInput & { idempotencyKey: string; code: string }): Promise<PlaceTypeView> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({
@@ -282,7 +282,7 @@ export class PlaceTypesUseCases {
   }
 
   async update(input: PlaceTypeInput & { id: string }): Promise<PlaceTypeView> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const before = await this.deps.places.getPlaceType(input.id);
     if (!before) throw CleaningErrors.placeTypeNotFound();
     const now = this.deps.clock.now();

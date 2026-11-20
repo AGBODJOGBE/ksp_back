@@ -122,9 +122,7 @@ describe('accès du back-office', () => {
 
   it('compte connecté et double authentification de moins de 12 h', () => {
     const fresh = { ...user, authTime: now / 1000 - 3600 };
-    expect(runWithContext({ correlationId: 'c', user: fresh }, () => requireStaff(now))).toEqual({
-      userId: 'u1',
-    });
+    expect(runWithContext({ correlationId: 'c', user: fresh }, () => requireStaff(now))).toBe('u1');
     const old = { ...user, authTime: now / 1000 - 13 * 3600 };
     expect(() => runWithContext({ correlationId: 'c', user: old }, () => requireStaff(now))).toThrow(
       expect.objectContaining({ code: 'AUTH_MFA_REQUIRED' }),

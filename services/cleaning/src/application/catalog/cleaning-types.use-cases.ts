@@ -75,7 +75,7 @@ export class CleaningTypesUseCases {
   }
 
   async create(input: CleaningTypeFields & { idempotencyKey: string; code: string }): Promise<CleaningType> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const now = this.deps.clock.now();
     const { idempotencyKey, ...body } = input;
     return runIdempotent({
@@ -121,7 +121,7 @@ export class CleaningTypesUseCases {
   async update(
     input: CleaningTypeFields & { id: string; active?: boolean | undefined },
   ): Promise<CleaningType> {
-    const { userId } = requireStaff();
+    const userId = requireStaff();
     const before = await this.deps.cleaningTypes.getCleaningType(input.id);
     if (!before) throw CleaningErrors.cleaningTypeNotFound();
     const now = this.deps.clock.now();
