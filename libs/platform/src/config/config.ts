@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { sharesKeyMaterial } from '../crypto/keyring';
 
 export class ConfigError extends Error {
   override readonly name = 'ConfigError';
@@ -38,6 +39,30 @@ export const baseServiceConfigSchema = z
   });
 
 export type BaseServiceConfig = z.infer<typeof baseServiceConfigSchema>;
+
+/**
+ * Refuse en production les secrets de développement du `.env.example` (ADR-050), à appeler dans le
+ * `superRefine` du schéma du service. Pour un trousseau de clés, une clé de développement recopiée sous
+ * un autre identifiant est refusée aussi.
+ */
+export function refuseDevelopmentSecrets(
+  cfg: { NODE_ENV: string } & Record<string, unknown>,
+  ctx: z.RefinementCtx,
+  devSecrets: Readonly<Record<string, string>>,
+): void {
+  if (cfg.NODE_ENV !== 'production') return;
+  for (const [name, devValue] of Object.entries(devSecrets)) {
+    const value = cfg[name];
+    if (typeof value !== 'string') continue;
+    if (value === devValue || sharesKeyMaterial(value, devValue)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [name],
+        message: 'Secret de développement refusé en production : secret propre fourni par le coffre.',
+      });
+    }
+  }
+}
 
 /**
  * Lit et valide la configuration. Le service refuse de démarrer si une variable manque ou est invalide :

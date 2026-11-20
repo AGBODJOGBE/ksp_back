@@ -1,4 +1,10 @@
-import { baseServiceConfigSchema, requireGrpcAddressesInProduction } from '@ksp/platform';
+import {
+  baseServiceConfigSchema,
+  fieldKeyringEnv,
+  refuseDevelopmentSecrets,
+  requireFieldKeysInProduction,
+  requireGrpcAddressesInProduction,
+} from '@ksp/platform';
 import { z } from 'zod';
 import { type MfaPolicy } from './domain/mfa/mfa-challenge';
 import { type OtpPolicy } from './domain/otp/otp-policy';
@@ -71,9 +77,10 @@ export const configSchema = baseServiceConfigSchema
     BACKOFFICE_IDLE_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(1800),
     /**
      * Clé AES-256-GCM des secrets de double authentification (32 octets en base64), fournie par le
-     * coffre à secrets. Obligatoire en production ; vide ailleurs : clé temporaire.
+     * coffre à secrets. Obligatoire en production ; vide ailleurs : clé temporaire. Rotation : liste
+     * `id:clé` séparée par des virgules, la première chiffre, les suivantes relisent (FieldCipher du kit).
      */
-    IDENTITY_MFA_ENCRYPTION_KEY: z.string().optional(),
+    IDENTITY_MFA_ENCRYPTION_KEY: fieldKeyringEnv('IDENTITY_MFA_ENCRYPTION_KEY'),
     /** Durée de vie du jeton de double authentification : 5 minutes. */
     MFA_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(300),
     /** Codes faux acceptés par jeton de double authentification ; au-delà, il est annulé. */
@@ -114,16 +121,9 @@ export const configSchema = baseServiceConfigSchema
   .superRefine((cfg, ctx) => {
     // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
     requireGrpcAddressesInProduction(cfg, ctx);
-    if (cfg.NODE_ENV !== 'production') return;
-    for (const [name, value] of Object.entries(DEV_SECRETS)) {
-      if (cfg[name as keyof typeof DEV_SECRETS] === value) {
-        ctx.addIssue({
-          code: 'custom',
-          path: [name],
-          message: 'Secret de développement refusé en production : secret propre fourni par le coffre.',
-        });
-      }
-    }
+    // Clé des secrets de double authentification : absente en production, le service ne démarre pas.
+    requireFieldKeysInProduction(cfg, ctx, ['IDENTITY_MFA_ENCRYPTION_KEY']);
+    refuseDevelopmentSecrets(cfg, ctx, DEV_SECRETS);
   });
 
 export type ServiceConfig = z.infer<typeof configSchema>;
