@@ -37,8 +37,13 @@ export const LISTENED_EVENTS = Object.keys(EVENT_RULES) as KspEventType[];
 /**
  * Versions de l'enveloppe lues par événement ; version 1 seule pour les autres. Le portefeuille
  * crédité est lu en versions 1 et 2 (RV-101) : wallet ne publiera plus que la version 2 une fois
- * tous ses consommateurs livrés ; tout message v1 est un message v2 valide.
+ * tous ses consommateurs livrés ; tout message v1 est un message v2 valide. Les factures sont lues
+ * en versions 1 et 2 (RV-98) : la facture mensuelle d'une organisation n'est publiée qu'en v2, et
+ * les règles ne lisent que les champs communs aux deux versions.
  */
 export const LISTENED_EVENT_VERSIONS: { readonly [T in KspEventType]?: readonly number[] } = {
   'wallet.prepaid.credited': [1, 2],
+  'billing.invoice.issued': [1, 2],
+  'billing.invoice.overdue': [1, 2],
+  'billing.invoice.paid': [1, 2],
 };
