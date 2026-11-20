@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.case.submitted.v1.schema.json",
+  "title": "recovery.case.submitted",
+  "description": "Dossier envoyé à KSP : mandat signé et frais de dossier payés, en attente de l'examen de recevabilité (partie 4). Écouté par notification (créancier, superviseur). Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.case.submitted",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["caseId", "caseNumber", "creditor", "kind", "amountDue", "source", "submittedAt"],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "kind": {
+      "enum": ["b2b", "b2c", "rent"],
+      "description": "Offre : entreprise, particulier ou loyers"
+    },
+    "amountDue": {
+      "$ref": "#/$defs/money"
+    },
+    "source": {
+      "enum": ["form", "import", "rental"]
+    },
+    "submittedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

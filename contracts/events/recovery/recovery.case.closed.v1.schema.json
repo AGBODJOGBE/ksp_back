@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.case.closed.v1.schema.json",
+  "title": "recovery.case.closed",
+  "description": "Dossier clôturé (R-PR-10) : solde des comptes fait. Attestation de solde produite pour un dossier payé. Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.case.closed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "caseId",
+    "caseNumber",
+    "creditor",
+    "kind",
+    "reason",
+    "totalCollected",
+    "settlementCertificateDocumentId",
+    "closedAt"
+  ],
+  "$defs": {
+    "moneyOrZero": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "kind": {
+      "enum": ["b2b", "b2c", "rent"],
+      "description": "Offre : entreprise, particulier ou loyers"
+    },
+    "reason": {
+      "enum": [
+        "paid",
+        "settlement_executed",
+        "dispute_upheld",
+        "abandoned_by_creditor",
+        "unrecoverable",
+        "prescribed"
+      ]
+    },
+    "totalCollected": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "settlementCertificateDocumentId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "closedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

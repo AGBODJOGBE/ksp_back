@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.case.rejected.v1.schema.json",
+  "title": "recovery.case.rejected",
+  "description": "Dossier irrecevable (4.4), ou classé faute de complément dans le délai (reason = incomplete) : frais de dossier remboursés au portefeuille, moins le forfait d'étude (à valider pour un dossier classé). Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.case.rejected",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["caseId", "caseNumber", "creditor", "reason", "refundedAmount", "rejectedAt"],
+  "$defs": {
+    "moneyOrZero": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "reason": {
+      "enum": ["prescribed", "illegal", "no_evidence", "debtor_unreachable", "other", "incomplete"]
+    },
+    "refundedAmount": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "rejectedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

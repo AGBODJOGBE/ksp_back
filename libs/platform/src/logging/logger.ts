@@ -11,6 +11,8 @@ export { maskSecretPaths };
 export const REDACTED_PATHS = [
   'req.headers.authorization',
   'req.headers.cookie',
+  // Session du débiteur sans compte (ADR-061).
+  'req.headers["x-debtor-session"]',
   // Cookie de renouvellement posé par la gateway.
   'res.headers["set-cookie"]',
   '*.password',

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.case.accepted.v1.schema.json",
+  "title": "recovery.case.accepted",
+  "description": "Dossier déclaré recevable (4.4) : il devient actif à l’étape de notification du mandat au débiteur. Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.case.accepted",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["caseId", "caseNumber", "creditor", "kind", "assignedAgentId", "score", "acceptedAt"],
+  "$defs": {
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "kind": {
+      "enum": ["b2b", "b2c", "rent"],
+      "description": "Offre : entreprise, particulier ou loyers"
+    },
+    "assignedAgentId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Chargé affecté, null si pas encore affecté"
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "acceptedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.payment.collected.v1.schema.json",
+  "title": "recovery.payment.collected",
+  "description": "Encaissement imputé sur un dossier (R-EN-03) : frais de procédure, puis intérêts et pénalités, puis principal. Commission calculée selon la règle figée dans le mandat (R-CO-01, 02) : retenue sur l'encaissement (deducted), ou à facturer au créancier pour un paiement reçu directement par lui (invoiced). Écouté par billing (facture mensuelle de commission) et notification. Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.payment.collected",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "caseId",
+    "caseNumber",
+    "creditor",
+    "kind",
+    "collectionId",
+    "source",
+    "gross",
+    "allocatedCosts",
+    "allocatedInterests",
+    "allocatedPrincipal",
+    "overpaid",
+    "commission",
+    "commissionSettlement",
+    "stage",
+    "amountDueAfter",
+    "receivedAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "moneyOrZero": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "kind": {
+      "enum": ["b2b", "b2c", "rent"],
+      "description": "Offre : entreprise, particulier ou loyers"
+    },
+    "collectionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "enum": ["payment_link", "offline_cash", "offline_transfer", "partner", "direct_to_creditor"]
+    },
+    "gross": {
+      "$ref": "#/$defs/money"
+    },
+    "allocatedCosts": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "allocatedInterests": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "allocatedPrincipal": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "overpaid": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "commission": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "commissionSettlement": {
+      "enum": ["deducted", "invoiced"]
+    },
+    "stage": {
+      "enum": ["notice", "payment_plan", "amicable", "formal_notice", "bailiff", "litigation"]
+    },
+    "amountDueAfter": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "receivedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

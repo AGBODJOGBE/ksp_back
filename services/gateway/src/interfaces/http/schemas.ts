@@ -7,6 +7,7 @@ import { documentBodies } from './document-schemas';
 import { fileBodies } from './file-schemas';
 import { accountBodies, organizationBodies } from './organization-schemas';
 import { paymentBodies } from './payment-schemas';
+import { recoveryBodies } from './recovery-schemas';
 import { walletBodies } from './wallet-schemas';
 
 /**
@@ -56,6 +57,7 @@ export const requestBodies = {
   ...walletBodies,
   ...fileBodies,
   ...documentBodies,
+  ...recoveryBodies,
 };
 
 /** Champ refusé et raison, sans reprendre la valeur envoyée (elle peut être un code ou un jeton). */

@@ -61,6 +61,16 @@ describe('journaux : adresses secrètes', () => {
     expect(JSON.stringify(request)).not.toContain(token);
   });
 
+  it('le jeton du lien d’un débiteur et sa session sont masqués (ADR-061)', () => {
+    const token = 'Dk4vQ0b4H1m0w2nY5p7r9t1v3x5z7B9D1F3H5J7L9Nq';
+    expect(maskSecretPaths(`/api/v1/recovery/debtor/access/${token}/code`)).toBe(
+      '/api/v1/recovery/debtor/access/[masqué]/code',
+    );
+    expect(maskSecretPaths('/api/v1/recovery/debtor/case')).toBe('/api/v1/recovery/debtor/case');
+    const line = written({ req: { headers: { 'x-debtor-session': token } } });
+    expect(line).not.toContain(token);
+  });
+
   it('adresse complète (attribut url.full des traces) : le jeton est masqué aussi', () => {
     const token = 'Zk3vQ0b4H1m0w2nY5p7r9t1v3x5z7B9D1F3H5J7L9Nq';
     expect(maskSecretPaths(`https://api.ksp.bj/api/v1/document/sign/${token}`)).toBe(

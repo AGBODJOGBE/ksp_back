@@ -25,6 +25,8 @@ import { NotificationHttpController } from '../src/interfaces/http/notification.
 import { OrganizationAdminHttpController } from '../src/interfaces/http/organizations-admin.controller';
 import { OrganizationHttpController } from '../src/interfaces/http/organizations.controller';
 import { PaymentHttpController } from '../src/interfaces/http/payment.controller';
+import { RecoveryAdminHttpController } from '../src/interfaces/http/recovery-admin.controller';
+import { RecoveryHttpController } from '../src/interfaces/http/recovery.controller';
 import { WalletHttpController } from '../src/interfaces/http/wallet.controller';
 import { expressPath } from '../src/interfaces/http/route.decorator';
 import { ROUTE_DEFINITION } from '../src/interfaces/http/route.guard';
@@ -35,6 +37,7 @@ import { type NotificationServer, startNotificationStub } from './support/notifi
 import { type DocumentServer, SIGNING_TOKEN, startDocumentStub } from './support/document-stub';
 import { type FileServer, startFileStub } from './support/file-stub';
 import { LINK_TOKEN, type PaymentServer, startPaymentStub } from './support/payment-stub';
+import { DEBTOR_TOKEN, type RecoveryServer, startRecoveryStub } from './support/recovery-stub';
 import { startWalletStub, type WalletServer } from './support/wallet-stub';
 import {
   type IdentityServer,
@@ -70,7 +73,7 @@ interface Operation extends Json {
   'x-ksp-mfa-max-age'?: number;
   'x-ksp-raw-body'?: boolean;
   'x-ksp-pending-deletion'?: boolean;
-  parameters?: { $ref?: string }[];
+  parameters?: { $ref?: string; name?: string; in?: string; required?: boolean; schema?: Json }[];
 }
 
 const doc = parse(
@@ -203,6 +206,8 @@ describe('contrat OpenAPI : manifeste de routage', () => {
       FileHttpController,
       WalletHttpController,
       DocumentHttpController,
+      RecoveryHttpController,
+      RecoveryAdminHttpController,
     ]) {
       expect(Reflect.getMetadata(PATH_METADATA, controller)).toBe('/');
       for (const handler of handlers(controller)) {
@@ -303,10 +308,12 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
   let file: FileServer;
   let wallet: WalletServer;
   let documents: DocumentServer;
+  let recovery: RecoveryServer;
   let app: NestExpressApplication;
   let token: string;
   let staffToken: string;
   let staffWithoutMfa: string;
+  let partnerToken: string;
   let ip = 0;
 
   beforeAll(async () => {
@@ -319,12 +326,14 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     file = await startFileStub(keys);
     documents = await startDocumentStub(keys);
     wallet = await startWalletStub(keys);
+    recovery = await startRecoveryStub(keys);
     app = await startGateway({
       paymentUrl: payment.url,
       notificationUrl: notification.url,
       fileUrl: file.url,
       walletUrl: wallet.url,
       documentUrl: documents.url,
+      recoveryUrl: recovery.url,
       identityUrl: identity.url,
       cleaningUrl: cleaning.url,
       billingUrl: billing.url,
@@ -350,6 +359,10 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
       });
     staffToken = await staff(true);
     staffWithoutMfa = await staff(false);
+    // Huissier partenaire du recouvrement (ADR-060, décision 13).
+    partnerToken = await keys.accessToken({
+      claims: { roles: [{ role: 'recovery_bailiff', scopeType: 'global' }] },
+    });
   }, 30_000);
 
   afterAll(async () => {
@@ -362,6 +375,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     await file?.close();
     await wallet?.close();
     await documents?.close();
+    await recovery?.close();
   });
 
   beforeEach(() => {
@@ -373,6 +387,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
     file.stub.reset();
     wallet.stub.reset();
     documents.stub.reset();
+    recovery.stub.reset();
   });
 
   const http = () => request(app.getHttpServer());
@@ -926,7 +941,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
    */
   function cleaningScenarios(): typeof scenarios {
     const ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001';
-    type Auth = 'customer' | 'staff' | 'staff_no_mfa' | 'none';
+    type Auth = 'customer' | 'staff' | 'staff_no_mfa' | 'partner' | 'none';
     const call = (operationId: string, options: { auth?: Auth; body?: unknown; key?: boolean } = {}) => {
       const { path, method, op } = operation(operationId);
       const backoffice = path.startsWith('/api/v1/admin/');
@@ -937,16 +952,46 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         .replace('{file}', ID)
         .replace('{unavailability}', ID)
         // Jeton d'un lien : de signature (document, ADR-044) ou de paiement (ADR-040).
-        .replace('{token}', path.startsWith('/api/v1/document/') ? SIGNING_TOKEN : LINK_TOKEN)
+        .replace(
+          '{token}',
+          path.startsWith('/api/v1/document/')
+            ? SIGNING_TOKEN
+            : path.startsWith('/api/v1/recovery/')
+              ? DEBTOR_TOKEN
+              : LINK_TOKEN,
+        )
+        // Recouvrement : ligne d'un import, année des jours fériés, objets d'un dossier.
+        .replace('{row}', '2')
+        .replace('{year}', '2027')
+        .replace('{notice}', ID)
+        .replace('{dispute}', ID)
+        .replace('{assignment}', ID)
         .replace('{type}', 'organization');
+      // Paramètres de requête obligatoires : la première valeur permise.
+      const query = (op.parameters ?? [])
+        .filter((p) => p.in === 'query' && p.required)
+        .map((p) => `${p.name}=${String((p.schema?.['enum'] as unknown[] | undefined)?.[0] ?? '1')}`)
+        .join('&');
       let req = from(
-        http()[method.toLowerCase() as 'get' | 'post' | 'put'](url),
+        http()[method.toLowerCase() as 'get' | 'post' | 'put'](query ? `${url}?${query}` : url),
         backoffice ? 'backoffice' : 'web',
       );
+      const partner = path.startsWith('/api/v1/recovery/partner/');
       const auth: Auth =
-        options.auth ?? (op['x-ksp-access'] === 'public' ? 'none' : backoffice ? 'staff' : 'customer');
-      const bearer = { customer: token, staff: staffToken, staff_no_mfa: staffWithoutMfa, none: null }[auth];
+        options.auth ??
+        (op['x-ksp-access'] === 'public' ? 'none' : backoffice ? 'staff' : partner ? 'partner' : 'customer');
+      const bearer = {
+        customer: token,
+        staff: staffToken,
+        staff_no_mfa: staffWithoutMfa,
+        partner: partnerToken,
+        none: null,
+      }[auth];
       if (bearer) req = req.set('Authorization', `Bearer ${bearer}`);
+      // Session du débiteur sans compte (ADR-061).
+      if ((op.parameters ?? []).some((p) => p.$ref?.endsWith('/DebtorSessionHeader'))) {
+        req = req.set('X-Debtor-Session', DEBTOR_TOKEN);
+      }
       const needsKey = (op.parameters ?? []).some((p) => p.$ref?.endsWith('/IdempotencyKey'));
       if (options.key ?? needsKey) req = req.set('Idempotency-Key', 'cle-0192f1c4-0001');
       const content = op.requestBody?.content['application/json'];
@@ -970,7 +1015,10 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         ({ path }) =>
           path.includes('/cleaning') ||
           path.includes('/billing') ||
-          (path.includes('/payment') && !path.includes('/webhooks/')) ||
+          // Préfixes du paiement seulement : les routes du recouvrement contiennent aussi « /payment ».
+          ((path.startsWith('/api/v1/payment/') || path.startsWith('/api/v1/admin/payment/')) &&
+            !path.includes('/webhooks/')) ||
+          path.includes('/recovery/') ||
           path.startsWith('/api/v1/file/') ||
           path.includes('/wallet') ||
           path.startsWith('/api/v1/document/') ||
@@ -1876,6 +1924,55 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
             'Authorization',
             `Bearer ${staffToken}`,
           ),
+      ],
+      // Recouvrement (ADR-060, ADR-061).
+      [
+        'débiteur sans session',
+        'recoveryGetDebtorCase',
+        401,
+        () => from(http().get('/api/v1/recovery/debtor/case')),
+      ],
+      [
+        'lien du débiteur mal formé',
+        'recoveryOpenDebtorAccess',
+        404,
+        () => from(http().get('/api/v1/recovery/debtor/access/court')),
+      ],
+      [
+        'code du débiteur faux',
+        'recoveryVerifyDebtorAccessCode',
+        400,
+        () => {
+          recovery.stub.on('verifyDebtorAccessCode', () =>
+            Promise.reject(
+              AppError.invalid('RECOVERY_DEBTOR_CODE_INVALID', 'Code incorrect.', { attemptsLeft: 4 }),
+            ),
+          );
+          return call('recoveryVerifyDebtorAccessCode');
+        },
+      ],
+      [
+        'route partenaire pour un client',
+        'recoveryListMyAssignments',
+        403,
+        () => call('recoveryListMyAssignments', { auth: 'customer' }),
+      ],
+      [
+        'back-office du recouvrement sans double authentification',
+        'recoveryAdminListCases',
+        403,
+        () => call('recoveryAdminListCases', { auth: 'staff_no_mfa' }),
+      ],
+      [
+        'recovery indisponible',
+        'recoveryGetMyCase',
+        503,
+        () => {
+          recovery.stub.on('getMyCase', () =>
+            Promise.reject(AppError.unavailable('RECOVERY_UNAVAILABLE', 'Indisponible.')),
+          );
+          return call('recoveryGetMyCase');
+        },
       ],
     ];
     return [...successes, ...documentErrors, ...errors];
