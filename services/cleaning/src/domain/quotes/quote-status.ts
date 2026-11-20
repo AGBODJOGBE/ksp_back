@@ -14,7 +14,8 @@ export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
 
 /**
  * Partie 15.2 : `draft` → `sent` → `accepted` / `declined` / `expired` / `superseded` ; `sent` →
- * `withdrawn` (nouvelle visite demandée par KSP, R-VI-07). Toute autre transition est refusée.
+ * `withdrawn` (nouvelle visite demandée par KSP, R-VI-07, ou demande annulée ou refusée). Toute
+ * autre transition est refusée.
  */
 const TRANSITIONS: Readonly<Record<QuoteStatus, readonly QuoteStatus[]>> = {
   draft: ['sent'],

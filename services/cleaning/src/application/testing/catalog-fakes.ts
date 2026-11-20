@@ -197,6 +197,13 @@ export class CatalogMemory {
       idempotency: {
         find: async (ref) => this.records.get(`${ref.actorId}|${ref.operation}|${ref.key}`) ?? null,
       },
+      // Lot C : remplacés par les faux du dossier (requests-fakes.ts) quand un test en a besoin.
+      cases: {} as CleaningDeps['cases'],
+      clientPlaces: {} as CleaningDeps['clientPlaces'],
+      caseSettings: {} as CleaningDeps['caseSettings'],
+      communeResolver: {} as CleaningDeps['communeResolver'],
+      balances: {} as CleaningDeps['balances'],
+      directPayments: {} as CleaningDeps['directPayments'],
     };
   }
 

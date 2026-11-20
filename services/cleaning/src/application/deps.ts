@@ -19,6 +19,14 @@ import {
   type ReverseGeocoder,
   type WalletLedger,
 } from './ports';
+// Lot C
+import { type DirectPayments, type PrepaidBalances } from './money/money.ports';
+import {
+  type CaseRepository,
+  type CaseSettingsReader,
+  type CommuneResolver,
+  type PlaceRepository,
+} from './requests/requests.ports';
 
 /** Jeton d'injection des dépendances des cas d'usage (racine de composition : app.module.ts). */
 export const CLEANING_DEPS = Symbol('CLEANING_DEPS');
@@ -49,4 +57,16 @@ export interface CleaningDeps {
   settings: CatalogSettingsReader;
   communes: CommuneDirectory;
   idempotency: IdempotencyStore;
+  // --- Lot C : lieux du client, demande, frais de visite, visite, constat, devis ---
+  /** Dossiers : demande, frais, visites, version retenue, devis, programme créé à l'acceptation. */
+  cases: CaseRepository;
+  /** « Mes lieux » (partie 3). */
+  clientPlaces: PlaceRepository;
+  caseSettings: CaseSettingsReader;
+  /** Commune par contour (geo.ResolveCommune, R-ZN-01). */
+  communeResolver: CommuneResolver;
+  /** Solde prépayé (wallet.GetPrepaidBalance). */
+  balances: PrepaidBalances;
+  /** Paiement direct par Mobile Money (payment.CreatePaymentRequest, R-WL-05). */
+  directPayments: DirectPayments;
 }
