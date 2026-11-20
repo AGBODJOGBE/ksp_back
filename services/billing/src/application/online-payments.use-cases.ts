@@ -1,5 +1,5 @@
 import { balance, type Invoice, type InvoicePayment, paidAmount, withOnlinePayment } from '../domain/invoice';
-import { invoiceReference } from './issuing.use-cases';
+import { paidEvent } from './monthly/invoice-events';
 import { type BillingDeps } from './ports';
 import { requireCaller } from './shared/access';
 import { BillingErrors } from './shared/errors';
@@ -120,18 +120,8 @@ export class RecordOnlineInvoicePaymentUseCase {
         payment,
         { eventId: input.eventId, consumer: `${PAYMENT_CONSUMER}.${input.eventType}` },
         (overdueCount) =>
-          becamePaid
-            ? [
-                {
-                  type: 'billing.invoice.paid',
-                  payload: {
-                    ...invoiceReference(updated),
-                    paidAt: (updated.paidAt ?? now).toISOString(),
-                    overdueCount,
-                  },
-                },
-              ]
-            : [],
+          // Lot F : version 2 pour une facture v2 (RV-98).
+          becamePaid ? [paidEvent(updated, updated.paidAt ?? now, overdueCount)] : [],
       );
       if (result === 'saved') return { outcome: 'recorded', excess };
       if (result === 'duplicate') return { outcome: 'duplicate', excess: 0 };

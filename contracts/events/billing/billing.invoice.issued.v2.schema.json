@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/billing/billing.invoice.issued.v2.schema.json",
+  "title": "billing.invoice.issued",
+  "description": "Facture émise, en attente de paiement jusqu'à l'échéance. Écouté par notification (espace client et e-mail avec la date limite). Version 2 (RV-98) : facture v2 sans contrat (séance, frais de visite, facture mensuelle d'organisation) ; `contractId` disparaît, `kind` devient obligatoire. Les factures v1 (contrats) restent publiées en version 1.",
+  "x-event-type": "billing.invoice.issued",
+  "x-event-version": 2,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "invoiceId",
+    "invoiceNumber",
+    "customerId",
+    "organizationId",
+    "source",
+    "periodStart",
+    "periodEnd",
+    "total",
+    "issuedAt",
+    "dueAt",
+    "kind"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    }
+  },
+  "properties": {
+    "invoiceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "invoiceNumber": {
+      "type": "string",
+      "pattern": "^FAC-[0-9]{4}-[0-9]{6}$"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "source": {
+      "enum": ["cleaning"],
+      "description": "Service métier à l'origine de l'objet facturé"
+    },
+    "periodStart": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Facture mensuelle : 1er du mois facturé à 00:00 (heure du Bénin)"
+    },
+    "periodEnd": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Borne exclusive : 1er du mois suivant à 00:00 (heure du Bénin)"
+    },
+    "total": {
+      "$ref": "#/$defs/money"
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "dueAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "kind": {
+      "enum": ["session", "visit_fee", "monthly"],
+      "description": "Facture de séance, reçu des frais de visite ou facture mensuelle d'organisation"
+    },
+    "status": {
+      "enum": ["pending_payment", "paid"],
+      "description": "paid pour une facture émise au paiement (séance, frais de visite : dueAt = issuedAt), ou facture mensuelle dont le total est nul ; pending_payment sinon ; absent : pending_payment"
+    }
+  }
+}

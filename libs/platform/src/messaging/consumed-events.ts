@@ -14,7 +14,14 @@ export const EVENT_CONSUMERS = {
   // Facture mensuelle des entreprises : séances réalisées et manquées, avec leur montant dû
   // (CDC Nettoyage v2, 15.5 et R-PE-01). Déclarés avant l'abonnement de billing (lot F) : publiés plus
   // tôt par cleaning, ils restent dans son outbox (mis de côté au bout de 24 h, rejouables), jamais perdus.
-  billing: ['cleaning.session.completed', 'cleaning.session.missed', 'payment.intent.succeeded'],
+  billing: [
+    'cleaning.session.completed',
+    'cleaning.session.missed',
+    'payment.intent.succeeded',
+    // Lot F (R-PE-04) : virement ou Mobile Money crédité au portefeuille pour une facture
+    // (forObject "billing_invoice"), débité aussitôt.
+    'wallet.prepaid.credited',
+  ],
   cleaning: [
     'billing.invoice.overdue',
     'billing.invoice.paid',

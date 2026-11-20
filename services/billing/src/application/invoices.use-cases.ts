@@ -9,7 +9,7 @@ import {
 } from '../domain/invoice';
 import { beninMidnight } from '../domain/contract';
 import { billingSettingsProblems, type BillingSettings } from '../domain/settings';
-import { invoiceReference } from './issuing.use-cases';
+import { paidEvent } from './monthly/invoice-events';
 import {
   type BillingDeps,
   type InvoiceFilter,
@@ -174,14 +174,8 @@ export class RecordInvoicePaymentUseCase {
     let saved: boolean;
     try {
       saved = await this.deps.invoices.recordPayment(updated, payment, (overdueCount) =>
-        updated.status === 'paid'
-          ? [
-              {
-                type: 'billing.invoice.paid',
-                payload: { ...invoiceReference(updated), paidAt: now.toISOString(), overdueCount },
-              },
-            ]
-          : [],
+        // Lot F : version 2 pour une facture v2 (RV-98).
+        updated.status === 'paid' ? [paidEvent(updated, now, overdueCount)] : [],
       );
     } catch (error) {
       // Unicité facture + clé : un envoi concurrent avec la même clé vient d'être enregistré.
@@ -265,14 +259,8 @@ export class PayMyInvoiceFromWalletUseCase {
       let saved = false;
       try {
         saved = await this.deps.invoices.recordPayment(updated, payment, (overdueCount) =>
-          updated.status === 'paid'
-            ? [
-                {
-                  type: 'billing.invoice.paid',
-                  payload: { ...invoiceReference(updated), paidAt: now.toISOString(), overdueCount },
-                },
-              ]
-            : [],
+          // Lot F : version 2 pour une facture v2 (RV-98).
+          updated.status === 'paid' ? [paidEvent(updated, now, overdueCount)] : [],
         );
       } catch {
         // Unicité facture + clé : un envoi concurrent de la même clé vient d'être enregistré.

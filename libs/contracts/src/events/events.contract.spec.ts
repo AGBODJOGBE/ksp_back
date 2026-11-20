@@ -1083,6 +1083,7 @@ describe('Contrats des événements cleaning (v2)', () => {
   });
 });
 
+/** Facture v1 (contrat) : événements en version 1. */
 const invoice = {
   invoiceId: uuid,
   invoiceNumber: 'FAC-2026-000042',
@@ -1093,16 +1094,39 @@ const invoice = {
   total: xof(160000),
 };
 
+/** Facture v2 (ici, mensuelle d'organisation) : événements en version 2, sans contrat (RV-98). */
+const monthlyInvoice = {
+  invoiceId: uuid,
+  invoiceNumber: 'FAC-2026-000042',
+  customerId: uuid,
+  organizationId: uuid,
+  source: 'cleaning' as const,
+  kind: 'monthly' as const,
+  total: xof(160000),
+};
+
 const billingExamples: { [K in BillingEventType]: BillingEventPayloads[K] } = {
   'billing.invoice.issued': {
-    ...invoice,
-    periodStart: '2026-11-05T08:00:00Z',
-    periodEnd: '2026-12-05T08:00:00Z',
-    issuedAt: '2026-12-05T08:00:00Z',
-    dueAt: '2026-12-15T08:00:00Z',
+    ...monthlyInvoice,
+    periodStart: '2026-10-31T23:00:00Z',
+    periodEnd: '2026-11-30T23:00:00Z',
+    issuedAt: '2026-11-30T23:00:00Z',
+    dueAt: '2026-12-10T23:00:00Z',
+    status: 'pending_payment',
   },
-  'billing.invoice.overdue': { ...invoice, dueAt: '2026-12-15T08:00:00Z', overdueCount: 1 },
-  'billing.invoice.paid': { ...invoice, paidAt: '2026-12-16T10:00:00Z', overdueCount: 0 },
+  'billing.invoice.overdue': {
+    ...monthlyInvoice,
+    dueAt: '2026-12-10T23:00:00Z',
+    overdueCount: 2,
+    holderOverdueCount: 2,
+  },
+  'billing.invoice.paid': {
+    ...monthlyInvoice,
+    paidAt: '2026-12-16T10:00:00Z',
+    overdueCount: 0,
+    holderOverdueCount: 0,
+    settledBy: 'payment',
+  },
   'billing.invoice.reminded': {
     invoiceId: uuid,
     invoiceNumber: 'FAC-2026-000042',
@@ -1150,14 +1174,58 @@ describe('Contrats des événements billing', () => {
     );
     expect(issued({ ...billingExamples['billing.invoice.issued'], kind: 'weekly' })).toBe(false);
     const overdue = ajv.compile(schemas.get('billing.invoice.overdue')!);
-    expect(
-      overdue({ ...billingExamples['billing.invoice.overdue'], kind: 'monthly', holderOverdueCount: 2 }),
-    ).toBe(true);
+    expect(overdue({ ...billingExamples['billing.invoice.overdue'], holderOverdueCount: 0 })).toBe(false);
     const paid = ajv.compile(schemas.get('billing.invoice.paid')!);
     for (const settledBy of ['payment', 'credit_note', 'cancellation']) {
-      expect(paid({ ...billingExamples['billing.invoice.paid'], kind: 'monthly', settledBy })).toBe(true);
+      expect(paid({ ...billingExamples['billing.invoice.paid'], settledBy })).toBe(true);
     }
     expect(paid({ ...billingExamples['billing.invoice.paid'], settledBy: 'refund' })).toBe(false);
+  });
+
+  it.each(['billing.invoice.issued', 'billing.invoice.overdue', 'billing.invoice.paid'] as const)(
+    '%s v2 (RV-98) : sans contrat, nature obligatoire',
+    (type) => {
+      const validate = ajv.compile(loadSchemaVersion('billing', type, 2));
+      const example = billingExamples[type];
+      expect(validate({ ...example, contractId: uuid })).toBe(false);
+      const { kind: _kind, ...withoutKind } = example as typeof example & { kind: string };
+      expect(validate(withoutKind)).toBe(false);
+    },
+  );
+
+  it('paid v2 : settledBy et impayés du titulaire obligatoires (RV-87)', () => {
+    const validate = ajv.compile(loadSchemaVersion('billing', 'billing.invoice.paid', 2));
+    const { settledBy: _settledBy, ...withoutSettlement } = billingExamples['billing.invoice.paid'];
+    expect(validate(withoutSettlement)).toBe(false);
+    const { holderOverdueCount: _count, ...withoutCount } = billingExamples['billing.invoice.paid'];
+    expect(validate(withoutCount)).toBe(false);
+  });
+
+  it('v1 inchangée : une facture de contrat reste publiée en version 1, avec son contrat', () => {
+    const issued = ajv.compile(loadSchemaVersion('billing', 'billing.invoice.issued', 1));
+    const v1Issued = {
+      ...invoice,
+      periodStart: '2026-11-05T08:00:00Z',
+      periodEnd: '2026-12-05T08:00:00Z',
+      issuedAt: '2026-12-05T08:00:00Z',
+      dueAt: '2026-12-15T08:00:00Z',
+    };
+    expect(issued(v1Issued)).toBe(true);
+    const { contractId: _contractId, ...withoutContract } = v1Issued;
+    expect(issued(withoutContract)).toBe(false);
+    const overdue = ajv.compile(loadSchemaVersion('billing', 'billing.invoice.overdue', 1));
+    expect(overdue({ ...invoice, dueAt: '2026-12-15T08:00:00Z', overdueCount: 1 })).toBe(true);
+    const paid = ajv.compile(loadSchemaVersion('billing', 'billing.invoice.paid', 1));
+    expect(paid({ ...invoice, paidAt: '2026-12-16T10:00:00Z', overdueCount: 0 })).toBe(true);
+    expect(
+      paid({
+        ...invoice,
+        paidAt: '2026-12-16T10:00:00Z',
+        overdueCount: 0,
+        kind: 'monthly',
+        settledBy: 'payment',
+      }),
+    ).toBe(true);
   });
 
   it('aucun événement billing n’accepte d’adresse, et les montants sont des entiers en XOF', () => {

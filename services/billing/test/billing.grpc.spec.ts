@@ -28,6 +28,8 @@ import {
   BillingGrpcController,
   ObligationGrpcController,
 } from '../src/interfaces/grpc/billing.controller';
+import { createMonthlyUseCases, MONTHLY_USE_CASES } from '../src/application/monthly/use-cases';
+import { FakeWalletCredits, InMemoryMonthly } from '../src/application/testing/monthly-fakes';
 
 /**
  * Bout en bout sur un vrai serveur gRPC (doublures en mémoire, sans base) : chargement du
@@ -62,7 +64,19 @@ describe('billing en gRPC', () => {
 
     @Module({
       controllers: [BillingGrpcController, BillingAdminGrpcController, ObligationGrpcController],
-      providers: [{ provide: BILLING_USE_CASES, useValue: useCases }, GrpcContextInterceptor],
+      providers: [
+        { provide: BILLING_USE_CASES, useValue: useCases },
+        // Lot F : avoirs du back-office (BillingAdminService).
+        {
+          provide: MONTHLY_USE_CASES,
+          useValue: createMonthlyUseCases({
+            ...world,
+            monthly: new InMemoryMonthly(world.invoices, world.recorder),
+            walletCredits: new FakeWalletCredits(),
+          }),
+        },
+        GrpcContextInterceptor,
+      ],
     })
     class TestModule {}
 

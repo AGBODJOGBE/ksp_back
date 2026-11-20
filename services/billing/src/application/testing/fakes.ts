@@ -2,6 +2,7 @@ import { AppError, type RoleClaim, runWithContext } from '@ksp/platform';
 import { type BillingContract, contractPeriods } from '../../domain/contract';
 import { formatInvoiceNumber, type Invoice, type InvoicePayment, invoiceYear } from '../../domain/invoice';
 import { type BillingSettings, DEFAULT_BILLING_SETTINGS } from '../../domain/settings';
+import { inOverdueScope } from '../../domain/monthly-invoice';
 import {
   type BillingDeps,
   type Clock,
@@ -60,7 +61,8 @@ export class InMemoryContracts implements ContractRepository {
         contract,
         invoicedIndexes: [...this.invoices.invoices.values()]
           .filter((invoice) => invoice.contractId === contract.id)
-          .map((invoice) => invoice.periodIndex),
+          .map((invoice) => invoice.periodIndex)
+          .filter((index): index is number => index !== null),
       }))
       .filter(({ contract, invoicedIndexes }) => invoicedIndexes.length < contractPeriods(contract).length);
   }
@@ -129,7 +131,7 @@ export class InMemoryInvoices implements InvoiceRepository {
     const stored = this.invoices.get(invoice.id);
     if (!stored || stored.status !== 'pending_payment' || stored.version !== invoice.version) return false;
     this.invoices.set(invoice.id, { ...stored, status: 'overdue', version: stored.version + 1 });
-    this.recorder.record(events(this.countOverdue(invoice.contractId)));
+    this.recorder.record(events(this.countOverdue(invoice)));
     return true;
   }
   async recordPayment(
@@ -140,7 +142,7 @@ export class InMemoryInvoices implements InvoiceRepository {
     const stored = this.invoices.get(invoice.id);
     if (!stored || stored.version !== invoice.version) return false;
     this.invoices.set(invoice.id, { ...invoice, version: invoice.version + 1 });
-    this.recorder.record(events(this.countOverdue(invoice.contractId)));
+    this.recorder.record(events(this.countOverdue(invoice)));
     return true;
   }
   readonly processed = new Set<string>();
@@ -156,8 +158,9 @@ export class InMemoryInvoices implements InvoiceRepository {
     this.processed.add(key);
     return 'saved' as const;
   }
-  private countOverdue(contractId: string) {
-    return [...this.invoices.values()].filter((i) => i.contractId === contractId && i.status === 'overdue')
+  // Lot F : impayées du contrat (v1) ou du titulaire (v2).
+  countOverdue(invoice: Invoice) {
+    return [...this.invoices.values()].filter((i) => inOverdueScope(invoice, i) && i.status === 'overdue')
       .length;
   }
 }

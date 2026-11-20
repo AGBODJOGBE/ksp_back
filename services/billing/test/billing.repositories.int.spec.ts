@@ -68,13 +68,13 @@ describeWithDatabase('dépôts billing (PostgreSQL)', () => {
       ids: new UuidV7Generator(),
     };
     useCases = createUseCases(deps);
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await prisma?.$disconnect();
     await pool?.query(`DROP SCHEMA ${schema} CASCADE`);
     await pool?.end();
-  });
+  }, 60_000);
 
   /** Contrat v1 écrit directement en base, comme un contrat enregistré avant la refonte. */
   const saveContract = (contract: BillingContract) =>

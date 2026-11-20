@@ -4,6 +4,9 @@ import { Controller, Inject } from '@nestjs/common';
 import { parsePage } from '../../application/shared/validation';
 import { BILLING_USE_CASES, type BillingUseCases } from '../../application/use-cases';
 import { presentInvoice, presentSettings } from './presenters';
+// Lot F : avoirs.
+import { MONTHLY_USE_CASES, type MonthlyBillingUseCases } from '../../application/monthly/use-cases';
+import { parseLines, presentCreditNoteResult } from './monthly-presenters';
 
 /** Méthodes du contrat v2 (CDC Nettoyage v2) pas encore livrées : réponse NOT_IMPLEMENTED. */
 function notImplemented(method: string): Promise<never> {
@@ -74,7 +77,11 @@ export class BillingGrpcController implements billingV1.BillingServiceController
 @Controller()
 @billingV1.BillingAdminServiceControllerMethods()
 export class BillingAdminGrpcController implements billingV1.BillingAdminServiceController {
-  constructor(@Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases) {}
+  constructor(
+    @Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases,
+    // Lot F : avoirs saisis par la finance.
+    @Inject(MONTHLY_USE_CASES) private readonly monthly: MonthlyBillingUseCases,
+  ) {}
 
   async listInvoices(request: billingV1.ListInvoicesRequest): Promise<billingV1.ListInvoicesResponse> {
     const page = await this.useCases.listInvoices.execute({
@@ -119,8 +126,17 @@ export class BillingAdminGrpcController implements billingV1.BillingAdminService
     return { settings: presentSettings(saved) };
   }
 
-  issueAdminCreditNote(): Promise<billingV1.IssueAdminCreditNoteResponse> {
-    return notImplemented('IssueAdminCreditNote');
+  // Lot F (R-PE-07).
+  async issueAdminCreditNote(
+    request: billingV1.IssueAdminCreditNoteRequest,
+  ): Promise<billingV1.IssueAdminCreditNoteResponse> {
+    const result = await this.monthly.issueAdminCreditNote.execute({
+      idempotencyKey: request.idempotencyKey,
+      invoiceId: request.invoiceId,
+      lines: parseLines(request.lines),
+      reason: request.reason,
+    });
+    return presentCreditNoteResult(result);
   }
 
   listCreditNotes(): Promise<billingV1.ListCreditNotesResponse> {
@@ -179,16 +195,31 @@ export class WalletDebitCheckGrpcController implements billingV1.WalletDebitChec
 
 /**
  * InvoiceIssuanceService (v2) : émission des factures de séance, des reçus de frais de visite et des
- * avoirs, réservée à cleaning. Pas encore livré : réponse NOT_IMPLEMENTED.
+ * avoirs, réservée à cleaning. IssueInvoice pas encore livré (lot E) : réponse NOT_IMPLEMENTED.
  */
 @Controller()
 @billingV1.InvoiceIssuanceServiceControllerMethods()
 export class InvoiceIssuanceGrpcController implements billingV1.InvoiceIssuanceServiceController {
+  // Lot F : avoirs demandés par cleaning.
+  constructor(@Inject(MONTHLY_USE_CASES) private readonly monthly: MonthlyBillingUseCases) {}
+
   issueInvoice(): Promise<billingV1.IssueInvoiceResponse> {
     return notImplemented('IssueInvoice');
   }
 
-  issueCreditNote(): Promise<billingV1.IssueCreditNoteResponse> {
-    return notImplemented('IssueCreditNote');
+  // Lot F (R-PE-07, R-RC-03).
+  async issueCreditNote(
+    request: billingV1.IssueCreditNoteRequest,
+  ): Promise<billingV1.IssueCreditNoteResponse> {
+    const result = await this.monthly.issueCreditNote.execute({
+      idempotencyKey: request.idempotencyKey,
+      invoiceId: request.invoiceId,
+      lines: parseLines(request.lines),
+      reason: request.reason,
+      source: request.sourceObject?.objectType
+        ? { objectType: request.sourceObject.objectType, objectId: request.sourceObject.objectId }
+        : null,
+    });
+    return presentCreditNoteResult(result);
   }
 }
