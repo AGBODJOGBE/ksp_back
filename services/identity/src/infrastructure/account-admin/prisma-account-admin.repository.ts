@@ -1,4 +1,4 @@
-import { appendToOutbox, createEnvelope, type SqlExecutor } from '@ksp/platform';
+import { appendToOutbox, createEnvelope, phoneLookupForms, type SqlExecutor } from '@ksp/platform';
 import { Injectable } from '@nestjs/common';
 import {
   type AccountAdminRepository,
@@ -75,7 +75,9 @@ export class PrismaAccountAdminRepository implements AccountAdminRepository {
     const filters: Prisma.UserWhereInput[] = [{ status: { not: 'deleted' } }];
     if (search.cursor) filters.push({ id: { lt: search.cursor } });
     const { query } = search;
-    if (query.kind === 'phone') filters.push({ phones: { some: { phoneE164: query.e164 } } });
+    if (query.kind === 'phone') {
+      filters.push({ phones: { some: { phoneE164: { in: phoneLookupForms(query.e164) } } } });
+    }
     if (query.kind === 'name') {
       for (const word of query.words) {
         filters.push({

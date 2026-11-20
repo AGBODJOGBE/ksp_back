@@ -147,6 +147,14 @@ describeWithDatabase('PrismaLoginRepository (PostgreSQL)', () => {
     expect(consumed.rows).toEqual([{ consumed_at: null }]);
   });
 
+  it('retrouve un compte encore enregistré sous l’ancienne forme béninoise à 8 chiffres (ADR-063)', async () => {
+    const { account } = await repository.completePhoneLogin(plan(await sentChallenge(), null, base));
+    await pool.query(`UPDATE user_phones SET phone_e164 = '+22997000045' WHERE user_id = $1`, [account.id]);
+    expect((await repository.findByPhone(PHONE))?.id).toBe(account.id);
+    expect((await repository.findByPhone('+22997000045'))?.id).toBe(account.id);
+    expect(await repository.findByPhone('+2290197000046')).toBeNull();
+  });
+
   it('lit plusieurs comptes par leurs identifiants (GetUsersByIds), en omettant les inconnus', async () => {
     const { account } = await repository.completePhoneLogin(plan(await sentChallenge(), null, base));
     expect(await repository.findByIds([account.id, '0192f1c4-7a2b-7c3d-8e4f-ffffffffffff'])).toEqual([

@@ -1,4 +1,5 @@
 import { createHmac, hkdfSync } from 'node:crypto';
+import { tryNormalizePhone } from '../phone/phone';
 import { fieldKeyringFromConfig, type FieldKeyring } from './keyring';
 
 /** Valeur impossible à normaliser (téléphone hors E.164, e-mail sans @…). */
@@ -6,10 +7,7 @@ export class BlindIndexInputError extends Error {
   override readonly name = 'BlindIndexInputError';
 }
 
-const E164 = /^\+[1-9]\d{6,14}$/;
 const PURPOSE = /^[a-z0-9_]{1,50}$/;
-/** Ancien plan béninois : +229 suivi de 8 chiffres exactement. */
-const BENIN_EIGHT_DIGITS = /^\+229\d{8}$/;
 /**
  * Étiquette de dérivation (HKDF-SHA256) de la clé HMAC : même si un service configurait par erreur la
  * même clé pour `FieldCipher` et `BlindIndex`, la clé AES et la clé HMAC resteraient distinctes.
@@ -81,12 +79,11 @@ export class BlindIndex {
  * Bénin (ADR-063, validé le 2026-11-20) : la numérotation est passée à 10 chiffres fin 2024 en
  * ajoutant `01` devant les 8 chiffres ; un numéro `+229` à 8 chiffres devient donc `+229 01` suivi des
  * 8 chiffres, et les deux formes d'un même numéro donnent la même empreinte. Les autres pays sont inchangés.
+ * Règle portée par `tryNormalizePhone` (`@ksp/platform/phone`), seule fonction commune aux services.
  */
 export function normalizePhone(value: string): string {
-  let phone = value.normalize('NFKC').replace(/[\s.\-()]/g, '');
-  if (phone.startsWith('00')) phone = `+${phone.slice(2)}`;
-  if (!E164.test(phone)) throw new BlindIndexInputError('Téléphone attendu au format E.164 (+229…).');
-  if (BENIN_EIGHT_DIGITS.test(phone)) phone = `+22901${phone.slice(4)}`;
+  const phone = tryNormalizePhone(value);
+  if (phone === null) throw new BlindIndexInputError('Téléphone attendu au format E.164 (+229…).');
   return phone;
 }
 

@@ -54,13 +54,33 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ['@nestjs/*', '@prisma/*', 'amqplib', '@grpc/*', '@ksp/platform', '@ksp/contracts'],
+              group: ['@nestjs/*', '@prisma/*', 'amqplib', '@grpc/*', '@ksp/contracts'],
+              message: 'Le domaine reste pur : aucune dépendance technique.',
+            },
+            {
+              // Seule exception : `@ksp/platform/phone`, module pur sans dépendance (ADR-063).
+              regex: '^@ksp/platform(?!/phone$)(/.*)?$',
               message: 'Le domaine reste pur : aucune dépendance technique.',
             },
             {
               group: ['**/infrastructure/**', '**/interfaces/**', '**/application/**'],
               message: "Le domaine ne dépend d'aucune autre couche.",
             },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // `@ksp/platform/phone` est importé par le domaine : le module reste sans aucune dépendance (ADR-063).
+    files: ['libs/platform/src/phone/**/*.ts'],
+    ignores: ['**/*.spec.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { regex: '.*', message: 'Module importé par le domaine des services : aucune dépendance.' },
           ],
         },
       ],
