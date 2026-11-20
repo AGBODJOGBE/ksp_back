@@ -35,4 +35,5 @@ export * from './messaging/rabbitmq/dead-letters';
 export * from './messaging/rabbitmq/publisher';
 export * from './messaging/rabbitmq/topology';
 export * from './messaging/sql-stores';
+export * from './phone/phone';
 export * from './telemetry/telemetry';

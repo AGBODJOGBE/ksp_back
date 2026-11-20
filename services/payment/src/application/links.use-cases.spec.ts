@@ -85,6 +85,11 @@ describe('liens de paiement (cas d’usage, ADR-040)', () => {
       expect([...links().hashes.keys()][0]).toMatch(/^[0-9a-f]{64}$/);
     });
 
+    it('range un ancien numéro béninois à 8 chiffres du payeur à 10 chiffres (ADR-063)', async () => {
+      const { view } = await create({ payerPhone: '+22997000045' });
+      expect(view.link).toMatchObject({ payerPhone: '+2290197000045' });
+    });
+
     it('rejeu de la même clé : même lien, même jeton ; clé réutilisée pour un autre objet : 409', async () => {
       const first = await create();
       const again = await create();

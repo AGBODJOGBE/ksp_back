@@ -1,3 +1,4 @@
+import { phoneLookupForms } from '@ksp/platform';
 import {
   collectionEntries,
   type LedgerTransaction,
@@ -9,12 +10,12 @@ import {
   sameCollection,
 } from '../domain/ledger';
 import {
-  BENIN_PHONE,
   isSettled,
   markSubmitted,
   maskPhone,
   type Operator,
   OPERATORS,
+  parseBeninPhone,
   settle,
   type WalletPayout,
   WALLET_PAYOUT_STATUSES,
@@ -23,6 +24,7 @@ import {
   type LedgerOverview,
   type PageRequest,
   type PageResult,
+  type PhoneFingerprints,
   type StatementLine,
   type WalletDeps,
   type WalletSummary,
@@ -140,11 +142,15 @@ export class RecordCollectionUseCase {
 /**
  * Même bénéficiaire qu'une demande enregistrée (rejeu) : par l'empreinte du numéro complet ; pour un
  * reversement antérieur à l'empreinte, par le numéro complet tant qu'il est gardé, sinon par le
- * numéro masqué (seul indice restant).
+ * numéro masqué (seul indice restant). Une demande enregistrée avant la règle commune (ADR-063) peut
+ * porter l'ancienne forme béninoise à 8 chiffres du même numéro : chaque forme est essayée.
  */
-function samePhone(existing: WalletPayout, phone: string, fingerprint: string): boolean {
-  if (existing.beneficiaryPhoneHash) return existing.beneficiaryPhoneHash === fingerprint;
-  if (existing.beneficiaryPhone) return existing.beneficiaryPhone === phone;
+function samePhone(existing: WalletPayout, phone: string, fingerprints: PhoneFingerprints): boolean {
+  const forms = phoneLookupForms(phone);
+  if (existing.beneficiaryPhoneHash) {
+    return forms.some((form) => fingerprints.of(form) === existing.beneficiaryPhoneHash);
+  }
+  if (existing.beneficiaryPhone) return forms.includes(existing.beneficiaryPhone);
   return existing.beneficiaryPhoneMasked === maskPhone(phone);
 }
 
@@ -198,8 +204,8 @@ export class RequestPayoutUseCase {
     }
     const holder = requireHolder('holder', input.holder);
     const amount = requireXof('amount', input.amount);
-    const phone = input.beneficiary?.phone ?? '';
-    if (!BENIN_PHONE.test(phone)) {
+    const phone = parseBeninPhone(input.beneficiary?.phone ?? '');
+    if (phone === null) {
       throw WalletErrors.invalid(
         'beneficiary.phone',
         'Numéro béninois au format international attendu (+229…).',
@@ -215,7 +221,7 @@ export class RequestPayoutUseCase {
         existing.holder.id === holder.id &&
         existing.amount === amount &&
         existing.beneficiaryOperator === operator &&
-        samePhone(existing, phone, fingerprint);
+        samePhone(existing, phone, this.deps.fingerprints);
       if (!same) throw WalletErrors.keyReused();
       const payout = await trySubmit(this.deps, existing);
       return { payout, wallet: await this.deps.ledger.summary(holder), created: false };

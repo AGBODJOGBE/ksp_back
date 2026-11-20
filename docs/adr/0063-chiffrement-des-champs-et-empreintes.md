@@ -94,6 +94,22 @@ recherche sont du code technique, comme la vérification des jetons ou l'outbox.
   les ajoutent au `.env.example` et à `DEV_SECRETS`, et chiffrent avec un contexte propre à chaque champ.
 - Une colonne chiffrée ne se trie ni ne se filtre par fragment : seules les recherches exactes (par
   empreinte) sont possibles.
+- Complément du 2026-11-20 (numéros du Bénin dans tous les services) : la règle vit dans
+  `tryNormalizePhone` (null au lieu d'une erreur) et `phoneLookupForms` (forme normalisée puis ancienne
+  forme à 8 chiffres), module pur exporté par `@ksp/platform` et par `@ksp/platform/phone`, seule
+  entrée du kit permise dans le domaine des services ; `normalizePhone` s'appuie dessus. Elle
+  s'applique à tout téléphone reçu : `identity` (code de connexion, connexion, recherche au back-office,
+  `roles:grant`), `notification` (destinataire), `document` (signataire sans compte, variables des
+  modèles), `payment` (payeur d'un lien, bénéficiaire d'un reversement), `wallet` (bénéficiaire d'un
+  reversement) et `recovery` (import). Les lignes enregistrées sous l'ancienne forme restent retrouvées
+  (`phoneLookupForms`) ; dans `identity`, le script `phones:normalize` les réécrit, sans jamais créer de
+  doublon. La gateway et le contrat OpenAPI sont inchangés : les deux formes y sont acceptées.
+  Garde-fous : ESLint n'ouvre au domaine que le sous-chemin `@ksp/platform/phone` (le reste du kit y
+  reste interdit), et ce module n'importe rien lui-même ; une demande de code enregistrée avant la
+  règle crée le compte sous la forme normalisée. Après chaque déploiement, lancer
+  `phones:normalize` en simulation et arbitrer les conflits listés (comptes créés sous les deux
+  formes avant la règle). Si d'autres règles de valeur partagées apparaissent, elles iront dans une
+  bibliothèque pure dédiée plutôt que dans de nouvelles exceptions du kit.
 
 ## À valider
 

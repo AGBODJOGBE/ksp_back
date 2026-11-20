@@ -58,6 +58,12 @@ describe('destinataire', () => {
     expect(PhoneNumber.parse('+33612345678')?.masked()).toBe('+336******78');
   });
 
+  it('envoie un numéro béninois à 8 chiffres à sa forme à 10 chiffres (ADR-063)', () => {
+    expect(PhoneNumber.parse('+22997000045')?.e164).toBe('+2290197000045');
+    expect(PhoneNumber.parse('+2290197000045')?.e164).toBe('+2290197000045');
+    expect(PhoneNumber.parse('+22890000045')?.e164).toBe('+22890000045');
+  });
+
   it.each(['', '0197000045', '+229', '+229abc0000045'])('refuse le numéro %p', (value) => {
     expect(PhoneNumber.parse(value)).toBeNull();
   });

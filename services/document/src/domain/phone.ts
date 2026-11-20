@@ -1,9 +1,11 @@
-const E164 = /^\+[1-9][0-9]{6,14}$/;
+import { tryNormalizePhone } from '@ksp/platform/phone';
 
-/** Numéro E.164 sans espace, ou null s'il est mal formé. */
+/**
+ * Numéro E.164 sans espace, ou null s'il est mal formé. Normalisation commune du kit (ADR-063) : un
+ * numéro béninois `+229` à 8 chiffres devient `+229 01` suivi des 8 chiffres.
+ */
 export function parsePhone(value: string | null | undefined): string | null {
-  const compact = (value ?? '').replace(/\s+/g, '');
-  return E164.test(compact) ? compact : null;
+  return tryNormalizePhone(value);
 }
 
 /**

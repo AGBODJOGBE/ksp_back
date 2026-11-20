@@ -1,3 +1,4 @@
+import { tryNormalizePhone } from '@ksp/platform';
 import {
   isCalendarDate,
   isLinkSubjectType,
@@ -29,7 +30,7 @@ import {
 import { PaymentSync } from './sync';
 
 const HOUR_MS = 3_600_000;
-/** Téléphone du payeur, facultatif : E.164. */
+/** Téléphone du payeur, facultatif : E.164, au moins 8 chiffres après le « + ». */
 const E164 = /^\+[1-9]\d{7,14}$/;
 
 /** Lien et ce qui en découle : statut, essais de paiement, jeton et adresse publique. */
@@ -153,8 +154,9 @@ export class CreatePaymentLinkUseCase {
       throw PaymentErrors.invalid('expiresAt', 'Expiration attendue entre 1 heure et 180 jours.');
     }
     const payerName = optionalText('payerName', input.payerName, 120);
-    const payerPhone = input.payerPhone ? input.payerPhone : null;
-    if (payerPhone !== null && !E164.test(payerPhone)) {
+    // Normalisation commune du kit (ADR-063) : +229 suivi de 8 chiffres devient +229 01 suivi des 8.
+    const payerPhone = input.payerPhone ? tryNormalizePhone(input.payerPhone) : null;
+    if (input.payerPhone && (payerPhone === null || !E164.test(payerPhone))) {
       throw PaymentErrors.invalid('payerPhone', 'Numéro au format international attendu (+229…).');
     }
 

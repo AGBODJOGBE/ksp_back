@@ -1,3 +1,4 @@
+import { tryNormalizePhone } from '@ksp/platform/phone';
 import { type Holder } from './ledger';
 
 /**
@@ -24,8 +25,17 @@ export const WALLET_PAYOUT_STATUSES: readonly WalletPayoutStatus[] = [
 export type Operator = 'mtn' | 'moov' | 'celtiis';
 export const OPERATORS: readonly Operator[] = ['mtn', 'moov', 'celtiis'];
 
-/** Numéro béninois E.164 : +229 suivi de 8 chiffres (ancien plan) ou de 10 (depuis 2024). */
-export const BENIN_PHONE = /^\+229(\d{8}|\d{10})$/;
+/** Numéro béninois E.164 du plan à 10 chiffres : +229 suivi de 10 chiffres. */
+const BENIN_PHONE = /^\+229\d{10}$/;
+
+/**
+ * Numéro béninois E.164, ou null. Normalisation commune du kit (ADR-063) : un ancien numéro `+229`
+ * à 8 chiffres devient `+229 01` suivi des 8 chiffres, seule forme encore joignable.
+ */
+export function parseBeninPhone(value: string): string | null {
+  const phone = tryNormalizePhone(value);
+  return phone !== null && BENIN_PHONE.test(phone) ? phone : null;
+}
 
 export interface WalletPayout {
   id: string;

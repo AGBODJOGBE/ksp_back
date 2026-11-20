@@ -143,4 +143,19 @@ describeWithDatabase('PrismaOtpChallengeRepository (PostgreSQL)', () => {
     ]);
     expect(failedRow.rows).toEqual([{ send_failed_at: at(40), sent_at: null }]);
   });
+
+  it('compte aussi les envois enregistrés sous l’ancienne forme béninoise à 8 chiffres (ADR-063)', async () => {
+    const now = new Date('2026-10-17T12:00:00Z');
+    const event = { userId: null, purpose: 'login' as const, channel: 'sms' as const, targetMasked: 'x' };
+    const legacy = challenge(phone, now);
+    const neighbour = challenge(PhoneNumber.parse('+2290197000046')!, now);
+    for (const c of [legacy, neighbour]) {
+      await repository.create(c);
+      await repository.markSent(c.id, 'sms', now, event);
+    }
+    // Demandes écrites avant la règle commune : cible à 8 chiffres.
+    await pool.query(`UPDATE otp_challenges SET target = '+22997000045' WHERE id = $1`, [legacy.id]);
+    await pool.query(`UPDATE otp_challenges SET target = '+22997000046' WHERE id = $1`, [neighbour.id]);
+    expect(await repository.sentAtSince(phone, new Date(0))).toEqual([now]);
+  });
 });

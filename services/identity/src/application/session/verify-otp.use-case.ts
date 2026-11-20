@@ -4,6 +4,7 @@ import { AppError } from '@ksp/platform';
 import { type OtpPolicy } from '../../domain/otp/otp-policy';
 import { challengeState } from '../../domain/otp/otp-verification';
 import { type ClientKind, type SessionPolicy } from '../../domain/session/session-policy';
+import { PhoneNumber } from '../../domain/user/phone-number';
 import { mfaErrors } from '../mfa/mfa-errors';
 import { type MfaRequired, type OpenMfaChallenge } from '../mfa/open-mfa-challenge';
 import { type OtpChallengeRepository, type OtpHasher } from '../otp/otp.ports';
@@ -91,7 +92,11 @@ export class VerifyOtpUseCase {
       throw latestState === 'exhausted' ? exhausted() : expired();
     }
 
-    const account = await this.accounts.findByPhone(challenge.target);
+    // Demande enregistrée avant la règle commune (ADR-063) : sa cible est ramenée à la forme normalisée,
+    // pour qu'un compte créé par elle ne soit jamais rangé sous l'ancienne forme béninoise à 8 chiffres
+    // (deux comptes possibles pour un même numéro, la contrainte d'unicité ne voyant pas le lien).
+    const target = PhoneNumber.parse(challenge.target)?.e164 ?? challenge.target;
+    const account = await this.accounts.findByPhone(target);
     if (!this.hasher.matches(challenge.id, input.code, challenge.codeHash)) {
       await this.recordFailure(account?.id ?? null, 'otp_invalid', input);
       if (attempts >= this.otpPolicy.maxAttempts) throw exhausted();
@@ -110,7 +115,7 @@ export class VerifyOtpUseCase {
     }
 
     if (input.clientKind === 'backoffice') return this.startMfa(input, challenge.id, account, now);
-    const session = await this.openSession(input, challenge.id, challenge.target, account, now, true);
+    const session = await this.openSession(input, challenge.id, target, account, now, true);
     return { status: 'authenticated', session };
   }
 

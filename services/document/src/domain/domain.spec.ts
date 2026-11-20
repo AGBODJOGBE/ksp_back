@@ -32,6 +32,10 @@ describe('mise en forme', () => {
     expect(formatDocumentNumber('PAC', 2026, 42)).toBe('PAC-2026-000042');
     expect(parsePhone('+229 01 97 00 00 45')).toBe('+2290197000045');
     expect(parsePhone('0197000045')).toBeNull();
+    // Bénin à 8 chiffres : préfixe 01 ajouté (ADR-063) ; 10 chiffres et autres pays inchangés.
+    expect(parsePhone('+22997000045')).toBe('+2290197000045');
+    expect(parsePhone('+2290197000045')).toBe('+2290197000045');
+    expect(parsePhone('+33612345678')).toBe('+33612345678');
     expect(maskPhone('+2290197000045')).toBe('+229********45');
     expect(parseEmail(' Awa@Exemple.BJ ')).toBe('awa@exemple.bj');
     expect(parseEmail('awa@')).toBeNull();
@@ -94,6 +98,22 @@ describe('modèles', () => {
     expect(invalid).toEqual({
       ok: false,
       fields: expect.arrayContaining(['claim.principal', 'fees.successFeePercent', '(racine)']) as unknown,
+    });
+
+    // Téléphones : règle commune du kit (ADR-063), illisible refusé.
+    const phones = entry.prepare({
+      ...valid,
+      creditor: { ...valid.creditor, phoneE164: '+22997000045' },
+      debtor: { ...valid.debtor, phoneE164: '+33612345678' },
+    });
+    expect(phones.ok).toBe(true);
+    if (!phones.ok) return;
+    const printed = JSON.stringify(phones.document.build(context));
+    expect(printed).toContain('+2290197000045');
+    expect(printed).toContain('+33612345678');
+    expect(entry.prepare({ ...valid, debtor: { name: 'K', phoneE164: '97000045' } })).toEqual({
+      ok: false,
+      fields: ['debtor.phoneE164'],
     });
   });
 

@@ -32,6 +32,8 @@ describe('téléphones du Bénin', () => {
     expect(normalizeBeninPhone('0197000001')).toBe('+2290197000001');
     expect(normalizeBeninPhone('+229 02 97 00 00 01')).toBeNull();
     expect(normalizeBeninPhone('12345')).toBeNull();
+    expect(normalizeBeninPhone('+22997000001')).toBe('+2290197000001');
+    expect(normalizeBeninPhone('+33612345678')).toBeNull();
   });
 });
 

@@ -141,6 +141,19 @@ describe('RequestOtpUseCase (UC-ID-01, demande de code)', () => {
     await expect(useCase.execute({ ...request, phone: '+33612345678' })).resolves.toBeDefined();
   });
 
+  it('range un ancien numéro béninois à 8 chiffres sous sa forme à 10 chiffres (ADR-063)', async () => {
+    const { useCase, challenges } = setup();
+    const result = await useCase.execute({ ...request, phone: '+229 97 00 00 45' });
+    expect(result.maskedTarget).toBe('+229********45');
+    expect(challenges.rows.get(result.challengeId)!.target.e164).toBe('+2290197000045');
+  });
+
+  it('les deux formes d’un numéro béninois partagent les mêmes limites d’envoi', async () => {
+    const { useCase } = setup();
+    await useCase.execute({ ...request, phone: '+22997000045' });
+    await expectAppError(useCase.execute(request), 'IDENTITY_OTP_RATE_LIMITED');
+  });
+
   it('bloque le 6ᵉ envoi de l’heure', async () => {
     const { useCase, advance } = setup();
     for (let i = 0; i < 5; i += 1) {

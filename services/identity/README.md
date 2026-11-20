@@ -39,6 +39,22 @@ Rôles du back-office (migration `0004_roles_and_mfa`) : `super_admin`, `support
 `recovery_agent`. À la connexion suivante au back-office, l'application d'authentification est
 configurée, puis exigée à chaque connexion.
 
+## Numéros béninois à 8 chiffres (ADR-063)
+
+Tout numéro reçu passe par la normalisation commune du kit (`tryNormalizePhone`) : un numéro
+`+229` suivi de 8 chiffres devient `+229 01` suivi des 8 chiffres, les autres sont inchangés. Les
+deux formes d'un même numéro donnent donc le même compte ; une ligne encore enregistrée sous
+l'ancienne forme reste retrouvée. Pour réécrire ces lignes :
+
+```bash
+pnpm --filter @ksp/identity-service build
+pnpm --filter @ksp/identity-service phones:normalize           # simulation
+pnpm --filter @ksp/identity-service phones:normalize --apply   # réécriture
+```
+
+Relancer la commande ne réécrit rien de plus. Une réécriture qui créerait un doublon est refusée
+et listée (code de sortie 1) ; les numéros du rapport sont masqués.
+
 ## E-mail du profil (ADR-026)
 
 L'utilisateur connecté déclare ou change son e-mail (`ChangeEmail`, route

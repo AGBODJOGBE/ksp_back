@@ -1,4 +1,4 @@
-import { appendToOutbox, createEnvelope, type SqlExecutor } from '@ksp/platform';
+import { appendToOutbox, createEnvelope, phoneLookupForms, type SqlExecutor } from '@ksp/platform';
 import { Injectable } from '@nestjs/common';
 import {
   type Account,
@@ -78,11 +78,19 @@ export function deletionObstacles(value: unknown): DeletionObstacle[] {
 export class PrismaLoginRepository implements AccountRepository, LoginRepository, UserDirectory {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Compte d'un numéro, sous sa forme normalisée ou, pour un numéro béninois, sous l'ancienne forme à
+   * 8 chiffres pas encore réécrite (`phones:normalize`) ; la forme normalisée l'emporte.
+   */
   async findByPhone(phoneE164: string): Promise<Account | null> {
-    const phone = await this.prisma.userPhone.findUnique({
-      where: { phoneE164 },
-      select: { user: { select: ACCOUNT_SELECT } },
+    const forms = phoneLookupForms(phoneE164);
+    const phones = await this.prisma.userPhone.findMany({
+      where: { phoneE164: { in: forms } },
+      select: { phoneE164: true, user: { select: ACCOUNT_SELECT } },
     });
+    const phone = forms
+      .map((form) => phones.find((candidate) => candidate.phoneE164 === form))
+      .find((candidate) => candidate !== undefined);
     return phone ? toAccount(phone.user) : null;
   }
 

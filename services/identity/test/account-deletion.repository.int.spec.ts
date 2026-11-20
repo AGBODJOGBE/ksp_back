@@ -175,6 +175,12 @@ describeWithDatabase('PrismaAccountDeletionRepository (PostgreSQL)', () => {
 
   it('anonymisation : données effacées, numéro libre, appartenances retirées, événements ; une seule fois', async () => {
     await addOrganization([USER, OTHER]);
+    // Demande de code enregistrée avant la règle commune, sous l'ancienne forme à 8 chiffres (ADR-063).
+    await pool.query(
+      `INSERT INTO otp_challenges (id, target, channel, purpose, code_hash, expires_at)
+       VALUES ('0192f1c4-7a2b-7c3d-8e4f-0000000000c2', '+22997000045', 'whatsapp', 'login', 'h', $1)`,
+      [now],
+    );
     await deletions.requestDeletion({ userId: USER, requestedAt: now, scheduledFor });
     expect(await deletions.anonymize(USER, now)).toBe(false);
     const due = new Date(scheduledFor.getTime() + 1000);
@@ -194,7 +200,10 @@ describeWithDatabase('PrismaAccountDeletionRepository (PostgreSQL)', () => {
       anonymized_at: due,
     });
     expect((await pool.query('SELECT 1 FROM user_phones WHERE user_id = $1', [USER])).rowCount).toBe(0);
-    expect((await pool.query('SELECT 1 FROM otp_challenges WHERE target = $1', [PHONE])).rowCount).toBe(0);
+    expect(
+      (await pool.query('SELECT 1 FROM otp_challenges WHERE target IN ($1, $2)', [PHONE, '+22997000045']))
+        .rowCount,
+    ).toBe(0);
     expect((await pool.query('SELECT 1 FROM sessions WHERE user_id = $1', [USER])).rowCount).toBe(0);
     expect(
       (await pool.query('SELECT ip, user_agent FROM login_events WHERE user_id = $1', [USER])).rows,

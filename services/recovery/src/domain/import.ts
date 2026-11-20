@@ -1,3 +1,4 @@
+import { tryNormalizePhone } from '@ksp/platform/phone';
 import { isLocalDay, type LocalDay } from './calendar';
 import { type ClaimNature } from './eligibility';
 
@@ -112,24 +113,23 @@ const NATURES: ReadonlySet<string> = new Set([
   'other',
 ]);
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/**
+ * Numéro béninois du plan à 10 chiffres issu d'un ancien numéro : +229 01 suivi de 8 chiffres.
+ * Mobiles et fixes ont tous reçu le préfixe 01 le 30/11/2024 (ADR-063).
+ */
+const BENIN_TEN_DIGITS = /^\+22901\d{8}$/;
 
 /**
  * Téléphone du Bénin au format E.164, plan à 10 chiffres : +229 01 suivi de 8 chiffres. Un ancien
- * numéro à 8 chiffres est converti. Espaces, points, tirets et préfixe 00229 tolérés. Null si le
- * numéro est invalide.
+ * numéro à 8 chiffres est converti par la règle commune du kit (ADR-063). Espaces, points, tirets et
+ * préfixe 00229 tolérés ; un numéro sans indicatif est lu comme béninois. Null si le numéro est
+ * invalide ou étranger.
  */
 export function normalizeBeninPhone(raw: string): string | null {
   const compact = raw.replace(/[\s.\-()]/g, '');
-  const digits = compact.startsWith('+229')
-    ? compact.slice(4)
-    : compact.startsWith('00229')
-      ? compact.slice(5)
-      : compact;
-  // Depuis le passage à 10 chiffres (30 novembre 2024), un ancien numéro à 8 chiffres se compose
-  // précédé de 01 : il est rangé sous sa forme actuelle, la seule joignable (à confirmer pour les fixes).
-  if (/^\d{8}$/.test(digits)) return `+22901${digits}`;
-  if (/^01\d{8}$/.test(digits)) return `+229${digits}`;
-  return null;
+  const international = /^(01)?\d{8}$/.test(compact) ? `+229${compact}` : compact;
+  const phone = tryNormalizePhone(international);
+  return phone !== null && BENIN_TEN_DIGITS.test(phone) ? phone : null;
 }
 
 /** Montant entier en FCFA ; les séparateurs de milliers (espaces, insécables compris, et points) sont tolérés. */

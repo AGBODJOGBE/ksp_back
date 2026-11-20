@@ -64,6 +64,12 @@ describe('FindAccountByPhoneUseCase (recherche de compte au back-office)', () =>
     expect(JSON.stringify(match)).not.toContain('awa@example.com');
   });
 
+  it('cherche un ancien numéro béninois à 8 chiffres sous sa forme à 10 chiffres (ADR-063)', async () => {
+    const { lookup, lookups } = useCase();
+    await asStaff(['cleaning_admin'], () => lookup.execute({ phone: '+22997000045' }));
+    expect(lookups).toEqual(['+2290197000045']);
+  });
+
   it('super_admin a la même portée ; double authentification exigée ; autres rôles refusés', async () => {
     const { lookup, lookups } = useCase();
     const find = () => lookup.execute({ phone: '+2290197000045' });

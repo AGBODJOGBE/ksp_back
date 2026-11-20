@@ -185,6 +185,30 @@ describe('portefeuille (cas d’usage, ADR-042)', () => {
       expect(stored.beneficiaryPhoneHash).not.toContain('0197000045');
     });
 
+    it('ancien numéro béninois à 8 chiffres : transmis à 10 chiffres, même demande au rejeu (ADR-063)', async () => {
+      const legacy = { ...BENEFICIARY, phone: '+22997000045' };
+      const { payout } = await requestPayout({ beneficiary: legacy });
+      expect(executor().requests[0]!.beneficiary.phone).toBe('+2290197000045');
+      expect((await requestPayout()).payout.id).toBe(payout.id);
+      // Empreinte enregistrée avant la règle, sur l'ancienne forme : toujours reconnue au rejeu.
+      const stored = store().payoutRows.get(payout.id)!;
+      stored.beneficiaryPhoneHash = setup.deps.fingerprints.of('+22997000045');
+      expect((await requestPayout({ beneficiary: legacy })).payout.id).toBe(payout.id);
+      expect((await requestPayout()).payout.id).toBe(payout.id);
+      // Un autre numéro, sous l'une ou l'autre forme, reste une autre demande.
+      for (const phone of ['+2290197000046', '+22997000046']) {
+        const reused = await rejection(requestPayout({ beneficiary: { ...BENEFICIARY, phone } }));
+        expect(reused.code).toBe('WALLET_IDEMPOTENCY_KEY_REUSED');
+      }
+      // Reversement antérieur à l'empreinte, numéro complet encore gardé sous l'ancienne forme.
+      Object.assign(stored, { beneficiaryPhoneHash: null, beneficiaryPhone: '+22997000045' });
+      expect((await requestPayout()).payout.id).toBe(payout.id);
+      expect(
+        (await rejection(requestPayout({ beneficiary: { ...BENEFICIARY, phone: '+22997000046' } }))).code,
+      ).toBe('WALLET_IDEMPOTENCY_KEY_REUSED');
+      expect(executor().requests).toHaveLength(1);
+    });
+
     it('jamais au-delà du solde disponible', async () => {
       const error = await rejection(requestPayout({ amount: { amount: 21876, currency: 'XOF' } }));
       expect(error.code).toBe('WALLET_INSUFFICIENT_BALANCE');

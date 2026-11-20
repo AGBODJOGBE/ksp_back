@@ -18,6 +18,7 @@ module.exports = {
   // Les bibliothèques internes sont chargées depuis leurs sources : pas besoin de les compiler pour tester.
   moduleNameMapper: {
     '^@ksp/platform/telemetry$': '<rootDir>/../../libs/platform/src/telemetry/telemetry',
+    '^@ksp/platform/phone$': '<rootDir>/../../libs/platform/src/phone/phone',
     '^@ksp/(contracts|platform)$': '<rootDir>/../../libs/$1/src',
   },
   collectCoverageFrom: [

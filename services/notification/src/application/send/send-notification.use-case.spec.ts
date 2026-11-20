@@ -79,6 +79,14 @@ describe('SendNotificationUseCase — envoi accepté', () => {
     expect(JSON.stringify(notifications.rows)).not.toContain('0197000045');
   });
 
+  it('envoie à un ancien numéro béninois à 8 chiffres sous sa forme à 10 chiffres (ADR-063)', async () => {
+    const whatsapp = new FakeProvider('whatsapp', [{ accepted: true, providerMessageId: 'wamid.1' }]);
+    const { notifications, useCase } = setup([whatsapp]);
+    await useCase.execute(otp({ recipient: { userId: '', phoneE164: '+22997000045', email: '' } }));
+    expect(whatsapp.sent[0]).toMatchObject({ phoneE164: '+2290197000045' });
+    expect(notifications.rows[0]).toMatchObject({ targetMasked: '+229********45' });
+  });
+
   it('utilise WhatsApp quand le canal n’est pas précisé, et le français par défaut', async () => {
     const { providers, useCase } = setup();
     await expect(

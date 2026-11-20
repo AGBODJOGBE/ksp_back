@@ -2,6 +2,7 @@
  * Doublure en mémoire de l'administration des comptes (ADR-043), adossée aux rôles en mémoire :
  * mêmes règles que le dépôt réel (transition conditionnelle, dernier super administrateur, audit).
  */
+import { phoneLookupForms } from '@ksp/platform';
 import { type RoleDefinition } from '../../domain/role/role';
 import {
   type AccountAdminRepository,
@@ -58,7 +59,9 @@ export class InMemoryAccountAdmin implements AccountAdminRepository {
     const matches = [...this.accounts.values()]
       .filter((account) => account.status !== 'deleted')
       .filter((account) => !search.cursor || account.id < search.cursor)
-      .filter((account) => query.kind !== 'phone' || account.phoneE164 === query.e164)
+      .filter(
+        (account) => query.kind !== 'phone' || phoneLookupForms(query.e164).includes(account.phoneE164 ?? ''),
+      )
       .filter(
         (account) =>
           query.kind !== 'name' ||

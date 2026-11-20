@@ -56,6 +56,13 @@ describe('gateway : routes identity de bout en bout (serveur gRPC identity simul
     req.set('Authorization', `Bearer ${token}`).set('X-Forwarded-For', nextIp());
 
   describe('demande de code (UC-GW-01)', () => {
+    it('accepte les deux formes d’un numéro béninois ; identity les normalise (ADR-063)', async () => {
+      for (const phone of ['+22997000045', '+2290197000045']) {
+        await mobile(http.post(OTP)).send({ phone }).expect(200);
+        expect(identity.stub.last('requestOtp')?.request['phoneE164']).toBe(phone);
+      }
+    });
+
     it('traduit la requÃªte en gRPC et transmet le contexte du client', async () => {
       const ip = nextIp();
       const res = await http

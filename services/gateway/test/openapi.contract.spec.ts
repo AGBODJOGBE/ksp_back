@@ -286,6 +286,12 @@ describe('contrat OpenAPI : corps des requêtes', () => {
     const phone = (contractSchema('PhoneE164')['pattern'] as string) ?? '';
     expect(phone).toBe('^\\+[1-9][0-9]{6,14}$');
     expect(requestBodies.requestOtp.safeParse({ phone: '+22901' }).success).toBe(false);
+    // Bénin (ADR-063) : l'ancienne forme à 8 chiffres et la forme à 10 chiffres restent acceptées.
+    for (const value of ['+22997000045', '+2290197000045']) {
+      expect(new RegExp(phone).test(value)).toBe(true);
+      expect(requestBodies.requestOtp.safeParse({ phone: value }).success).toBe(true);
+      expect(requestBodies.findAccountByPhone.safeParse({ phone: value }).success).toBe(true);
+    }
     expect(requestBodies.verifyOtp.safeParse({ challengeId: 'x', code: '482913' }).success).toBe(false);
     expect(
       requestBodies.verifyOtp.safeParse({ challengeId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0f', code: '48a' })

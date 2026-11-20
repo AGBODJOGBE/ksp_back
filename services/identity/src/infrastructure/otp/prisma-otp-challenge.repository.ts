@@ -1,4 +1,4 @@
-import { appendToOutbox, createEnvelope, type SqlExecutor } from '@ksp/platform';
+import { appendToOutbox, createEnvelope, phoneLookupForms, type SqlExecutor } from '@ksp/platform';
 import { Injectable } from '@nestjs/common';
 import { type OtpChallengeRepository, type OtpRequestedEvent } from '../../application/otp/otp.ports';
 import { type OtpChallenge, type OtpChannel } from '../../domain/otp/otp-challenge';
@@ -13,7 +13,7 @@ export class PrismaOtpChallengeRepository implements OtpChallengeRepository {
 
   async sentAtSince(target: PhoneNumber, since: Date): Promise<Date[]> {
     const rows = await this.prisma.otpChallenge.findMany({
-      where: { target: target.e164, sentAt: { gte: since } },
+      where: { target: { in: phoneLookupForms(target.e164) }, sentAt: { gte: since } },
       select: { sentAt: true },
     });
     return rows.map((row) => row.sentAt as Date);

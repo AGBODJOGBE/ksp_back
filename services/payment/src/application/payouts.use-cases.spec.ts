@@ -72,6 +72,24 @@ describe('reversements (cas d’usage, ADR-041)', () => {
       expect(operator.details).toEqual({ field: 'beneficiary.operator' });
     });
 
+    it('verse à un ancien numéro béninois à 8 chiffres sous sa forme à 10 chiffres (ADR-063)', async () => {
+      const legacy = { phone: '+22997000045', operator: 'mtn', name: 'SARL Bénin Immo' };
+      const { payout } = await requestPayout({ beneficiary: legacy });
+      expect(payout.beneficiary.phone).toBe('+2290197000045');
+      // Rejeu avec l'autre forme du même numéro : même demande.
+      expect((await requestPayout()).payout.id).toBe(payout.id);
+      // Demande enregistrée avant la règle, sous l'ancienne forme : toujours reconnue au rejeu.
+      const row = payouts().rows.get(payout.id)!;
+      payouts().rows.set(payout.id, { ...row, beneficiary: { ...row.beneficiary, phone: '+22997000045' } });
+      expect((await requestPayout()).payout.id).toBe(payout.id);
+      // Un autre numéro, sous l'une ou l'autre forme, reste une autre demande.
+      for (const phone of ['+2290197000046', '+22997000046', '+2290297000045']) {
+        const reused = await rejection(requestPayout({ beneficiary: { ...legacy, phone } }));
+        expect(reused.code).toBe('PAYMENT_IDEMPOTENCY_KEY_REUSED');
+      }
+      expect(payouts().rows.size).toBe(1);
+    });
+
     it('la finance confirme le virement : payment.payout.completed, sans numéro ni nom', async () => {
       const { payout } = await requestPayout();
       const confirm = () =>
