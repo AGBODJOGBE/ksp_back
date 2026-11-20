@@ -249,6 +249,8 @@ describe('RefreshSessionUseCase (sessions du back-office)', () => {
       mfa: false,
       amr: ['otp'],
     });
+    // Pas de permissions du personnel dans une session des sites et applications.
+    expect(issued[0]).not.toHaveProperty('perms');
   });
 
   it('échéance fixe de 12 heures, rôles relus, mfa et auth_time de la double authentification', async () => {
@@ -256,6 +258,8 @@ describe('RefreshSessionUseCase (sessions du back-office)', () => {
     backofficeSession();
     const openedAt = new Date('2026-10-19T12:00:00Z');
     roles.assign('u-1', 'cleaning_supervisor');
+    // Permissions cochées après l'ouverture : relues au renouvellement (R-RB-05).
+    roles.permissionsOf.set('cleaning_supervisor', ['cleaning.request.process']);
     advance(20 * MINUTE);
     const renewed = await refresh.execute('rt-bo');
 
@@ -269,6 +273,7 @@ describe('RefreshSessionUseCase (sessions du back-office)', () => {
         { role: 'customer', scopeType: 'personal' },
         { role: 'cleaning_supervisor', scopeType: 'domain', scopeId: 'cleaning' },
       ],
+      perms: ['cleaning.request.process'],
     });
   });
 

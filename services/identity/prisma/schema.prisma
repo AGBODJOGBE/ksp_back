@@ -210,12 +210,15 @@ enum RoleScopeType {
   domain
   org
   personal
+  /// Attribution limitée à des communes (CDC Nettoyage v2, R-RB-03 ; ADR-057).
+  zone
 }
 
-/// Rôles déclarés par les services. Catalogue initial du back-office écrit par la migration 0004.
+/// Rôles du back-office (ADR-057) : livrés par défaut par un service (RegisterCatalog, jamais écrasés
+/// ensuite) ou créés par le super administrateur. Un rôle ne se supprime jamais : il se désactive.
 model Role {
   id               String        @id @db.Uuid
-  /// Service qui déclare le rôle.
+  /// Service qui déclare le rôle ; "identity" pour un rôle créé au back-office.
   service          String
   code             String        @unique
   scopeType        RoleScopeType @map("scope_type")
@@ -224,10 +227,61 @@ model Role {
   backofficeAccess Boolean       @default(false) @map("backoffice_access")
   description      String
   createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Nom affiché ; vide : le code.
+  name             String?
+  /// Son retrait révoque immédiatement les sessions de la personne (R-RB-05).
+  sensitive        Boolean       @default(false)
+  /// "default" (livré par un service) ou "custom" (créé au back-office) : contrainte en base.
+  origin           String        @default("default")
+  /// Vide pour un rôle livré par défaut.
+  createdBy        String?       @map("created_by") @db.Uuid
+  updatedAt        DateTime?     @map("updated_at") @db.Timestamptz(3)
+  updatedBy        String?       @map("updated_by") @db.Uuid
+  deactivatedAt    DateTime?     @map("deactivated_at") @db.Timestamptz(3)
+  deactivatedBy    String?       @map("deactivated_by") @db.Uuid
 
   assignments RoleAssignment[]
+  permissions RolePermission[]
 
   @@map("roles")
+}
+
+/// Permissions déclarées par le code des services (R-RB-01). Une permission qui n'est plus déclarée
+/// est retirée (retired_at), jamais effacée : les rôles qui la cochaient la montrent retirée.
+model Permission {
+  /// <service>.<ressource>.<action>.
+  code         String    @id
+  service      String
+  description  String
+  registeredAt DateTime  @map("registered_at") @db.Timestamptz(3)
+  retiredAt    DateTime? @map("retired_at") @db.Timestamptz(3)
+
+  roles RolePermission[]
+
+  @@index([service])
+  @@map("permissions")
+}
+
+/// Permissions cochées d'un rôle (R-RB-02).
+model RolePermission {
+  roleId         String @map("role_id") @db.Uuid
+  permissionCode String @map("permission_code")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionCode], references: [code], onDelete: Restrict)
+
+  @@id([roleId, permissionCode])
+  @@index([permissionCode])
+  @@map("role_permissions")
+}
+
+/// Dernière version de catalogue enregistrée par chaque service : une version déjà vue est sans effet.
+model CatalogRegistration {
+  service      String   @id
+  version      Int
+  registeredAt DateTime @map("registered_at") @db.Timestamptz(3)
+
+  @@map("catalog_registrations")
 }
 
 /// Qui a quel rôle, et où. Une attribution retirée garde sa ligne (revoked_at) pour l'historique.
@@ -246,6 +300,8 @@ model RoleAssignment {
   revokedAt    DateTime?     @map("revoked_at") @db.Timestamptz(3)
   revokedBy    String?       @map("revoked_by") @db.Uuid
   revokeReason String?       @map("revoke_reason")
+  /// Portée zone : clés de commune (geo), triées ; vide pour une autre portée (contrainte en base).
+  zoneKeys     String[]      @default([]) @map("zone_keys")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)

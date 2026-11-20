@@ -354,6 +354,7 @@ describe('portefeuille (cas d’usage, ADR-042)', () => {
           { account: 'ksp:payouts_in_transit', balance: 0 },
           { account: 'ksp:prepaid_funds', balance: 0 },
           { account: 'ksp:service_revenue', balance: 0 },
+          { account: 'ksp:prepaid_withdrawals_in_transit', balance: 0 },
         ],
         owedToHolders: 21875,
         holdersCount: 1,

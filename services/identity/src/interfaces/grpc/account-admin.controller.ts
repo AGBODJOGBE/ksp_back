@@ -13,15 +13,25 @@ import {
   RevokeAccountRoleUseCase,
   SearchAccountsUseCase,
 } from '../../application/account-admin/account-admin.use-cases';
+import { type DeclaredPermission } from '../../application/rbac/rbac.ports';
+import { ListPermissionsUseCase } from '../../application/rbac/catalog.use-cases';
+import {
+  CreateRoleUseCase,
+  DeactivateRoleUseCase,
+  GetRoleUseCase,
+  type ManagedRoleOutput,
+  UpdateRoleUseCase,
+} from '../../application/rbac/managed-roles.use-cases';
+import { permissionModule } from '../../domain/role/permission';
 import { type RoleScopeType } from '../../domain/role/role';
 import { USER_STATUS } from './mappers';
-import { notImplemented } from './not-implemented';
 
 const SCOPE_TYPE: Record<RoleScopeType, identityV1.ScopeType> = {
   global: identityV1.ScopeType.SCOPE_TYPE_GLOBAL,
   domain: identityV1.ScopeType.SCOPE_TYPE_DOMAIN,
   org: identityV1.ScopeType.SCOPE_TYPE_ORG,
   personal: identityV1.ScopeType.SCOPE_TYPE_PERSONAL,
+  zone: identityV1.ScopeType.SCOPE_TYPE_ZONE,
 };
 
 const iso = (value: Date | null): string => value?.toISOString() ?? '';
@@ -66,6 +76,7 @@ export function toAccountDetailMessage(detail: AccountDetailView): identityV1.Ac
       revokedByName: assignment.revokedByName ?? '',
       revokeReason: assignment.revokeReason ?? '',
       revocable: assignment.revocable,
+      ...(assignment.zoneKeys.length ? { zones: { keys: assignment.zoneKeys } } : {}),
     })),
     history: detail.history.map((entry) => ({
       id: entry.id,
@@ -77,6 +88,42 @@ export function toAccountDetailMessage(detail: AccountDetailView): identityV1.Ac
       reason: entry.reason ?? '',
     })),
     actions: { ...detail.actions },
+  };
+}
+
+/** Permission déclarée → message Permission (module : deuxième segment du code). */
+export function toPermissionMessage(permission: DeclaredPermission): identityV1.Permission {
+  return {
+    code: permission.code,
+    description: permission.description,
+    service: permission.service,
+    module: permissionModule(permission.code),
+    retired: permission.retired,
+  };
+}
+
+/** Fiche d'un rôle géré → message ManagedRole. */
+export function toManagedRoleMessage(role: ManagedRoleOutput): identityV1.ManagedRole {
+  return {
+    code: role.code,
+    name: role.name,
+    description: role.description,
+    service: role.service,
+    origin: role.origin,
+    scopeType: SCOPE_TYPE[role.scopeType],
+    permissions: role.permissions,
+    sensitive: role.sensitive,
+    backofficeAccess: role.backofficeAccess,
+    requiresMfa: role.requiresMfa,
+    active: role.active,
+    editable: role.editable,
+    activeAssignments: role.activeAssignments,
+    createdAt: role.createdAt.toISOString(),
+    createdBy: role.createdBy ?? '',
+    updatedAt: iso(role.updatedAt),
+    updatedBy: role.updatedBy ?? '',
+    deactivatedAt: iso(role.deactivatedAt),
+    deactivatedBy: role.deactivatedBy ?? '',
   };
 }
 
@@ -97,6 +144,11 @@ export class AccountAdminGrpcController implements identityV1.AccountAdminServic
     private readonly revokeAccountRoleUseCase: RevokeAccountRoleUseCase,
     private readonly changeAccountStatusUseCase: ChangeAccountStatusUseCase,
     private readonly resetAccountMfaUseCase: ResetAccountMfaUseCase,
+    private readonly listPermissionsUseCase: ListPermissionsUseCase,
+    private readonly getRoleUseCase: GetRoleUseCase,
+    private readonly createRoleUseCase: CreateRoleUseCase,
+    private readonly updateRoleUseCase: UpdateRoleUseCase,
+    private readonly deactivateRoleUseCase: DeactivateRoleUseCase,
   ) {}
 
   async findAccountByPhone(
@@ -139,6 +191,10 @@ export class AccountAdminGrpcController implements identityV1.AccountAdminServic
         description: role.description,
         backofficeAccess: role.backofficeAccess,
         grantable: role.grantable,
+        name: role.name || role.code,
+        active: role.active !== false,
+        sensitive: role.sensitive === true,
+        origin: role.origin ?? 'default',
       })),
     };
   }
@@ -150,6 +206,7 @@ export class AccountAdminGrpcController implements identityV1.AccountAdminServic
       userId: request.userId,
       roleCode: request.roleCode,
       reason: request.reason,
+      ...(request.zones ? { zoneKeys: request.zones.keys } : {}),
     });
     return { detail: toAccountDetailMessage(detail) };
   }
@@ -197,23 +254,49 @@ export class AccountAdminGrpcController implements identityV1.AccountAdminServic
     return { detail: toAccountDetailMessage(detail) };
   }
 
-  listPermissions(): Promise<identityV1.ListPermissionsResponse> {
-    return notImplemented('ListPermissions');
+  async listPermissions(
+    request: identityV1.ListPermissionsRequest,
+  ): Promise<identityV1.ListPermissionsResponse> {
+    const permissions = await this.listPermissionsUseCase.execute({
+      service: request.service,
+      includeRetired: request.includeRetired,
+    });
+    return { permissions: permissions.map(toPermissionMessage) };
   }
 
-  getRole(): Promise<identityV1.GetRoleResponse> {
-    return notImplemented('GetRole');
+  async getRole(request: identityV1.GetRoleRequest): Promise<identityV1.GetRoleResponse> {
+    return { role: toManagedRoleMessage(await this.getRoleUseCase.execute(request.roleCode)) };
   }
 
-  createRole(): Promise<identityV1.CreateRoleResponse> {
-    return notImplemented('CreateRole');
+  async createRole(request: identityV1.CreateRoleRequest): Promise<identityV1.CreateRoleResponse> {
+    const role = await this.createRoleUseCase.execute({
+      code: request.code,
+      name: request.name,
+      description: request.description,
+      permissions: request.permissions,
+      sensitive: request.sensitive,
+      reason: request.reason,
+    });
+    return { role: toManagedRoleMessage(role) };
   }
 
-  updateRole(): Promise<identityV1.UpdateRoleResponse> {
-    return notImplemented('UpdateRole');
+  async updateRole(request: identityV1.UpdateRoleRequest): Promise<identityV1.UpdateRoleResponse> {
+    const role = await this.updateRoleUseCase.execute({
+      code: request.roleCode,
+      ...(request.name !== undefined ? { name: request.name } : {}),
+      ...(request.description !== undefined ? { description: request.description } : {}),
+      ...(request.sensitive !== undefined ? { sensitive: request.sensitive } : {}),
+      // Absent : permissions inchangées ; présent (même vide) : liste complète.
+      ...(request.permissions ? { permissions: request.permissions.codes } : {}),
+      reason: request.reason,
+    });
+    return { role: toManagedRoleMessage(role) };
   }
 
-  deactivateRole(): Promise<identityV1.DeactivateRoleResponse> {
-    return notImplemented('DeactivateRole');
+  async deactivateRole(
+    request: identityV1.DeactivateRoleRequest,
+  ): Promise<identityV1.DeactivateRoleResponse> {
+    const role = await this.deactivateRoleUseCase.execute({ code: request.roleCode, reason: request.reason });
+    return { role: toManagedRoleMessage(role) };
   }
 }

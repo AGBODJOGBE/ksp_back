@@ -22,6 +22,12 @@ export interface AccessTokenSubject {
   authTime: Date;
   /** Méthodes d'authentification de la session (RFC 8176). */
   amr: AccessTokenAuthMethod[];
+  /**
+   * Session du back-office : permissions valables partout (claim perms) et limitées à des zones
+   * (claim zone_perms, omis s'il est vide). Absents pour une session des sites et applications.
+   */
+  perms?: string[];
+  zonePerms?: Record<string, string[]>;
 }
 
 export interface IssuedAccessToken {
@@ -61,6 +67,10 @@ export class AccessTokenIssuer {
       mfa: subject.mfa,
       auth_time: Math.floor(subject.authTime.getTime() / 1000),
       amr: subject.amr,
+      ...(subject.perms ? { perms: subject.perms } : {}),
+      ...(subject.zonePerms && Object.keys(subject.zonePerms).length
+        ? { zone_perms: subject.zonePerms }
+        : {}),
     };
     const token = await this.signer.sign({ ...claims }, ACCESS_TOKEN.type);
     return {

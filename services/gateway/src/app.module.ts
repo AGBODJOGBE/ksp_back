@@ -379,9 +379,12 @@ export class AppModule {
         { provide: PAYMENT_SIMULATION_ROUTE, useValue: config.NODE_ENV !== 'production' },
         {
           provide: CallCleaningUseCase,
-          inject: [IdentityGrpcAdapter, CLEANING_API],
-          useFactory: (identity: IdentityGrpcAdapter, cleaning: CleaningApi) =>
-            new CallCleaningUseCase(identity, cleaning),
+          inject: [IdentityGrpcAdapter, ORGANIZATIONS_API, CLEANING_API],
+          useFactory: (
+            identity: IdentityGrpcAdapter,
+            organizations: OrganizationsApi,
+            cleaning: CleaningApi,
+          ) => new CallCleaningUseCase(identity, organizations, cleaning),
         },
         {
           provide: RATE_LIMITER,

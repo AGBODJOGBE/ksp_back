@@ -1,3 +1,4 @@
+import { type WalletObjectRef } from '@ksp/contracts';
 import { type Holder, type LedgerTransaction, refundEntries, topUpEntries } from '../domain/ledger';
 import {
   type CreditKind,
@@ -12,6 +13,8 @@ import { creditedEvent, prepaidAfter, recipient, topUpReference } from './prepai
 import {
   CREDIT_MFA_MAX_AGE_SECONDS,
   IDEMPOTENCY_KEY,
+  OBJECT_PART,
+  OBJECT_TYPE,
   oneOf,
   requireHolder,
   requireStaff,
@@ -23,8 +26,55 @@ import {
 import { transaction, WALLET } from './wallet.use-cases';
 
 /** Crédits manuels de la finance. */
-export const CREDIT_KINDS: readonly CreditKind[] = ['refund', 'top_up'];
-export const CREDIT_REQUEST_STATUSES: readonly ManualCreditStatus[] = ['pending_approval', 'approved'];
+export const CREDIT_KINDS: readonly CreditKind[] = [
+  'refund',
+  'top_up',
+  'cash_top_up',
+  'bank_transfer_top_up',
+];
+export const CREDIT_REQUEST_STATUSES: readonly ManualCreditStatus[] = [
+  'pending_approval',
+  'approved',
+  'rejected',
+];
+/** Versements reçus hors ligne (espèces, virement) : reçu obligatoire, toujours une double validation. */
+const OFFLINE_KINDS: readonly CreditKind[] = ['cash_top_up', 'bank_transfer_top_up'];
+/** Service qui débite l'objet d'un versement (forObject.service). */
+const SERVICE_NAME = /^[a-z]+$/;
+
+/** Écriture du grand livre d'un crédit manuel : remboursement, ou recharge (argent reçu par KSP). */
+function ledgerKind(kind: CreditKind): 'refund' | 'top_up' {
+  return kind === 'refund' ? 'refund' : 'top_up';
+}
+
+/** Moyen de la recharge publié dans wallet.prepaid.credited v2 ; absent pour un remboursement. */
+function topUpChannel(kind: CreditKind) {
+  if (kind === 'cash_top_up') return 'cash' as const;
+  if (kind === 'bank_transfer_top_up') return 'bank_transfer' as const;
+  return kind === 'top_up' ? ('mobile_money_online' as const) : undefined;
+}
+
+/** Objet à régler aussitôt (forObject), facultatif : service, type, identifiant et part. */
+function optionalForObject(
+  value: { service?: string; objectType?: string; objectId?: string; part?: string } | undefined,
+): WalletObjectRef | null {
+  if (!value || (!value.service && !value.objectType && !value.objectId && !value.part)) return null;
+  if (!SERVICE_NAME.test(value.service ?? '')) {
+    throw WalletErrors.invalid('forObject.service', 'Service attendu (minuscules).');
+  }
+  if (!OBJECT_TYPE.test(value.objectType ?? '')) {
+    throw WalletErrors.invalid('forObject.objectType', 'Type d’objet invalide.');
+  }
+  const part = value.part ? value.part : null;
+  if (part !== null && !OBJECT_PART.test(part))
+    throw WalletErrors.invalid('forObject.part', 'Part invalide.');
+  return {
+    service: value.service!,
+    objectType: value.objectType!,
+    objectId: requireUuid('forObject.objectId', value.objectId),
+    part,
+  };
+}
 /** Justification d'un remboursement manuel : 15 caractères au moins (ADR-048). */
 export const REFUND_REASON_MIN = 15;
 
@@ -47,12 +97,13 @@ interface CreditOrder {
   paymentId: string | null;
   reference: string;
   actorId: string;
+  forObject: WalletObjectRef | null;
 }
 
 /** Même crédit (rejeu) : sorte, titulaire, montant et auteur identiques. */
 function sameCredit(existing: LedgerTransaction, order: CreditOrder): boolean {
   return (
-    existing.kind === order.kind &&
+    existing.kind === ledgerKind(order.kind) &&
     existing.holder.type === order.holder.type &&
     existing.holder.id === order.holder.id &&
     existing.amount === order.amount &&
@@ -77,8 +128,9 @@ async function writeCredit(
   };
   const existing = await deps.ledger.findByReference(WALLET, order.reference);
   if (existing) return replay(existing);
+  const kind = ledgerKind(order.kind);
   const credit = transaction(deps, {
-    kind: order.kind,
+    kind,
     caller: WALLET,
     reference: order.reference,
     holder: order.holder,
@@ -86,10 +138,11 @@ async function writeCredit(
     description: order.reason,
     actorId: order.actorId,
     entries:
-      order.kind === 'top_up'
+      kind === 'top_up'
         ? topUpEntries(order.holder, order.amount)
         : refundEntries(order.holder, order.amount),
   });
+  const channel = topUpChannel(order.kind);
   const outcome = await deps.ledger.record({
     transaction: credit,
     events: (balance) => [
@@ -97,11 +150,17 @@ async function writeCredit(
         origin: 'finance',
         userId: recipient(order.holder, null),
         ...(order.paymentId ? { paymentId: order.paymentId } : {}),
+        ...(channel ? { topUpChannel: channel } : {}),
+        forObject: order.forObject,
       }),
     ],
   });
   if (outcome.kind === 'recorded') {
-    return { transaction: credit, wallet: prepaidAfter(credit, outcome.holderBalance), created: true };
+    return {
+      transaction: credit,
+      wallet: await prepaidAfter(deps, credit, outcome.holderBalance),
+      created: true,
+    };
   }
   const raced = await deps.ledger.findByReference(WALLET, order.reference);
   if (raced) return replay(raced);
@@ -144,6 +203,10 @@ export class CreditPrepaidWalletUseCase {
     amount: { amount: number; currency: string } | undefined;
     reason: string;
     paymentId: string;
+    /** v2 : espèces ou virement, référence du reçu (obligatoire pour eux seuls). */
+    receiptReference?: string | undefined;
+    /** v2 : objet à régler aussitôt, facultatif (versement reçu, pas un remboursement). */
+    forObject?: { service?: string; objectType?: string; objectId?: string; part?: string } | undefined;
   }): Promise<CreditResult> {
     const staff = requireStaff(CREDIT_MFA_MAX_AGE_SECONDS);
     if (!IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
@@ -156,9 +219,19 @@ export class CreditPrepaidWalletUseCase {
     let paymentId: string | null = null;
     if (kind === 'top_up') {
       paymentId = requireUuid('paymentId', input.paymentId);
-    } else {
-      if (input.paymentId)
-        throw WalletErrors.invalid('paymentId', 'Un remboursement ne cite pas de paiement.');
+    } else if (input.paymentId) {
+      throw WalletErrors.invalid('paymentId', 'Seule une recharge Mobile Money cite un paiement.');
+    }
+    const offline = OFFLINE_KINDS.includes(kind);
+    let receiptReference: string | null = null;
+    if (offline) {
+      receiptReference = requireText('receiptReference', input.receiptReference, 100);
+    } else if (input.receiptReference) {
+      throw WalletErrors.invalid('receiptReference', 'Seuls les espèces et les virements ont un reçu.');
+    }
+    const forObject = optionalForObject(input.forObject);
+    if (kind === 'refund') {
+      if (forObject) throw WalletErrors.invalid('forObject', 'Un remboursement ne règle aucun objet.');
       if (reason.length < REFUND_REASON_MIN) {
         throw WalletErrors.invalid(
           'reason',
@@ -174,20 +247,22 @@ export class CreditPrepaidWalletUseCase {
       paymentId,
       reference: paymentId ? topUpReference(paymentId) : `credit:${input.idempotencyKey}`,
       actorId: staff.userId,
+      forObject,
     };
 
     // Rejeu : crédit déjà écrit, ou demande déjà enregistrée avec cette clé.
     const written = await this.deps.ledger.findByReference(WALLET, order.reference);
     if (written) return { ...(await writeCredit(this.deps, order)), pendingRequest: null };
     const requested = await this.deps.creditRequests.findByKey(input.idempotencyKey);
-    if (requested) return this.replayRequest(requested, order);
+    if (requested) return this.replayRequest(requested, order, receiptReference);
 
     if (kind === 'refund' && amount > this.deps.settings.manualRefundMax) {
       throw WalletErrors.creditLimitExceeded(this.deps.settings.manualRefundMax);
     }
     if (paymentId) await verifyTopUp(this.deps, paymentId, holder, amount);
 
-    if (amount > this.deps.settings.creditApprovalThreshold) {
+    // Espèces et virements : toujours validés par une deuxième personne (R-WL-02), quel que soit le montant.
+    if (offline || amount > this.deps.settings.creditApprovalThreshold) {
       const stored = await this.deps.creditRequests.create({
         id: this.deps.ids.next(),
         idempotencyKey: input.idempotencyKey,
@@ -202,9 +277,14 @@ export class CreditPrepaidWalletUseCase {
         approvedBy: null,
         approvedAt: null,
         transactionId: null,
+        receiptReference,
+        forObject,
+        rejectedBy: null,
+        rejectedAt: null,
+        rejectionReason: null,
         version: 0,
       });
-      if (!stored.created) return this.replayRequest(stored.request, order);
+      if (!stored.created) return this.replayRequest(stored.request, order, receiptReference);
       return {
         transaction: null,
         wallet: await this.deps.ledger.prepaidSummary(holder),
@@ -215,14 +295,22 @@ export class CreditPrepaidWalletUseCase {
     return { ...(await writeCredit(this.deps, order)), pendingRequest: null };
   }
 
-  /** Même clé : la même demande (validée ou non) ; une demande différente est refusée. */
-  private async replayRequest(request: ManualCreditRequest, order: CreditOrder): Promise<CreditResult> {
+  /**
+   * Même clé : la même demande (en attente, validée ou rejetée) ; une demande différente est refusée.
+   * Une demande rejetée est rendue telle quelle, sans crédit.
+   */
+  private async replayRequest(
+    request: ManualCreditRequest,
+    order: CreditOrder,
+    receiptReference: string | null,
+  ): Promise<CreditResult> {
     const same =
       request.holder.type === order.holder.type &&
       request.holder.id === order.holder.id &&
       request.kind === order.kind &&
       request.amount === order.amount &&
       request.paymentId === order.paymentId &&
+      request.receiptReference === receiptReference &&
       request.requestedBy === order.actorId;
     if (!same) throw WalletErrors.keyReused();
     const credit = request.transactionId
@@ -255,6 +343,7 @@ export class ApproveManualCreditUseCase {
     const staff = requireStaff(CREDIT_MFA_MAX_AGE_SECONDS);
     const request = await this.deps.creditRequests.findById(requireUuid('requestId', requestId));
     if (!request) throw WalletErrors.creditRequestNotFound();
+    if (request.status === 'rejected') throw WalletErrors.creditRequestNotPending(request.status);
     if (request.requestedBy === staff.userId) throw WalletErrors.approvalByRequester();
     const order: CreditOrder = {
       holder: request.holder,
@@ -264,6 +353,7 @@ export class ApproveManualCreditUseCase {
       paymentId: request.paymentId,
       reference: request.paymentId ? topUpReference(request.paymentId) : `credit:${request.idempotencyKey}`,
       actorId: request.requestedBy,
+      forObject: request.forObject,
     };
     if (request.status === 'pending_approval' && request.paymentId) {
       await verifyTopUp(this.deps, request.paymentId, request.holder, request.amount);
@@ -284,6 +374,38 @@ export class ApproveManualCreditUseCase {
         : ((await this.deps.creditRequests.findById(request.id)) ?? approved);
     }
     return { ...credit, request: current, created: credit.created };
+  }
+}
+
+/**
+ * Back-office : rejet motivé d'une demande de crédit en attente (recharge en espèces non retrouvée en
+ * caisse…), double authentification de moins de 10 minutes. Rien n'est crédité. L'auteur peut rejeter
+ * sa propre demande pour l'annuler (à valider). Demande validée ou déjà rejetée :
+ * WALLET_CREDIT_REQUEST_NOT_PENDING.
+ */
+export class RejectManualCreditUseCase {
+  constructor(private readonly deps: WalletDeps) {}
+
+  async execute(input: { requestId: string; reason: string }): Promise<{ request: ManualCreditRequest }> {
+    const staff = requireStaff(CREDIT_MFA_MAX_AGE_SECONDS);
+    const id = requireUuid('requestId', input.requestId);
+    const reason = requireText('reason', input.reason, 200);
+    const request = await this.deps.creditRequests.findById(id);
+    if (!request) throw WalletErrors.creditRequestNotFound();
+    if (request.status !== 'pending_approval') throw WalletErrors.creditRequestNotPending(request.status);
+    const rejected: ManualCreditRequest = {
+      ...request,
+      status: 'rejected',
+      rejectedBy: staff.userId,
+      rejectedAt: this.deps.clock.now(),
+      rejectionReason: reason,
+    };
+    if (await this.deps.creditRequests.save(rejected)) {
+      return { request: { ...rejected, version: rejected.version + 1 } };
+    }
+    // Validée ou rejetée en même temps : l'état enregistré fait foi.
+    const current = await this.deps.creditRequests.findById(id);
+    throw WalletErrors.creditRequestNotPending(current?.status ?? request.status);
   }
 }
 

@@ -22,6 +22,8 @@ export interface RoleAssignmentView {
   role: RoleDefinition;
   scopeType: RoleScopeType;
   scopeId: string | null;
+  /** Portée zone : clés de commune de l'attribution (R-RB-03) ; vide sinon. */
+  zoneKeys: string[];
   grantedAt: Date;
   grantedBy: string | null;
   grantedByName: string | null;

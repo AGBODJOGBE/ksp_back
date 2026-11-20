@@ -270,6 +270,19 @@ describe('gateway → cleaning v2 : contrôleur commun des routes du Nettoyage',
       expect(cleaning.stub.last('getRequest')).toBeDefined();
     });
 
+    it('les permissions du jeton sont transmises à cleaning, qui les revérifie (ADR-057, décision 4)', async () => {
+      answered();
+      const bearer = await staff({
+        perms: ['cleaning.catalog.read', 'cleaning.request.read'],
+        zone_perms: { 'porto-novo': ['cleaning.request.process'] },
+      });
+      await backoffice(http().get(url), bearer).expect(404);
+      expect(cleaning.stub.last('getRequest')!.context?.user).toMatchObject({
+        permissions: ['cleaning.catalog.read', 'cleaning.request.read'],
+        zonePermissions: { 'porto-novo': ['cleaning.request.process'] },
+      });
+    });
+
     it('les rôles seuls ne suffisent pas : la permission est la seule condition d’accès', async () => {
       const bearer = await keys.accessToken({
         claims: { client_id: 'backoffice', mfa: true, roles: [{ role: 'super_admin', scopeType: 'global' }] },

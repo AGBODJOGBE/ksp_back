@@ -55,8 +55,8 @@ export interface RouteDefinition {
    * auprès d'identity avant d'appeler le service.
    */
   requiresCompleteProfile?: boolean;
-  /** Réponse sans corps (204) ; 200 sinon. */
-  successStatus?: 204;
+  /** Création (201, corps : la ressource créée) ou réponse sans corps (204) ; 200 sinon. */
+  successStatus?: 201 | 204;
   /** Route alias : même appel gRPC que cette autre route, sous un autre chemin et un autre accès. */
   aliasOf?: string;
 }

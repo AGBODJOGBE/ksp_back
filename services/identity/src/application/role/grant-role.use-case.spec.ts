@@ -45,6 +45,8 @@ describe('GrantRoleUseCase (amorçage roles:grant)', () => {
       roleCode: 'cleaning_supervisor',
       scopeType: 'domain',
       scopeId: 'cleaning',
+      zoneKeys: [],
+      grantedAt: new Date('2026-10-22T09:00:00Z'),
       created: true,
     });
     const again = await useCase.execute({ phone: '+2290197000045', roleCode: 'cleaning_supervisor' });

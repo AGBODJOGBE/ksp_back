@@ -33,6 +33,13 @@ const managers = {
   recentMfaSeconds: CRITICAL_MFA_SECONDS,
 } as const;
 
+/** Lecture des rôles et des permissions : super_admin, double authentification de la session. */
+const roleReaders = {
+  level: 'authenticated',
+  anyRole: ACCOUNT_MANAGERS,
+  recentMfaSeconds: BACKOFFICE_MFA_SECONDS,
+} as const;
+
 /**
  * Routes des comptes au back-office. Reprises des extensions x-ksp-* du contrat OpenAPI ; le test de
  * conformité vérifie qu'elles restent identiques.
@@ -117,6 +124,54 @@ export const ACCOUNT_ROUTES = [
     method: 'POST',
     path: '/api/v1/admin/identity/accounts/{id}/mfa/reset',
     grpc: `${ACCOUNT_ADMIN}/ResetAccountMfa`,
+    access: managers,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  // Rôles dynamiques (R-RB-01, R-RB-02 ; ADR-057) : super_admin seul ; lectures avec la double
+  // authentification de la session, écritures avec une double authentification récente.
+  {
+    operationId: 'createRole',
+    method: 'POST',
+    path: '/api/v1/admin/identity/roles',
+    grpc: `${ACCOUNT_ADMIN}/CreateRole`,
+    access: managers,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+    successStatus: 201,
+  },
+  {
+    operationId: 'listPermissions',
+    method: 'GET',
+    path: '/api/v1/admin/identity/permissions',
+    grpc: `${ACCOUNT_ADMIN}/ListPermissions`,
+    access: roleReaders,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
+    operationId: 'getRole',
+    method: 'GET',
+    path: '/api/v1/admin/identity/roles/{code}',
+    grpc: `${ACCOUNT_ADMIN}/GetRole`,
+    access: roleReaders,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
+    operationId: 'updateRole',
+    method: 'PATCH',
+    path: '/api/v1/admin/identity/roles/{code}',
+    grpc: `${ACCOUNT_ADMIN}/UpdateRole`,
+    access: managers,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
+    operationId: 'deactivateRole',
+    method: 'POST',
+    path: '/api/v1/admin/identity/roles/{code}/deactivate',
+    grpc: `${ACCOUNT_ADMIN}/DeactivateRole`,
     access: managers,
     rateLimit: 'authenticated',
     requiresKnownClient: false,

@@ -34,6 +34,7 @@ import {
 } from '../../domain/ledger';
 import { type Operator, type WalletPayout, type WalletPayoutStatus } from '../../domain/wallet-payout';
 import { PrismaService } from '../prisma/prisma.service';
+import { mutableWithdrawalColumns, newWithdrawalRow, withdrawalsInProgress } from './prisma-withdrawals';
 import { v7 as uuidv7 } from 'uuid';
 
 type Tx = Prisma.TransactionClient;
@@ -233,6 +234,16 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
           });
           if (count === 0) throw new Abort({ kind: 'conflict' });
         }
+        if (input.createWithdrawal) {
+          await db.walletWithdrawal.create({ data: newWithdrawalRow(input.createWithdrawal) });
+        }
+        if (input.updateWithdrawal) {
+          const { count } = await db.walletWithdrawal.updateMany({
+            where: { id: input.updateWithdrawal.id, version: input.updateWithdrawal.version },
+            data: { ...mutableWithdrawalColumns(input.updateWithdrawal), version: { increment: 1 } },
+          });
+          if (count === 0) throw new Abort({ kind: 'conflict' });
+        }
         const [after] = await db.$queryRawUnsafe<{ balance: bigint }[]>(
           'SELECT balance FROM ledger_accounts WHERE code = $1',
           holderCode,
@@ -241,7 +252,10 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
         for (const event of input.events?.(holderBalance) ?? []) {
           await appendToOutbox(
             db as unknown as SqlExecutor,
-            createEnvelope(event.type, event.payload as never, { producer: 'wallet' }),
+            createEnvelope(event.type, event.payload as never, {
+              producer: 'wallet',
+              ...(event.version ? { version: event.version } : {}),
+            }),
           );
         }
         return { kind: 'recorded', transaction: tx, holderBalance } as const;
@@ -310,11 +324,21 @@ export class PrismaLedgerStore implements LedgerStore, WalletPayoutRepository {
 
   async prepaidSummary(holder: Holder): Promise<PrepaidSummary> {
     const code = prepaidAccount(holder);
-    const [account, last] = await Promise.all([
+    const [account, last, inProgress] = await Promise.all([
       this.prisma.ledgerAccount.findUnique({ where: { code } }),
       this.prisma.ledgerEntry.findFirst({ where: { accountCode: code }, orderBy: { id: 'desc' } }),
+      withdrawalsInProgress(this.prisma, holder),
     ]);
-    return { holder, balance: Number(account?.balance ?? 0n), lastEntryAt: last?.createdAt ?? null };
+    return {
+      holder,
+      balance: Number(account?.balance ?? 0n),
+      lastEntryAt: last?.createdAt ?? null,
+      withdrawalsInProgress: inProgress,
+    };
+  }
+
+  withdrawalsInProgress(holder: Holder): Promise<number> {
+    return withdrawalsInProgress(this.prisma, holder);
   }
 
   /** Écritures des comptes demandés, les plus récentes d'abord (identifiants UUID v7 triables). */

@@ -31,6 +31,7 @@ export class PrepaidEventsConsumer implements OnApplicationBootstrap {
         customerId: payload.customerId,
         organizationId: payload.organizationId,
         amount: payload.amount.amount,
+        target: payload.target ?? null,
       });
       if (outcome === 'rejected') {
         // Paiement relu chez payment qui ne confirme pas l'événement (ADR-048) : rien n'est crédité.

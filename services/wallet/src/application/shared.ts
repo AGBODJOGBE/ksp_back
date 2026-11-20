@@ -80,10 +80,34 @@ export const WalletErrors = {
     ),
   creditRequestNotFound: () =>
     AppError.notFound('WALLET_CREDIT_REQUEST_NOT_FOUND', 'Cette demande de crédit est introuvable.'),
+  creditRequestNotPending: (status: string) =>
+    AppError.precondition(
+      'WALLET_CREDIT_REQUEST_NOT_PENDING',
+      'Cette demande de crédit a déjà été validée ou rejetée.',
+      { status },
+    ),
   approvalByRequester: () =>
     AppError.forbidden(
       'WALLET_APPROVAL_BY_REQUESTER',
       'Un crédit doit être validé par un autre membre de la finance que l’auteur de la demande.',
+    ),
+  withdrawalNotFound: () => AppError.notFound('WALLET_WITHDRAWAL_NOT_FOUND', 'Ce retrait est introuvable.'),
+  withdrawalInvalidTransition: (status: string) =>
+    AppError.precondition(
+      'WALLET_WITHDRAWAL_INVALID_TRANSITION',
+      'Cette action n’est pas possible dans l’état actuel du retrait.',
+      { status },
+    ),
+  approvalByProcessor: () =>
+    AppError.forbidden(
+      'WALLET_APPROVAL_BY_PROCESSOR',
+      'Un retrait doit être validé par une autre personne que celle qui l’a traité.',
+    ),
+  withdrawalAdminRequired: () =>
+    AppError.forbidden(
+      'AUTH_FORBIDDEN',
+      'Seul un administrateur de l’organisation peut demander un retrait de son portefeuille.',
+      { organizationRole: 'org_admin' },
     ),
   viewerForbidden: () =>
     AppError.forbidden(

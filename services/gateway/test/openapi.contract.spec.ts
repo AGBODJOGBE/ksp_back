@@ -93,23 +93,11 @@ const NOT_YET_EXPOSED = [
   'removeOrganizationMember',
   'listMyOrganizationInvitations',
   'respondToOrganizationInvitation',
-  'createRole',
-  'listPermissions',
-  'getRole',
-  'updateRole',
-  'deactivateRole',
   'payMyInvoiceByMobileMoney',
   'getMyBillingPreferences',
   'updateMyBillingPreferences',
   'issueAdminCreditNote',
   'listCreditNotes',
-  'requestWithdrawal',
-  'listMyWithdrawals',
-  'rejectManualCredit',
-  'listWithdrawals',
-  'processWithdrawal',
-  'approveWithdrawal',
-  'rejectWithdrawal',
 ];
 
 /**
@@ -119,9 +107,7 @@ const NOT_YET_EXPOSED = [
  */
 const FIELDS_NOT_YET_ACCEPTED: Record<string, string[]> = {
   createOrganization: ['commune', 'logoFileId', 'phone', 'representativeName', 'sector'],
-  grantAccountRole: ['zoneKeys'],
   updateBillingSettings: ['reminderOffsetDays'],
-  creditPrepaidWallet: ['forObject', 'receiptReference'],
 };
 
 /** Routes du Nettoyage : produites depuis le contrat (tools/gateway/cleaning-routes.ts). */
@@ -216,7 +202,7 @@ describe('contrat OpenAPI : manifeste de routage', () => {
         pendingDeletion: op['x-ksp-pending-deletion'] ?? false,
         permission: op['x-ksp-permission'] ?? null,
         completeProfile: op['x-ksp-requires-complete-profile'] ?? false,
-        successStatus: op.responses['200'] ? 200 : 204,
+        successStatus: op.responses['200'] ? 200 : op.responses['201'] ? 201 : 204,
         idempotencyKey: (op.parameters ?? []).some((p) => p.$ref?.endsWith('/IdempotencyKey'))
           ? 'required'
           : (op.parameters ?? []).some((p) => p.$ref?.endsWith('/OptionalIdempotencyKey'))
@@ -1088,7 +1074,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         .replace('{token}', path.startsWith('/api/v1/document/') ? SIGNING_TOKEN : LINK_TOKEN)
         .replace('{type}', 'organization');
       let req = from(
-        http()[method.toLowerCase() as 'get' | 'post' | 'put'](url),
+        http()[method.toLowerCase() as 'get' | 'post' | 'put' | 'patch'](url),
         backoffice ? 'backoffice' : 'web',
       );
       const auth: Auth =
@@ -1113,7 +1099,8 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           path.includes('/organizations') ||
           path.includes('/accounts') ||
           path.includes('/notification/') ||
-          path === '/api/v1/admin/identity/roles' ||
+          path.startsWith('/api/v1/admin/identity/roles') ||
+          path === '/api/v1/admin/identity/permissions' ||
           path === '/api/v1/identity/context',
       )
       .map(
@@ -1121,7 +1108,7 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
           [
             `succès ${op.operationId}`,
             op.operationId,
-            200,
+            op.responses['200'] ? 200 : 201,
             () => call(op.operationId),
           ] as (typeof scenarios)[number],
       );

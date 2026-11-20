@@ -81,6 +81,8 @@ describe('accès au back-office', () => {
     scopeId: 'cleaning',
     requiresMfa: backofficeAccess,
     backofficeAccess,
+    zoneKeys: [],
+    permissions: [],
   });
 
   it('seuls les rôles du back-office l’ouvrent', () => {

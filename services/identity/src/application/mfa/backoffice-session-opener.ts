@@ -1,7 +1,7 @@
 import { PERSONAL_CONTEXT } from '../../domain/context/active-context';
 import { isProfileIncomplete } from '../../domain/user/profile';
 import { type SessionPolicy } from '../../domain/session/session-policy';
-import { backofficeRoleClaims } from '../role/role-claims';
+import { backofficeGrants } from '../role/role-claims';
 import { type OpenedSession } from '../session/verify-otp.use-case';
 import { type RefreshTokenGenerator } from '../session/session.ports';
 import { type IdGenerator } from '../shared/system.ports';
@@ -69,7 +69,7 @@ export class BackofficeSessionOpener {
       sessionId,
       clientId: step.challenge.clientKind,
       activeContext: PERSONAL_CONTEXT,
-      roles: backofficeRoleClaims(step.roles),
+      ...backofficeGrants(step.roles),
       mfa: true,
       authTime: now,
       amr: ['otp', 'mfa'],

@@ -11,7 +11,15 @@ import {
   RevokeAccountRoleUseCase,
   SearchAccountsUseCase,
 } from '../../application/account-admin/account-admin.use-cases';
+import { ListPermissionsUseCase } from '../../application/rbac/catalog.use-cases';
+import {
+  CreateRoleUseCase,
+  DeactivateRoleUseCase,
+  GetRoleUseCase,
+  UpdateRoleUseCase,
+} from '../../application/rbac/managed-roles.use-cases';
 import { InMemoryAccountAdmin } from '../../application/testing/account-admin-fakes';
+import { InMemoryRbac } from '../../application/testing/rbac-fakes';
 import { InMemoryRoles } from '../../application/testing/mfa-fakes';
 import { AccountAdminGrpcController } from './account-admin.controller';
 
@@ -44,6 +52,9 @@ function controller() {
   const details = new AccountDetails(accounts);
   const ids = { next: () => '0192f1c4-0000-7000-8000-0000000000c1' };
   const clock = { now: () => new Date('2026-11-07T10:00:00Z') };
+  const rbac = new InMemoryRbac();
+  rbac.declare('cleaning.request.read');
+  rbac.declare('cleaning.planning.manage');
   return new AccountAdminGrpcController(
     new FindAccountByPhoneUseCase({
       findByPhone: async () => ({
@@ -65,8 +76,60 @@ function controller() {
     new RevokeAccountRoleUseCase(details, accounts, roles, ids, clock),
     new ChangeAccountStatusUseCase(details, accounts, ids, clock),
     new ResetAccountMfaUseCase(details, accounts, ids, clock, 3600),
+    new ListPermissionsUseCase(rbac),
+    new GetRoleUseCase(rbac),
+    new CreateRoleUseCase(rbac, ids, clock),
+    new UpdateRoleUseCase(rbac, ids, clock),
+    new DeactivateRoleUseCase(rbac, ids, clock),
   );
 }
+
+describe('AccountAdminGrpcController — rôles dynamiques (ADR-057)', () => {
+  it('ListPermissions : module déduit du code', async () => {
+    const response = await as('super_admin', () =>
+      controller().listPermissions({ service: 'cleaning', includeRetired: false }),
+    );
+    expect(response.permissions[0]).toEqual({
+      code: 'cleaning.planning.manage',
+      description: 'cleaning.planning.manage',
+      service: 'cleaning',
+      module: 'planning',
+      retired: false,
+    });
+  });
+
+  it('CreateRole puis UpdateRole : fiche ManagedRole, permissions absentes = inchangées', async () => {
+    const admin = controller();
+    const created = await as('super_admin', () =>
+      admin.createRole({
+        code: 'cleaning_planner',
+        name: 'Planificateur',
+        description: 'Planifie',
+        permissions: ['cleaning.request.read'],
+        sensitive: false,
+        reason: 'Organisation',
+      }),
+    );
+    expect(created.role).toMatchObject({
+      code: 'cleaning_planner',
+      origin: 'custom',
+      scopeType: identityV1.ScopeType.SCOPE_TYPE_GLOBAL,
+      permissions: ['cleaning.request.read'],
+      active: true,
+      editable: true,
+      updatedAt: '',
+      deactivatedAt: '',
+    });
+    const renamed = await as('super_admin', () =>
+      admin.updateRole({ roleCode: 'cleaning_planner', name: 'Planning', reason: 'Organisation' }),
+    );
+    expect(renamed.role).toMatchObject({ name: 'Planning', permissions: ['cleaning.request.read'] });
+    const emptied = await as('super_admin', () =>
+      admin.updateRole({ roleCode: 'cleaning_planner', permissions: { codes: [] }, reason: 'Organisation' }),
+    );
+    expect(emptied.role?.permissions).toEqual([]);
+  });
+});
 
 describe('AccountAdminGrpcController', () => {
   it('FindAccountByPhone : compte au format du contrat, nom vide si le profil est incomplet', async () => {
@@ -157,7 +220,12 @@ describe('AccountAdminGrpcController', () => {
       scopeType: identityV1.ScopeType.SCOPE_TYPE_DOMAIN,
       description: 'Agent de terrain du nettoyage',
       backofficeAccess: true,
-      grantable: true,
+      // Administrateur de métier : lecture seule (R-RB-02, v2).
+      grantable: false,
+      name: 'cleaning_agent',
+      active: true,
+      sensitive: false,
+      origin: 'default',
     });
     expect(res.roles.find((role) => role.code === 'super_admin')?.grantable).toBe(false);
   });

@@ -2,7 +2,7 @@
  * Rôles et attributions (cahier des charges Identité, partie 5). Un rôle appartient au service qui
  * le déclare ; Identité l'enregistre et l'attribue avec une portée.
  */
-export type RoleScopeType = 'global' | 'domain' | 'org' | 'personal';
+export type RoleScopeType = 'global' | 'domain' | 'org' | 'personal' | 'zone';
 
 export interface RoleDefinition {
   /** Service qui déclare le rôle (identity, cleaning, recovery, wallet…). */
@@ -14,6 +14,14 @@ export interface RoleDefinition {
   /** Donne accès au back-office (colonne « Back-office » de la partie 5). */
   backofficeAccess: boolean;
   description: string;
+  /** Nom affiché (ADR-057) ; absent ou vide : le code. */
+  name?: string | null;
+  /** Son retrait révoque immédiatement les sessions de la personne (R-RB-05). */
+  sensitive?: boolean;
+  /** false : désactivé, ne s'attribue plus (R-RB-02). Absent : actif. */
+  active?: boolean;
+  /** "default" (livré par un service) ou "custom" (créé au back-office). */
+  origin?: 'default' | 'custom';
 }
 
 /** Un rôle attribué à un compte, encore actif. */
@@ -24,6 +32,10 @@ export interface AssignedRole {
   scopeId: string | null;
   requiresMfa: boolean;
   backofficeAccess: boolean;
+  /** Portée zone : clés de commune de l'attribution (R-RB-03) ; vide pour une autre portée. */
+  zoneKeys: string[];
+  /** Permissions cochées du rôle, retirées exclues (ADR-057). */
+  permissions: string[];
 }
 
 const internal = (
