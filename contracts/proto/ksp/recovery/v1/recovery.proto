@@ -1,0 +1,6 @@
+syntax = "proto3";
+
+package ksp.recovery.v1;
+
+// Contrat du service recovery. Les opérations sont ajoutées à partir de son cahier des charges.
+service RecoveryService {}
