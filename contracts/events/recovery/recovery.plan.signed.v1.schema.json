@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.plan.signed.v1.schema.json",
+  "title": "recovery.plan.signed",
+  "description": "Échéancier signé en ligne par le débiteur (R-EC-02) : vaut reconnaissance de dette ; le PDF signé est gardé par document. Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.plan.signed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "caseId",
+    "caseNumber",
+    "creditor",
+    "planId",
+    "total",
+    "installmentsCount",
+    "firstDueDate",
+    "renegotiation",
+    "documentId",
+    "signedAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "planId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "total": {
+      "$ref": "#/$defs/money"
+    },
+    "installmentsCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "firstDueDate": {
+      "type": "string",
+      "format": "date"
+    },
+    "renegotiation": {
+      "type": "boolean"
+    },
+    "documentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "signedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

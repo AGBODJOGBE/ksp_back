@@ -20,7 +20,14 @@ export type RateLimitCategory =
   | 'document_code_verify'
   | 'document_link'
   | 'document_link_code_request'
-  | 'document_link_code_verify';
+  | 'document_link_code_verify'
+  | 'recovery_debtor_link'
+  | 'recovery_debtor_code_request'
+  | 'recovery_debtor_code_verify'
+  | 'recovery_debtor'
+  | 'recovery_debtor_payment'
+  | 'recovery_debtor_upload'
+  | 'recovery_import';
 
 export interface RateLimitRule {
   limit: number;
@@ -66,6 +73,14 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   document_link: { limit: 30, windowSeconds: 60, key: 'ip' },
   document_link_code_request: { limit: 3, windowSeconds: 60, key: 'ip' },
   document_link_code_verify: { limit: 10, windowSeconds: 60, key: 'ip' },
+  // Recouvrement (ADR-060, ADR-061) : débiteur sans compte, import de factures.
+  recovery_debtor_link: { limit: 30, windowSeconds: 60, key: 'ip' },
+  recovery_debtor_code_request: { limit: 3, windowSeconds: 60, key: 'ip' },
+  recovery_debtor_code_verify: { limit: 10, windowSeconds: 60, key: 'ip' },
+  recovery_debtor: { limit: 60, windowSeconds: 60, key: 'ip' },
+  recovery_debtor_payment: { limit: 5, windowSeconds: 60, key: 'ip' },
+  recovery_debtor_upload: { limit: 10, windowSeconds: 60, key: 'ip' },
+  recovery_import: { limit: 5, windowSeconds: 60, key: 'user' },
 };
 
 /** Clé du compteur : une catégorie ne partage jamais ses compteurs avec une autre. */

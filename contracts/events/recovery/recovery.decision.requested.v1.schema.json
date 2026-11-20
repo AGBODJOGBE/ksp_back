@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.decision.requested.v1.schema.json",
+  "title": "recovery.decision.requested",
+  "description": "Décision demandée au créancier (14.1) : échéancier hors barème, remise, passage à l’huissier ou au judiciaire, réponse à une contestation. Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.decision.requested",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["caseId", "caseNumber", "creditor", "decisionId", "kind", "expiresAt", "requestedAt"],
+  "$defs": {
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "decisionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "enum": [
+        "plan_off_scale",
+        "settlement_discount",
+        "bailiff_escalation",
+        "litigation_escalation",
+        "dispute_response",
+        "stage_skip"
+      ]
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "requestedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

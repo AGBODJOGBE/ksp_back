@@ -213,6 +213,13 @@ export interface RecordCollectionRequest {
   reference: string;
   /** Libellé du relevé, 1 à 140 caractères (aucune donnée personnelle du débiteur). */
   description: string;
+  /**
+   * Facultatif (ADR-060) : commission calculée par l'appelant (règle à paliers, par étape, avec
+   * minimum et maximum), entière, de 0 au montant brut. Renseignée, elle remplace le calcul par
+   * commission_rate_bps, qui reste fourni pour le relevé (taux effectif arrondi). Absente : calcul
+   * par le taux, comme avant.
+   */
+  commissionAmount?: Money | undefined;
 }
 
 export interface RecordCollectionResponse {
