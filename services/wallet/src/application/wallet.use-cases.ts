@@ -19,6 +19,8 @@ import {
   type WalletPayout,
   WALLET_PAYOUT_STATUSES,
 } from '../domain/wallet-payout';
+import { withdrawalIdFromReference } from '../domain/withdrawal';
+import { settleWithdrawalPayout } from './withdrawals.use-cases';
 import {
   type LedgerOverview,
   type PageRequest,
@@ -494,6 +496,9 @@ export class SettlePayoutUseCase {
     amount: number;
   }): Promise<PayoutSettlementOutcome> {
     if (input.issuer !== WALLET) return 'ignored';
+    // Retrait du portefeuille prépayé (R-WL-04) : même mécanisme, référence propre.
+    const withdrawalId = withdrawalIdFromReference(input.reference);
+    if (withdrawalId) return settleWithdrawalPayout(this.deps, withdrawalId, input);
     const payoutId = /^[0-9a-f-]{36}$/i.test(input.reference) ? input.reference.toLowerCase() : null;
     const payout = payoutId ? await this.deps.payouts.findById(payoutId) : null;
     if (!payout) return 'ignored';

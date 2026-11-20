@@ -2,11 +2,13 @@ import {
   ApproveManualCreditUseCase,
   CreditPrepaidWalletUseCase,
   ListManualCreditRequestsUseCase,
+  RejectManualCreditUseCase,
 } from './manual-credits.use-cases';
 import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import { type WalletDeps } from './ports';
 import {
   CreateTopUpUseCase,
+  CreditByServiceUseCase,
   CreditTopUpUseCase,
   DebitPrepaidUseCase,
   GetPrepaidBalanceUseCase,
@@ -29,6 +31,14 @@ import {
   SettlePayoutUseCase,
   SubmitPendingPayoutsUseCase,
 } from './wallet.use-cases';
+import {
+  ApproveWithdrawalUseCase,
+  ListMyWithdrawalsUseCase,
+  ListWithdrawalsUseCase,
+  ProcessWithdrawalUseCase,
+  RejectWithdrawalUseCase,
+  RequestWithdrawalUseCase,
+} from './withdrawals.use-cases';
 
 /** Cas d'usage du service (une classe chacun), reliés aux mêmes dépendances. */
 export function createUseCases(deps: WalletDeps) {
@@ -53,10 +63,18 @@ export function createUseCases(deps: WalletDeps) {
     getPrepaidBalance: new GetPrepaidBalanceUseCase(deps),
     createTopUp: new CreateTopUpUseCase(deps),
     creditTopUp: new CreditTopUpUseCase(deps),
+    creditByService: new CreditByServiceUseCase(deps),
     creditPrepaidWallet: new CreditPrepaidWalletUseCase(deps),
     approveManualCredit: new ApproveManualCreditUseCase(deps),
+    rejectManualCredit: new RejectManualCreditUseCase(deps),
     listManualCreditRequests: new ListManualCreditRequestsUseCase(deps),
     hasPendingObligations: new HasPendingObligationsUseCase(deps),
+    requestWithdrawal: new RequestWithdrawalUseCase(deps),
+    listMyWithdrawals: new ListMyWithdrawalsUseCase(deps),
+    listWithdrawals: new ListWithdrawalsUseCase(deps),
+    processWithdrawal: new ProcessWithdrawalUseCase(deps),
+    approveWithdrawal: new ApproveWithdrawalUseCase(deps),
+    rejectWithdrawal: new RejectWithdrawalUseCase(deps),
   };
 }
 

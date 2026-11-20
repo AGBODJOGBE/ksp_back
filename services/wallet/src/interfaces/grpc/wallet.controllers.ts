@@ -1,4 +1,4 @@
-import { AllowedCallers, AppError } from '@ksp/platform';
+import { AllowedCallers } from '@ksp/platform';
 import { commonV1, walletV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import {
@@ -12,13 +12,7 @@ import { parsePage } from '../../application/shared';
 import { WALLET_USE_CASES, type WalletUseCases } from '../../application/use-cases';
 import { type LedgerTransaction } from '../../domain/ledger';
 import { type WalletPayout } from '../../domain/wallet-payout';
-
-/** Méthodes du contrat v2 (CDC Nettoyage v2) pas encore livrées : réponse NOT_IMPLEMENTED. */
-function notImplemented(method: string): Promise<never> {
-  return Promise.reject(
-    AppError.notImplemented('WALLET_NOT_IMPLEMENTED', `La méthode ${method} n'est pas encore disponible.`),
-  );
-}
+import { type Withdrawal } from '../../domain/withdrawal';
 
 const iso = (value: Date | null) => (value ? value.toISOString() : '');
 const xof = (amount: number) => ({ amount, currency: 'XOF' });
@@ -30,6 +24,7 @@ export function presentPrepaid(summary: PrepaidSummary): walletV1.PrepaidWallet 
     holder: { ...summary.holder },
     balance: xof(summary.balance),
     lastEntryAt: iso(summary.lastEntryAt),
+    withdrawalsInProgress: xof(summary.withdrawalsInProgress),
   };
 }
 
@@ -68,6 +63,11 @@ export function presentCreditRequest(request: ManualCreditRequest): walletV1.Man
     approvedBy: request.approvedBy ?? '',
     approvedAt: request.approvedAt?.toISOString() ?? '',
     transactionId: request.transactionId ?? '',
+    ...(request.receiptReference ? { receiptReference: request.receiptReference } : {}),
+    ...(request.forObject ? { forObject: { ...request.forObject, part: request.forObject.part ?? '' } } : {}),
+    ...(request.rejectedBy ? { rejectedBy: request.rejectedBy } : {}),
+    ...(request.rejectedAt ? { rejectedAt: request.rejectedAt.toISOString() } : {}),
+    ...(request.rejectionReason ? { rejectionReason: request.rejectionReason } : {}),
   };
 }
 
@@ -135,6 +135,38 @@ export function presentPayout(payout: WalletPayout): walletV1.WalletPayout {
     failedAt: iso(payout.failedAt),
   };
 }
+
+/** Retrait (R-WL-04) : jamais le numéro complet ni le nom, seulement le numéro masqué et l'opérateur. */
+export function presentWithdrawal(withdrawal: Withdrawal): walletV1.Withdrawal {
+  return {
+    id: withdrawal.id,
+    holder: { ...withdrawal.holder },
+    amount: xof(withdrawal.amount),
+    status: withdrawal.status,
+    beneficiaryOperator: withdrawal.beneficiaryOperator,
+    beneficiaryPhoneMasked: withdrawal.beneficiaryPhoneMasked,
+    requestedBy: withdrawal.requestedBy,
+    requestedAt: iso(withdrawal.requestedAt),
+    processedBy: withdrawal.processedBy ?? '',
+    processedAt: iso(withdrawal.processedAt),
+    processingNote: withdrawal.processingNote ?? '',
+    approvedBy: withdrawal.approvedBy ?? '',
+    approvedAt: iso(withdrawal.approvedAt),
+    rejectedBy: withdrawal.rejectedBy ?? '',
+    rejectedAt: iso(withdrawal.rejectedAt),
+    rejectionReason: withdrawal.rejectionReason ?? '',
+    paymentPayoutId: withdrawal.paymentPayoutId ?? '',
+    holdTransactionId: withdrawal.holdTransactionId,
+    settlementTransactionId: withdrawal.settlementTransactionId ?? '',
+    completedAt: iso(withdrawal.completedAt),
+    failedAt: iso(withdrawal.failedAt),
+  };
+}
+
+const withdrawalPage = (page: PageResult<Withdrawal>) => ({
+  withdrawals: page.items.map(presentWithdrawal),
+  nextCursor: page.nextCursor ?? '',
+});
 
 const payoutPage = (page: PageResult<WalletPayout>) => ({
   payouts: page.items.map(presentPayout),
@@ -252,8 +284,21 @@ export class WalletGrpcController implements walletV1.WalletServiceController {
     return { wallet: presentPrepaid(await this.useCases.getPrepaidBalance.execute(request.holder)) };
   }
 
-  credit(): Promise<walletV1.CreditResponse> {
-    return notImplemented('Credit');
+  async credit(request: walletV1.CreditRequest): Promise<walletV1.CreditResponse> {
+    const result = await this.useCases.creditByService.execute({
+      idempotencyKey: request.idempotencyKey,
+      holder: request.holder,
+      amount: request.amount,
+      object: request.object,
+      kind: request.kind,
+      description: request.description,
+      relatedTransactionId: request.relatedTransactionId,
+    });
+    return {
+      transaction: presentTransaction(result.transaction),
+      wallet: presentPrepaid(result.wallet),
+      created: result.created,
+    };
   }
 }
 
@@ -304,12 +349,30 @@ export class WalletAccountGrpcController implements walletV1.WalletAccountServic
     );
   }
 
-  requestWithdrawal(): Promise<walletV1.RequestWithdrawalResponse> {
-    return notImplemented('RequestWithdrawal');
+  async requestWithdrawal(
+    request: walletV1.RequestWithdrawalRequest,
+  ): Promise<walletV1.RequestWithdrawalResponse> {
+    const result = await this.useCases.requestWithdrawal.execute({
+      idempotencyKey: request.idempotencyKey,
+      amount: request.amount,
+      beneficiary: request.beneficiary,
+    });
+    return {
+      withdrawal: presentWithdrawal(result.withdrawal),
+      wallet: presentPrepaid(result.wallet),
+      created: result.created,
+    };
   }
 
-  listMyWithdrawals(): Promise<walletV1.ListMyWithdrawalsResponse> {
-    return notImplemented('ListMyWithdrawals');
+  async listMyWithdrawals(
+    request: walletV1.ListMyWithdrawalsRequest,
+  ): Promise<walletV1.ListMyWithdrawalsResponse> {
+    return withdrawalPage(
+      await this.useCases.listMyWithdrawals.execute({
+        page: parsePage(request.page),
+        status: request.status,
+      }),
+    );
   }
 }
 
@@ -371,6 +434,8 @@ export class WalletAdminGrpcController implements walletV1.WalletAdminServiceCon
       amount: request.amount,
       reason: request.reason,
       paymentId: request.paymentId,
+      receiptReference: request.receiptReference,
+      forObject: request.forObject,
     });
     return {
       ...(result.transaction ? { transaction: presentTransaction(result.transaction) } : {}),
@@ -402,23 +467,53 @@ export class WalletAdminGrpcController implements walletV1.WalletAdminServiceCon
     };
   }
 
-  rejectManualCredit(): Promise<walletV1.RejectManualCreditResponse> {
-    return notImplemented('RejectManualCredit');
+  async rejectManualCredit(
+    request: walletV1.RejectManualCreditRequest,
+  ): Promise<walletV1.RejectManualCreditResponse> {
+    const result = await this.useCases.rejectManualCredit.execute({
+      requestId: request.requestId,
+      reason: request.reason,
+    });
+    return { request: presentCreditRequest(result.request) };
   }
 
-  listWithdrawals(): Promise<walletV1.ListWithdrawalsResponse> {
-    return notImplemented('ListWithdrawals');
+  async listWithdrawals(request: walletV1.ListWithdrawalsRequest): Promise<walletV1.ListWithdrawalsResponse> {
+    return withdrawalPage(
+      await this.useCases.listWithdrawals.execute({
+        page: parsePage(request.page),
+        status: request.status,
+        holder: request.holder,
+      }),
+    );
   }
 
-  processWithdrawal(): Promise<walletV1.ProcessWithdrawalResponse> {
-    return notImplemented('ProcessWithdrawal');
+  async processWithdrawal(
+    request: walletV1.ProcessWithdrawalRequest,
+  ): Promise<walletV1.ProcessWithdrawalResponse> {
+    const result = await this.useCases.processWithdrawal.execute({
+      withdrawalId: request.withdrawalId,
+      note: request.note,
+    });
+    return { withdrawal: presentWithdrawal(result.withdrawal) };
   }
 
-  approveWithdrawal(): Promise<walletV1.ApproveWithdrawalResponse> {
-    return notImplemented('ApproveWithdrawal');
+  async approveWithdrawal(
+    request: walletV1.ApproveWithdrawalRequest,
+  ): Promise<walletV1.ApproveWithdrawalResponse> {
+    const result = await this.useCases.approveWithdrawal.execute({ withdrawalId: request.withdrawalId });
+    return { withdrawal: presentWithdrawal(result.withdrawal) };
   }
 
-  rejectWithdrawal(): Promise<walletV1.RejectWithdrawalResponse> {
-    return notImplemented('RejectWithdrawal');
+  async rejectWithdrawal(
+    request: walletV1.RejectWithdrawalRequest,
+  ): Promise<walletV1.RejectWithdrawalResponse> {
+    const result = await this.useCases.rejectWithdrawal.execute({
+      withdrawalId: request.withdrawalId,
+      reason: request.reason,
+    });
+    return {
+      withdrawal: presentWithdrawal(result.withdrawal),
+      wallet: presentPrepaid(result.wallet),
+    };
   }
 }

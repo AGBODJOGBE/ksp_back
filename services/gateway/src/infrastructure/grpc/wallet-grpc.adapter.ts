@@ -4,7 +4,7 @@ import { AppError, type GrpcCaller } from '@ksp/platform';
 import { Logger } from '@nestjs/common';
 import { type Observable } from 'rxjs';
 import { type Json, type Page } from '../../application/common/api.ports';
-import { type WalletApi, type WalletHolder } from '../../application/wallet/wallet.ports';
+import { type WalletApi, type WalletHolder, type WalletObject } from '../../application/wallet/wallet.ports';
 import { toUpstreamError } from './upstream-error';
 
 export interface WalletClients {
@@ -37,8 +37,64 @@ function presentCreditRequest(value: walletV1.ManualCreditRequest) {
     approvedBy: value.approvedBy || null,
     approvedAt: value.approvedAt || null,
     transactionId: value.transactionId || null,
+    // v2 (R-WL-02, R-PE-04) : reçu, objet à régler, rejet ; absents d'une demande d'avant.
+    ...(value.receiptReference !== undefined ? { receiptReference: value.receiptReference || null } : {}),
+    ...(value.forObject ? { forObject: presentObject(value.forObject) } : {}),
+    ...(value.rejectedAt !== undefined
+      ? {
+          rejectedBy: value.rejectedBy || null,
+          rejectedAt: value.rejectedAt || null,
+          rejectionReason: value.rejectionReason || null,
+        }
+      : {}),
   };
 }
+
+/** Objet d'un service réglé par le portefeuille (v2, R-WL-05). */
+function presentObject(value: walletV1.ObjectReference) {
+  return {
+    service: value.service,
+    objectType: value.objectType,
+    objectId: value.objectId,
+    part: orNull(value.part),
+  };
+}
+
+/**
+ * Retrait vers Mobile Money (R-WL-04) : numéro masqué seulement. La note de traitement ne sort
+ * qu'au back-office.
+ */
+export function presentWithdrawal(value: walletV1.Withdrawal | undefined, backoffice: boolean) {
+  if (!value?.holder) throw malformed('retrait');
+  return {
+    id: value.id,
+    holder: { type: value.holder.type, id: value.holder.id },
+    amount: xof(value.amount),
+    status: value.status,
+    beneficiaryOperator: value.beneficiaryOperator,
+    beneficiaryPhoneMasked: value.beneficiaryPhoneMasked,
+    requestedBy: value.requestedBy,
+    requestedAt: value.requestedAt,
+    processedBy: orNull(value.processedBy),
+    processedAt: orNull(value.processedAt),
+    ...(backoffice ? { processingNote: orNull(value.processingNote) } : {}),
+    approvedBy: orNull(value.approvedBy),
+    approvedAt: orNull(value.approvedAt),
+    rejectedAt: orNull(value.rejectedAt),
+    rejectionReason: orNull(value.rejectionReason),
+    paymentPayoutId: orNull(value.paymentPayoutId),
+    completedAt: orNull(value.completedAt),
+    failedAt: orNull(value.failedAt),
+  };
+}
+
+const withdrawals = (
+  res: { withdrawals: walletV1.Withdrawal[]; nextCursor: string },
+  backoffice: boolean,
+) => ({
+  data: res.withdrawals.map((withdrawal) => presentWithdrawal(withdrawal, backoffice)),
+  nextCursor: res.nextCursor || null,
+});
 
 export function presentPrepaid(value: walletV1.PrepaidWallet | undefined) {
   if (!value?.holder) throw malformed('portefeuille prépayé');
@@ -46,6 +102,7 @@ export function presentPrepaid(value: walletV1.PrepaidWallet | undefined) {
     holder: { type: value.holder.type, id: value.holder.id },
     balance: xof(value.balance),
     lastEntryAt: orNull(value.lastEntryAt),
+    ...(value.withdrawalsInProgress ? { withdrawalsInProgress: xof(value.withdrawalsInProgress) } : {}),
   };
 }
 
@@ -196,6 +253,8 @@ export class WalletGrpcAdapter implements WalletApi {
       amount: number;
       reason: string;
       paymentId?: string | undefined;
+      receiptReference?: string | undefined;
+      forObject?: WalletObject | undefined;
       idempotencyKey: string;
     },
   ): Promise<Json> {
@@ -208,6 +267,17 @@ export class WalletGrpcAdapter implements WalletApi {
           amount: { amount: input.amount, currency: 'XOF' },
           reason: input.reason,
           paymentId: input.paymentId ?? '',
+          ...(input.receiptReference ? { receiptReference: input.receiptReference } : {}),
+          ...(input.forObject
+            ? {
+                forObject: {
+                  service: input.forObject.service ?? '',
+                  objectType: input.forObject.objectType,
+                  objectId: input.forObject.objectId,
+                  part: input.forObject.part ?? '',
+                },
+              }
+            : {}),
         },
         m,
       ),
@@ -288,9 +358,102 @@ export class WalletGrpcAdapter implements WalletApi {
     };
   }
 
-  private async read<T>(name: string, invoke: (metadata: Metadata) => Observable<T>): Promise<T> {
+  /** Retrait : idempotent par clé chez wallet, donc rejouable après une panne. */
+  async requestWithdrawal(input: {
+    amount: number;
+    beneficiary: { phone: string; operator: string; name: string };
+    idempotencyKey: string;
+  }): Promise<Json> {
+    const res = await this.read('requestWithdrawal', (m) =>
+      this.clients.account.requestWithdrawal(
+        {
+          idempotencyKey: input.idempotencyKey,
+          amount: { amount: input.amount, currency: 'XOF' },
+          beneficiary: {
+            phone: input.beneficiary.phone,
+            operator: input.beneficiary.operator,
+            name: input.beneficiary.name,
+          },
+        },
+        m,
+      ),
+    );
+    return {
+      withdrawal: presentWithdrawal(res.withdrawal, false),
+      wallet: presentPrepaid(res.wallet),
+      created: res.created,
+    };
+  }
+
+  async listMyWithdrawals(value: Page, status: string | undefined): Promise<Json> {
+    const res = await this.read('listMyWithdrawals', (m) =>
+      this.clients.account.listMyWithdrawals({ page: page(value), status: status ?? '' }, m),
+    );
+    return withdrawals(res, false);
+  }
+
+  async rejectManualCredit(requestId: string, reason: string): Promise<Json> {
+    const res = await this.write('rejectManualCredit', (m) =>
+      this.clients.admin.rejectManualCredit({ requestId, reason }, m),
+    );
+    if (!res.request) throw malformed('rejet de crédit');
+    return presentCreditRequest(res.request);
+  }
+
+  async listWithdrawals(
+    value: Page,
+    filters: { status?: string | undefined; holder?: WalletHolder | undefined },
+  ): Promise<Json> {
+    const res = await this.read('listWithdrawals', (m) =>
+      this.clients.admin.listWithdrawals(
+        {
+          page: page(value),
+          status: filters.status ?? '',
+          ...(filters.holder ? { holder: filters.holder } : {}),
+        },
+        m,
+      ),
+    );
+    return withdrawals(res, true);
+  }
+
+  async processWithdrawal(withdrawalId: string, note: string): Promise<Json> {
+    const res = await this.write('processWithdrawal', (m) =>
+      this.clients.admin.processWithdrawal({ withdrawalId, note }, m),
+    );
+    return presentWithdrawal(res.withdrawal, true);
+  }
+
+  async approveWithdrawal(withdrawalId: string): Promise<Json> {
+    const res = await this.write('approveWithdrawal', (m) =>
+      this.clients.admin.approveWithdrawal({ withdrawalId }, m),
+    );
+    return presentWithdrawal(res.withdrawal, true);
+  }
+
+  async rejectWithdrawal(withdrawalId: string, reason: string): Promise<Json> {
+    const res = await this.write('rejectWithdrawal', (m) =>
+      this.clients.admin.rejectWithdrawal({ withdrawalId, reason }, m),
+    );
+    return presentWithdrawal(res.withdrawal, true);
+  }
+
+  private read<T>(name: string, invoke: (metadata: Metadata) => Observable<T>): Promise<T> {
+    return this.call(name, invoke, { idempotent: true });
+  }
+
+  /** Décision de la finance (traiter, valider, refuser) : jamais rejouée automatiquement. */
+  private write<T>(name: string, invoke: (metadata: Metadata) => Observable<T>): Promise<T> {
+    return this.call(name, invoke, {});
+  }
+
+  private async call<T>(
+    name: string,
+    invoke: (metadata: Metadata) => Observable<T>,
+    options: { idempotent?: boolean },
+  ): Promise<T> {
     try {
-      return await this.caller.call(name, invoke, { idempotent: true });
+      return await this.caller.call(name, invoke, options);
     } catch (error) {
       const upstream = toUpstreamError('wallet', error);
       if (upstream.code !== (error as AppError)?.code) {

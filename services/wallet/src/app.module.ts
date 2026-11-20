@@ -17,6 +17,7 @@ import { GrpcPayoutExecutor } from './infrastructure/payment/grpc-payout-executo
 import { GrpcTopUpPayments } from './infrastructure/payment/grpc-top-up-payments';
 import { PrismaLedgerStore } from './infrastructure/persistence/prisma-ledger.store';
 import { PrismaCreditRequests } from './infrastructure/persistence/prisma-credit-requests';
+import { PrismaWithdrawals } from './infrastructure/persistence/prisma-withdrawals';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import {
   DEBIT_RECONCILE_INTERVAL_MS,
@@ -62,6 +63,7 @@ export class AppModule {
         OutboxRelayService,
         PrismaLedgerStore,
         PrismaCreditRequests,
+        PrismaWithdrawals,
         PayoutEventsConsumer,
         PrepaidEventsConsumer,
         SubmitPayoutsService,
@@ -73,6 +75,7 @@ export class AppModule {
           inject: [
             PrismaLedgerStore,
             PrismaCreditRequests,
+            PrismaWithdrawals,
             PAYMENT_CLIENT,
             CLEANING_CLIENT,
             BILLING_CLIENT,
@@ -81,6 +84,7 @@ export class AppModule {
           useFactory: (
             store: PrismaLedgerStore,
             creditRequests: PrismaCreditRequests,
+            withdrawals: PrismaWithdrawals,
             payment: ClientGrpc,
             cleaning: ClientGrpc,
             billing: ClientGrpc,
@@ -97,6 +101,7 @@ export class AppModule {
             return createUseCases({
               ledger: store,
               payouts: store,
+              withdrawals,
               executor: new GrpcPayoutExecutor(
                 payment.getService<paymentV1.PayoutServiceClient>(paymentV1.PAYOUT_SERVICE_NAME),
                 caller,
@@ -111,6 +116,7 @@ export class AppModule {
               settings: {
                 ledgerCallers: config.WALLET_LEDGER_CALLERS,
                 debitCallers: config.WALLET_DEBIT_CALLERS,
+                creditCallers: config.WALLET_CREDIT_CALLERS,
                 topUpMin: config.WALLET_TOP_UP_MIN,
                 topUpMax: config.WALLET_TOP_UP_MAX,
                 manualRefundMax: config.WALLET_MANUAL_REFUND_MAX,

@@ -164,6 +164,29 @@ const protoMembership: identityV1.OrganizationMembership = {
   pendingBillingEmail: '',
 };
 
+/** Rôle géré au back-office (R-RB-02), tel que le rend identity. */
+export const protoManagedRole: identityV1.ManagedRole = {
+  code: 'cleaning_planner',
+  name: 'Planificateur Nettoyage',
+  description: 'Planifie les visites et les séances.',
+  service: 'identity',
+  origin: 'custom',
+  scopeType: identityV1.ScopeType.SCOPE_TYPE_GLOBAL,
+  permissions: ['cleaning.planning.manage', 'cleaning.request.read'],
+  sensitive: false,
+  backofficeAccess: true,
+  requiresMfa: true,
+  active: true,
+  editable: true,
+  activeAssignments: 0,
+  createdAt: '2026-11-20T09:00:00.000Z',
+  createdBy: ACCOUNT_ID,
+  updatedAt: '',
+  updatedBy: '',
+  deactivatedAt: '',
+  deactivatedBy: '',
+};
+
 export function protoSession(refreshToken = 'rt-new'): identityV1.SessionTokens {
   return {
     accessToken: 'eyJhbGciOiJFUzI1NiJ9.e30.c2ln',
@@ -373,11 +396,28 @@ export class IdentityStub {
     respondToOrganizationInvitation: () => ({}),
     changeOrganizationMemberRole: () => ({}),
     removeOrganizationMember: () => ({}),
-    listPermissions: () => ({}),
-    getRole: () => ({}),
-    createRole: () => ({}),
-    updateRole: () => ({}),
-    deactivateRole: () => ({}),
+    listPermissions: () => ({
+      permissions: [
+        {
+          code: 'cleaning.planning.manage',
+          description: 'Affecter les agents',
+          service: 'cleaning',
+          module: 'planning',
+          retired: false,
+        },
+      ],
+    }),
+    getRole: () => ({ role: protoManagedRole }),
+    createRole: () => ({ role: protoManagedRole }),
+    updateRole: () => ({ role: protoManagedRole }),
+    deactivateRole: () => ({
+      role: {
+        ...protoManagedRole,
+        active: false,
+        deactivatedAt: '2026-11-20T10:00:00.000Z',
+        deactivatedBy: ACCOUNT_ID,
+      },
+    }),
   };
 
   /** Remplace la réponse d'une méthode (erreur métier, délai…) jusqu'à reset(). */

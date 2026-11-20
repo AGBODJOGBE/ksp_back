@@ -126,11 +126,14 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
       expect(await topUp(20000, { eventId: '0192f1c4-0000-7000-c000-000000000002' })).toBe('duplicate');
       expect(await topUp(20000, { subjectId: ORGANIZATION_ID, paymentId: MISSION_ID })).toBe('ignored');
       expect((await prepaid()).balance).toBe(20000);
+      // Version 2 seulement (RV-101 : notification lit déjà les versions 1 et 2).
       expect(setup.store.events).toEqual([
         {
           type: 'wallet.prepaid.credited',
+          version: 2,
           payload: expect.objectContaining({
             kind: 'top_up',
+            topUpChannel: 'mobile_money_online',
             origin: 'payment',
             userId: USER_ID,
             paymentId: PAYMENT_ID,
@@ -138,6 +141,23 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
           }),
         },
       ]);
+      expect(setup.store.events[0]!.payload).not.toHaveProperty('forObject');
+    });
+
+    it('paiement direct (R-WL-05) : l’objet visé par le paiement est repris dans forObject', async () => {
+      const target = {
+        service: 'cleaning',
+        objectType: 'cleaning_session',
+        objectId: MISSION_ID,
+        part: null,
+        reference: 'DN-000124',
+      };
+      expect(await topUp(20000, { target })).toBe('recorded');
+      expect(setup.store.events[0]!.payload).toMatchObject({
+        kind: 'top_up',
+        forObject: { service: 'cleaning', objectType: 'cleaning_session', objectId: MISSION_ID, part: null },
+      });
+      expect(setup.store.events[0]!.payload).not.toHaveProperty('forObject.reference');
     });
   });
 

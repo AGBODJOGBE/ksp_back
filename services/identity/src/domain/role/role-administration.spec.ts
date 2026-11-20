@@ -2,6 +2,7 @@ import { INITIAL_BACKOFFICE_ROLES, type RoleDefinition } from './role';
 import {
   accountTransition,
   canManageAccounts,
+  canGrantRole,
   canManageRole,
   parseAccountQuery,
   perimeterOf,
@@ -28,10 +29,10 @@ describe("périmètre d'un administrateur", () => {
     expect(seesFullPhone(all)).toBe(true);
   });
 
-  it("l'administrateur du Nettoyage gère les rôles de son métier, sauf le sien", () => {
+  it("l'administrateur du Nettoyage lit son équipe mais n'attribue aucun rôle (R-RB-02, v2)", () => {
     const cleaning = perimeterOf(['cleaning_admin'])!;
-    expect(canManageRole(cleaning, role('cleaning_agent'))).toBe(true);
-    expect(canManageRole(cleaning, role('cleaning_supervisor'))).toBe(true);
+    expect(canManageRole(cleaning, role('cleaning_agent'))).toBe(false);
+    expect(canManageRole(cleaning, role('cleaning_supervisor'))).toBe(false);
     expect(canManageRole(cleaning, role('cleaning_admin'))).toBe(false);
     expect(canManageRole(cleaning, role('recovery_agent'))).toBe(false);
     expect(canManageRole(cleaning, role('super_admin'))).toBe(false);
@@ -45,6 +46,13 @@ describe("périmètre d'un administrateur", () => {
     const personal = { code: 'customer', service: 'identity', scopeType: 'personal' } as const;
     expect(canManageRole({ kind: 'all' }, orgRole)).toBe(false);
     expect(canManageRole({ kind: 'all' }, personal)).toBe(false);
+  });
+
+  it('un rôle créé au back-office (portée globale) se gère ; un rôle désactivé ne s’attribue plus', () => {
+    const custom = { code: 'cleaning_planner', service: 'identity', scopeType: 'global' } as const;
+    expect(canManageRole({ kind: 'all' }, custom)).toBe(true);
+    expect(canGrantRole({ kind: 'all' }, { ...custom, active: false })).toBe(false);
+    expect(canGrantRole({ kind: 'all' }, custom)).toBe(true);
   });
 });
 

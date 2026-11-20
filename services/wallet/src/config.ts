@@ -28,6 +28,11 @@ export const configSchema = baseServiceConfigSchema
     WALLET_LEDGER_CALLERS: serviceList('recovery'),
     /** Services autorisés à débiter et rembourser les portefeuilles prépayés (ADR-046). */
     WALLET_DEBIT_CALLERS: serviceList('cleaning,billing'),
+    /**
+     * Services autorisés à créditer un portefeuille sans débit à rembourser (Credit : geste
+     * commercial, crédit d'une réclamation, remboursement partiel ; CDC Nettoyage v2, R-WL-04).
+     */
+    WALLET_CREDIT_CALLERS: serviceList('cleaning'),
     /** Montants de recharge acceptés, en XOF entiers (ADR-046). */
     WALLET_TOP_UP_MIN: z.coerce.number().int().min(1).default(500),
     WALLET_TOP_UP_MAX: z.coerce.number().int().min(1).max(1_000_000_000).default(1_000_000),

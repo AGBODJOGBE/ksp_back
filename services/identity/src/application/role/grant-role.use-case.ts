@@ -42,6 +42,7 @@ export class GrantRoleUseCase {
       userId: account.id,
       roleCode: role.code,
       ...scope,
+      zoneKeys: [],
       grantedBy: null,
       now: this.clock.now(),
     });

@@ -10,7 +10,12 @@ const call: CleaningCall = {
   read: false,
 };
 
-function setup(profileIncomplete: boolean) {
+const ORG = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0a01';
+
+function setup(
+  profileIncomplete: boolean,
+  context: { organizationId: string | null; ifu?: string } = { organizationId: null },
+) {
   const calls: { operationId: string; call: CleaningCall }[] = [];
   const cleaning: CleaningApi = {
     call: async (operationId, input) => {
@@ -18,8 +23,19 @@ function setup(profileIncomplete: boolean) {
       return { ok: true };
     },
   };
-  const identity = { getMe: jest.fn(async () => ({ profileIncomplete }) as never) };
-  return { useCase: new CallCleaningUseCase(identity, cleaning), calls, identity };
+  const activeContext = context.organizationId
+    ? { type: 'business', organizationId: context.organizationId, organizationName: 'Hôtel du Lac' }
+    : { type: 'individual', organizationId: null, organizationName: null };
+  const identity = { getMe: jest.fn(async () => ({ profileIncomplete, activeContext }) as never) };
+  const organizations = {
+    getMine: jest.fn(async () => ({ organization: { id: ORG, ifu: context.ifu ?? '' } }) as never),
+  };
+  return {
+    useCase: new CallCleaningUseCase(identity, organizations, cleaning),
+    calls,
+    identity,
+    organizations,
+  };
 }
 
 describe('CallCleaningUseCase', () => {
@@ -48,5 +64,27 @@ describe('CallCleaningUseCase', () => {
     const { useCase, calls } = setup(false);
     await useCase.execute({ operationId: 'cleaningSubmitRequest', requiresCompleteProfile: true }, call);
     expect(calls).toHaveLength(1);
+  });
+
+  it('contexte personnel complet : l’organisation n’est jamais lue', async () => {
+    const { useCase, organizations } = setup(false);
+    await useCase.execute({ operationId: 'cleaningSubmitRequest', requiresCompleteProfile: true }, call);
+    expect(organizations.getMine).not.toHaveBeenCalled();
+  });
+
+  it('organisation active avec son IFU : transmise (R-CP-02)', async () => {
+    const { useCase, calls, organizations } = setup(false, { organizationId: ORG, ifu: '3201234567890' });
+    await useCase.execute({ operationId: 'cleaningSubmitRequest', requiresCompleteProfile: true }, call);
+    expect(organizations.getMine).toHaveBeenCalledWith(ORG);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('organisation active sans IFU : 422 IDENTITY_PROFILE_INCOMPLETE (R-CP-02)', async () => {
+    const { useCase, calls } = setup(false, { organizationId: ORG });
+    const error = await useCase
+      .execute({ operationId: 'cleaningSubmitRequest', requiresCompleteProfile: true }, call)
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ kind: 'FAILED_PRECONDITION', code: 'IDENTITY_PROFILE_INCOMPLETE' });
+    expect(calls).toEqual([]);
   });
 });

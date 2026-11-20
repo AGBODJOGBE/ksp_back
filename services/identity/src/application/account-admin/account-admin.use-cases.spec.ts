@@ -180,24 +180,23 @@ describe('GetAccountUseCase et ListAssignableRolesUseCase', () => {
     expect(detail.roles[0]).toMatchObject({ scopeType: 'domain', scopeId: 'cleaning', revocable: true });
     expect(detail.actions).toEqual({ grantRole: true, suspend: true, reactivate: false, resetMfa: true });
 
+    // Personne ne s'attribue un rôle à soi-même (R-RB-04).
     const self = await asDirector(() => get.execute(DIRECTOR));
-    expect(self.actions).toEqual({ grantRole: true, suspend: false, reactivate: false, resetMfa: false });
+    expect(self.actions).toEqual({ grantRole: false, suspend: false, reactivate: false, resetMfa: false });
   });
 
-  it('administrateur du Nettoyage : son équipe seulement, aucune action sur le compte', async () => {
+  it('administrateur du Nettoyage : lecture de son équipe seulement, aucune action (R-RB-02)', async () => {
     const { get, grant } = setup();
     const agent = await asCleaningHead(() => get.execute(AGENT));
     expect(agent.account.phoneE164).toBeNull();
-    expect(agent.roles[0]!.revocable).toBe(true);
-    expect(agent.actions).toEqual({ grantRole: true, suspend: false, reactivate: false, resetMfa: false });
+    expect(agent.roles[0]!.revocable).toBe(false);
+    expect(agent.actions).toEqual({ grantRole: false, suspend: false, reactivate: false, resetMfa: false });
     // Hors de son métier (ADR-050) : introuvable, comme un compte inconnu.
     for (const id of [DIRECTOR, CUSTOMER]) {
       expect((await failure(asCleaningHead(() => get.execute(id)))).code).toBe('IDENTITY_USER_NOT_FOUND');
     }
-    // Un client retrouvé par son numéro complet rejoint l'équipe par l'attribution d'un rôle.
-    await asCleaningHead(() =>
-      grant.execute({ userId: CUSTOMER, roleCode: 'cleaning_agent', reason: REASON }),
-    );
+    // Un client rejoint l'équipe par une attribution du super administrateur.
+    await asDirector(() => grant.execute({ userId: CUSTOMER, roleCode: 'cleaning_agent', reason: REASON }));
     await expect(asCleaningHead(() => get.execute(CUSTOMER))).resolves.toMatchObject({
       account: { id: CUSTOMER },
     });
@@ -216,10 +215,17 @@ describe('GetAccountUseCase et ListAssignableRolesUseCase', () => {
     const all = await asDirector(() => catalog.execute());
     expect(all.every((role) => role.grantable)).toBe(true);
     const cleaning = await asCleaningHead(() => catalog.execute());
-    expect(cleaning.filter((role) => role.grantable).map((role) => role.code)).toEqual([
-      'cleaning_agent',
-      'cleaning_supervisor',
-    ]);
+    expect(cleaning.filter((role) => role.grantable)).toEqual([]);
+  });
+
+  it('catalogue : un rôle désactivé y figure, jamais attribuable', async () => {
+    const { catalog, roles } = setup();
+    roles.definitions.find((role) => role.code === 'recovery_agent')!.active = false;
+    const all = await asDirector(() => catalog.execute());
+    expect(all.find((role) => role.code === 'recovery_agent')).toMatchObject({
+      active: false,
+      grantable: false,
+    });
   });
 });
 
@@ -260,17 +266,53 @@ describe('GrantAccountRoleUseCase', () => {
     expect(roles.audit).toEqual([]);
   });
 
-  it("l'administrateur du Nettoyage attribue les rôles de son métier, jamais le sien ni ceux d'un autre", async () => {
+  it("l'administrateur du Nettoyage n'attribue aucun rôle, même de son métier (R-RB-02)", async () => {
     const { grant } = setup();
-    await asCleaningHead(() =>
-      grant.execute({ userId: CUSTOMER, roleCode: 'cleaning_agent', reason: REASON }),
-    );
-    for (const roleCode of ['cleaning_admin', 'recovery_agent', 'super_admin']) {
+    for (const roleCode of ['cleaning_agent', 'cleaning_admin', 'recovery_agent', 'super_admin']) {
       const error = await failure(
         asCleaningHead(() => grant.execute({ userId: CUSTOMER, roleCode, reason: REASON })),
       );
       expect(error.code).toBe('IDENTITY_ROLE_FORBIDDEN');
     }
+  });
+
+  it('limite l’attribution à des zones : portée zone, clés triées (R-RB-03)', async () => {
+    const { grant, roles } = setup();
+    const detail = await asDirector(() =>
+      grant.execute({
+        userId: CUSTOMER,
+        roleCode: 'cleaning_supervisor',
+        reason: REASON,
+        zoneKeys: ['porto-novo', 'cotonou'],
+      }),
+    );
+    expect(roles.granted[0]).toMatchObject({
+      scopeType: 'zone',
+      scopeId: null,
+      zoneKeys: ['cotonou', 'porto-novo'],
+    });
+    expect(detail.roles[0]).toMatchObject({ scopeType: 'zone', zoneKeys: ['cotonou', 'porto-novo'] });
+    for (const zoneKeys of [[], ['cotonou', 'cotonou'], ['Cotonou']]) {
+      const error = await failure(
+        asDirector(() =>
+          grant.execute({ userId: CUSTOMER, roleCode: 'cleaning_agent', reason: REASON, zoneKeys }),
+        ),
+      );
+      expect(error).toMatchObject({ code: 'IDENTITY_ROLE_INVALID', details: { field: 'zoneKeys' } });
+    }
+  });
+
+  it('jamais à soi-même (R-RB-04) ; jamais un rôle désactivé (R-RB-02)', async () => {
+    const { grant, roles } = setup();
+    const self = await failure(
+      asDirector(() => grant.execute({ userId: DIRECTOR, roleCode: 'cleaning_agent', reason: REASON })),
+    );
+    expect(self.code).toBe('IDENTITY_SELF_ACTION_FORBIDDEN');
+    roles.definitions.find((role) => role.code === 'recovery_agent')!.active = false;
+    const inactive = await failure(
+      asDirector(() => grant.execute({ userId: CUSTOMER, roleCode: 'recovery_agent', reason: REASON })),
+    );
+    expect(inactive.code).toBe('IDENTITY_ROLE_INACTIVE');
   });
 
   it('motif obligatoire ; rôle inconnu ; compte non actif', async () => {
@@ -301,31 +343,48 @@ describe('RevokeAccountRoleUseCase', () => {
 
   it('retire le rôle avec le motif, publie identity.role.revoked, garde l’historique', async () => {
     const { revoke, roles } = setup();
-    const detail = await asCleaningHead(() =>
+    const detail = await asDirector(() =>
       revoke.execute({ userId: AGENT, assignmentId: AGENT_ROLE, reason: 'Départ de l’équipe' }),
     );
     expect(roles.revoked).toEqual([
       expect.objectContaining({
         assignmentId: AGENT_ROLE,
         userId: AGENT,
-        actorId: CLEANING_HEAD,
+        actorId: DIRECTOR,
         reason: 'Départ de l’équipe',
         roleCode: 'cleaning_agent',
       }),
     ]);
     expect(detail.account.roleCodes).toEqual([]);
     expect(detail.roles[0]).toMatchObject({
-      revokedBy: CLEANING_HEAD,
-      revokedByName: 'Rachid Bello',
+      revokedBy: DIRECTOR,
+      revokedByName: 'Afi Kpodar',
       revokeReason: 'Départ de l’équipe',
       revocable: false,
     });
     expect(detail.actions.grantRole).toBe(true);
 
     const again = await failure(
-      asCleaningHead(() => revoke.execute({ userId: AGENT, assignmentId: AGENT_ROLE, reason: 'x' })),
+      asDirector(() => revoke.execute({ userId: AGENT, assignmentId: AGENT_ROLE, reason: 'x' })),
     );
     expect(again.code).toBe('IDENTITY_ROLE_ALREADY_REVOKED');
+    // Rôle ordinaire : les sessions restent ouvertes jusqu'au renouvellement.
+    expect(roles.sessionsRevokedFor).toEqual([]);
+  });
+
+  it('retrait d’un rôle sensible : toutes les sessions de la personne fermées (R-RB-05)', async () => {
+    const { revoke, roles } = setup();
+    roles.definitions.find((role) => role.code === 'cleaning_agent')!.sensitive = true;
+    await asDirector(() => revoke.execute({ userId: AGENT, assignmentId: AGENT_ROLE, reason: REASON }));
+    expect(roles.sessionsRevokedFor).toEqual([AGENT]);
+  });
+
+  it('l’administrateur du Nettoyage ne retire aucun rôle', async () => {
+    const { revoke } = setup();
+    const error = await failure(
+      asCleaningHead(() => revoke.execute({ userId: AGENT, assignmentId: AGENT_ROLE, reason: REASON })),
+    );
+    expect(error.code).toBe('IDENTITY_ROLE_FORBIDDEN');
   });
 
   it('attribution inconnue ou d’un autre compte : introuvable ; rôle hors périmètre : refusé', async () => {
