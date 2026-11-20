@@ -1,51 +1,36 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ReadinessRegistry } from '@ksp/platform';
-import { Client, Pool } from 'pg';
+import { type Pool } from 'pg';
 import { writeChanges } from '../src/infrastructure/persistence/changes';
-import { PrismaService } from '../src/infrastructure/prisma/prisma.service';
+import { type PrismaService } from '../src/infrastructure/prisma/prisma.service';
 import { UuidV7Generator } from '../src/infrastructure/system/system';
+import {
+  describeWithDatabase,
+  HOOK_TIMEOUT_MS,
+  openTestDatabase,
+  type TestDatabase,
+} from './support/database';
 
 /**
  * Intégration contre un vrai PostgreSQL : migration v2 dans un schéma jetable, client Prisma,
  * outbox et journal d'audit écrits dans la transaction de l'état, données de démonstration. Ignoré
  * sans TEST_DATABASE_URL (fourni en CI). Le métier v2 ajoute ses dépôts lot par lot (ADR-054).
  */
-const databaseUrl = process.env.TEST_DATABASE_URL;
-const describeWithDatabase = databaseUrl ? describe : describe.skip;
-const MIGRATIONS = join(__dirname, '..', 'prisma', 'migrations');
 const DEMO = join(__dirname, '..', 'prisma', 'demo', 'demo-data.sql');
 const REQUEST_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e01';
 
 describeWithDatabase('base cleaning v2 (PostgreSQL)', () => {
-  const schema = `cleaning_test_${Date.now()}`;
+  let db: TestDatabase;
   let pool: Pool;
   let prisma: PrismaService;
   const ids = new UuidV7Generator();
 
   beforeAll(async () => {
-    const admin = new Client({ connectionString: databaseUrl });
-    await admin.connect();
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    await admin.end();
-    pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}` });
-    for (const migration of readdirSync(MIGRATIONS)
-      .filter((name) => /^\d{4}_/.test(name))
-      .sort()) {
-      await pool.query(readFileSync(join(MIGRATIONS, migration, 'migration.sql'), 'utf8'));
-    }
-    const url = new URL(databaseUrl as string);
-    url.searchParams.set('schema', schema);
-    process.env.DATABASE_URL = url.toString();
-    prisma = new PrismaService(new ReadinessRegistry());
-    await prisma.$connect();
-  }, 60_000);
+    db = await openTestDatabase('cleaning_test');
+    ({ pool, prisma } = db);
+  }, HOOK_TIMEOUT_MS);
 
-  afterAll(async () => {
-    await prisma?.$disconnect();
-    await pool?.query(`DROP SCHEMA ${schema} CASCADE`);
-    await pool?.end();
-  }, 60_000);
+  afterAll(() => db?.close(), HOOK_TIMEOUT_MS);
 
   it('la migration crée la ligne des réglages, avec leurs valeurs par défaut (partie 16.1)', async () => {
     expect(await prisma.cleaningSettings.findUniqueOrThrow({ where: { id: 1 } })).toMatchObject({

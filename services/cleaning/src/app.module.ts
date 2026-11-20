@@ -8,12 +8,24 @@ import {
 } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
+import { CATALOG_USE_CASES, catalogUseCases } from './application/catalog/catalog-use-cases';
 import { CLEANING_DEPS, type CleaningDeps } from './application/deps';
 import { type ServiceConfig } from './config';
 import { GrpcPhotoStore } from './infrastructure/file/grpc-photo-store';
+import { GeoServiceCommuneDirectory } from './infrastructure/geocoding/geo-service.communes';
 import { GeoServiceGeocoder } from './infrastructure/geocoding/geo-service.geocoder';
 import { IdentityPeopleDirectory } from './infrastructure/identity/identity-people-directory';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
+import {
+  PrismaCatalogSettingsReader,
+  PrismaIdempotencyStore,
+} from './infrastructure/persistence/catalog/prisma-catalog-settings';
+import { PrismaCleaningTypeRepository } from './infrastructure/persistence/catalog/prisma-cleaning-type.repository';
+import { PrismaHolidayRepository } from './infrastructure/persistence/catalog/prisma-holiday.repository';
+import { PrismaOfferRepository } from './infrastructure/persistence/catalog/prisma-offer.repository';
+import { PrismaParameterRepository } from './infrastructure/persistence/catalog/prisma-parameter.repository';
+import { PrismaPlaceCatalogRepository } from './infrastructure/persistence/catalog/prisma-place-catalog.repository';
+import { PrismaZoneRepository } from './infrastructure/persistence/catalog/prisma-zone.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { GrpcWalletLedger } from './infrastructure/wallet/grpc-wallet-ledger';
@@ -49,6 +61,7 @@ export class AppModule {
         {
           provide: CLEANING_DEPS,
           inject: [
+            PrismaService,
             IDENTITY_CLIENT,
             WALLET_CLIENT,
             FILE_CLIENT,
@@ -56,6 +69,7 @@ export class AppModule {
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
           ],
           useFactory: (
+            prisma: PrismaService,
             identityGrpc: ClientGrpc,
             walletGrpc: ClientGrpc,
             fileGrpc: ClientGrpc,
@@ -69,6 +83,8 @@ export class AppModule {
             }
             const caller = (target: string) =>
               new GrpcCaller({ target, ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}) });
+            const ids = new UuidV7Generator();
+            const geo = geoGrpc.getService<geoV1.GeoServiceClient>(geoV1.GEO_SERVICE_NAME);
             return {
               people: new IdentityPeopleDirectory(
                 identityGrpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
@@ -83,16 +99,22 @@ export class AppModule {
                 caller('file'),
               ),
               // Délai de l'appel à geo : ses deux fournisseurs enchaînés, plus une marge d'une seconde.
-              geocoder: new GeoServiceGeocoder(
-                geoGrpc.getService<geoV1.GeoServiceClient>(geoV1.GEO_SERVICE_NAME),
-                caller('geo'),
-                2 * config.GEOCODING_TIMEOUT_MS + 1_000,
-              ),
+              geocoder: new GeoServiceGeocoder(geo, caller('geo'), 2 * config.GEOCODING_TIMEOUT_MS + 1_000),
               clock: new SystemClock(),
-              ids: new UuidV7Generator(),
+              ids,
+              places: new PrismaPlaceCatalogRepository(prisma, ids),
+              parameters: new PrismaParameterRepository(prisma, ids),
+              cleaningTypes: new PrismaCleaningTypeRepository(prisma, ids),
+              offers: new PrismaOfferRepository(prisma, ids),
+              zones: new PrismaZoneRepository(prisma, ids),
+              holidays: new PrismaHolidayRepository(prisma, ids),
+              settings: new PrismaCatalogSettingsReader(prisma),
+              communes: new GeoServiceCommuneDirectory(geo, caller('geo')),
+              idempotency: new PrismaIdempotencyStore(prisma),
             };
           },
         },
+        { provide: CATALOG_USE_CASES, inject: [CLEANING_DEPS], useFactory: catalogUseCases },
       ],
     };
   }
