@@ -26,3 +26,6 @@ CREATE DATABASE wallet OWNER wallet;
 
 CREATE USER document WITH PASSWORD 'document' CREATEDB;
 CREATE DATABASE document OWNER document;
+
+CREATE USER recovery WITH PASSWORD 'recovery' CREATEDB;
+CREATE DATABASE recovery OWNER recovery;

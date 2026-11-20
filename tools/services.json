@@ -48,5 +48,10 @@
     "grpcPort": 50059,
     "httpPort": 3109,
     "database": false
+  },
+  "recovery": {
+    "grpcPort": 50060,
+    "httpPort": 3110,
+    "database": true
   }
 }
