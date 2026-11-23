@@ -153,8 +153,10 @@ export function collectionEntries(
   holder: Holder,
   gross: number,
   rateBps: number,
+  commissionAmount?: number,
 ): { net: number; commission: number; entries: EntryLine[] } {
-  const commission = commissionOf(gross, rateBps);
+  // Commission calculée par l'appelant (paliers, minimum, maximum : ADR-060) ; sinon par le taux.
+  const commission = commissionAmount ?? commissionOf(gross, rateBps);
   const net = gross - commission;
   return {
     net,
@@ -254,16 +256,23 @@ export function sameDebit(
   );
 }
 
-/** Même encaissement (rejeu d'une référence) : même titulaire, même brut, même taux. */
+/**
+ * Même encaissement (rejeu d'une référence) : même titulaire, même brut, même taux et, si l'appelant
+ * l'a fournie, même commission.
+ */
 export function sameCollection(
-  transaction: Pick<LedgerTransaction, 'kind' | 'holder' | 'grossAmount' | 'commissionRateBps'>,
-  request: { holder: Holder; gross: number; rateBps: number },
+  transaction: Pick<
+    LedgerTransaction,
+    'kind' | 'holder' | 'grossAmount' | 'commissionRateBps' | 'commission'
+  >,
+  request: { holder: Holder; gross: number; rateBps: number; commissionAmount?: number },
 ): boolean {
   return (
     transaction.kind === 'collection' &&
     transaction.holder.type === request.holder.type &&
     transaction.holder.id === request.holder.id &&
     transaction.grossAmount === request.gross &&
-    transaction.commissionRateBps === request.rateBps
+    transaction.commissionRateBps === request.rateBps &&
+    (request.commissionAmount === undefined || transaction.commission === request.commissionAmount)
   );
 }

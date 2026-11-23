@@ -103,7 +103,7 @@ export const configSchema = baseServiceConfigSchema
     OBLIGATION_SERVICES: z
       .string()
       .default(
-        'cleaning=localhost:50053,billing=localhost:50054,payment=localhost:50055,wallet=localhost:50057',
+        'cleaning=localhost:50053,billing=localhost:50054,payment=localhost:50055,wallet=localhost:50057,recovery=localhost:50060',
       ),
     /** Délai de réponse de chaque service interrogé : sous le délai de la gateway (3 secondes). */
     OBLIGATION_CHECK_DEADLINE_MS: z.coerce.number().int().positive().default(1500),

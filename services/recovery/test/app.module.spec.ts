@@ -1,6 +1,7 @@
 import { loadConfig } from '@ksp/platform';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
+import { ObligationGrpcController } from '../src/interfaces/grpc/obligation.controller';
 import { configSchema } from '../src/config';
 import {
   RecoveryAdminGrpcController,
@@ -24,11 +25,12 @@ describe('AppModule', () => {
     expect(moduleRef.get(RecoveryDebtorGrpcController)).toBeDefined();
     expect(moduleRef.get(RecoveryPartnerGrpcController)).toBeDefined();
     expect(moduleRef.get(RecoveryAdminGrpcController)).toBeDefined();
+    expect(moduleRef.get(ObligationGrpcController)).toBeDefined();
     await moduleRef.close();
   });
 
   it("répond « pas encore disponible » tant qu'un cas d'usage n'est pas livré", async () => {
-    await expect(new RecoveryCreditorGrpcController().createCase()).rejects.toMatchObject({
+    await expect(new RecoveryCreditorGrpcController({} as never).createCase()).rejects.toMatchObject({
       code: 'RECOVERY_NOT_IMPLEMENTED',
     });
   });

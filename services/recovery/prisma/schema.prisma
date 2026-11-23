@@ -39,3 +39,783 @@ model ProcessedEvent {
   @@id([eventId, consumer])
   @@map("processed_events")
 }
+
+// ---------------------------------------------------------------------------------------------
+// Recouvrement (ADR-060 à 063, cahier des charges partie 16.2). Montants : entiers en XOF. Les
+// coordonnées des débiteurs sont chiffrées par FieldCipher (colonnes *_enc) ; le téléphone et
+// l'e-mail ont aussi une empreinte de recherche (BlindIndex, colonnes *_index).
+// ---------------------------------------------------------------------------------------------
+
+enum CaseKind {
+  b2b
+  b2c
+  rent
+}
+
+enum CaseStatus {
+  draft
+  awaiting_fee
+  under_review
+  info_requested
+  active
+  suspended
+  closed
+  rejected
+}
+
+enum CaseStage {
+  notice
+  payment_plan
+  amicable
+  formal_notice
+  bailiff
+  litigation
+}
+
+enum PartyType {
+  user
+  organization
+}
+
+/// Dossier de recouvrement (RC-000123). La règle tarifaire est figée à la signature du mandat
+/// (R-CO-02) ; les montants tenus à jour donnent le montant dû (R-SD-08).
+model RecoveryCase {
+  id                     String     @id @db.Uuid
+  /// Séquence du numéro lisible RC-000123.
+  sequence               Int        @unique @default(autoincrement())
+  number                 String     @unique
+  kind                   CaseKind
+  status                 CaseStatus @default(draft)
+  stage                  CaseStage?
+  /// Étape la plus avancée atteinte (palier de commission, R-CO-01).
+  highestStage           CaseStage? @map("highest_stage")
+  creditorType           PartyType  @map("creditor_type")
+  creditorId             String     @map("creditor_id") @db.Uuid
+  /// Compte qui a créé le dossier (le créancier, ou un membre de l'organisation créancière).
+  createdByUserId        String     @map("created_by_user_id") @db.Uuid
+  /// Nature de la créance : facture impayée, prêt, reconnaissance de dette, chèque…
+  nature                 String
+  /// form, import ou rental.
+  source                 String     @default("form")
+  importId               String?    @map("import_id") @db.Uuid
+  communeKey             String?    @map("commune_key")
+  relationshipToPreserve Boolean    @default(false) @map("relationship_to_preserve")
+  /// Préférences du créancier pour ce dossier (barème d'échéancier, remise autorisée).
+  preferences            Json?
+  assignedAgentId        String?    @map("assigned_agent_id") @db.Uuid
+  score                  Int?
+  scoreBreakdown         Json?      @map("score_breakdown")
+  rejectionReason        String?    @map("rejection_reason")
+  closureReason          String?    @map("closure_reason")
+  /// Mandat signé (document) et règles tarifaires figées (R-SD-03, R-CO-02).
+  mandateDocumentId      String?    @map("mandate_document_id") @db.Uuid
+  mandateSignedAt        DateTime?  @map("mandate_signed_at") @db.Timestamptz(3)
+  feeRuleId              String?    @map("fee_rule_id") @db.Uuid
+  feeRuleVersion         Int?       @map("fee_rule_version")
+  commissionRuleId       String?    @map("commission_rule_id") @db.Uuid
+  commissionRuleVersion  Int?       @map("commission_rule_version")
+  commissionSummary      String?    @map("commission_summary")
+  /// Frais de dossier : montant et débit du portefeuille (référence wallet).
+  caseFee                Int        @default(0) @map("case_fee")
+  caseFeePaidAt          DateTime?  @map("case_fee_paid_at") @db.Timestamptz(3)
+  caseFeeDebitReference  String?    @unique @map("case_fee_debit_reference")
+  /// Montants tenus à jour (R-SD-08) : dû = principal + intérêts + frais − payé.
+  principal              Int        @default(0)
+  interests              Int        @default(0)
+  costs                  Int        @default(0)
+  paid                   Int        @default(0)
+  /// Base déjà commissionnée et commission déjà prélevée (tranches et minimum au cumul, ADR-062).
+  commissionedBase       Int        @default(0) @map("commissioned_base")
+  commissionTotal        Int        @default(0) @map("commission_total")
+  /// Date d'exigibilité la plus ancienne et date limite de prescription (partie 2).
+  earliestDueDate        DateTime?  @map("earliest_due_date") @db.Date
+  prescriptionDate       DateTime?  @map("prescription_date") @db.Date
+  idempotencyKey         String?    @map("idempotency_key")
+  submittedAt            DateTime?  @map("submitted_at") @db.Timestamptz(3)
+  acceptedAt             DateTime?  @map("accepted_at") @db.Timestamptz(3)
+  suspendedAt            DateTime?  @map("suspended_at") @db.Timestamptz(3)
+  stoppedAt              DateTime?  @map("stopped_at") @db.Timestamptz(3)
+  closedAt               DateTime?  @map("closed_at") @db.Timestamptz(3)
+  /// Verrou optimiste : chaque modification incrémente la version.
+  version                Int        @default(0)
+  createdAt              DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  debtors          Debtor[]
+  claims           Claim[]
+  priorEffort      PriorEffort?
+  documents        CaseDocument[]
+  contacts         Contact[]
+  promises         PaymentPromise[]
+  plans            PaymentPlan[]
+  decisions        Decision[]
+  transitions      StageTransition[]
+  notices          Notice[]
+  assignments      PartnerAssignment[]
+  provisions       Provision[]
+  paymentRequests  PaymentRequest[]
+  collections      Collection[]
+  offlinePayments  OfflinePayment[]
+  disputes         Dispute[]
+  callbackRequests CallbackRequest[]
+  debtorAccesses   DebtorAccess[]
+  evidence         EvidenceEntry[]
+
+  @@unique([creditorType, creditorId, idempotencyKey])
+  @@index([creditorType, creditorId, status])
+  @@index([status, stage])
+  @@index([assignedAgentId, status])
+  @@index([prescriptionDate])
+  @@map("recovery_cases")
+}
+
+/// Débiteur, codébiteur ou caution (4.1, étape 2). Données personnelles chiffrées (ADR-063).
+model Debtor {
+  id           String   @id @db.Uuid
+  caseId       String   @map("case_id") @db.Uuid
+  /// main, codebtor ou guarantor.
+  role         String   @default("main")
+  /// person ou company.
+  kind         String
+  /// Noms, raison sociale, IFU, RCCM, représentant : objet JSON chiffré.
+  identityEnc  String   @map("identity_enc")
+  /// Adresses (commune, quartier, repère) : liste JSON chiffrée.
+  addressesEnc String?  @map("addresses_enc")
+  position     Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  case     RecoveryCase    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  contacts DebtorContact[]
+
+  @@index([caseId])
+  @@map("debtors")
+}
+
+/// Moyen de contact d'un débiteur : valeur chiffrée, empreinte de recherche du téléphone ou de
+/// l'e-mail (doublons R-SD-06, sans déchiffrer).
+model DebtorContact {
+  id         String    @id @db.Uuid
+  debtorId   String    @map("debtor_id") @db.Uuid
+  /// phone ou email.
+  channel    String
+  valueEnc   String    @map("value_enc")
+  valueIndex String    @map("value_index")
+  isPrimary  Boolean   @default(false) @map("is_primary")
+  valid      Boolean   @default(true)
+  verifiedAt DateTime? @map("verified_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  debtor Debtor @relation(fields: [debtorId], references: [id], onDelete: Cascade)
+
+  @@index([debtorId])
+  @@index([valueIndex])
+  @@map("debtor_contacts")
+}
+
+/// Créance (facture, prêt, chèque…) : référence et montants (4.1, étape 3).
+model Claim {
+  id          String   @id @db.Uuid
+  caseId      String   @map("case_id") @db.Uuid
+  reference   String
+  nature      String
+  principal   Int
+  interests   Int      @default(0)
+  dueDate     DateTime @map("due_date") @db.Date
+  description String?
+  /// Paiements partiels déjà reçus avant la soumission.
+  paidBefore  Int      @default(0) @map("paid_before")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@index([reference])
+  @@map("claims")
+}
+
+/// Démarches déjà faites par le créancier (4.1, étape 5).
+model PriorEffort {
+  caseId               String    @id @map("case_id") @db.Uuid
+  remindersCount       Int       @default(0) @map("reminders_count")
+  lastReminderAt       DateTime? @map("last_reminder_at") @db.Date
+  channels             String[]  @default([])
+  acknowledged         Boolean   @default(false)
+  acknowledgmentFileId String?   @map("acknowledgment_file_id") @db.Uuid
+  promises             String?
+  notes                String?
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@map("prior_efforts")
+}
+
+/// Pièce d'un dossier (fichier de file ou document produit) : justificatif, mandat, échéancier
+/// signé, acte… `visibleToPartner` est posé pièce par pièce par le juriste (R-AR-02, ADR-060).
+model CaseDocument {
+  id               String   @id @db.Uuid
+  caseId           String   @map("case_id") @db.Uuid
+  claimId          String?  @map("claim_id") @db.Uuid
+  fileId           String?  @map("file_id") @db.Uuid
+  documentId       String?  @map("document_id") @db.Uuid
+  /// evidence, mandate, payment_plan, formal_notice, fee_quote, legal_act, dispute, other.
+  kind             String
+  label            String
+  visibleToPartner Boolean  @default(false) @map("visible_to_partner")
+  visibleToDebtor  Boolean  @default(false) @map("visible_to_debtor")
+  uploadedByType   String   @map("uploaded_by_type")
+  uploadedById     String?  @map("uploaded_by_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@map("case_documents")
+}
+
+/// Contact avec le débiteur : message, appel, courrier, visite (R-PR-08).
+model Contact {
+  id             String   @id @db.Uuid
+  caseId         String   @map("case_id") @db.Uuid
+  channel        String
+  /// outbound ou inbound.
+  direction      String
+  occurredAt     DateTime @map("occurred_at") @db.Timestamptz(3)
+  byType         String   @map("by_type")
+  byId           String?  @map("by_id") @db.Uuid
+  outcome        String?
+  deliveryStatus String?  @map("delivery_status")
+  note           String?
+  /// Note interne : jamais montrée au créancier ni au débiteur.
+  internal       Boolean  @default(false)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, occurredAt])
+  @@map("contacts")
+}
+
+/// Promesse de paiement (R-PR-09) : relance le lendemain si elle n'est pas tenue.
+model PaymentPromise {
+  id        String    @id @db.Uuid
+  caseId    String    @map("case_id") @db.Uuid
+  amount    Int
+  dueDate   DateTime  @map("due_date") @db.Date
+  /// pending, kept, broken, cancelled.
+  status    String    @default("pending")
+  createdBy String    @map("created_by") @db.Uuid
+  keptAt    DateTime? @map("kept_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([status, dueDate])
+  @@index([caseId])
+  @@map("payment_promises")
+}
+
+/// Échéancier (6.1) ; signé, il vaut reconnaissance de dette (R-EC-02).
+model PaymentPlan {
+  id                 String    @id @db.Uuid
+  caseId             String    @map("case_id") @db.Uuid
+  /// proposed, pending_creditor, signed, completed, defaulted, rejected, cancelled.
+  status             String    @default("proposed")
+  /// Conditions : rythme, nombre d'échéances, premier versement, remise.
+  terms              Json
+  total              Int
+  outOfScale         Boolean   @default(false) @map("out_of_scale")
+  violations         Json?
+  proposedByType     String    @map("proposed_by_type")
+  proposedById       String?   @map("proposed_by_id") @db.Uuid
+  /// Échéancier renégocié (une seule renégociation, 6.1).
+  renegotiatedFromId String?   @map("renegotiated_from_id") @db.Uuid
+  signatureRequestId String?   @map("signature_request_id") @db.Uuid
+  signedDocumentId   String?   @map("signed_document_id") @db.Uuid
+  signedAt           DateTime? @map("signed_at") @db.Timestamptz(3)
+  endedAt            DateTime? @map("ended_at") @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case         RecoveryCase  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  installments Installment[]
+
+  @@index([caseId, status])
+  @@map("payment_plans")
+}
+
+/// Échéance d'un échéancier.
+model Installment {
+  id      String    @id @db.Uuid
+  planId  String    @map("plan_id") @db.Uuid
+  rank    Int
+  dueDate DateTime  @map("due_date") @db.Date
+  amount  Int
+  paid    Int       @default(0)
+  /// upcoming, due, paid, partial, missed.
+  status  String    @default("upcoming")
+  paidAt  DateTime? @map("paid_at") @db.Timestamptz(3)
+
+  plan PaymentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, rank])
+  @@index([status, dueDate])
+  @@map("installments")
+}
+
+/// Décision demandée au créancier (R-PR-04, R-PR-05, R-EC-01, saut d'étape R-PR-03).
+model Decision {
+  id          String    @id @db.Uuid
+  caseId      String    @map("case_id") @db.Uuid
+  /// plan_out_of_scale, discount, bailiff, litigation, dispute_answer, stage_skip.
+  type        String
+  /// pending, accepted, refused, expired.
+  status      String    @default("pending")
+  payload     Json
+  requestedBy String?   @map("requested_by") @db.Uuid
+  requestedAt DateTime  @map("requested_at") @db.Timestamptz(3)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
+  decidedAt   DateTime? @map("decided_at") @db.Timestamptz(3)
+  decidedBy   String?   @map("decided_by") @db.Uuid
+  answer      Json?
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, status])
+  @@index([status, expiresAt])
+  @@map("decisions")
+}
+
+/// Passage d'une étape à une autre (sauts tracés, R-PR-03).
+model StageTransition {
+  id      String     @id @db.Uuid
+  caseId  String     @map("case_id") @db.Uuid
+  from    CaseStage?
+  to      CaseStage
+  at      DateTime   @db.Timestamptz(3)
+  byType  String     @map("by_type")
+  byId    String?    @map("by_id") @db.Uuid
+  reason  String?
+  skipped Boolean    @default(false)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, at])
+  @@map("stage_transitions")
+}
+
+/// Courrier produit par document : mise en demeure, attestation, devis, relevé, reçu, journal.
+model Notice {
+  id             String    @id @db.Uuid
+  caseId         String    @map("case_id") @db.Uuid
+  /// formal_notice, settlement_certificate, fee_quote, statement, receipt, evidence_log.
+  kind           String
+  documentId     String    @map("document_id") @db.Uuid
+  documentNumber String    @map("document_number")
+  signedBy       String?   @map("signed_by") @db.Uuid
+  issuedAt       DateTime  @map("issued_at") @db.Timestamptz(3)
+  deliveredAt    DateTime? @map("delivered_at") @db.Timestamptz(3)
+  deliveryMethod String?   @map("delivery_method")
+  proofFileId    String?   @map("proof_file_id") @db.Uuid
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, kind])
+  @@map("notices")
+}
+
+/// Huissier ou avocat partenaire (R-HU-01), vérifié avant activation.
+model Partner {
+  id               String    @id @db.Uuid
+  /// bailiff ou lawyer.
+  kind             String
+  /// Compte KSP du partenaire (accès partenaire), s'il en a un.
+  userId           String?   @unique @map("user_id") @db.Uuid
+  displayName      String    @map("display_name")
+  office           String
+  /// Ressort : clés de commune de geo.
+  areas            String[]  @default([])
+  /// Coordonnées professionnelles : JSON chiffré.
+  contactsEnc      String?   @map("contacts_enc")
+  /// Grille d'honoraires par type d'acte.
+  feeSchedule      Json?     @map("fee_schedule")
+  /// pending, active, suspended.
+  status           String    @default("pending")
+  verifiedAt       DateTime? @map("verified_at") @db.Timestamptz(3)
+  verifiedBy       String?   @map("verified_by") @db.Uuid
+  averageDelayDays Int?      @map("average_delay_days")
+  successRateBps   Int?      @map("success_rate_bps")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  assignments PartnerAssignment[]
+
+  @@index([kind, status])
+  @@map("partners")
+}
+
+/// Dossier confié à un partenaire (R-HU-02 à 07).
+model PartnerAssignment {
+  id              String    @id @db.Uuid
+  caseId          String    @map("case_id") @db.Uuid
+  partnerId       String    @map("partner_id") @db.Uuid
+  /// active, withdrawn, completed.
+  status          String    @default("active")
+  assignedBy      String    @map("assigned_by") @db.Uuid
+  assignedAt      DateTime  @map("assigned_at") @db.Timestamptz(3)
+  quoteDocumentId String?   @map("quote_document_id") @db.Uuid
+  lastUpdateAt    DateTime  @map("last_update_at") @db.Timestamptz(3)
+  withdrawnAt     DateTime? @map("withdrawn_at") @db.Timestamptz(3)
+  withdrawReason  String?   @map("withdraw_reason")
+
+  case    RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  partner Partner      @relation(fields: [partnerId], references: [id])
+  acts    LegalAct[]
+
+  @@index([partnerId, status])
+  @@index([caseId])
+  @@index([status, lastUpdateAt])
+  @@map("partner_assignments")
+}
+
+/// Acte d'un partenaire : sommation, signification, saisie, audience, décision (R-HU-04).
+model LegalAct {
+  id           String   @id @db.Uuid
+  assignmentId String   @map("assignment_id") @db.Uuid
+  caseId       String   @map("case_id") @db.Uuid
+  type         String
+  actDate      DateTime @map("act_date") @db.Date
+  cost         Int      @default(0)
+  fileId       String?  @map("file_id") @db.Uuid
+  note         String?
+  recordedBy   String   @map("recorded_by") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  assignment PartnerAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, actDate])
+  @@map("legal_acts")
+}
+
+/// Provision des frais d'huissier, de greffe ou d'avocat, payée par le créancier (R-PR-04). KSP
+/// n'avance jamais de frais ; le reste est rendu à la main par la finance (ADR-060).
+model Provision {
+  id             String    @id @db.Uuid
+  caseId         String    @map("case_id") @db.Uuid
+  decisionId     String?   @map("decision_id") @db.Uuid
+  assignmentId   String?   @map("assignment_id") @db.Uuid
+  amount         Int
+  /// requested, paid, consumed, refunded, cancelled.
+  status         String    @default("requested")
+  debitReference String?   @unique @map("debit_reference")
+  paidAt         DateTime? @map("paid_at") @db.Timestamptz(3)
+  consumedAmount Int       @default(0) @map("consumed_amount")
+  refundedAmount Int       @default(0) @map("refunded_amount")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@map("provisions")
+}
+
+/// Montant à payer et son lien de paiement (payment, ADR-040) : un seul lien actif par dossier,
+/// plafonné au montant dû (ADR-060).
+model PaymentRequest {
+  id            String    @id @db.Uuid
+  caseId        String    @map("case_id") @db.Uuid
+  amount        Int
+  paymentLinkId String?   @unique @map("payment_link_id") @db.Uuid
+  /// pending, active, paid, revoked, expired.
+  status        String    @default("pending")
+  /// debtor ou staff.
+  requestedBy   String    @map("requested_by")
+  installmentId String?   @map("installment_id") @db.Uuid
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(3)
+  paidAt        DateTime? @map("paid_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, status])
+  @@map("payment_requests")
+}
+
+/// Encaissement imputé (R-EN-03) et sa commission (R-CO-01). Le net est crédité au portefeuille du
+/// créancier par wallet.RecordCollection dès l'encaissement confirmé (ADR-060).
+model Collection {
+  id                  String    @id @db.Uuid
+  caseId              String    @map("case_id") @db.Uuid
+  /// payment_link, offline, partner ou direct (payé directement au créancier, R-PR-07).
+  source              String
+  /// Référence d'idempotence : payment:<id>, offline:<id>, direct:<id>.
+  reference           String    @unique
+  gross               Int
+  allocatedCosts      Int       @map("allocated_costs")
+  allocatedInterests  Int       @map("allocated_interests")
+  allocatedPrincipal  Int       @map("allocated_principal")
+  overpaid            Int       @default(0)
+  commissionBase      Int       @map("commission_base")
+  commission          Int
+  net                 Int
+  /// Groupe d'étapes à l'encaissement : amicable, formal_notice ou litigation.
+  stageGroup          String    @map("stage_group")
+  ruleId              String?   @map("rule_id") @db.Uuid
+  ruleVersion         Int?      @map("rule_version")
+  walletTransactionId String?   @map("wallet_transaction_id") @db.Uuid
+  creditedAt          DateTime? @map("credited_at") @db.Timestamptz(3)
+  collectedAt         DateTime  @map("collected_at") @db.Timestamptz(3)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, collectedAt])
+  @@index([creditedAt])
+  @@map("collections")
+}
+
+/// Paiement reçu hors ligne (espèces, virement, encaissement d'un partenaire) : saisi par une
+/// personne, validé par une autre (R-EN-01, R-AR-03, R-HU-05).
+model OfflinePayment {
+  id              String    @id @db.Uuid
+  caseId          String    @map("case_id") @db.Uuid
+  /// cash, transfer ou partner.
+  method          String
+  amount          Int
+  externalRef     String?   @map("external_ref")
+  receivedAt      DateTime  @map("received_at") @db.Timestamptz(3)
+  recordedBy      String    @map("recorded_by") @db.Uuid
+  partnerId       String?   @map("partner_id") @db.Uuid
+  /// pending, approved ou rejected.
+  status          String    @default("pending")
+  reviewedBy      String?   @map("reviewed_by") @db.Uuid
+  reviewedAt      DateTime? @map("reviewed_at") @db.Timestamptz(3)
+  rejectionReason String?   @map("rejection_reason")
+  collectionId    String?   @unique @map("collection_id") @db.Uuid
+  idempotencyKey  String?   @map("idempotency_key")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@unique([recordedBy, idempotencyKey])
+  @@index([status, createdAt])
+  @@map("offline_payments")
+}
+
+/// Import tableur d'un créancier entreprise (R-SD-01, R-SD-02).
+model CaseImport {
+  id             String    @id @db.Uuid
+  creditorType   PartyType @map("creditor_type")
+  creditorId     String    @map("creditor_id") @db.Uuid
+  createdBy      String    @map("created_by") @db.Uuid
+  fileId         String?   @map("file_id") @db.Uuid
+  /// validating, ready, confirmed ou failed.
+  status         String    @default("validating")
+  linesTotal     Int       @default(0) @map("lines_total")
+  linesValid     Int       @default(0) @map("lines_valid")
+  linesInvalid   Int       @default(0) @map("lines_invalid")
+  idempotencyKey String?   @map("idempotency_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  lines CaseImportLine[]
+
+  @@unique([creditorType, creditorId, idempotencyKey])
+  @@map("case_imports")
+}
+
+/// Ligne d'import : valeurs chiffrées (coordonnées de débiteurs), erreurs, dossier créé.
+model CaseImportLine {
+  id        String  @id @db.Uuid
+  importId  String  @map("import_id") @db.Uuid
+  rowNumber Int     @map("row_number")
+  valuesEnc String  @map("values_enc")
+  /// valid, invalid ou ignored.
+  status    String
+  errors    Json?
+  caseId    String? @map("case_id") @db.Uuid
+
+  import CaseImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([importId, rowNumber])
+  @@map("case_import_lines")
+}
+
+/// Contestation du débiteur : suspend le dossier (R-PR-02).
+model Dispute {
+  id                String    @id @db.Uuid
+  caseId            String    @map("case_id") @db.Uuid
+  reason            String
+  /// Texte du débiteur, chiffré.
+  textEnc           String?   @map("text_enc")
+  /// open, answered ou resolved.
+  status            String    @default("open")
+  openedAt          DateTime  @map("opened_at") @db.Timestamptz(3)
+  creditorAnswerDue DateTime  @map("creditor_answer_due") @db.Timestamptz(3)
+  creditorAnswerAt  DateTime? @map("creditor_answer_at") @db.Timestamptz(3)
+  /// resume, correct_amount ou close.
+  resolution        String?
+  resolvedBy        String?   @map("resolved_by") @db.Uuid
+  resolvedAt        DateTime? @map("resolved_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, status])
+  @@map("disputes")
+}
+
+/// Rappel demandé par le débiteur sur un créneau (partie 7).
+model CallbackRequest {
+  id        String    @id @db.Uuid
+  caseId    String    @map("case_id") @db.Uuid
+  slotStart DateTime  @map("slot_start") @db.Timestamptz(3)
+  slotEnd   DateTime  @map("slot_end") @db.Timestamptz(3)
+  /// pending, done, missed ou cancelled.
+  status    String    @default("pending")
+  handledBy String?   @map("handled_by") @db.Uuid
+  handledAt DateTime? @map("handled_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([status, slotStart])
+  @@map("callback_requests")
+}
+
+/// Lien personnel du débiteur (ADR-061) : jeton aléatoire dont seule l'empreinte est gardée, code
+/// envoyé à chaque ouverture (empreinte HMAC), blocage après 5 codes faux.
+model DebtorAccess {
+  id             String    @id @db.Uuid
+  caseId         String    @map("case_id") @db.Uuid
+  debtorId       String    @map("debtor_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash")
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(3)
+  codeHash       String?   @map("code_hash")
+  codeExpiresAt  DateTime? @map("code_expires_at") @db.Timestamptz(3)
+  codeSentAt     DateTime? @map("code_sent_at") @db.Timestamptz(3)
+  codesSentCount Int       @default(0) @map("codes_sent_count")
+  failedAttempts Int       @default(0) @map("failed_attempts")
+  lockedUntil    DateTime? @map("locked_until") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case     RecoveryCase    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  sessions DebtorSession[]
+
+  @@index([caseId])
+  @@map("debtor_accesses")
+}
+
+/// Session courte du débiteur après son code (ADR-061) : empreinte du jeton seulement.
+model DebtorSession {
+  id        String    @id @db.Uuid
+  accessId  String    @map("access_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  access DebtorAccess @relation(fields: [accessId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("debtor_sessions")
+}
+
+/// Règle tarifaire du Recouvrement (ADR-062) : versionnée, figée dans le mandat à sa signature.
+model PricingRule {
+  id                String     @id @db.Uuid
+  /// case_fee, recovery_commission ou study_fee.
+  object            String
+  /// fixed, percentage, tiered ou by_stage.
+  mode              String
+  fixedAmount       Int?       @map("fixed_amount")
+  rateBps           Int?       @map("rate_bps")
+  /// Tranches : [{ upTo, rateBps, fixedAmount }].
+  tiers             Json?
+  /// Taux par groupe d'étapes : { amicable, formal_notice, litigation }.
+  stageRates        Json?      @map("stage_rates")
+  minimum           Int?
+  maximum           Int?
+  /// b2b, b2c, rent ou any.
+  offer             String
+  communeKey        String?    @map("commune_key")
+  creditorType      PartyType? @map("creditor_type")
+  creditorId        String?    @map("creditor_id") @db.Uuid
+  validFrom         DateTime   @map("valid_from") @db.Timestamptz(3)
+  validUntil        DateTime?  @map("valid_until") @db.Timestamptz(3)
+  /// draft, pending_approval, published ou archived.
+  status            String     @default("draft")
+  version           Int        @default(0)
+  label             String
+  createdBy         String     @map("created_by") @db.Uuid
+  approvedBy        String?    @map("approved_by") @db.Uuid
+  publishedAt       DateTime?  @map("published_at") @db.Timestamptz(3)
+  archivedAt        DateTime?  @map("archived_at") @db.Timestamptz(3)
+  archiveReason     String?    @map("archive_reason")
+  previousVersionId String?    @map("previous_version_id") @db.Uuid
+  idempotencyKey    String?    @map("idempotency_key")
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([createdBy, idempotencyKey])
+  @@index([object, status])
+  @@map("pricing_rules")
+}
+
+/// Réglages du back-office (partie 17.1) : une seule ligne.
+model RecoverySettingsRow {
+  id        Int      @id @default(1)
+  values    Json
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  @@map("recovery_settings")
+}
+
+/// Jours fériés du Bénin (jours ouvrés des délais).
+model Holiday {
+  date  DateTime @id @db.Date
+  label String
+
+  @@map("holidays")
+}
+
+/// Journal de preuve (R-PR-08) : horodaté, attribué, en ajout seul (déclencheur SQL). Exporté en PDF
+/// pour l'huissier, l'avocat ou le juge. Jamais de coordonnées du débiteur.
+model EvidenceEntry {
+  id             String   @id @db.Uuid
+  caseId         String   @map("case_id") @db.Uuid
+  occurredAt     DateTime @map("occurred_at") @db.Timestamptz(3)
+  actorType      String   @map("actor_type")
+  actorId        String?  @map("actor_id") @db.Uuid
+  actorName      String?  @map("actor_name")
+  action         String
+  channel        String?
+  summary        String
+  outcome        String?
+  deliveryStatus String?  @map("delivery_status")
+  /// Entrée interne : jamais montrée au créancier ni au débiteur.
+  internal       Boolean  @default(false)
+  refType        String?  @map("ref_type")
+  refId          String?  @map("ref_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+
+  @@index([caseId, occurredAt])
+  @@map("evidence_entries")
+}
+
+/// Journal d'audit des actions sensibles (en attendant le service audit) : consultation, export,
+/// changement d'étape, paiement hors ligne, reversement, règle tarifaire, réglages.
+model AuditEntry {
+  id         String   @id @db.Uuid
+  actorId    String   @map("actor_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  at         DateTime @db.Timestamptz(3)
+  details    Json?
+
+  @@index([entityType, entityId])
+  @@map("audit_log")
+}

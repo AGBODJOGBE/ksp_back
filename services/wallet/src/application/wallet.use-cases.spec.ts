@@ -115,6 +115,37 @@ describe('portefeuille (cas d’usage, ADR-042)', () => {
       );
     });
 
+    it('commission fournie par l’appelant (ADR-060) : elle remplace le calcul par le taux', async () => {
+      const { transaction, wallet } = await collect({
+        commissionRateBps: 2000,
+        commissionAmount: { amount: 5000, currency: 'XOF' },
+      });
+      expect(transaction).toMatchObject({ grossAmount: 25000, commission: 5000, amount: 20000 });
+      expect(wallet).toMatchObject({ balance: 20000 });
+      expectInvariant();
+    });
+
+    it('commission fournie : rejeu identique accepté, autre commission refusée', async () => {
+      const commissionAmount = { amount: 3000, currency: 'XOF' };
+      const first = await collect({ commissionAmount });
+      const again = await collect({ commissionAmount });
+      expect(again).toMatchObject({ created: false, transaction: { id: first.transaction.id } });
+      expect((await rejection(collect({ commissionAmount: { amount: 3001, currency: 'XOF' } }))).code).toBe(
+        'WALLET_IDEMPOTENCY_KEY_REUSED',
+      );
+    });
+
+    it.each([
+      ['négative', { amount: -1, currency: 'XOF' }],
+      ['au-delà du brut', { amount: 25001, currency: 'XOF' }],
+      ['non entière', { amount: 10.5, currency: 'XOF' }],
+      ['autre devise', { amount: 100, currency: 'EUR' }],
+    ])('refuse une commission fournie %s', async (_label, commissionAmount) => {
+      const error = await rejection(collect({ commissionAmount }));
+      expect(error.code).toBe('WALLET_VALIDATION_FAILED');
+      expect(store().transactions.size).toBe(0);
+    });
+
     it('commission nulle : pas de ligne de commission', async () => {
       const { transaction } = await collect({ commissionRateBps: 0 });
       expect(transaction.entries.map((e) => e.account)).toEqual([

@@ -127,7 +127,7 @@ describe('parseObligationServices', () => {
 });
 
 describe('services interrogés par défaut', () => {
-  it('le portefeuille aussi : un solde ou un reversement en cours bloque (ADR-048)', () => {
+  it('le portefeuille (ADR-048) et le recouvrement (ADR-060) aussi : un solde, un reversement ou un dossier ouvert bloque', () => {
     const config = configSchema.parse({
       SERVICE_NAME: 'identity',
       GRPC_PORT: '50051',
@@ -141,6 +141,7 @@ describe('services interrogés par défaut', () => {
       'billing',
       'payment',
       'wallet',
+      'recovery',
     ]);
   });
 });
