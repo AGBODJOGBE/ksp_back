@@ -1,5 +1,7 @@
+import { Logger } from '@nestjs/common';
 import { acceptQuote, declineQuote, forwardQuote } from '../../domain/quotes/acceptance';
 import { DAY_MS, localDay } from '../../domain/requests/time';
+import { planNewProgram } from '../auto-planning/auto-planning.use-cases';
 import { type CleaningDeps } from '../deps';
 import { cleaningErrors } from '../shared/errors';
 import { runIdempotent } from '../shared/idempotency';
@@ -28,6 +30,7 @@ export interface AcceptedQuote {
 }
 
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const logger = new Logger('ClientQuotes');
 
 /**
  * R-AC-01 : le client décale la date de début. Interprétation : toutes les dates du devis glissent du
@@ -69,7 +72,7 @@ export class ClientQuotesUseCases {
     if (input.startDate && !DAY_PATTERN.test(input.startDate))
       throw cleaningErrors.invalid('startDate', 'invalid_type');
     const now = this.deps.clock.now();
-    return runIdempotent<AcceptedQuote>({
+    const accepted = await runIdempotent<AcceptedQuote>({
       store: this.deps.idempotency,
       actorId: customer.userId,
       operation: 'quote.accept',
@@ -209,6 +212,21 @@ export class ClientQuotesUseCases {
         return { record: saved, quote: acceptedQuote, program: { ...program, number: programNumber } };
       },
     });
+    await this.planAccepted(accepted.program.id);
+    return accepted;
+  }
+
+  /**
+   * R-PL-01 : les séances de l'horizon sont planifiées dès l'acceptation, hors de sa transaction. Une
+   * panne ne défait pas l'acceptation : le passage régulier les planifie. Rejouer est sans effet.
+   */
+  private async planAccepted(programId: string): Promise<void> {
+    try {
+      await planNewProgram(this.deps, programId);
+    } catch (error) {
+      const cause = error instanceof Error ? error.message : String(error);
+      logger.warn(`Programme ${programId} : planification reportée au passage régulier (${cause}).`);
+    }
   }
 
   /** UC-NT-09 — Refuser un devis (R-AC-03) : dossier clos, frais de visite conservés. */
