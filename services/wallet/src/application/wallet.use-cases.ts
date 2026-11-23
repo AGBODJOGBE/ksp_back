@@ -77,9 +77,29 @@ export function transaction(
   };
 }
 
+/** Commission fournie par l'appelant : entière, en XOF, de 0 au montant brut (ADR-060). */
+function optionalCommission(
+  value: { amount: number; currency: string } | undefined,
+  gross: number,
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value.currency !== 'XOF' ||
+    !Number.isInteger(value.amount) ||
+    value.amount < 0 ||
+    value.amount > gross
+  ) {
+    throw WalletErrors.invalid(
+      'commissionAmount',
+      'Commission en XOF entiers attendue, de 0 au montant brut.',
+    );
+  }
+  return value.amount;
+}
+
 /**
  * Encaissement reçu pour un titulaire (ADR-042) : le net lui est crédité, la commission (taux fourni
- * par l'appelant, arrondie à l'entier inférieur) revient à KSP. Idempotent par (appelant, référence) :
+ * par l'appelant, arrondie à l'entier inférieur, ou montant calculé par lui : ADR-060) revient à KSP. Idempotent par (appelant, référence) :
  * le rejeu rend la même transaction ; une référence déjà utilisée pour autre chose est refusée.
  */
 export class RecordCollectionUseCase {
@@ -89,6 +109,8 @@ export class RecordCollectionUseCase {
     holder: { type: string; id: string } | undefined;
     grossAmount: { amount: number; currency: string } | undefined;
     commissionRateBps: number;
+    /** Facultative (ADR-060) : commission calculée par l'appelant, de 0 au montant brut. */
+    commissionAmount?: { amount: number; currency: string } | undefined;
     reference: string;
     description: string;
   }): Promise<{ transaction: LedgerTransaction; wallet: WalletSummary; created: boolean }> {
@@ -101,7 +123,13 @@ export class RecordCollectionUseCase {
     }
     if (!REFERENCE.test(input.reference)) throw WalletErrors.invalid('reference', 'Référence invalide.');
     const description = requireText('description', input.description, 140);
-    const request = { holder, gross, rateBps };
+    const commissionAmount = optionalCommission(input.commissionAmount, gross);
+    const request = {
+      holder,
+      gross,
+      rateBps,
+      ...(commissionAmount === undefined ? {} : { commissionAmount }),
+    };
 
     const replay = async (existing: LedgerTransaction) => {
       if (!sameCollection(existing, request)) throw WalletErrors.keyReused();
@@ -110,7 +138,7 @@ export class RecordCollectionUseCase {
     const existing = await this.deps.ledger.findByReference(caller, input.reference);
     if (existing) return replay(existing);
 
-    const { net, commission, entries } = collectionEntries(holder, gross, rateBps);
+    const { net, commission, entries } = collectionEntries(holder, gross, rateBps, commissionAmount);
     const outcome = await this.deps.ledger.record({
       transaction: transaction(this.deps, {
         kind: 'collection',

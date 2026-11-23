@@ -58,6 +58,32 @@ export const INITIAL_BACKOFFICE_ROLES: readonly RoleDefinition[] = [
   internal('recovery', 'recovery_agent', 'domain', 'Agent de recouvrement'),
 ];
 
+/** Rôle d'un partenaire externe (huissier, avocat) : ni back-office ni double authentification (ADR-060). */
+const partner = (service: string, code: string, description: string): RoleDefinition => ({
+  service,
+  code,
+  scopeType: 'domain',
+  requiresMfa: false,
+  backofficeAccess: false,
+  description,
+});
+
+/**
+ * Rôles du Recouvrement ajoutés par la migration 0011 (ADR-060) : superviseur et juriste au
+ * back-office ; huissier et avocat partenaires, qui n'accèdent qu'à leurs dossiers assignés
+ * (/api/v1/recovery/partner), sans double authentification (décision du 2026-11-20 : la finance
+ * valide à deux les sommes qu'ils déclarent).
+ */
+export const RECOVERY_ROLES: readonly RoleDefinition[] = [
+  internal('recovery', 'recovery_supervisor', 'domain', 'Superviseur du recouvrement'),
+  internal('recovery', 'legal_officer', 'domain', 'Juriste du recouvrement'),
+  partner('recovery', 'recovery_bailiff', 'Huissier de justice partenaire du recouvrement'),
+  partner('recovery', 'recovery_lawyer', 'Avocat partenaire du recouvrement'),
+];
+
+/** Catalogue complet enregistré par les migrations. */
+export const ROLE_CATALOG: readonly RoleDefinition[] = [...INITIAL_BACKOFFICE_ROLES, ...RECOVERY_ROLES];
+
 const ROLE_CODE = /^[a-z][a-z0-9_]*$/;
 
 /**

@@ -1,15 +1,47 @@
 import { recoveryV1 } from '@ksp/contracts';
-import { Controller } from '@nestjs/common';
+import { Controller, Inject } from '@nestjs/common';
+import { RECOVERY_USE_CASES, type RecoveryUseCases } from '../../application/use-cases';
 import { notImplemented } from './not-implemented';
+import {
+  amountOf,
+  money,
+  presentPricingResult,
+  presentPricingRule,
+  presentSettings,
+  pricingInputOf,
+  settingsOf,
+} from './presenters';
 
-// Adaptateurs gRPC des quatre services du contrat (ADR-060). Les cas d'usage arrivent avec les
-// branches R1 à R5 ; en attendant, chaque méthode répond « pas encore disponible ».
+// Adaptateurs gRPC des quatre services du contrat (ADR-060) : aucune règle métier ici. R1 livre la
+// tarification, les réglages, les jours fériés et l'estimation des frais ; les autres méthodes
+// répondent « pas encore disponible » jusqu'à leur branche (R2 à R5).
 
 @Controller()
 @recoveryV1.RecoveryCreditorServiceControllerMethods()
 export class RecoveryCreditorGrpcController implements recoveryV1.RecoveryCreditorServiceController {
-  estimateCaseFees(): Promise<recoveryV1.EstimateCaseFeesResponse> {
-    return notImplemented('EstimateCaseFees');
+  constructor(@Inject(RECOVERY_USE_CASES) private readonly useCases: RecoveryUseCases) {}
+
+  async estimateCaseFees(
+    request: recoveryV1.EstimateCaseFeesRequest,
+  ): Promise<recoveryV1.EstimateCaseFeesResponse> {
+    const estimate = await this.useCases.estimateCaseFees.execute({
+      kind: request.kind,
+      amountDue: amountOf('amountDue', request.amountDue) ?? 0,
+      communeKey: request.communeKey || null,
+    });
+    return {
+      caseFee: money(estimate.caseFee),
+      commissionSummary: estimate.commissionSummary,
+      stageRates: estimate.stageRates,
+      minimumAmountDue: money(estimate.minimumAmountDue),
+      pricing: {
+        feeRuleId: estimate.feeRule.id,
+        feeRuleVersion: estimate.feeRule.version,
+        commissionRuleId: estimate.commissionRule.id,
+        commissionRuleVersion: estimate.commissionRule.version,
+        commissionSummary: estimate.commissionSummary,
+      },
+    };
   }
 
   createCase(): Promise<recoveryV1.CreateCaseResponse> {
@@ -180,6 +212,8 @@ export class RecoveryPartnerGrpcController implements recoveryV1.RecoveryPartner
 @Controller()
 @recoveryV1.RecoveryAdminServiceControllerMethods()
 export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServiceController {
+  constructor(@Inject(RECOVERY_USE_CASES) private readonly useCases: RecoveryUseCases) {}
+
   getRecoveryOverview(): Promise<recoveryV1.GetRecoveryOverviewResponse> {
     return notImplemented('GetRecoveryOverview');
   }
@@ -312,51 +346,106 @@ export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServ
     return notImplemented('UpdatePartner');
   }
 
-  listPricingRules(): Promise<recoveryV1.ListPricingRulesResponse> {
-    return notImplemented('ListPricingRules');
+  async listPricingRules(
+    request: recoveryV1.ListPricingRulesRequest,
+  ): Promise<recoveryV1.ListPricingRulesResponse> {
+    const result = await this.useCases.listPricingRules.execute({
+      object: request.object,
+      statuses: request.statuses,
+      offer: request.offer,
+      creditorId: request.creditorId,
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return { rules: result.items.map(presentPricingRule), nextCursor: result.nextCursor ?? '' };
   }
 
-  getPricingRule(): Promise<recoveryV1.GetPricingRuleResponse> {
-    return notImplemented('GetPricingRule');
+  async getPricingRule(
+    request: recoveryV1.GetPricingRuleRequest,
+  ): Promise<recoveryV1.GetPricingRuleResponse> {
+    return {
+      rule: presentPricingRule(await this.useCases.getPricingRule.execute({ ruleId: request.ruleId })),
+    };
   }
 
-  createPricingRule(): Promise<recoveryV1.CreatePricingRuleResponse> {
-    return notImplemented('CreatePricingRule');
+  async createPricingRule(
+    request: recoveryV1.CreatePricingRuleRequest,
+  ): Promise<recoveryV1.CreatePricingRuleResponse> {
+    const rule = await this.useCases.createPricingRule.execute({
+      idempotencyKey: request.idempotencyKey,
+      input: pricingInputOf(request.input),
+    });
+    return { rule: presentPricingRule(rule) };
   }
 
-  updatePricingRule(): Promise<recoveryV1.UpdatePricingRuleResponse> {
-    return notImplemented('UpdatePricingRule');
+  async updatePricingRule(
+    request: recoveryV1.UpdatePricingRuleRequest,
+  ): Promise<recoveryV1.UpdatePricingRuleResponse> {
+    const rule = await this.useCases.updatePricingRule.execute({
+      ruleId: request.ruleId,
+      input: pricingInputOf(request.input),
+    });
+    return { rule: presentPricingRule(rule) };
   }
 
-  publishPricingRule(): Promise<recoveryV1.PublishPricingRuleResponse> {
-    return notImplemented('PublishPricingRule');
+  async publishPricingRule(
+    request: recoveryV1.PublishPricingRuleRequest,
+  ): Promise<recoveryV1.PublishPricingRuleResponse> {
+    return {
+      rule: presentPricingRule(await this.useCases.publishPricingRule.execute({ ruleId: request.ruleId })),
+    };
   }
 
-  approvePricingRule(): Promise<recoveryV1.ApprovePricingRuleResponse> {
-    return notImplemented('ApprovePricingRule');
+  async approvePricingRule(
+    request: recoveryV1.ApprovePricingRuleRequest,
+  ): Promise<recoveryV1.ApprovePricingRuleResponse> {
+    return {
+      rule: presentPricingRule(await this.useCases.approvePricingRule.execute({ ruleId: request.ruleId })),
+    };
   }
 
-  archivePricingRule(): Promise<recoveryV1.ArchivePricingRuleResponse> {
-    return notImplemented('ArchivePricingRule');
+  async archivePricingRule(
+    request: recoveryV1.ArchivePricingRuleRequest,
+  ): Promise<recoveryV1.ArchivePricingRuleResponse> {
+    const rule = await this.useCases.archivePricingRule.execute({
+      ruleId: request.ruleId,
+      reason: request.reason,
+    });
+    return { rule: presentPricingRule(rule) };
   }
 
-  simulatePricing(): Promise<recoveryV1.SimulatePricingResponse> {
-    return notImplemented('SimulatePricing');
+  async simulatePricing(
+    request: recoveryV1.SimulatePricingRequest,
+  ): Promise<recoveryV1.SimulatePricingResponse> {
+    const result = await this.useCases.simulatePricing.execute({
+      ruleId: request.ruleId,
+      object: request.object,
+      offer: request.target?.offer ?? '',
+      communeKey: request.target?.communeKey || null,
+      creditorId: request.target?.creditor?.id || null,
+      baseAmount: amountOf('baseAmount', request.baseAmount) ?? 0,
+      stage: request.stage,
+    });
+    return presentPricingResult(result);
   }
 
-  getRecoverySettings(): Promise<recoveryV1.GetRecoverySettingsResponse> {
-    return notImplemented('GetRecoverySettings');
+  async getRecoverySettings(): Promise<recoveryV1.GetRecoverySettingsResponse> {
+    return { settings: presentSettings(await this.useCases.getSettings.execute()) };
   }
 
-  updateRecoverySettings(): Promise<recoveryV1.UpdateRecoverySettingsResponse> {
-    return notImplemented('UpdateRecoverySettings');
+  async updateRecoverySettings(
+    request: recoveryV1.UpdateRecoverySettingsRequest,
+  ): Promise<recoveryV1.UpdateRecoverySettingsResponse> {
+    const stored = await this.useCases.updateSettings.execute({ settings: settingsOf(request.settings) });
+    return { settings: presentSettings(stored) };
   }
 
-  listHolidays(): Promise<recoveryV1.ListHolidaysResponse> {
-    return notImplemented('ListHolidays');
+  async listHolidays(request: recoveryV1.ListHolidaysRequest): Promise<recoveryV1.ListHolidaysResponse> {
+    return { holidays: await this.useCases.listHolidays.execute({ year: request.year }) };
   }
 
-  setHolidays(): Promise<recoveryV1.SetHolidaysResponse> {
-    return notImplemented('SetHolidays');
+  async setHolidays(request: recoveryV1.SetHolidaysRequest): Promise<recoveryV1.SetHolidaysResponse> {
+    return {
+      holidays: await this.useCases.setHolidays.execute({ year: request.year, holidays: request.holidays }),
+    };
   }
 }
