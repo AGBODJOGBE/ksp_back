@@ -1,50 +1,49 @@
 import { randomBytes } from 'node:crypto';
+import { FieldCipher, FieldKeyError } from '@ksp/platform';
 import { checkTotp, TOTP_DEFAULTS } from '../../domain/mfa/totp';
 import { normalizeRecoveryCode } from '../../domain/mfa/recovery-code';
-import { AesGcmSecretCipher, MfaEncryptionKeyError } from './aes-gcm-secret-cipher';
 import { CryptoMfaTokenGenerator, CryptoRecoveryCodes } from './crypto-mfa-secrets';
 import { base32Decode, base32Encode, HmacTotpGenerator } from './hmac-totp-generator';
 
-describe('AesGcmSecretCipher', () => {
+describe('chiffrement des secrets de double authentification (FieldCipher du kit)', () => {
   const key = randomBytes(32).toString('base64');
+  const fromConfig = (raw: string | undefined, nodeEnv: string) =>
+    FieldCipher.fromConfig(raw, nodeEnv, 'IDENTITY_MFA_ENCRYPTION_KEY');
+
+  it('relit un secret chiffré par l’ancien chiffrement d’identity (format v1, même clé)', () => {
+    // Chiffré produit par l'ancienne classe AesGcmSecretCipher avec cette clé, pour le compte « user-legacy ».
+    const cipher = fromConfig('CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws=', 'production');
+    const legacy = 'v1.BQUFBQUFBQUFBQUF.9SYqJdjBSeticty8qkehNw.ySbG8Ia8F9cUB0EsWT3zsw';
+    expect(cipher.decrypt(legacy, 'user-legacy')).toBe('JBSWY3DPEHPK3PXP');
+    expect(() => cipher.decrypt(legacy, 'user-other')).toThrow();
+  });
 
   it('chiffre puis déchiffre (aller-retour), avec un chiffré différent à chaque fois', () => {
-    const cipher = AesGcmSecretCipher.fromConfig(key, 'production');
+    const cipher = fromConfig(key, 'production');
     const first = cipher.encrypt('JBSWY3DPEHPK3PXP', 'user-1');
     const second = cipher.encrypt('JBSWY3DPEHPK3PXP', 'user-1');
-    expect(first).toMatch(/^v1\.[\w-]+\.[\w-]+\.[\w-]+$/);
+    expect(first).toMatch(/^v2\.default\.[\w-]+\.[\w-]+\.[\w-]+$/);
     expect(first).not.toBe(second);
     expect(first).not.toContain('JBSWY3DPEHPK3PXP');
     expect(cipher.decrypt(first, 'user-1')).toBe('JBSWY3DPEHPK3PXP');
     // La même clé relue depuis la configuration déchiffre aussi (redémarrage du service).
-    expect(AesGcmSecretCipher.fromConfig(key, 'production').decrypt(second, 'user-1')).toBe(
-      'JBSWY3DPEHPK3PXP',
-    );
+    expect(fromConfig(key, 'production').decrypt(second, 'user-1')).toBe('JBSWY3DPEHPK3PXP');
   });
 
-  it('refuse un chiffré recopié sur un autre compte, modifié ou lu avec une autre clé', () => {
-    const cipher = AesGcmSecretCipher.fromConfig(key, 'production');
-    const encrypted = cipher.encrypt('secret', 'user-1');
-    expect(() => cipher.decrypt(encrypted, 'user-2')).toThrow();
-    const [version, iv, body, tag] = encrypted.split('.');
-    const altered = Buffer.from(body!, 'base64url');
-    altered[0] = altered[0]! ^ 1;
+  it('refuse un chiffré recopié sur un autre compte ou lu avec une autre clé', () => {
+    const encrypted = fromConfig(key, 'production').encrypt('secret', 'user-1');
+    expect(() => fromConfig(key, 'production').decrypt(encrypted, 'user-2')).toThrow();
     expect(() =>
-      cipher.decrypt([version, iv, altered.toString('base64url'), tag].join('.'), 'user-1'),
+      fromConfig(randomBytes(32).toString('base64'), 'production').decrypt(encrypted, 'user-1'),
     ).toThrow();
-    expect(() => cipher.decrypt([version, iv, body, tag!.slice(0, 8)].join('.'), 'user-1')).toThrow();
-    const other = AesGcmSecretCipher.fromConfig(randomBytes(32).toString('base64'), 'production');
-    expect(() => other.decrypt(encrypted, 'user-1')).toThrow();
   });
 
   it('clé obligatoire en production, temporaire ailleurs, 32 octets exigés', () => {
-    expect(() => AesGcmSecretCipher.fromConfig(undefined, 'production')).toThrow(MfaEncryptionKeyError);
-    expect(AesGcmSecretCipher.fromConfig('', 'development').ephemeral).toBe(true);
-    expect(AesGcmSecretCipher.fromConfig(key, 'development').ephemeral).toBe(false);
-    expect(() => AesGcmSecretCipher.fromConfig(randomBytes(16).toString('base64'), 'test')).toThrow(
-      MfaEncryptionKeyError,
-    );
-    expect(() => AesGcmSecretCipher.fromConfig('pas-du-base64!', 'test')).toThrow(MfaEncryptionKeyError);
+    expect(() => fromConfig(undefined, 'production')).toThrow(FieldKeyError);
+    expect(fromConfig('', 'development').ephemeral).toBe(true);
+    expect(fromConfig(key, 'development').ephemeral).toBe(false);
+    expect(() => fromConfig(randomBytes(16).toString('base64'), 'test')).toThrow(FieldKeyError);
+    expect(() => fromConfig('pas-du-base64!', 'test')).toThrow(FieldKeyError);
   });
 });
 

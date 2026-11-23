@@ -1,3 +1,4 @@
+import { tryNormalizePhone } from '@ksp/platform/phone';
 import { z } from 'zod';
 import { type Block, type Issuer } from '../content';
 import { hasControlCharacter } from '../text';
@@ -53,7 +54,19 @@ export const amount = z.int().min(1).max(100_000_000_000);
 /** Date calendaire « AAAA-MM-JJ ». */
 export const calendarDate = z.iso.date();
 
-export const phone = z.string().regex(/^\+[1-9][0-9]{6,14}$/, 'Numéro E.164 attendu.');
+/**
+ * Téléphone E.164, normalisé par la règle commune du kit (ADR-063) : un numéro béninois `+229` à
+ * 8 chiffres est imprimé `+229 01` suivi des 8 chiffres. Les variables ne sont pas conservées (le
+ * PDF fait foi) : aucun document déjà produit ne change.
+ */
+export const phone = z.string().transform((value, context) => {
+  const normalized = tryNormalizePhone(value);
+  if (normalized === null) {
+    context.addIssue({ code: 'custom', message: 'Numéro E.164 attendu.' });
+    return z.NEVER;
+  }
+  return normalized;
+});
 
 /** Référence d'un dossier : lettres, chiffres, « - », « _ », « / ». */
 export const reference = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_/-]{0,39}$/, 'Référence invalide.');

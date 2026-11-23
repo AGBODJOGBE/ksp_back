@@ -70,6 +70,10 @@ export interface RuleContext {
   cleaningStaffFallback?: Readonly<Partial<Record<CleaningStaffPermission, readonly string[]>>>;
   /** Adresse du back-office, sans barre finale, pour les liens du personnel ; absente : sans lien. */
   backOfficeBaseUrl?: string | null;
+  /** Superviseurs du recouvrement, prévenus de chaque nouveau dossier à examiner (peut être vide). */
+  recoverySupervisorUserIds: readonly string[];
+  /** Juristes du recouvrement, prévenus des contestations et des actes des partenaires (peut être vide). */
+  recoveryLegalUserIds: readonly string[];
 }
 
 export type EventRule<T extends KspEventType> = (

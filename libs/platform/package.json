@@ -47,6 +47,8 @@
   "files": [
     "dist",
     "telemetry.js",
-    "telemetry.d.ts"
+    "telemetry.d.ts",
+    "phone.js",
+    "phone.d.ts"
   ]
 }

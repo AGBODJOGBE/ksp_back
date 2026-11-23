@@ -203,6 +203,7 @@ export class WalletGrpcController implements walletV1.WalletServiceController {
       holder: request.holder,
       grossAmount: request.grossAmount,
       commissionRateBps: request.commissionRateBps,
+      commissionAmount: request.commissionAmount,
       reference: request.reference,
       description: request.description,
     });

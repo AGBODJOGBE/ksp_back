@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.case.suspended.v1.schema.json",
+  "title": "recovery.case.suspended",
+  "description": "Dossier suspendu par une contestation du débiteur (R-PR-02) ; le créancier doit y répondre. Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.case.suspended",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "caseId",
+    "caseNumber",
+    "creditor",
+    "reason",
+    "disputeId",
+    "creditorAnswerDueAt",
+    "suspendedAt"
+  ],
+  "$defs": {
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "reason": {
+      "const": "dispute"
+    },
+    "disputeId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "creditorAnswerDueAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "suspendedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

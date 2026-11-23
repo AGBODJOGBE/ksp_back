@@ -18,6 +18,8 @@ const CONTEXT: RuleContext = {
   timeZone: 'Africa/Porto-Novo',
   cleaningTeamUserIds: [],
   accountsTeamUserIds: [],
+  recoverySupervisorUserIds: [],
+  recoveryLegalUserIds: [],
   backOfficeBaseUrl: 'https://admin.ksp.bj',
 };
 

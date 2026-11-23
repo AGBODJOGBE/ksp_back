@@ -188,6 +188,8 @@ export class AppModule {
                 accountsTeamUserIds: config.NOTIFICATION_ACCOUNTS_TEAM_USER_IDS,
                 cleaningStaffFallback: config.NOTIFICATION_CLEANING_STAFF_FALLBACK,
                 backOfficeBaseUrl: config.BACKOFFICE_BASE_URL?.replace(/\/+$/, '') ?? null,
+                recoverySupervisorUserIds: config.NOTIFICATION_RECOVERY_SUPERVISOR_USER_IDS,
+                recoveryLegalUserIds: config.NOTIFICATION_RECOVERY_LEGAL_USER_IDS,
               },
             );
           },

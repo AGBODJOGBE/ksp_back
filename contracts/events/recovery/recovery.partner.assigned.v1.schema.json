@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.partner.assigned.v1.schema.json",
+  "title": "recovery.partner.assigned",
+  "description": "Huissier ou avocat partenaire assigné à un dossier (partie 8). Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.partner.assigned",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "caseId",
+    "caseNumber",
+    "creditor",
+    "assignmentId",
+    "partnerId",
+    "partnerKind",
+    "partnerUserId",
+    "assignedAt"
+  ],
+  "$defs": {
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "assignmentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "partnerId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "partnerKind": {
+      "enum": ["bailiff", "lawyer"]
+    },
+    "partnerUserId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Compte KSP du partenaire, null sans accès partenaire"
+    },
+    "assignedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

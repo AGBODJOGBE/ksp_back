@@ -4,6 +4,8 @@ import {
   catalogProblems,
   defaultAssignmentScope,
   INITIAL_BACKOFFICE_ROLES,
+  RECOVERY_ROLES,
+  ROLE_CATALOG,
   type RoleDefinition,
 } from './role';
 
@@ -15,6 +17,28 @@ const role = (change: Partial<RoleDefinition> = {}): RoleDefinition => ({
   backofficeAccess: true,
   description: 'Agent',
   ...change,
+});
+
+describe('rôles du Recouvrement (ADR-060, migration 0011)', () => {
+  it('superviseur et juriste au back-office ; huissier et avocat partenaires, sans back-office', () => {
+    const byCode = new Map(RECOVERY_ROLES.map((r) => [r.code, r]));
+    expect([...byCode.keys()].sort()).toEqual([
+      'legal_officer',
+      'recovery_bailiff',
+      'recovery_lawyer',
+      'recovery_supervisor',
+    ]);
+    expect(byCode.get('recovery_supervisor')).toMatchObject({ backofficeAccess: true, requiresMfa: true });
+    expect(byCode.get('legal_officer')).toMatchObject({ backofficeAccess: true, requiresMfa: true });
+    expect(byCode.get('recovery_bailiff')).toMatchObject({ backofficeAccess: false, requiresMfa: false });
+    expect(byCode.get('recovery_lawyer')).toMatchObject({ backofficeAccess: false, requiresMfa: false });
+    expect(RECOVERY_ROLES.every((r) => r.service === 'recovery' && r.scopeType === 'domain')).toBe(true);
+  });
+
+  it('le catalogue complet respecte les règles et n’a aucun code en double', () => {
+    expect(catalogProblems(ROLE_CATALOG)).toEqual([]);
+    expect(ROLE_CATALOG).toHaveLength(12);
+  });
 });
 
 describe('catalogue initial des rôles du back-office', () => {

@@ -152,6 +152,24 @@ La gateway appelle `notification` avec son jeton de service : `notification` doi
 Un jeton de lien mal formé rend 404 `PAYMENT_LINK_NOT_FOUND` sans appel de payment (rien de plus
 qu'un jeton inconnu). Aucune donnée personnelle du payeur sur les routes publiques.
 
+## Routes du recouvrement (ADR-060 à 062)
+
+85 routes vers `recovery` (`RECOVERY_GRPC_URL`, `localhost:50060` par défaut), déclarées dans `src/domain/routing/recovery-routes.ts` :
+
+| Route                                                    | Appel gRPC                  | Accès                                                       |
+| -------------------------------------------------------- | --------------------------- | ----------------------------------------------------------- |
+| `/api/v1/recovery/…` (dossiers, import, décisions…)      | `RecoveryCreditorService/…` | connecté (créancier ; périmètre vérifié par recovery)       |
+| `/api/v1/recovery/debtor/access/{token}[/code, /verify]` | `RecoveryDebtorService/…`   | public, 30 / 3 / 10 par minute et par IP                    |
+| `/api/v1/recovery/debtor/…` (en-tête `X-Debtor-Session`) | `RecoveryDebtorService/…`   | public, 60 par IP (paiement 5, pièces 10)                   |
+| `/api/v1/recovery/partner/…`                             | `RecoveryPartnerService/…`  | `recovery_bailiff`, `recovery_lawyer`                       |
+| `/api/v1/admin/recovery/…`                               | `RecoveryAdminService/…`    | rôles du recouvrement ou de la finance selon la route + MFA |
+
+Chaque route est traduite par sa ligne de `recovery-operations.ts` (paramètres, corps, clé d'idempotence) et
+sa réponse par `recovery-shapes.ts` : seuls les champs du contrat sortent ; un test confronte la table à
+`recovery.proto`. Un jeton de lien du débiteur mal formé rend 404 `RECOVERY_DEBTOR_LINK_INVALID` sans appel de
+recovery ; une session absente ou mal formée rend 401. Le jeton du chemin et la session ne sont jamais
+journalisés ; les notes internes sont retirées du journal du créancier même si recovery en rendait.
+
 ## Fonctionnement
 
 | Sujet             | Règle                                                                                                                                                                                                                                                                                                                                                  |

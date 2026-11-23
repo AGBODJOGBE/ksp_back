@@ -1,3 +1,4 @@
+import { phoneLookupForms } from '@ksp/platform';
 import {
   collectionEntries,
   type LedgerTransaction,
@@ -9,12 +10,12 @@ import {
   sameCollection,
 } from '../domain/ledger';
 import {
-  BENIN_PHONE,
   isSettled,
   markSubmitted,
   maskPhone,
   type Operator,
   OPERATORS,
+  parseBeninPhone,
   settle,
   type WalletPayout,
   WALLET_PAYOUT_STATUSES,
@@ -25,6 +26,7 @@ import {
   type LedgerOverview,
   type PageRequest,
   type PageResult,
+  type PhoneFingerprints,
   type StatementLine,
   type WalletDeps,
   type WalletSummary,
@@ -77,9 +79,29 @@ export function transaction(
   };
 }
 
+/** Commission fournie par l'appelant : entière, en XOF, de 0 au montant brut (ADR-060). */
+function optionalCommission(
+  value: { amount: number; currency: string } | undefined,
+  gross: number,
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value.currency !== 'XOF' ||
+    !Number.isInteger(value.amount) ||
+    value.amount < 0 ||
+    value.amount > gross
+  ) {
+    throw WalletErrors.invalid(
+      'commissionAmount',
+      'Commission en XOF entiers attendue, de 0 au montant brut.',
+    );
+  }
+  return value.amount;
+}
+
 /**
  * Encaissement reçu pour un titulaire (ADR-042) : le net lui est crédité, la commission (taux fourni
- * par l'appelant, arrondie à l'entier inférieur) revient à KSP. Idempotent par (appelant, référence) :
+ * par l'appelant, arrondie à l'entier inférieur, ou montant calculé par lui : ADR-060) revient à KSP. Idempotent par (appelant, référence) :
  * le rejeu rend la même transaction ; une référence déjà utilisée pour autre chose est refusée.
  */
 export class RecordCollectionUseCase {
@@ -89,6 +111,8 @@ export class RecordCollectionUseCase {
     holder: { type: string; id: string } | undefined;
     grossAmount: { amount: number; currency: string } | undefined;
     commissionRateBps: number;
+    /** Facultative (ADR-060) : commission calculée par l'appelant, de 0 au montant brut. */
+    commissionAmount?: { amount: number; currency: string } | undefined;
     reference: string;
     description: string;
   }): Promise<{ transaction: LedgerTransaction; wallet: WalletSummary; created: boolean }> {
@@ -101,7 +125,13 @@ export class RecordCollectionUseCase {
     }
     if (!REFERENCE.test(input.reference)) throw WalletErrors.invalid('reference', 'Référence invalide.');
     const description = requireText('description', input.description, 140);
-    const request = { holder, gross, rateBps };
+    const commissionAmount = optionalCommission(input.commissionAmount, gross);
+    const request = {
+      holder,
+      gross,
+      rateBps,
+      ...(commissionAmount === undefined ? {} : { commissionAmount }),
+    };
 
     const replay = async (existing: LedgerTransaction) => {
       if (!sameCollection(existing, request)) throw WalletErrors.keyReused();
@@ -110,7 +140,7 @@ export class RecordCollectionUseCase {
     const existing = await this.deps.ledger.findByReference(caller, input.reference);
     if (existing) return replay(existing);
 
-    const { net, commission, entries } = collectionEntries(holder, gross, rateBps);
+    const { net, commission, entries } = collectionEntries(holder, gross, rateBps, commissionAmount);
     const outcome = await this.deps.ledger.record({
       transaction: transaction(this.deps, {
         kind: 'collection',
@@ -142,11 +172,15 @@ export class RecordCollectionUseCase {
 /**
  * Même bénéficiaire qu'une demande enregistrée (rejeu) : par l'empreinte du numéro complet ; pour un
  * reversement antérieur à l'empreinte, par le numéro complet tant qu'il est gardé, sinon par le
- * numéro masqué (seul indice restant).
+ * numéro masqué (seul indice restant). Une demande enregistrée avant la règle commune (ADR-063) peut
+ * porter l'ancienne forme béninoise à 8 chiffres du même numéro : chaque forme est essayée.
  */
-function samePhone(existing: WalletPayout, phone: string, fingerprint: string): boolean {
-  if (existing.beneficiaryPhoneHash) return existing.beneficiaryPhoneHash === fingerprint;
-  if (existing.beneficiaryPhone) return existing.beneficiaryPhone === phone;
+function samePhone(existing: WalletPayout, phone: string, fingerprints: PhoneFingerprints): boolean {
+  const forms = phoneLookupForms(phone);
+  if (existing.beneficiaryPhoneHash) {
+    return forms.some((form) => fingerprints.of(form) === existing.beneficiaryPhoneHash);
+  }
+  if (existing.beneficiaryPhone) return forms.includes(existing.beneficiaryPhone);
   return existing.beneficiaryPhoneMasked === maskPhone(phone);
 }
 
@@ -200,8 +234,8 @@ export class RequestPayoutUseCase {
     }
     const holder = requireHolder('holder', input.holder);
     const amount = requireXof('amount', input.amount);
-    const phone = input.beneficiary?.phone ?? '';
-    if (!BENIN_PHONE.test(phone)) {
+    const phone = parseBeninPhone(input.beneficiary?.phone ?? '');
+    if (phone === null) {
       throw WalletErrors.invalid(
         'beneficiary.phone',
         'Numéro béninois au format international attendu (+229…).',
@@ -217,7 +251,7 @@ export class RequestPayoutUseCase {
         existing.holder.id === holder.id &&
         existing.amount === amount &&
         existing.beneficiaryOperator === operator &&
-        samePhone(existing, phone, fingerprint);
+        samePhone(existing, phone, this.deps.fingerprints);
       if (!same) throw WalletErrors.keyReused();
       const payout = await trySubmit(this.deps, existing);
       return { payout, wallet: await this.deps.ledger.summary(holder), created: false };

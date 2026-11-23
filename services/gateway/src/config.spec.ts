@@ -13,9 +13,17 @@ const PRODUCTION = {
   CORS_WEB_ORIGINS: 'https://ksp.bj, https://shop.ksp.bj,https://print.ksp.bj',
   CORS_BACKOFFICE_ORIGINS: 'https://admin.ksp.bj',
   ...Object.fromEntries(
-    ['IDENTITY', 'CLEANING', 'BILLING', 'PAYMENT', 'NOTIFICATION', 'FILE', 'WALLET', 'DOCUMENT'].map(
-      (service) => [`${service}_GRPC_URL`, `dns:///${service.toLowerCase()}-headless:50051`],
-    ),
+    [
+      'IDENTITY',
+      'CLEANING',
+      'BILLING',
+      'PAYMENT',
+      'NOTIFICATION',
+      'FILE',
+      'WALLET',
+      'DOCUMENT',
+      'RECOVERY',
+    ].map((service) => [`${service}_GRPC_URL`, `dns:///${service.toLowerCase()}-headless:50051`]),
   ),
 };
 

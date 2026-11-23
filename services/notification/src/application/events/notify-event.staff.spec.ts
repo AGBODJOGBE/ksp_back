@@ -102,6 +102,8 @@ function setup(
       timeZone: 'Africa/Porto-Novo',
       cleaningTeamUserIds: [],
       accountsTeamUserIds: [],
+      recoverySupervisorUserIds: [],
+      recoveryLegalUserIds: [],
       ...context,
     },
   );

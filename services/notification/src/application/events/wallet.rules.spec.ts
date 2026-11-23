@@ -9,6 +9,8 @@ const CONTEXT: RuleContext = {
   timeZone: 'Africa/Porto-Novo',
   cleaningTeamUserIds: [],
   accountsTeamUserIds: [],
+  recoverySupervisorUserIds: [],
+  recoveryLegalUserIds: [],
 };
 const USER = '0192f1c4-0000-7000-8000-00000000c001';
 const ORG = '0192f1c4-0000-7000-8000-00000000a001';

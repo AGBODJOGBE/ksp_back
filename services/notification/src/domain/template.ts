@@ -10,6 +10,7 @@ import { ACCOUNT_TEMPLATES } from './messages/account.messages';
 import { DOCUMENT_DIRECT_TEMPLATES } from './messages/document.messages';
 import { ORGANIZATION_TEMPLATES } from './messages/organization.messages';
 import { WALLET_TEMPLATES } from './messages/wallet.messages';
+import { RECOVERY_DIRECT_TEMPLATES, RECOVERY_TEMPLATES } from './messages/recovery.messages';
 
 /**
  * Modèle de message. Lot 1 : `identity.otp` (envoi direct) ; lot 2 : les messages des événements du
@@ -75,6 +76,7 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
   },
   ...Object.fromEntries(IDENTITY_DIRECT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(DOCUMENT_DIRECT_TEMPLATES.map((template) => [template.code, template])),
+  ...Object.fromEntries(RECOVERY_DIRECT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(CLEANING_TEMPLATES.map((template) => [template.code, template])),
   // Nettoyage v2 (CDC Nettoyage v2, 16.2 ; lot G).
   ...Object.fromEntries(CLEANING_CUSTOMER_TEMPLATES.map((template) => [template.code, template])),
@@ -85,6 +87,7 @@ const TEMPLATES: Readonly<Record<string, TemplateDefinition>> = {
   ...Object.fromEntries(ACCOUNT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(PAYMENT_TEMPLATES.map((template) => [template.code, template])),
   ...Object.fromEntries(WALLET_TEMPLATES.map((template) => [template.code, template])),
+  ...Object.fromEntries(RECOVERY_TEMPLATES.map((template) => [template.code, template])),
 };
 
 /** Tous les modèles connus, par code croissant (liste du back-office, en lecture seule). */

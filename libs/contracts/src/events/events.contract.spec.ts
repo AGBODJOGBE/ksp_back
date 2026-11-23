@@ -8,6 +8,7 @@ import { type DocumentEventPayloads, type DocumentEventType } from './document.e
 import { type IdentityEventPayloads, type IdentityEventType } from './identity.events';
 import { type NotificationEventPayloads, type NotificationEventType } from './notification.events';
 import { type PaymentEventPayloads, type PaymentEventType } from './payment.events';
+import { type RecoveryEventPayloads, type RecoveryEventType } from './recovery.events';
 import { type WalletEventPayloads, type WalletEventType } from './wallet.events';
 
 const EVENTS_ROOT = resolve(__dirname, '..', '..', '..', '..', 'contracts', 'events');
@@ -1524,5 +1525,183 @@ describe('Contrats des événements wallet', () => {
       expect(validate({ ...payload, balanceAfter: { amount: -1, currency: 'XOF' } })).toBe(false);
       expect(validate({ ...payload, phone: '+2290197000045' })).toBe(false);
     }
+  });
+});
+
+const creditorRef = { type: 'organization' as const, id: uuid };
+const recoveryCase = { caseId: uuid, caseNumber: 'RC-000123', creditor: creditorRef };
+
+const recoveryExamples: { [K in RecoveryEventType]: RecoveryEventPayloads[K] } = {
+  'recovery.case.submitted': {
+    ...recoveryCase,
+    kind: 'b2b',
+    amountDue: xof(1250000),
+    source: 'import',
+    submittedAt: '2026-11-20T09:00:00Z',
+  },
+  'recovery.case.accepted': {
+    ...recoveryCase,
+    kind: 'b2b',
+    assignedAgentId: uuid,
+    score: 72,
+    acceptedAt: '2026-11-21T09:00:00Z',
+  },
+  'recovery.case.info_requested': {
+    ...recoveryCase,
+    completionDueAt: '2026-12-06T09:00:00Z',
+    requestedAt: '2026-11-21T09:00:00Z',
+  },
+  'recovery.case.rejected': {
+    ...recoveryCase,
+    reason: 'prescribed',
+    refundedAmount: xof(0),
+    rejectedAt: '2026-11-21T09:00:00Z',
+  },
+  'recovery.case.stage_changed': {
+    ...recoveryCase,
+    kind: 'b2c',
+    fromStage: 'notice',
+    toStage: 'amicable',
+    skipReason: null,
+    changedBy: 'system',
+    changedAt: '2026-11-29T09:00:00Z',
+  },
+  'recovery.case.suspended': {
+    ...recoveryCase,
+    reason: 'dispute',
+    disputeId: uuid,
+    creditorAnswerDueAt: '2026-12-10T09:00:00Z',
+    suspendedAt: '2026-11-30T09:00:00Z',
+  },
+  'recovery.case.resumed': {
+    ...recoveryCase,
+    disputeId: uuid,
+    resolution: 'correct_amount',
+    resumedAt: '2026-12-05T09:00:00Z',
+  },
+  'recovery.case.closed': {
+    ...recoveryCase,
+    kind: 'b2b',
+    reason: 'paid',
+    totalCollected: xof(1250000),
+    settlementCertificateDocumentId: uuid,
+    closedAt: '2027-03-01T09:00:00Z',
+  },
+  'recovery.decision.requested': {
+    ...recoveryCase,
+    decisionId: uuid,
+    kind: 'bailiff_escalation',
+    expiresAt: '2027-01-15T09:00:00Z',
+    requestedAt: '2026-12-31T09:00:00Z',
+  },
+  'recovery.plan.signed': {
+    ...recoveryCase,
+    planId: uuid,
+    total: xof(1250000),
+    installmentsCount: 3,
+    firstDueDate: '2026-12-05',
+    renegotiation: false,
+    documentId: uuid,
+    signedAt: '2026-11-25T09:00:00Z',
+  },
+  'recovery.plan.installment_missed': {
+    ...recoveryCase,
+    planId: uuid,
+    installmentRank: 3,
+    dueDate: '2027-02-05',
+    amount: xof(312500),
+    missedCount: 1,
+    missedAt: '2027-02-10T23:00:00Z',
+  },
+  'recovery.plan.defaulted': {
+    ...recoveryCase,
+    planId: uuid,
+    missedCount: 2,
+    defaultedAt: '2027-03-10T23:00:00Z',
+  },
+  'recovery.notice.issued': {
+    ...recoveryCase,
+    noticeId: uuid,
+    documentId: uuid,
+    deadlineDays: 15,
+    issuedAt: '2027-04-01T09:00:00Z',
+  },
+  'recovery.payment.collected': {
+    ...recoveryCase,
+    kind: 'b2b',
+    collectionId: uuid,
+    source: 'payment_link',
+    gross: xof(312500),
+    allocatedCosts: xof(0),
+    allocatedInterests: xof(12500),
+    allocatedPrincipal: xof(300000),
+    overpaid: xof(0),
+    commission: xof(31250),
+    commissionSettlement: 'deducted',
+    stage: 'payment_plan',
+    amountDueAfter: xof(937500),
+    receivedAt: '2026-12-05T10:00:00Z',
+  },
+  'recovery.remittance.paid': {
+    ...recoveryCase,
+    collectionId: uuid,
+    gross: xof(312500),
+    commission: xof(31250),
+    net: xof(281250),
+    walletTransactionId: uuid,
+    creditedAt: '2026-12-05T10:00:05Z',
+  },
+  'recovery.partner.assigned': {
+    ...recoveryCase,
+    assignmentId: uuid,
+    partnerId: uuid,
+    partnerKind: 'bailiff',
+    partnerUserId: null,
+    assignedAt: '2027-01-20T09:00:00Z',
+  },
+  'recovery.partner.act_recorded': {
+    ...recoveryCase,
+    actId: uuid,
+    assignmentId: uuid,
+    partnerId: uuid,
+    actType: 'summons_to_pay',
+    actDate: '2027-01-25',
+    cost: xof(25000),
+    recordedAt: '2027-01-25T15:00:00Z',
+  },
+};
+
+describe('Contrats des événements recovery', () => {
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  addFormats(ajv);
+  ajv.addKeyword('x-event-type').addKeyword('x-event-version');
+  const schemas = loadSchemas('recovery');
+
+  it('chaque type TypeScript a un schéma, et inversement', () => {
+    expect([...schemas.keys()].sort()).toEqual(Object.keys(recoveryExamples).sort());
+  });
+
+  it.each(Object.entries(recoveryExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
+    const validate = ajv.compile(schemas.get(type)!);
+    expect(validate(payload)).toBe(true);
+  });
+
+  it('aucune donnée personnelle du débiteur, numéro de dossier au format RC-, créancier sans nom', () => {
+    for (const [type, payload] of Object.entries(recoveryExamples)) {
+      const validate = ajv.compile(schemas.get(type)!);
+      expect(validate({ ...payload, debtorPhone: '+2290197000045' })).toBe(false);
+      expect(validate({ ...payload, debtorName: 'Jean Dupont' })).toBe(false);
+      expect(validate({ ...payload, caseNumber: '123' })).toBe(false);
+      expect(validate({ ...payload, creditor: { ...creditorRef, displayName: 'SARL Bénin' } })).toBe(false);
+    }
+  });
+
+  it('montants entiers en XOF, jamais négatifs ; un encaissement est strictement positif', () => {
+    const collected = ajv.compile(schemas.get('recovery.payment.collected')!);
+    const example = recoveryExamples['recovery.payment.collected'];
+    expect(collected({ ...example, gross: xof(0) })).toBe(false);
+    expect(collected({ ...example, commission: { amount: 10.5, currency: 'XOF' } })).toBe(false);
+    expect(collected({ ...example, allocatedCosts: { amount: -1, currency: 'XOF' } })).toBe(false);
+    expect(collected({ ...example, gross: { amount: 1000, currency: 'EUR' } })).toBe(false);
   });
 });

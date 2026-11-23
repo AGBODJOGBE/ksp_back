@@ -145,6 +145,41 @@ export const configSchema = baseServiceConfigSchema
       .pipe(
         z.array(z.uuid('NOTIFICATION_ACCOUNTS_TEAM_USER_IDS : identifiants de comptes (UUID) attendus.')),
       ),
+    /**
+     * Superviseurs du recouvrement, prévenus de chaque nouveau dossier à examiner (CDC Recouvrement,
+     * partie 17.2). Identifiants séparés par des virgules ; vide par défaut (la file de recevabilité
+     * du back-office reste la référence).
+     */
+    NOTIFICATION_RECOVERY_SUPERVISOR_USER_IDS: z
+      .string()
+      .default('')
+      .transform((raw) =>
+        raw
+          .split(',')
+          .map((item) => item.trim().toLowerCase())
+          .filter(Boolean),
+      )
+      .pipe(
+        z.array(
+          z.uuid('NOTIFICATION_RECOVERY_SUPERVISOR_USER_IDS : identifiants de comptes (UUID) attendus.'),
+        ),
+      ),
+    /**
+     * Juristes du recouvrement, prévenus des contestations des débiteurs et des actes enregistrés par
+     * les partenaires (R-PR-02, R-HU-04). Identifiants séparés par des virgules ; vide par défaut.
+     */
+    NOTIFICATION_RECOVERY_LEGAL_USER_IDS: z
+      .string()
+      .default('')
+      .transform((raw) =>
+        raw
+          .split(',')
+          .map((item) => item.trim().toLowerCase())
+          .filter(Boolean),
+      )
+      .pipe(
+        z.array(z.uuid('NOTIFICATION_RECOVERY_LEGAL_USER_IDS : identifiants de comptes (UUID) attendus.')),
+      ),
   })
   .refine((cfg) => !(cfg.NODE_ENV === 'production' && cfg.NOTIFICATION_WHATSAPP_PROVIDER === 'console'), {
     message:

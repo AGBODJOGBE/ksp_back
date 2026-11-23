@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/recovery/recovery.remittance.paid.v1.schema.json",
+  "title": "recovery.remittance.paid",
+  "description": "Net d’un encaissement crédité au portefeuille du créancier par wallet (RecordCollection, R-CO-03). Identifiants et montants seulement : ni nom, ni téléphone, ni adresse du débiteur (ADR-060).",
+  "x-event-type": "recovery.remittance.paid",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "caseId",
+    "caseNumber",
+    "creditor",
+    "collectionId",
+    "gross",
+    "commission",
+    "net",
+    "walletTransactionId",
+    "creditedAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "moneyOrZero": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier titulaire du dossier : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "caseNumber": {
+      "type": "string",
+      "pattern": "^RC-[0-9]{6,}$",
+      "description": "Numéro lisible du dossier"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "collectionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "gross": {
+      "$ref": "#/$defs/money"
+    },
+    "commission": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "net": {
+      "$ref": "#/$defs/moneyOrZero"
+    },
+    "walletTransactionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "creditedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -178,6 +178,22 @@ describe('RequestSignature', () => {
     expect(invitation).toMatchObject({ firstName: 'Koffi', expiresOn: '16 novembre 2026' });
   });
 
+  it('range l’ancien numéro béninois à 8 chiffres d’un signataire sans compte à 10 chiffres (ADR-063)', async () => {
+    const { useCases, generate } = setup();
+    const { document } = await generate('recovery_settlement_agreement', agreement, 'pac-8');
+    const result = await as(service(), () =>
+      useCases.requestSignature.execute({
+        documentId: document.id,
+        signer: { phoneE164: '+229 97 00 00 45', displayName: 'Koffi Mensah' },
+        idempotencyKey: 'sign-8',
+      }),
+    );
+    expect(result.signature.request).toMatchObject({
+      signerPhoneE164: '+2290197000045',
+      signerPhoneMasked: '+229********45',
+    });
+  });
+
   it('refuse la signature d’une mise en demeure, et une seconde demande en cours', async () => {
     const { useCases, generate, requestDebtorSignature } = setup();
     const notice = await generate(

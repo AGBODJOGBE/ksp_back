@@ -1,14 +1,19 @@
-const E164 = /^\+[1-9][0-9]{6,14}$/;
+import { tryNormalizePhone } from '@ksp/platform/phone';
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Numéro de téléphone au format international E.164 (tous les pays : la diaspora en fait partie). */
+/**
+ * Numéro de téléphone au format international E.164 (tous les pays : la diaspora en fait partie).
+ * Normalisation commune du kit (ADR-063) : un numéro béninois `+229` à 8 chiffres est envoyé à
+ * `+229 01` suivi des 8 chiffres, seule forme encore joignable.
+ */
 export class PhoneNumber {
   private constructor(readonly e164: string) {}
 
-  /** Renvoie null si la valeur n'est pas un numéro E.164 (les espaces sont tolérés). */
+  /** Renvoie null si la valeur n'est pas un numéro E.164 (espaces, points, tirets et `00` tolérés). */
   static parse(value: string): PhoneNumber | null {
-    const compact = value.replace(/\s+/g, '');
-    return E164.test(compact) ? new PhoneNumber(compact) : null;
+    const normalized = tryNormalizePhone(value);
+    return normalized === null ? null : new PhoneNumber(normalized);
   }
 
   /**

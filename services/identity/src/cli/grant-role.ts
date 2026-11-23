@@ -10,7 +10,7 @@
  */
 import { AppError, ReadinessRegistry } from '@ksp/platform';
 import { GrantRoleUseCase } from '../application/role/grant-role.use-case';
-import { INITIAL_BACKOFFICE_ROLES } from '../domain/role/role';
+import { ROLE_CATALOG } from '../domain/role/role';
 import { PrismaService } from '../infrastructure/prisma/prisma.service';
 import { PrismaRoleRepository } from '../infrastructure/role/prisma-role.repository';
 import { PrismaLoginRepository } from '../infrastructure/session/prisma-login.repository';
@@ -19,8 +19,8 @@ import { SystemClock, UuidV7Generator } from '../infrastructure/system/system';
 async function main(): Promise<number> {
   const [phone, roleCode] = process.argv.slice(2);
   if (!phone || !roleCode) {
-    const roles = INITIAL_BACKOFFICE_ROLES.map((role) => role.code).join(', ');
-    process.stderr.write(`Usage : roles:grant <+229…> <rôle>\nRôles du back-office : ${roles}\n`);
+    const roles = ROLE_CATALOG.map((role) => role.code).join(', ');
+    process.stderr.write(`Usage : roles:grant <+229…> <rôle>\nRôles : ${roles}\n`);
     return 2;
   }
   const prisma = new PrismaService(new ReadinessRegistry());

@@ -758,6 +758,8 @@ export async function startGateway(options: {
   walletUrl?: string;
   /** Service document simulé (document-stub.ts) ; sans lui, les routes des documents répondent 503. */
   documentUrl?: string;
+  /** Service recovery simulé (recovery-stub.ts) ; sans lui, les routes du recouvrement répondent 503. */
+  recoveryUrl?: string;
   keys: TestKeys;
   env?: Record<string, string>;
   jwks?: JwksSource;
@@ -774,6 +776,7 @@ export async function startGateway(options: {
     FILE_GRPC_URL: options.fileUrl ?? UNREACHABLE_GRPC_URL,
     WALLET_GRPC_URL: options.walletUrl ?? UNREACHABLE_GRPC_URL,
     DOCUMENT_GRPC_URL: options.documentUrl ?? UNREACHABLE_GRPC_URL,
+    RECOVERY_GRPC_URL: options.recoveryUrl ?? UNREACHABLE_GRPC_URL,
     CORS_WEB_ORIGINS: `${ORIGINS.web},https://shop.ksp.bj,https://print.ksp.bj`,
     CORS_BACKOFFICE_ORIGINS: ORIGINS.backoffice,
     ...options.env,

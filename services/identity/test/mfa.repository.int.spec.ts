@@ -11,7 +11,7 @@ import {
   TotpStepAlreadyUsedError,
 } from '../src/application/mfa/mfa.ports';
 import { ChallengeAlreadyConsumedError } from '../src/application/session/session.ports';
-import { INITIAL_BACKOFFICE_ROLES } from '../src/domain/role/role';
+import { ROLE_CATALOG } from '../src/domain/role/role';
 import { PrismaMfaRepository } from '../src/infrastructure/mfa/prisma-mfa.repository';
 import { PrismaService } from '../src/infrastructure/prisma/prisma.service';
 import { PrismaRoleRepository } from '../src/infrastructure/role/prisma-role.repository';
@@ -146,12 +146,17 @@ describeWithDatabase('Rôles et double authentification (PostgreSQL)', () => {
     await pool.query('TRUNCATE otp_challenges, users, outbox, login_events CASCADE');
   });
 
-  it('la migration enregistre le catalogue initial, tout rôle du back-office exige la double authentification', async () => {
-    const { rows } = await pool.query(
-      'SELECT code, requires_mfa, backoffice_access FROM roles ORDER BY code',
+  it('les migrations enregistrent le catalogue complet, tout rôle du back-office exige la double authentification', async () => {
+    const { rows } = await pool.query('SELECT code, requires_mfa, backoffice_access FROM roles');
+    const byCode = (a: { code: string }, b: { code: string }) => (a.code < b.code ? -1 : 1);
+    expect([...rows].sort(byCode)).toEqual(
+      ROLE_CATALOG.map((role) => ({
+        code: role.code,
+        requires_mfa: role.requiresMfa,
+        backoffice_access: role.backofficeAccess,
+      })).sort(byCode),
     );
-    expect(rows.map((row) => row.code)).toEqual(INITIAL_BACKOFFICE_ROLES.map((role) => role.code).sort());
-    expect(rows.every((row) => row.requires_mfa && row.backoffice_access)).toBe(true);
+    expect(rows.filter((row) => row.backoffice_access).every((row) => row.requires_mfa)).toBe(true);
     await expect(
       pool.query(
         `INSERT INTO roles (id, service, code, scope_type, requires_mfa, backoffice_access, description)

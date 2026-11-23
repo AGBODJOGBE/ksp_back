@@ -2,6 +2,7 @@
  * Doublures en mémoire des ports de l'application, pour les tests des cas d'usage.
  * Elles reproduisent les garanties des vrais dépôts (atomicité, unicité) sans base de données.
  */
+import { phoneLookupForms } from '@ksp/platform';
 import { type Organization, type OrganizationStatus } from '../../domain/organization/organization';
 import { type OtpChallenge, type OtpChannel } from '../../domain/otp/otp-challenge';
 import { clientKindsOf, sessionCategory } from '../../domain/session/session-policy';
@@ -137,8 +138,13 @@ export class InMemoryIdentityStore implements AccountRepository, LoginRepository
 
   constructor(private readonly challenges: InMemoryChallenges) {}
 
+  /** Comme le dépôt réel : forme normalisée d'abord, puis ancienne forme béninoise à 8 chiffres. */
   async findByPhone(phoneE164: string): Promise<Account | null> {
-    return this.accounts.find((account) => account.phoneE164 === phoneE164) ?? null;
+    for (const form of phoneLookupForms(phoneE164)) {
+      const account = this.accounts.find((candidate) => candidate.phoneE164 === form);
+      if (account) return account;
+    }
+    return null;
   }
 
   async findById(userId: string): Promise<Account | null> {

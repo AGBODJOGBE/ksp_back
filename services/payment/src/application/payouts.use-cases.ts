@@ -1,6 +1,7 @@
+import { phoneLookupForms } from '@ksp/platform';
 import { MAX_AMOUNT } from '../domain/payment-link';
 import {
-  BENIN_PHONE,
+  parseBeninPhone,
   PAYOUT_OPERATORS,
   PAYOUT_STATUSES,
   type Payout,
@@ -24,11 +25,14 @@ import { PayoutSync } from './payout-sync';
 
 const ISSUER = /^[a-z][a-z0-9-]*$/;
 
-/** Même demande (rejeu) : montant et bénéficiaire identiques. */
+/**
+ * Même demande (rejeu) : montant et bénéficiaire identiques. Un reversement enregistré avant la règle
+ * commune (ADR-063) peut porter l'ancienne forme béninoise à 8 chiffres du même numéro.
+ */
 function sameRequest(payout: Payout, amount: number, beneficiary: PayoutBeneficiary): boolean {
   return (
     payout.amount === amount &&
-    payout.beneficiary.phone === beneficiary.phone &&
+    phoneLookupForms(beneficiary.phone).includes(payout.beneficiary.phone) &&
     payout.beneficiary.operator === beneficiary.operator
   );
 }
@@ -58,8 +62,8 @@ export class RequestPayoutUseCase {
     }
     const reference = requireText('reference', input.reference, 100);
     const amount = requireXof('amount', input.amount, MAX_AMOUNT);
-    const phone = input.beneficiary?.phone ?? '';
-    if (!BENIN_PHONE.test(phone)) {
+    const phone = parseBeninPhone(input.beneficiary?.phone ?? '');
+    if (phone === null) {
       throw PaymentErrors.invalid(
         'beneficiary.phone',
         'Numéro béninois au format international attendu (+229…).',

@@ -19,7 +19,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "keys:generate": "tsx scripts/generate-signing-key.ts",
     "keys:service-client": "tsx scripts/generate-service-client.ts",
-    "roles:grant": "node --env-file-if-exists=.env dist/cli/grant-role.js"
+    "roles:grant": "node --env-file-if-exists=.env dist/cli/grant-role.js",
+    "phones:normalize": "node --env-file-if-exists=.env dist/cli/normalize-phones.js"
   },
   "dependencies": {
     "@ksp/contracts": "workspace:*",

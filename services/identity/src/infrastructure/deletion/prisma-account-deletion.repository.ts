@@ -1,4 +1,4 @@
-import { appendToOutbox, createEnvelope, type SqlExecutor } from '@ksp/platform';
+import { appendToOutbox, createEnvelope, phoneLookupForms, type SqlExecutor } from '@ksp/platform';
 import { Injectable } from '@nestjs/common';
 import {
   type AccountDeletionRepository,
@@ -145,7 +145,7 @@ export class PrismaAccountDeletionRepository implements AccountDeletionRepositor
       await tx.userPhone.deleteMany({ where: { userId } });
       if (phones.length > 0) {
         await tx.otpChallenge.deleteMany({
-          where: { target: { in: phones.map((phone) => phone.phoneE164) } },
+          where: { target: { in: phones.flatMap((phone) => phoneLookupForms(phone.phoneE164)) } },
         });
       }
       // Appareils et sessions (jetons de renouvellement par cascade), double authentification.

@@ -4,7 +4,7 @@ import {
   withdrawalReleaseEntries,
   withdrawalSettlementEntries,
 } from '../domain/ledger';
-import { BENIN_PHONE, maskPhone, type Operator, OPERATORS } from '../domain/wallet-payout';
+import { maskPhone, type Operator, OPERATORS, parseBeninPhone } from '../domain/wallet-payout';
 import {
   approveWithdrawal,
   markWithdrawalSubmitted,
@@ -83,8 +83,8 @@ export class RequestWithdrawalUseCase {
       throw WalletErrors.invalid('idempotencyKey', 'Clé d’idempotence invalide (8 à 100 caractères).');
     }
     const amount = requireXof('amount', input.amount);
-    const phone = input.beneficiary?.phone ?? '';
-    if (!BENIN_PHONE.test(phone)) {
+    const phone = parseBeninPhone(input.beneficiary?.phone ?? '');
+    if (phone === null) {
       throw WalletErrors.invalid(
         'beneficiary.phone',
         'Numéro béninois au format international attendu (+229…).',

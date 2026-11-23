@@ -149,6 +149,44 @@ describe('VerifyOtpUseCase (UC-ID-01, validation du code)', () => {
     expect(store.registered).toHaveLength(1);
   });
 
+  it('retrouve avec l’ancienne forme à 8 chiffres le compte enregistré sous la nouvelle (ADR-063)', async () => {
+    const { useCase, store, challenges, sentChallenge } = setup();
+    const first = await login(useCase, input(await sentChallenge('+2290197000045')));
+    // Demande saisie à 8 chiffres : normalisée dès la demande de code.
+    const second = await login(useCase, input(await sentChallenge('+22997000045')));
+    // Demande enregistrée avant la règle, sous l'ancienne forme, et validée après le déploiement.
+    const legacy = await sentChallenge();
+    Object.assign(challenges.rows.get(legacy)!, { target: { e164: '+22997000045' } });
+    const third = await login(useCase, input(legacy));
+    expect([second.isNewUser, third.isNewUser]).toEqual([false, false]);
+    expect([second.account.id, third.account.id]).toEqual([first.account.id, first.account.id]);
+    expect(store.accounts).toHaveLength(1);
+  });
+
+  it('un compte créé par une demande à l’ancienne forme est rangé sous la forme normalisée', async () => {
+    const { useCase, store, challenges, sentChallenge } = setup();
+    const legacy = await sentChallenge();
+    Object.assign(challenges.rows.get(legacy)!, { target: { e164: '+22997000045' } });
+    const created = await login(useCase, input(legacy));
+    expect(created.isNewUser).toBe(true);
+    expect(created.account.phoneE164).toBe('+2290197000045');
+    // Le nouveau numéro retrouve ce compte : aucun second compte.
+    const again = await login(useCase, input(await sentChallenge('+2290197000045')));
+    expect(again.account.id).toBe(created.account.id);
+    expect(store.accounts).toHaveLength(1);
+  });
+
+  it('retrouve un compte encore enregistré sous l’ancienne forme, sans en créer un second', async () => {
+    const { useCase, store, sentChallenge } = setup();
+    const first = await login(useCase, input(await sentChallenge()));
+    // Ligne écrite avant la règle et pas encore réécrite par phones:normalize.
+    Object.assign(store.accounts[0], { phoneE164: '+22997000045' });
+    const second = await login(useCase, input(await sentChallenge('+2290197000045')));
+    expect(second.isNewUser).toBe(false);
+    expect(second.account.id).toBe(first.account.id);
+    expect(store.accounts).toHaveLength(1);
+  });
+
   it('un code ne sert qu’une fois', async () => {
     const { useCase, sentChallenge } = setup();
     const id = await sentChallenge();

@@ -1,3 +1,5 @@
+import { tryNormalizePhone } from '@ksp/platform/phone';
+
 /**
  * Reversement par Mobile Money (ADR-041) : un service autorisé (wallet) fait verser un montant à un
  * bénéficiaire (créancier). Exécution par le prestataire (FedaPay) ou, en mode manuel, par la
@@ -27,8 +29,17 @@ export type PayoutProviderName = 'fedapay' | 'manual';
  */
 export type PayoutFailureCode = 'provider_failed' | 'provider_rejected' | 'rejected_by_finance';
 
-/** Numéro béninois E.164 : +229 suivi de 8 chiffres (ancien plan) ou de 10 (depuis 2024). */
-export const BENIN_PHONE = /^\+229(\d{8}|\d{10})$/;
+/** Numéro béninois E.164 du plan à 10 chiffres : +229 suivi de 10 chiffres. */
+const BENIN_PHONE = /^\+229\d{10}$/;
+
+/**
+ * Numéro béninois E.164, ou null. Normalisation commune du kit (ADR-063) : un ancien numéro `+229`
+ * à 8 chiffres devient `+229 01` suivi des 8 chiffres, seule forme encore joignable.
+ */
+export function parseBeninPhone(value: string): string | null {
+  const phone = tryNormalizePhone(value);
+  return phone !== null && BENIN_PHONE.test(phone) ? phone : null;
+}
 
 export interface PayoutBeneficiary {
   phone: string;

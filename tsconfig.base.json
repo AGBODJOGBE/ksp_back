@@ -23,7 +23,8 @@
     "paths": {
       "@ksp/contracts": ["./libs/contracts/src"],
       "@ksp/platform": ["./libs/platform/src"],
-      "@ksp/platform/telemetry": ["./libs/platform/src/telemetry/telemetry"]
+      "@ksp/platform/telemetry": ["./libs/platform/src/telemetry/telemetry"],
+      "@ksp/platform/phone": ["./libs/platform/src/phone/phone"]
     }
   }
 }
