@@ -195,7 +195,11 @@ describeWithDatabase('lot F : impayés et suspension des organisations (PostgreS
       expect.objectContaining({ causes: ['unpaid_invoices'], threshold: 2 }),
     ]);
     // Programme déjà suspendu par KSP : la cause s'ajoute (RV-84), pas d'avertissement.
-    expect((await programRow(byKsp.programId)).suspensionCauses).toEqual(['ksp_decision', 'unpaid_invoices']);
+    // L'ordre des causes actives n'a pas de sens : seule leur liste compte.
+    expect([...(await programRow(byKsp.programId)).suspensionCauses].sort()).toEqual([
+      'ksp_decision',
+      'unpaid_invoices',
+    ]);
     expect(await outbox('cleaning.program.suspension_updated', organizationId)).toEqual([
       expect.objectContaining({
         programId: byKsp.programId,
