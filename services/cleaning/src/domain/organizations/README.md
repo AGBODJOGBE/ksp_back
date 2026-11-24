@@ -5,16 +5,22 @@ Nettoyage v2, partie 11.2, R-PE-06, partie 11.3 ; reprises RV-83 à RV-87). Doma
 implicite ; erreurs : `../requests/errors.ts`. Réutilise sans les modifier les causes cumulables de
 `../programs/suspension.ts` et la reprise des séances de `../programs/catch-up.ts`.
 
-**Pas encore branché** : aucun cas d'usage, dépôt ni écouteur de cleaning n'appelle ce dossier. Le
-branchement se fera après la fusion des lots C, E et G, à partir des ports de `ports.ts`.
+**Branchement** : `application/organizations` (cas d'usage `OrganizationStandingUseCases`, réglages
+`StandingSettings`, écritures des programmes par la suspension et la reprise du lot E),
+`infrastructure/persistence/organizations` (unité de travail et verrou de l'organisation) et
+`infrastructure/messaging/organization-events.consumer.ts` (les quatre événements écoutés). La
+décision de KSP sur l'organisation (`identity.organization.suspended` / `.reactivated`) suit
+`ksp-standing.ts` : un événement plus ancien que la dernière décision est ignoré, à date égale la
+suspension l'emporte ; elle pose ou lève la cause `organization_suspended` sous le même verrou.
 
-| Fichier         | Rôle                                                                                        |
-| --------------- | ------------------------------------------------------------------------------------------- |
-| `standing.ts`   | Seuils, factures suivies, compte d'impayés, décision (avertir, suspendre, lever), événement |
-| `alignment.ts`  | Changements des programmes : suspension, cause ajoutée ou levée, reprise et réaffectation   |
-| `react.ts`      | Enchaînement décision → programmes → avertissement, à écrire dans une seule transaction     |
-| `acceptance.ts` | Acceptation de devis refusée au seuil, avertissement non bloquant d'une demande             |
-| `ports.ts`      | Ports du branchement à venir (interfaces seules)                                            |
+| Fichier           | Rôle                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| `standing.ts`     | Seuils, factures suivies, compte d'impayés, décision (avertir, suspendre, lever), événement |
+| `alignment.ts`    | Changements des programmes : suspension, cause ajoutée ou levée, reprise et réaffectation   |
+| `react.ts`        | Enchaînement décision → programmes → avertissement, à écrire dans une seule transaction     |
+| `acceptance.ts`   | Acceptation de devis refusée au seuil, avertissement non bloquant d'une demande             |
+| `ksp-standing.ts` | Décision de KSP sur l'organisation : départage par date (RV-85)                             |
+| `ports.ts`        | Ports du branchement (interfaces seules)                                                    |
 
 ## Ports du branchement
 

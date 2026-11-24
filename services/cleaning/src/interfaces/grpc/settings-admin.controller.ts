@@ -1,5 +1,5 @@
 import { cleaningV1 } from '@ksp/contracts';
-import { Controller, Inject } from '@nestjs/common';
+import { Controller, Inject, Logger } from '@nestjs/common';
 import { CLEANING_DEPS, type CleaningDeps } from '../../application/deps';
 import { type SettingsView, SettingsUseCases } from '../../application/settings/settings.use-cases';
 import { type ModuleSettings } from '../../domain/settings/settings';
@@ -11,10 +11,18 @@ import { money } from './catalog.presenters';
 @Controller()
 @cleaningV1.SettingsAdminServiceControllerMethods()
 export class SettingsAdminGrpcController implements cleaningV1.SettingsAdminServiceController {
+  private readonly logger = new Logger(SettingsAdminGrpcController.name);
   private readonly settings: SettingsUseCases;
 
   constructor(@Inject(CLEANING_DEPS) deps: CleaningDeps) {
-    this.settings = new SettingsUseCases(deps);
+    // Piste O : une organisation dont la réévaluation échoue après un changement des seuils le
+    // sera à son prochain événement de facture ; l'échec est journalisé.
+    this.settings = new SettingsUseCases(deps, (organizationId, error) =>
+      this.logger.error(
+        `Seuils d'impayés : réévaluation de l'organisation ${organizationId} en échec : ` +
+          (error instanceof Error ? error.message : String(error)),
+      ),
+    );
   }
 
   async getSettings(): Promise<cleaningV1.GetSettingsResponse> {

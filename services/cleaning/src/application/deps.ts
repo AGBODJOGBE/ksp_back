@@ -42,6 +42,8 @@ import {
 import { type PersonalDataRepository } from './privacy/privacy.ports';
 // Piste A (agents)
 import { type AgentAccounts, type AgentRoles } from './agents/agent.ports';
+// Piste O
+import { type OrganizationUnitOfWork } from './organizations/organizations.ports';
 
 /** Jeton d'injection des dépendances des cas d'usage (racine de composition : app.module.ts). */
 export const CLEANING_DEPS = Symbol('CLEANING_DEPS');
@@ -112,6 +114,9 @@ export interface CleaningDeps {
   roles?: AgentRoles;
   /** Compte KSP d'un agent créé par l'admin (identity.EnsureUserByPhone, R-AG-02). */
   accounts?: AgentAccounts;
+  // --- Piste O : situation des organisations (factures impayées, suspension par KSP) ------------
+  /** Transactions sous le verrou d'une organisation (R-PE-06, RV-85). */
+  organizations?: OrganizationUnitOfWork;
 }
 
 /** Dépendances des cas d'usage du lot E. */
@@ -124,3 +129,6 @@ export type ExecutionDeps = CleaningDeps &
 export type PrivacyDeps = CleaningDeps & Required<Pick<CleaningDeps, 'personalData'>>;
 /** Dépendances des cas d'usage des agents (piste A). */
 export type AgentDeps = CleaningDeps & Required<Pick<CleaningDeps, 'roles' | 'accounts'>>;
+
+/** Dépendances des cas d'usage de la piste O (situation des organisations). */
+export type OrganizationDeps = CleaningDeps & Required<Pick<CleaningDeps, 'organizations' | 'execution'>>;

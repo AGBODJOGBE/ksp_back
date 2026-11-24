@@ -5,6 +5,7 @@ import { type SessionCancelCause } from '../../domain/payments/charge';
 import { type Reschedule } from '../../domain/sessions/reschedule';
 import { type FieldSession, type Incident, type MissedCause } from '../../domain/sessions/session';
 import { type SessionStatus } from '../../domain/sessions/session-status';
+import { type OrganizationTransaction } from '../organizations/organizations.ports';
 import { type Changes } from '../ports';
 import { type Page } from '../shared/input';
 
@@ -217,6 +218,11 @@ export interface ExecutionReader {
 export interface ExecutionTx extends ExecutionReader {
   /** Verrou du programme (SELECT … FOR UPDATE), avant toute lecture de ses séances. */
   lockProgram(programId: string): Promise<void>;
+  /**
+   * Verrou de l'organisation (RV-85), à prendre avant celui du programme ; rend la situation de
+   * l'organisation dans cette transaction (réévaluation à la reprise d'un programme, R-SU-01).
+   */
+  organization(organizationId: string): Promise<OrganizationTransaction>;
   /** Refuse (ConcurrentUpdateError) si la version a changé ; null : sans contrôle de version. */
   updateSession(id: string, expectedVersion: number | null, patch: SessionPatch): Promise<void>;
   updateProgram(id: string, patch: ProgramPatch): Promise<void>;

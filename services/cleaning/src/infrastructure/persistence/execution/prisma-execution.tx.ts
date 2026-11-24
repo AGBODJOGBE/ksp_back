@@ -12,6 +12,7 @@ import {
   type SessionRecord,
   type WalletOperationRecord,
 } from '../../../application/execution/execution.ports';
+import { type OrganizationTransaction } from '../../../application/organizations/organizations.ports';
 import { type Changes, type Clock, type IdGenerator } from '../../../application/ports';
 import { type ProgramStatus } from '../../../domain/programs/program-status';
 import { type ActiveCause, type SuspensionCauseCode } from '../../../domain/programs/suspension';
@@ -19,6 +20,8 @@ import { type Reschedule } from '../../../domain/sessions/reschedule';
 import { type Incident } from '../../../domain/sessions/session';
 import { isUuid } from '../agents/agent-rows';
 import { type Tx, writeChanges } from '../changes';
+import { lockOrganization } from '../organizations/organization-lock';
+import { PrismaOrganizationTransaction } from '../organizations/prisma-organization.tx';
 import { checklistJson, PROGRAM_INCLUDE, SESSION_INCLUDE, toProgram, toSession } from './execution-rows';
 
 /** Affectations en vigueur d'une séance (retirées à l'annulation, la suspension ou le report). */
@@ -197,6 +200,11 @@ export class PrismaExecutionTx extends PrismaExecutionReader implements Executio
   async lockProgram(programId: string): Promise<void> {
     if (!isUuid(programId)) return;
     await this.tx.$queryRaw`SELECT id FROM programs WHERE id = ${programId}::uuid FOR UPDATE`;
+  }
+
+  async organization(organizationId: string): Promise<OrganizationTransaction> {
+    await lockOrganization(this.tx, organizationId);
+    return new PrismaOrganizationTransaction(this.tx, this, this.clock);
   }
 
   async updateSession(id: string, expectedVersion: number | null, patch: SessionPatch): Promise<void> {

@@ -9,6 +9,7 @@ import { type MissedCause } from '../../domain/sessions/session';
 import { SESSION_STATUSES, type SessionStatus } from '../../domain/sessions/session-status';
 import { completeSessionAsKsp, reportSessionMissedAsKsp } from '../../domain/sessions/staff-closure';
 import { type ExecutionDeps } from '../deps';
+import { reevaluateStanding, StandingSettings } from '../organizations/standing.use-cases';
 import { requireStaff } from '../shared/access';
 import { cleaningErrors } from '../shared/errors';
 import { instant, optionalInstant, page, requireUuid, requiredReason } from '../shared/input';
@@ -17,7 +18,7 @@ import { stopEffects } from './customer-programs.use-cases';
 import { executionAction } from './execution-actions';
 import { executionErrors } from './execution-errors';
 import { type ProgramRecord, type SessionRecord } from './execution.ports';
-import { applyAddCause, applyLiftCause, audit, type CatchUp } from './execution-support';
+import { applyAddCause, applyLiftCause, audit, type CatchUp, noEffects } from './execution-support';
 import { closeSession } from './field.use-cases';
 import { applyCancellation, applyReschedule } from './session-changes';
 import { SessionPayments } from './session-payments';
@@ -162,7 +163,12 @@ export class AdminProgramUseCases {
     });
   }
 
-  /** R-SU-01, R-SU-03 : levée de la cause « décision de KSP » ; reprise si aucune autre ne reste. */
+  /**
+   * R-SU-01, R-SU-03 : levée de la cause « décision de KSP » ; reprise si aucune autre ne reste.
+   * Programme d'une organisation : la décision se prend sous le verrou de l'organisation (RV-85) et,
+   * si le programme reprend, sa situation d'impayés est réévaluée dans la même transaction
+   * (l'avertissement retenu pendant la suspension part alors, R-SU-01).
+   */
   async resumeProgram(input: {
     programId: string;
     idempotencyKey: string;
@@ -176,6 +182,7 @@ export class AdminProgramUseCases {
       key: input.idempotencyKey,
       body: { programId: program.id, reason: input.reason ?? null },
       programId: program.id,
+      organizationId: program.organizationId,
       view: () => this.resumption(program.id),
       decide: async (ctx) => {
         if (!ctx.program.causes.some((cause) => cause.cause === 'ksp_decision')) {
@@ -191,7 +198,18 @@ export class AdminProgramUseCases {
           liftedBy: staffId,
           firstSessionLeadHours: ctx.settings.firstSessionLeadHours,
         });
-        return { effects: lifted };
+        if (lifted.effect !== 'resumed' || !ctx.organization || !program.organizationId) {
+          return { effects: lifted };
+        }
+        // La reprise est écrite avant la réévaluation : son événement précède l'avertissement.
+        await ctx.tx.write({ events: lifted.events, audit: lifted.audit });
+        await reevaluateStanding(
+          ctx.organization,
+          new StandingSettings(this.deps.moduleSettings, this.deps.execution, this.deps.clock),
+          program.organizationId,
+          ctx.now,
+        );
+        return { effects: noEffects() };
       },
     });
   }

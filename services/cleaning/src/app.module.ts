@@ -83,6 +83,9 @@ import {
   PERMISSION_CATALOG_REGISTRY,
   PermissionCatalogRegistrationService,
 } from './infrastructure/identity/permission-catalog-registration.service';
+// Piste O
+import { OrganizationEventsConsumer } from './infrastructure/messaging/organization-events.consumer';
+import { PrismaOrganizationUnitOfWork } from './infrastructure/persistence/organizations/prisma-organization.repository';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
@@ -243,6 +246,8 @@ export class AppModule {
                 identityGrpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
                 caller('identity'),
               ),
+              // --- Piste O : situation des organisations (impayés, suspension par KSP) -------
+              organizations: new PrismaOrganizationUnitOfWork(prisma, clock, ids),
             };
           },
         },
@@ -278,6 +283,8 @@ export class AppModule {
         },
         { provide: CATALOG_REGISTRATION_RETRY_MS, useValue: config.CLEANING_CATALOG_REGISTRATION_RETRY_MS },
         PermissionCatalogRegistrationService,
+        // --- Piste O : factures mensuelles impayées, organisation suspendue par KSP -----------
+        OrganizationEventsConsumer,
       ],
     };
   }

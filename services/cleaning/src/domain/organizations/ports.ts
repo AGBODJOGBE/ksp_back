@@ -2,10 +2,10 @@ import { type OrganizationProgram, type ProgramChange } from './alignment';
 import { type InvoiceStanding, type OrganizationBillingStanding, type UnpaidThresholds } from './standing';
 
 /**
- * Ports du branchement à venir de la situation d'impayés des organisations (lot F). Interfaces
- * seules, sans implémentation : cleaning n'est pas branché dans ce lot (README du dossier). Au
- * branchement, ils rejoignent la couche application ; toutes les méthodes s'exécutent dans la
- * transaction ouverte par `OrganizationStandingUnitOfWork.run`.
+ * Ports de la situation d'impayés des organisations (lot F). Interfaces seules : la couche
+ * application les étend (`application/organizations/organizations.ports.ts`, décision de KSP) et
+ * `infrastructure/persistence/organizations` les implémente. Toutes les méthodes s'exécutent dans
+ * la transaction ouverte par `OrganizationStandingUnitOfWork.run`.
  */
 
 /** Transaction unique : verrou de l'organisation, inbox, état, programmes, outbox et audit. */
@@ -46,7 +46,8 @@ export interface OrganizationStandingTransaction {
    */
   applyProgramChanges(
     changes: readonly ProgramChange[],
-    context: { unpaidCount: number; at: Date },
+    /** `threshold` : seuil de suspension en vigueur, porté par `cleaning.program.suspended`. */
+    context: { unpaidCount: number; threshold: number; at: Date },
   ): Promise<void>;
   /** Publie `cleaning.organization.unpaid_warning` et la trace `organization.unpaid_warning`. */
   publishUnpaidWarning(payload: {

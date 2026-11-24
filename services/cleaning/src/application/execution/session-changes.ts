@@ -1,5 +1,6 @@
 import { type CancelledSession } from '../../domain/sessions/cancellation';
 import { recheckAgents, type RescheduledSession } from '../../domain/sessions/reschedule';
+import { type OrganizationTransaction } from '../organizations/organizations.ports';
 import { type OutboxMessage } from '../ports';
 import {
   type ExecutionSettings,
@@ -22,6 +23,8 @@ export interface ChangeContext {
   session: SessionRecord;
   settings: ExecutionSettings;
   now: Date;
+  /** Situation de l'organisation du programme, quand l'action a pris son verrou (RV-85). */
+  organization?: OrganizationTransaction | null;
 }
 
 export interface ChangeDecision {

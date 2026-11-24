@@ -30,6 +30,11 @@ export async function executionAction<T>(
     programId: string;
     /** Séance visée ; absente pour une action sur le programme. */
     sessionId?: string;
+    /**
+     * Organisation dont la décision dépend (RV-85) : son verrou est pris avant celui du programme,
+     * et sa situation est donnée à `decide`.
+     */
+    organizationId?: string | null;
     decide: (ctx: ChangeContext) => Promise<ActionDecision>;
     view: () => Promise<T>;
   },
@@ -46,13 +51,22 @@ export async function executionAction<T>(
       let collect: string[] = [];
       try {
         await deps.execution.transaction(async (tx) => {
+          const organization = input.organizationId ? await tx.organization(input.organizationId) : null;
           const { program, sessions } = await lockedProgram(tx, input.programId);
           const session = input.sessionId
             ? sessions.find((line) => line.id === input.sessionId)!
             : sessions[0]!;
           const settings = await tx.settings();
           const now = deps.clock.now();
-          const decision = await input.decide({ tx, program, sessions, session, settings, now });
+          const decision = await input.decide({
+            tx,
+            program,
+            sessions,
+            session,
+            settings,
+            now,
+            organization,
+          });
           if (input.sessionId && decision.patch && Object.keys(decision.patch).length > 0) {
             await tx.updateSession(input.sessionId, session.version, decision.patch);
           }

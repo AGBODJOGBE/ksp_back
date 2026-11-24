@@ -1,6 +1,7 @@
 import { hasPermission, requirePermission } from '@ksp/platform';
 import { mergeSettings, type ModuleSettings, settingsChanges } from '../../domain/settings/settings';
-import { type CleaningDeps } from '../deps';
+import { type CleaningDeps, type OrganizationDeps } from '../deps';
+import { OrganizationStandingUseCases } from '../organizations/standing.use-cases';
 import { type Changes } from '../ports';
 import { requireStaff } from '../shared/access';
 import { cleaningErrors } from '../shared/errors';
@@ -9,7 +10,8 @@ import { writeError } from '../shared/idempotency';
 /**
  * Réglages du module (UC-NT-43, partie 16.1) : lecture pour tout le personnel du module, modification
  * par l'admin Nettoyage, bornée, validée en entier après fusion (RV-29) et tracée au journal
- * d'audit (settings.updated, avant et après).
+ * d'audit (settings.updated, avant et après). Un changement des seuils d'impayés réévalue ensuite
+ * les organisations concernées (piste O, R-PE-06).
  */
 
 /** Lecture : tout le personnel du module (contrat GetSettings). */
@@ -65,7 +67,19 @@ export interface SettingsView extends StoredSettings {
 }
 
 export class SettingsUseCases {
-  constructor(private readonly deps: CleaningDeps) {}
+  /** Piste O : situation des organisations, réévaluée quand les seuils d'impayés changent. */
+  private readonly standings: OrganizationStandingUseCases | null;
+
+  constructor(
+    private readonly deps: CleaningDeps,
+    /** Organisation dont la réévaluation a échoué après un changement des seuils (journal). */
+    reportReevaluationFailure?: (organizationId: string, error: unknown) => void,
+  ) {
+    this.standings =
+      deps.organizations && deps.execution
+        ? new OrganizationStandingUseCases(deps as OrganizationDeps, reportReevaluationFailure)
+        : null;
+  }
 
   async get(): Promise<SettingsView> {
     requireStaff();
@@ -106,6 +120,11 @@ export class SettingsUseCases {
         .catch((error: unknown) => {
           throw writeError(error);
         });
+      // Piste O : les nouveaux seuils s'appliquent aussitôt aux organisations qui ont des impayés
+      // (avertissement, suspension ou reprise), chacune dans sa propre transaction.
+      if ('unpaidInvoicesWarning' in after || 'unpaidInvoicesSuspension' in after) {
+        await this.standings?.reevaluateAll();
+      }
     }
     return this.view(await this.deps.moduleSettings.read(), hasPermission(user, AMOUNTS_READ_PERMISSION));
   }

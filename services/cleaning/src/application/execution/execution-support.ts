@@ -100,6 +100,8 @@ export async function applyAddCause(
     reason?: string | null;
     decidedBy?: string | null;
     overdueCount?: number | null;
+    /** Factures impayées de l'organisation (cause « factures impayées », lot F). */
+    unpaidCount?: number | null;
     threshold?: number | null;
   },
 ): Promise<Effects & { effect: 'suspended' | 'cause_added' | 'none' }> {
@@ -132,7 +134,7 @@ export async function applyAddCause(
             change: 'cause_added',
             cause: input.cause,
             causes,
-            unpaidCount: null,
+            unpaidCount: input.unpaidCount ?? null,
             overdueCount: input.overdueCount ?? null,
             updatedAt: input.now.toISOString(),
           },
@@ -165,7 +167,7 @@ export async function applyAddCause(
           releasedAgentIds: released,
           suspendedAt: input.now.toISOString(),
           communeKey: program.communeKey,
-          unpaidCount: null,
+          unpaidCount: input.unpaidCount ?? null,
           overdueCount: input.overdueCount ?? null,
           threshold: input.threshold ?? null,
         },
@@ -178,6 +180,27 @@ export async function applyAddCause(
       }),
     ],
   };
+}
+
+/**
+ * Jours sans rattrapage à la reprise d'un programme (R-SU-03) : jours exclus de son plan et jours
+ * fériés, de maintenant à la limite de recherche après sa dernière séance (AAAA-MM-JJ, Porto-Novo).
+ */
+export async function resumeExcludedDays(
+  reader: Pick<ExecutionTx, 'holidays'>,
+  program: Pick<ProgramRecord, 'schedulePlan'>,
+  sessions: ReadonlyArray<Pick<SessionRecord, 'scheduledEnd'>>,
+  now: Date,
+): Promise<Set<string>> {
+  const lastSession = sessions.reduce<Date>(
+    (latest, session) => (session.scheduledEnd > latest ? session.scheduledEnd : latest),
+    now,
+  );
+  const plan = program.schedulePlan as { excludedDates?: unknown } | null;
+  return new Set<string>([
+    ...(Array.isArray(plan?.excludedDates) ? (plan!.excludedDates as string[]) : []),
+    ...(await reader.holidays(now, addHours(lastSession, 24 * 7 * (CATCH_UP_MAX_WEEKS + 1)))),
+  ]);
 }
 
 /** Rattrapage proposé à la reprise (R-SU-03) ; null : aucune date trouvée dans les 8 semaines. */
@@ -202,6 +225,8 @@ export async function applyLiftCause(
     liftedBy: string | null;
     firstSessionLeadHours: number;
     overdueCount?: number | null;
+    /** Factures impayées de l'organisation (cause « factures impayées », lot F). */
+    unpaidCount?: number | null;
   },
 ): Promise<Effects & { effect: 'resumed' | 'cause_lifted' | 'none'; catchUp: CatchUp[] }> {
   const decision = liftSuspensionCause(
@@ -231,7 +256,7 @@ export async function applyLiftCause(
             change: 'cause_lifted',
             cause: input.cause,
             causes: decision.program.causes.map((cause) => cause.cause),
-            unpaidCount: null,
+            unpaidCount: input.unpaidCount ?? null,
             overdueCount: input.overdueCount ?? null,
             updatedAt: input.now.toISOString(),
           },
@@ -240,15 +265,7 @@ export async function applyLiftCause(
       audit: [audit(actor, 'program.cause_lifted', entity, input.now, { cause: input.cause })],
     };
   }
-  const lastSession = sessions.reduce<Date>(
-    (latest, session) => (session.scheduledEnd > latest ? session.scheduledEnd : latest),
-    input.now,
-  );
-  const plan = program.schedulePlan as { excludedDates?: unknown } | null;
-  const excluded = new Set<string>([
-    ...(Array.isArray(plan?.excludedDates) ? (plan!.excludedDates as string[]) : []),
-    ...(await tx.holidays(input.now, addHours(lastSession, 24 * 7 * (CATCH_UP_MAX_WEEKS + 1)))),
-  ]);
+  const excluded = await resumeExcludedDays(tx, program, sessions, input.now);
   const resumed = resumeSessions({
     sessions,
     now: input.now,
