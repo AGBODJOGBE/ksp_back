@@ -70,6 +70,10 @@ class CreditNoteIssuer {
       if (!invoice) throw BillingErrors.invoiceNotFound();
       const split = splitCreditNote(invoice, total);
       if ('code' in split) {
+        // Un envoi concurrent de la même clé a pu émettre l'avoir depuis la recherche du début : la
+        // facture lue le porte déjà. C'est un rejeu, pas un dépassement.
+        const concurrent = await this.replay(issuedBy, request.idempotencyKey, invoiceId);
+        if (concurrent) return concurrent;
         if (split.code === 'exceeds_invoice')
           throw MonthlyBillingErrors.creditNoteExceedsInvoice(split.maximum);
         throw BillingErrors.invalidTransition(split.status, 'credited');
