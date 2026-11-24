@@ -50,6 +50,13 @@ export const configSchema = baseServiceConfigSchema
      * 0 = tâche désactivée.
      */
     CLEANING_AUTO_PLANNING_INTERVAL_MS: z.coerce.number().int().min(0).default(3_600_000),
+    // --- Piste S -------------------------------------------------------------------------------
+    /**
+     * Intervalle de la tâche de conservation (UC-NT-48, R-DP-01, RV-13) : positions et photos au-delà
+     * de `retentionMonths`, clés d'idempotence de plus de 7 jours ; 6 heures par défaut.
+     * 0 : tâche désactivée.
+     */
+    CLEANING_LOCATION_PURGE_INTERVAL_MS: z.coerce.number().int().min(0).max(86_400_000).default(21_600_000),
   })
   .refine(
     (cfg) =>

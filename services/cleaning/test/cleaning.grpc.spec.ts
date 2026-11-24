@@ -34,6 +34,7 @@ import { CLEANING_GRPC_CONTROLLERS } from '../src/interfaces/grpc/controllers';
  * - Lot A : CatalogService et CatalogAdminService répondent avec leurs cas d'usage (faux en mémoire).
  * - Lots C, D, E et G : les RPC livrées exigent une connexion ; appelées sans utilisateur, elles
  *   répondent AUTH_REQUIRED avant tout accès aux données.
+ * - Piste S : ObligationService.HasPendingObligations répond avec son cas d'usage (réservée à identity).
  * - Toute autre RPC répond UNIMPLEMENTED avec le code CLEANING_NOT_IMPLEMENTED. Une méthode absente du
  *   serveur répondrait aussi UNIMPLEMENTED, mais sans ce code : le test la repère.
  */
@@ -180,12 +181,19 @@ const LOT_G: Readonly<Record<string, readonly string[]>> = {
   ProgramService: ['OpenClaim', 'ListMyClaims', 'GetMyClaim', 'AddClaimMessage'],
   ClaimAdminService: ['ListClaims', 'GetClaim', 'UpdateClaim', 'DecideClaim', 'ApproveClaimCredit'],
 };
+/**
+ * RPC branchée par la piste S (suppression d'un compte) : HasPendingObligations, réservée à identity,
+ * est testée à part (pas de compte connecté).
+ */
+const PISTE_S: Readonly<Record<string, readonly string[]>> = {
+  ObligationService: ['HasPendingObligations'],
+};
 const inLot = (lot: Readonly<Record<string, readonly string[]>>, service: string, rpc: string) =>
   lot[service]?.includes(rpc) ?? false;
 const delivered = (service: string, rpc: string) =>
   [LOT_D, LOT_C, LOT_E, LOT_G].some((lot) => inLot(lot, service, rpc));
 const serviceOnly = (service: string, rpc: string) =>
-  SERVICE_ONLY.some(([s, r]) => s === service && r === rpc);
+  SERVICE_ONLY.some(([s, r]) => s === service && r === rpc) || inLot(PISTE_S, service, rpc);
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -350,6 +358,22 @@ describe('cleaning en gRPC', () => {
     const lotG = Object.entries(LOT_G).flatMap(([service, rpcs]) => rpcs.map((rpc) => `${service}.${rpc}`));
     for (const rpc of lotG) expect(all).toContain(rpc);
     expect(RPCS.filter(([, service, rpc]) => inLot(LOT_G, service, rpc))).toHaveLength(lotG.length);
+  });
+
+  it('ObligationService.HasPendingObligations est branchée (piste S, réservée à identity)', async () => {
+    expect(RPCS.filter(([, service, rpc]) => inLot(PISTE_S, service, rpc))).toEqual([
+      ['obligation', 'ObligationService', 'HasPendingObligations'],
+    ]);
+    // Identifiant refusé avant toute lecture : la méthode répond, sans CLEANING_NOT_IMPLEMENTED.
+    expect(
+      await anonymous(() =>
+        call('obligation', 'ObligationService', 'HasPendingObligations', { userId: 'x' }),
+      ),
+    ).toMatchObject({
+      kind: 'INVALID_ARGUMENT',
+      code: 'CLEANING_VALIDATION_FAILED',
+      details: { field: 'userId', reason: 'invalid_type' },
+    });
   });
 
   it.each(DELIVERED)('%s : %s.%s est branchée et exige une connexion', async (pkg, service, rpc) => {

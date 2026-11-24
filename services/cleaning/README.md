@@ -4,7 +4,7 @@ Nettoyage & assainissement, refonte v2 (ADR-054) : un dossier = un lieu, devis u
 
 ## État
 
-La v1 est remplacée sur place (ADR-054, décision 3). **Le métier v2 est livré lot par lot** (lots A à G du cahier des charges, partie 18), chacun avec ses tests ; les reprises de la v1 sont listées dans `docs/adr/annexes/0054-reprises-de-la-v1.md`. En attendant son lot, chaque méthode gRPC répond `UNIMPLEMENTED` (code `CLEANING_NOT_IMPLEMENTED`, 501 à la gateway) ; `ObligationService` aussi : identity refuse alors la suppression d'un compte (service injoignable), jamais « rien en cours » sans contrôle.
+La v1 est remplacée sur place (ADR-054, décision 3). **Le métier v2 est livré lot par lot** (lots A à G du cahier des charges, partie 18), chacun avec ses tests ; les reprises de la v1 sont listées dans `docs/adr/annexes/0054-reprises-de-la-v1.md`. En attendant son lot, chaque méthode gRPC répond `UNIMPLEMENTED` (code `CLEANING_NOT_IMPLEMENTED`, 501 à la gateway). `ObligationService` est livré (contrôle avant la suppression d'un compte, réservé à identity) : une lecture en échec répond une erreur, et identity refuse alors la suppression, jamais « rien en cours » sans contrôle.
 
 Déjà en place : démarrage NestJS, configuration, santé et métriques, traces, client Prisma de la base v2, outbox (relais vers RabbitMQ et purge), écriture des événements v2 et du journal d'audit dans la transaction de l'état, adaptateurs vers identity (noms affichés), wallet (débit, remboursement), file (photos et pièces, par type d'objet) et geo (géocodage inverse).
 

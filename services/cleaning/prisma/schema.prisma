@@ -773,6 +773,9 @@ model Visit {
   /// Photo du lieu quand le client est absent (R-VI-05) ; facultative pour une absence signalée par
   /// le back-office (R-VI-08).
   missedPhotoFileId   String?           @map("missed_photo_file_id") @db.Uuid
+  /// Photos supprimées chez file après la durée de conservation (R-EX-07, R-DP-01), puis leurs
+  /// références retirées : la visite n'en porte plus aucune.
+  photosErasedAt      DateTime?         @map("photos_erased_at") @db.Timestamptz(3)
   missedAt            DateTime?         @map("missed_at") @db.Timestamptz(3)
   completedAt         DateTime?         @map("completed_at") @db.Timestamptz(3)
   cancelledAt         DateTime?         @map("cancelled_at") @db.Timestamptz(3)
@@ -1162,6 +1165,9 @@ model Session {
   /// Photo du lieu d'une séance manquée (R-EX-02) ; facultative pour une absence signalée par le
   /// back-office (R-EX-08).
   missedPhotoFileId     String?               @map("missed_photo_file_id") @db.Uuid
+  /// Photos (avant, après, absence, incidents) supprimées chez file après la durée de conservation
+  /// (R-EX-07, R-DP-01), puis leurs références retirées : la séance n'en porte plus aucune.
+  photosErasedAt        DateTime?             @map("photos_erased_at") @db.Timestamptz(3)
   /// Cause d'une séance manquée (ReportSessionMissedRequest.cause) ; null sinon.
   missedCause           SessionMissedCause?   @map("missed_cause")
   /// Début de l'attente du client sur place (R-EX-02 : attente réglable, customerWaitMinutes, avant

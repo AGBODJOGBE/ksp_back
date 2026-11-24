@@ -38,6 +38,8 @@ import {
   type InvoiceIssuer,
   type WalletBalances,
 } from './execution/execution.ports';
+// Piste S
+import { type PersonalDataRepository } from './privacy/privacy.ports';
 
 /** Jeton d'injection des dépendances des cas d'usage (racine de composition : app.module.ts). */
 export const CLEANING_DEPS = Symbol('CLEANING_DEPS');
@@ -99,6 +101,9 @@ export interface CleaningDeps {
   moduleSettings: SettingsRepository;
   /** Réclamations (UC-NT-17, UC-NT-40). */
   claims: ClaimRepository;
+  // --- Piste S : suppression d'un compte et conservation des données (R-DP-01, R-DP-02) ---------
+  /** Obligations avant la suppression d'un compte, effacement à la suppression, purge (UC-NT-48). */
+  personalData?: PersonalDataRepository;
 }
 
 /** Dépendances des cas d'usage du lot E. */
@@ -106,3 +111,6 @@ export type ExecutionDeps = CleaningDeps &
   Required<
     Pick<CleaningDeps, 'execution' | 'walletBalances' | 'invoices' | 'sessionPayments' | 'placePoints'>
   >;
+
+/** Dépendances des cas d'usage de la piste S (données personnelles). */
+export type PrivacyDeps = CleaningDeps & Required<Pick<CleaningDeps, 'personalData'>>;

@@ -67,6 +67,13 @@ import {
   AUTO_PLANNING_INTERVAL_MS,
   AutoPlanningScheduler,
 } from './infrastructure/scheduling/auto-planning.scheduler';
+// Piste S
+import { AccountErasureConsumer } from './infrastructure/messaging/account-erasure.consumer';
+import { PrismaPersonalDataRepository } from './infrastructure/persistence/privacy/prisma-personal-data.repository';
+import {
+  RETENTION_PURGE_INTERVAL_MS,
+  RetentionPurgeService,
+} from './infrastructure/scheduling/retention-purge.service';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
@@ -216,6 +223,8 @@ export class AppModule {
               autoPlanning: new PrismaAutoPlanningRepository(prisma, clock, ids),
               moduleSettings: new PrismaSettingsRepository(prisma, ids),
               claims: new PrismaClaimRepository(prisma, ids),
+              // --- Piste S : obligations, effacement à la suppression d'un compte, purge ------
+              personalData: new PrismaPersonalDataRepository(prisma),
             };
           },
         },
@@ -232,6 +241,10 @@ export class AppModule {
         // --- Lot G : passage régulier de la planification automatique ------------------------
         { provide: AUTO_PLANNING_INTERVAL_MS, useValue: config.CLEANING_AUTO_PLANNING_INTERVAL_MS },
         AutoPlanningScheduler,
+        // --- Piste S : compte supprimé (identity.user.deleted), tâche de conservation ----------
+        AccountErasureConsumer,
+        { provide: RETENTION_PURGE_INTERVAL_MS, useValue: config.CLEANING_LOCATION_PURGE_INTERVAL_MS },
+        RetentionPurgeService,
       ],
     };
   }
