@@ -116,7 +116,12 @@ describeWithDatabase('lot F : impayés et suspension des organisations (PostgreS
   const programRow = (programId: string) => prisma.program.findUniqueOrThrow({ where: { id: programId } });
   const outbox = async (eventType: string, organizationId: string) =>
     (await prisma.outboxEvent.findMany({ where: { eventType }, orderBy: { createdAt: 'asc' } }))
-      .map((row) => row.payload as Record<string, unknown>)
+      // L'outbox garde l'enveloppe de l'événement : son contenu est sous `payload`.
+      .map(
+        (row) =>
+          (row.payload as { payload?: Record<string, unknown> }).payload ??
+          (row.payload as Record<string, unknown>),
+      )
       .filter((payload) => payload.organizationId === organizationId);
   const billingStanding = (organizationId: string) =>
     prisma.organizationBillingStanding.findUnique({ where: { organizationId } });
