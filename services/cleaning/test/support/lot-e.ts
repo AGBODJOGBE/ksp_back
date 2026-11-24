@@ -241,7 +241,7 @@ export async function seedProgram(
     await pool.query(
       `INSERT INTO sessions (id, program_id, rank, commune_key, scheduled_start, scheduled_end, price, status, payment_status, created_at, updated_at)
        VALUES ($1, $2, $3, 'cotonou', $4, $5, $6, 'assigned', $7, now(), now())`,
-      [id, program, rank, start, end, price, input.payerKind === 'organization' ? null : 'not_due'],
+      [id, program, rank, start, end, price, 'not_due'],
     );
     await pool.query(
       `INSERT INTO assignments (id, target_kind, session_id, agent_id, is_lead, source, status, occupied_from, occupied_until, created_by, created_at)

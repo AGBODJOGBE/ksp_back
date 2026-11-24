@@ -57,7 +57,7 @@ export async function seedRequest(
   const id = newId();
   const { rows } = await pool.query<{ number: string }>(
     `INSERT INTO cleaning_requests (id, owner_kind, owner_id, submitted_by, place_id, place_type_id, commune_key, gps_encrypted, landmark_encrypted, address_encrypted, readable_address_encrypted, status, declared_values, schedule_plan, visit_slots, closed_at, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, 'cotonou', $7, $7, $7, $7, $8, '{}', '{}', '[{}]', $9, now(), now())
+     VALUES ($1, $2, $3, $4, $5, $6, 'cotonou', $7, $7, $7, $7, $8, '{}', '{}', '[{"start":"2030-01-07T08:00:00.000Z","end":"2030-01-07T10:00:00.000Z"}]', $9, now(), now())
      RETURNING number`,
     [
       id,
