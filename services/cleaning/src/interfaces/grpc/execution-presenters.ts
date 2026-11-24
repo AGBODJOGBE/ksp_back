@@ -91,6 +91,17 @@ export function presentProgram(
             ...optional('reason', cause.reason),
           }))
         : [],
+    ...(program.renewal
+      ? {
+          renewal: {
+            status: program.renewal.status,
+            proposedAt: program.renewal.proposedAt.toISOString(),
+            ...optional('quoteId', program.renewal.quoteId),
+            // Proposition sans devis : une nouvelle visite est nécessaire (R-PG-07).
+            visitRequired: program.renewal.quoteId === null,
+          },
+        }
+      : {}),
     createdAt: program.createdAt.toISOString(),
     ...(audience.staff && program.pendingCancellation
       ? {

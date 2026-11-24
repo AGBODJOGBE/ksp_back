@@ -7,13 +7,18 @@ import {
 } from '../../application/execution/admin-programs.use-cases';
 import { CLEANING_DEPS, type CleaningDeps, type ExecutionDeps } from '../../application/deps';
 import { type Audience, presentProgram, presentResumption, presentSession } from './execution-presenters';
-import { notImplemented } from './not-implemented';
+// Piste P
+import { ProgramAmendmentUseCases } from '../../application/requests/program-amendment.use-cases';
+import { seesAmounts } from '../../application/requests/staff';
+import { CasePresenter } from './case.presenters';
+import { declaredFromProto } from './case-values.presenters';
+import { scheduleFromProto } from './simulation.presenters';
 
 /**
  * Adaptateur gRPC de ProgramAdminService — back-office : programmes et séances (UC-NT-39). Lot E
  * livré : lecture, suspension et reprise, arrêt par KSP et sa validation, report, annulation et
- * reprise d'une séance, clôture et absence enregistrées pour l'équipe, retrait d'une photo. Le
- * changement de plan et l'avenant (R-PG-06) répondent encore NOT_IMPLEMENTED.
+ * reprise d'une séance, clôture et absence enregistrées pour l'équipe, retrait d'une photo. Piste P :
+ * changement de plan et avenant (R-PG-06).
  */
 const staff = (): Audience => ({ amounts: canReadAmounts(), staff: true });
 const session = (details: StaffSessionDetails) =>
@@ -23,9 +28,14 @@ const session = (details: StaffSessionDetails) =>
 @cleaningV1.ProgramAdminServiceControllerMethods()
 export class ProgramAdminGrpcController implements cleaningV1.ProgramAdminServiceController {
   private readonly programs: AdminProgramUseCases;
+  // Piste P : avenant.
+  private readonly amendments: ProgramAmendmentUseCases;
+  private readonly cases: CasePresenter;
 
   constructor(@Inject(CLEANING_DEPS) deps: CleaningDeps) {
     this.programs = new AdminProgramUseCases(deps as ExecutionDeps);
+    this.amendments = new ProgramAmendmentUseCases(deps as ExecutionDeps);
+    this.cases = new CasePresenter(deps);
   }
 
   async listPrograms(request: cleaningV1.ListProgramsRequest): Promise<cleaningV1.ListProgramsResponse> {
@@ -53,12 +63,46 @@ export class ProgramAdminGrpcController implements cleaningV1.ProgramAdminServic
     return { session: session(await this.programs.getSession(request.sessionId)) };
   }
 
-  changeProgramSchedule(): Promise<cleaningV1.ChangeProgramScheduleResponse> {
-    return notImplemented('ChangeProgramSchedule');
+  async changeProgramSchedule(
+    request: cleaningV1.ChangeProgramScheduleRequest,
+  ): Promise<cleaningV1.ChangeProgramScheduleResponse> {
+    const program = await this.programs.changeProgramSchedule({
+      programId: request.programId,
+      idempotencyKey: request.idempotencyKey,
+      effectiveFrom: request.effectiveFrom,
+      schedule: scheduleFromProto(request.schedule),
+      reason: request.reason,
+      durationMinutes: request.durationMinutes ?? null,
+    });
+    return { program: presentProgram(program, staff()) };
   }
 
-  createAmendment(): Promise<cleaningV1.CreateAmendmentResponse> {
-    return notImplemented('CreateAmendment');
+  /** Piste P — R-PG-06 : devis d'avenant, brouillon, sur la demande du programme. */
+  async createAmendment(
+    request: cleaningV1.CreateAmendmentRequest,
+  ): Promise<cleaningV1.CreateAmendmentResponse> {
+    const { record, quote } = await this.amendments.create({
+      programId: request.programId,
+      idempotencyKey: request.idempotencyKey,
+      addCleaningTypeIds: request.addCleaningTypeIds,
+      addSchedule: scheduleFromProto(request.addSchedule),
+      values: declaredFromProto(request.values),
+      teamSize: request.teamSize,
+      durationMinutes: request.durationMinutes,
+      adjustments: request.adjustments.map((item) => ({
+        kind: item.kind,
+        percentBps: item.percentBps,
+        fixedAmount: item.fixedAmount ? Number(item.fixedAmount.amount) : undefined,
+        reason: item.reason,
+      })),
+      onQuotePrices: request.onQuotePrices.map((item) => ({
+        offerId: item.offerId,
+        price: Number(item.price?.amount ?? 0),
+      })),
+      validityDays: request.validityDays,
+    });
+    const audience = { kind: 'staff' as const, amounts: seesAmounts(record.request.communeKey) };
+    return { quote: await this.cases.quoteView(record, quote, audience) };
   }
 
   async suspendProgram(

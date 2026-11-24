@@ -1,6 +1,6 @@
 import { type Prisma } from '../../../../prisma/generated';
 import { ConcurrentUpdateError } from '../../../application/agents/agent.ports';
-import { type IdGenerator } from '../../../application/ports';
+import { type Changes, type IdGenerator } from '../../../application/ports';
 import {
   type CaseFilter,
   type CaseRecord,
@@ -9,6 +9,8 @@ import {
   type DeadlineCandidates,
   type DirectPaymentRecord,
   type Owner,
+  type ProgramAmendmentWrite,
+  type ProgramRenewalWrite,
   type VisitListFilter,
   type WalletOperationRecord,
 } from '../../../application/requests/requests.ports';
@@ -311,7 +313,8 @@ export class PrismaCaseRepository implements CaseRepository {
             id: quote.id,
             requestId,
             ...data,
-            kind: 'initial',
+            kind: quote.kind,
+            programId: quote.programId,
             createdBy: quote.createdBy,
             createdAt: quote.createdAt,
           },
@@ -394,6 +397,9 @@ export class PrismaCaseRepository implements CaseRepository {
       if (count !== 1) throw new ConcurrentUpdateError();
     }
 
+    if (writes.programRenewal) await this.writeRenewal(tx, writes.programRenewal);
+    if (writes.programAmendment) await this.writeAmendment(tx, requestId, writes.programAmendment);
+
     if (writes.program) {
       const program = writes.program;
       const created = await tx.program.create({
@@ -411,6 +417,7 @@ export class PrismaCaseRepository implements CaseRepository {
           durationMinutes: program.durationMinutes,
           schedulePlan: program.schedulePlan as unknown as Prisma.InputJsonValue,
           visitFeeToDeduct: program.visitFeeToDeduct,
+          renewalOfProgramId: program.renewalOfProgramId ?? null,
           createdAt: program.createdAt,
           updatedAt: program.createdAt,
         },
@@ -436,6 +443,138 @@ export class PrismaCaseRepository implements CaseRepository {
         );
       }
     }
+  }
+
+  /**
+   * Piste P — R-PG-07 : proposition (jamais sur un programme déjà renouvelé), puis réponse du client
+   * sur la proposition en cours. Une ligne qui n'est plus dans l'état attendu : écriture concurrente.
+   */
+  private async writeRenewal(tx: Tx, renewal: ProgramRenewalWrite): Promise<void> {
+    const { count } =
+      renewal.status === 'proposed'
+        ? await tx.program.updateMany({
+            where: {
+              id: renewal.programId,
+              renewedBy: { is: null },
+              ...(renewal.onlyIfNone
+                ? { renewalStatus: null }
+                : { OR: [{ renewalStatus: null }, { renewalStatus: { not: 'accepted' } }] }),
+            },
+            data: {
+              renewalStatus: 'proposed',
+              renewalProposedAt: renewal.at,
+              renewalRespondedAt: null,
+              renewalRespondedBy: null,
+            },
+          })
+        : await tx.program.updateMany({
+            where: { id: renewal.programId, renewalStatus: 'proposed' },
+            data: {
+              renewalStatus: renewal.status,
+              renewalRespondedAt: renewal.at,
+              renewalRespondedBy: renewal.by,
+            },
+          });
+    if (count !== 1) throw new ConcurrentUpdateError();
+  }
+
+  /**
+   * Piste P — R-PG-06 : avenant accepté, sous le verrou du programme (le même que les décisions du
+   * lot E). Le programme et chaque séance changée sont écrits sous contrôle de version ; une séance
+   * démarrée, close ou payée entre-temps fait échouer l'écriture entière.
+   */
+  private async writeAmendment(tx: Tx, requestId: string, amendment: ProgramAmendmentWrite): Promise<void> {
+    const { programId, at } = amendment;
+    await tx.$queryRaw`SELECT id FROM programs WHERE id = ${programId}::uuid FOR UPDATE`;
+    const program = await tx.program.updateMany({
+      where: {
+        id: programId,
+        version: amendment.expectedVersion,
+        status: { in: ['confirmed', 'in_progress'] },
+      },
+      data: {
+        sessionPrice: amendment.sessionPrice,
+        teamSize: amendment.teamSize,
+        durationMinutes: amendment.durationMinutes,
+        schedulePlan: amendment.schedulePlan as Prisma.InputJsonValue,
+        updatedAt: at,
+        version: { increment: 1 },
+      },
+    });
+    if (program.count !== 1) throw new ConcurrentUpdateError();
+    for (const session of amendment.sessions) {
+      const updated = await tx.session.updateMany({
+        where: {
+          id: session.id,
+          programId,
+          version: session.version,
+          status: { in: ['to_assign', 'assigned', 'suspended'] },
+          paymentStatus: 'not_due',
+        },
+        data: {
+          price: session.price,
+          scheduledEnd: session.scheduledEnd,
+          ...(session.release ? { status: 'to_assign' as const } : {}),
+          updatedAt: at,
+          version: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1) throw new ConcurrentUpdateError();
+    }
+    const released = amendment.sessions.filter((session) => session.release).map((session) => session.id);
+    if (released.length) {
+      await tx.assignment.updateMany({
+        where: {
+          sessionId: { in: released },
+          status: { in: ['proposed', 'pending_confirmation', 'confirmed'] },
+        },
+        data: {
+          status: 'removed',
+          isLead: false,
+          removedAt: at,
+          removedBy: amendment.by,
+          removalReason: 'amendment',
+        },
+      });
+    }
+    if (amendment.addedSessions.length) {
+      await tx.session.createMany({
+        data: amendment.addedSessions.map((session) => ({
+          id: session.id,
+          programId,
+          rank: session.rank,
+          communeKey: amendment.communeKey,
+          scheduledStart: session.scheduledStart,
+          scheduledEnd: session.scheduledEnd,
+          price: session.price,
+          visitFeeDeducted: 0,
+          createdAt: at,
+          updatedAt: at,
+        })),
+      });
+    }
+    if (amendment.addedItems.length) {
+      await tx.requestItem.createMany({
+        data: amendment.addedItems.map((item) => ({
+          requestId,
+          offerId: item.offerId,
+          tariffVersionId: item.tariffVersionId,
+        })),
+        skipDuplicates: true,
+      });
+    }
+  }
+
+  async proposeRenewalWithoutQuote(programId: string, at: Date, changes: Changes): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.program.updateMany({
+        where: { id: programId, renewalStatus: null, renewedBy: { is: null } },
+        data: { renewalStatus: 'proposed', renewalProposedAt: at },
+      });
+      if (count !== 1) return false;
+      await writeChanges(tx, changes, () => this.ids.next());
+      return true;
+    });
   }
 
   async walletOperations(requestId: string): Promise<WalletOperationRecord[]> {

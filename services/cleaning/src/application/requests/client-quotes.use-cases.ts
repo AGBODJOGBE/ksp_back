@@ -20,6 +20,12 @@ import {
   saveCase,
 } from './case-support';
 import { currentCustomer } from './customer';
+import {
+  acceptAmendmentQuoteOf,
+  acceptRenewalQuote,
+  declineProgramQuoteOf,
+  isProgramQuote,
+} from './program-quotes.use-cases';
 import { type CaseRecord, type NewProgram, type QuoteRecord } from './requests.ports';
 
 /** Devis accepté et programme confirmé (contrat AcceptQuoteResult). */
@@ -44,6 +50,20 @@ export function shiftedStarts(starts: readonly Date[], startDate: string): Date[
     (Date.parse(`${startDate}T00:00:00Z`) - Date.parse(`${localDay(first)}T00:00:00Z`)) / DAY_MS,
   );
   return starts.map((start) => new Date(start.getTime() + delta * DAY_MS));
+}
+
+/**
+ * R-PL-01 : les séances de l'horizon sont planifiées dès que le programme change (acceptation d'un
+ * devis, changement de plan), hors de la transaction. Une panne ne défait rien : le passage régulier
+ * les planifie. Rejouer est sans effet.
+ */
+export async function planProgramNow(deps: CleaningDeps, programId: string): Promise<void> {
+  try {
+    await planNewProgram(deps, programId);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    logger.warn(`Programme ${programId} : planification reportée au passage régulier (${cause}).`);
+  }
 }
 
 export class ClientQuotesUseCases {
@@ -88,6 +108,23 @@ export class ClientQuotesUseCases {
         const { record, quote } = await ownedCaseByQuote(this.deps, customer, input.quoteId);
         if (input.termsVersion && input.termsVersion !== quote.termsVersion) {
           throw cleaningErrors.invalid('termsVersion', 'out_of_range');
+        }
+        // Piste P — R-PG-06 : le devis d'avenant complète le programme, sans en créer un autre.
+        if (quote.kind === 'amendment') {
+          if (input.startDate) throw cleaningErrors.invalid('startDate', 'not_applicable');
+          return acceptAmendmentQuoteOf(this.deps, { record, quote, customer, now, stub });
+        }
+        // Piste P — R-PG-07 : le devis de renouvellement crée un programme lié à l'ancien.
+        if (quote.kind === 'renewal') {
+          return acceptRenewalQuote(this.deps, {
+            record,
+            quote,
+            customer,
+            startDate: input.startDate ?? null,
+            sessionStarts: input.startDate ? shiftedStarts(quote.sessionStarts, input.startDate) : null,
+            now,
+            stub,
+          });
         }
         const [settings, standing] = await Promise.all([
           this.deps.caseSettings.caseSettings(),
@@ -221,12 +258,7 @@ export class ClientQuotesUseCases {
    * panne ne défait pas l'acceptation : le passage régulier les planifie. Rejouer est sans effet.
    */
   private async planAccepted(programId: string): Promise<void> {
-    try {
-      await planNewProgram(this.deps, programId);
-    } catch (error) {
-      const cause = error instanceof Error ? error.message : String(error);
-      logger.warn(`Programme ${programId} : planification reportée au passage régulier (${cause}).`);
-    }
+    await planProgramNow(this.deps, programId);
   }
 
   /** UC-NT-09 — Refuser un devis (R-AC-03) : dossier clos, frais de visite conservés. */
@@ -249,6 +281,18 @@ export class ClientQuotesUseCases {
       replay: async () => this.get(input.quoteId),
       run: async (stub) => {
         const { record, quote } = await ownedCaseByQuote(this.deps, customer, input.quoteId);
+        // Piste P : refuser un renouvellement ou un avenant ne clôt pas le dossier du programme.
+        if (isProgramQuote(quote)) {
+          return declineProgramQuoteOf(this.deps, {
+            record,
+            quote,
+            customer,
+            reasonCode: input.reasonCode ?? null,
+            comment,
+            now,
+            stub,
+          });
+        }
         const declined = decide(() =>
           declineQuote({
             quote,

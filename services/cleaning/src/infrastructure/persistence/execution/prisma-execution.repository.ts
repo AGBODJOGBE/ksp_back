@@ -71,6 +71,29 @@ export class PrismaExecutionRepository extends PrismaExecutionReader implements 
     return { items, nextCursor: rows.length > page.limit ? ids.at(-1)! : null, total };
   }
 
+  async programsToRenew(from: Date, until: Date, limit: number): Promise<string[]> {
+    const live = { status: { not: 'cancelled' as const } };
+    const rows = await this.prisma.program.findMany({
+      where: {
+        status: { in: ['confirmed', 'in_progress', 'completed'] },
+        renewalStatus: null,
+        renewedBy: { is: null },
+        OR: [
+          { schedulePlan: { path: ['kind'], equals: 'weekly' } },
+          { schedulePlan: { path: ['kind'], equals: 'monthly' } },
+        ],
+        AND: [
+          { sessions: { some: { ...live, scheduledStart: { gte: from } } } },
+          { sessions: { none: { ...live, scheduledStart: { gt: until } } } },
+        ],
+      },
+      orderBy: { id: 'asc' },
+      take: limit,
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
+  }
+
   async sessionsPastDue(now: Date, limit: number): Promise<DueSessionRef[]> {
     const rows = await this.prisma.session.findMany({
       where: { paymentStatus: 'due', paymentDueAt: { lte: now } },

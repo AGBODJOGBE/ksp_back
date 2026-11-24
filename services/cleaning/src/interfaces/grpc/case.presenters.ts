@@ -256,8 +256,8 @@ export class CasePresenter {
       id: quote.id,
       requestId: record.request.id,
       requestNumber: record.request.number,
-      programId: shown.status === 'accepted' ? opt(record.programId) : undefined,
-      kind: 'initial',
+      programId: quoteProgramId(record, quote, shown.status),
+      kind: quote.kind,
       version: quote.version,
       status: shown.status,
       place: lookups ? this.place(record, lookups) : undefined,
@@ -310,7 +310,7 @@ export class CasePresenter {
     const now = this.deps.clock.now();
     const customer = audience.kind === 'customer';
     const quotes = customer ? record.quotes.filter((quote) => quote.status !== 'draft') : record.quotes;
-    const current = sentQuote(record) ?? record.quotes.find((quote) => quote.status === 'accepted') ?? null;
+    const current = sentQuote(record) ?? latestAccepted(record);
     const revision = latestRevision(record);
     const showComparison = revision && (!customer || current !== null);
     const fees = [...record.fees].sort((a, b) => b.rank - a.rank);
@@ -445,4 +445,22 @@ export class CasePresenter {
       createdAt: new Date(program.createdAt).toISOString(),
     };
   }
+}
+
+/**
+ * Programme d'un devis (contrat Quote.program_id) : celui que complète un avenant ; sinon, une fois
+ * le devis accepté, celui qu'il a créé (le premier programme de la demande, ou le renouvellement).
+ */
+function quoteProgramId(record: CaseRecord, quote: QuoteRecord, status: string): string | undefined {
+  if (quote.kind === 'amendment') return opt(quote.programId);
+  if (status !== 'accepted') return undefined;
+  return opt(quote.createdProgramId ?? (quote.kind === 'renewal' ? null : record.programId));
+}
+
+/** Devis accepté le plus récent : un renouvellement accepté passe devant le devis d'origine. */
+function latestAccepted(record: CaseRecord): QuoteRecord | null {
+  return (
+    [...record.quotes].sort((a, b) => b.version - a.version).find((quote) => quote.status === 'accepted') ??
+    null
+  );
 }

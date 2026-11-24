@@ -3,9 +3,11 @@ import { expectedSessionAmount } from '../../domain/payments/charge';
 import { countOverdue, markOverdue } from '../../domain/payments/debit';
 import { sessionPayability, settleDirectPayment } from '../../domain/payments/direct-payment';
 import { staffingAlertToSend } from '../../domain/planning/staffing-alert';
+import { RENEWAL_WINDOW_DAYS } from '../../domain/programs/renewal';
 import { cancelForNoAgent } from '../../domain/sessions/cancellation';
 import { type ExecutionDeps } from '../deps';
 import { type OutboxMessage } from '../ports';
+import { ProgramRenewalUseCases } from '../requests/program-renewal.use-cases';
 import { type OwnerKind } from './execution.ports';
 import {
   audit,
@@ -284,6 +286,26 @@ export class ExecutionTasks {
    * aussitôt, ou reste au wallet si elle n'est plus payable (R-PP-07) ; toute recharge relance
    * ensuite les débits en attente du titulaire (RV-93).
    */
+  /**
+   * Piste P — R-PG-07 : proposition de renouvellement des programmes récurrents entrés dans leurs 14
+   * derniers jours (ou terminés depuis 14 jours au plus), ni suspendus ni annulés, sans proposition.
+   * Chaque écriture est conditionnée par l'absence de proposition : un second passage, ou une autre
+   * instance, ne propose rien de plus.
+   */
+  async proposeRenewals(): Promise<TaskReport> {
+    const now = this.deps.clock.now();
+    const windowMs = RENEWAL_WINDOW_DAYS * 86_400_000;
+    const due = await this.deps.execution.programsToRenew(
+      new Date(now.getTime() - windowMs),
+      new Date(now.getTime() + windowMs),
+      TASK_BATCH,
+    );
+    const renewals = new ProgramRenewalUseCases(this.deps);
+    return this.each('renouvellement', due, async (programId) => {
+      await renewals.proposeAutomatically(programId, now);
+    });
+  }
+
   async onWalletCredited(credit: WalletCredited): Promise<void> {
     const target = credit.forObject;
     if (target && target.service === 'cleaning' && target.objectType === 'cleaning_session') {

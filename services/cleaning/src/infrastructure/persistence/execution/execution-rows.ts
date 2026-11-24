@@ -25,6 +25,14 @@ export const PROGRAM_INCLUDE = {
   place: { select: { name: true, placeTypeId: true, placeType: { select: { name: true } } } },
   zone: { select: { name: true } },
   suspensionCauseHistory: { where: { liftedAt: null }, orderBy: { since: 'asc' as const } },
+  // Piste P : renouvellement (R-PG-07).
+  renewedBy: { select: { id: true } },
+  amendmentQuotes: {
+    where: { kind: 'renewal' as const },
+    select: { id: true },
+    orderBy: { version: 'desc' as const },
+    take: 1,
+  },
 } satisfies Prisma.ProgramInclude;
 
 export type ProgramRow = Prisma.ProgramGetPayload<{ include: typeof PROGRAM_INCLUDE }>;
@@ -103,6 +111,17 @@ export function toProgram(
     cleaningTypes,
     createdAt: row.createdAt,
     version: row.version,
+    renewalOfProgramId: row.renewalOfProgramId,
+    renewedByProgramId: row.renewedBy?.id ?? null,
+    renewal:
+      row.renewalStatus && row.renewalProposedAt
+        ? {
+            status: row.renewalStatus,
+            proposedAt: row.renewalProposedAt,
+            quoteId: row.amendmentQuotes[0]?.id ?? null,
+            respondedAt: row.renewalRespondedAt,
+          }
+        : null,
   };
 }
 

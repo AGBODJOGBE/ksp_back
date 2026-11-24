@@ -73,6 +73,22 @@ export interface ProgramRecord {
   cleaningTypes: ProgramCleaningType[];
   createdAt: Date;
   version: number;
+  // --- Piste P : renouvellement (R-PG-07) ---
+  /** Programme que celui-ci renouvelle ; null pour le premier programme d'une demande. */
+  renewalOfProgramId: string | null;
+  /** Programme créé par le renouvellement de celui-ci ; null sinon. */
+  renewedByProgramId: string | null;
+  /** Proposition de renouvellement ; null : aucune. */
+  renewal: ProgramRenewal | null;
+}
+
+/** Proposition de renouvellement d'un programme (contrat Renewal). */
+export interface ProgramRenewal {
+  status: 'proposed' | 'accepted' | 'declined';
+  proposedAt: Date;
+  /** Dernier devis de renouvellement ; null : nouvelle visite nécessaire, aucun devis. */
+  quoteId: string | null;
+  respondedAt: Date | null;
 }
 
 /** Agent affecté, avec l'état de son affectation (valeurs du contrat AssignedAgent.confirmation). */
@@ -165,6 +181,10 @@ export interface ProgramPatch {
   cancellation?: { at: Date; by: 'customer' | 'ksp'; reason: string | null; approvedBy: string | null };
   /** Demande d'arrêt par KSP (motif) ; null : demande retirée. */
   cancellationRequestReason?: string | null;
+  // --- Piste P : vie du programme (R-PG-06) ---
+  /** Nouveau plan des séances à venir (changement de plan, avenant). */
+  schedulePlan?: unknown;
+  durationMinutes?: number;
 }
 
 /** Opération de wallet enregistrée avant l'appel (15.4). */
@@ -353,6 +373,11 @@ export interface ExecutionRepository extends ExecutionReader {
   walletOperationByTransaction(
     transactionId: string,
   ): Promise<(WalletOperationRecord & { purpose: string }) | null>;
+  /**
+   * Piste P — R-PG-07 : programmes récurrents, ni suspendus ni annulés, sans proposition ni
+   * renouvellement, dont la dernière séance non annulée commence entre `from` et `until`.
+   */
+  programsToRenew(from: Date, until: Date, limit: number): Promise<string[]>;
   /** Séances d'un agent sur une période (mon activité). */
   agentSessions(agentId: string, from: Date, to: Date): Promise<SessionRecord[]>;
   /** Opérations de wallet d'un objet débité (rapprochement, RV-80). */

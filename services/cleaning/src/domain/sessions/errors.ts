@@ -4,6 +4,7 @@
  * `details` ; la couche application la traduit en AppError, avec le message affiché à l'utilisateur.
  */
 export type ExecutionErrorCode =
+  | 'CLEANING_AMENDMENT_REQUIRED'
   | 'CLEANING_BALANCE_GUARANTEE_NOT_MET'
   | 'CLEANING_CANCELLATION_TOO_LATE'
   | 'CLEANING_CHECKLIST_INCOMPLETE'
@@ -18,6 +19,7 @@ export type ExecutionErrorCode =
   | 'CLEANING_REASON_REQUIRED'
   | 'CLEANING_RESCHEDULE_LIMIT_REACHED'
   | 'CLEANING_RESCHEDULE_OVERLAP'
+  | 'CLEANING_SCHEDULE_EMPTY'
   | 'CLEANING_SECOND_APPROVER_REQUIRED'
   | 'CLEANING_SESSION_NOT_FOUND'
   | 'CLEANING_SESSION_OVERDUE_PAYMENT'
