@@ -22,7 +22,7 @@ export interface CreateAgentInput extends AgentApplicationInput {
 }
 
 /** Numéro reçu, ramené à la forme commune (ADR-063) ; identity le contrôle de nouveau. */
-function agentPhone(value: string | undefined | null): string {
+export function agentPhone(value: string | undefined | null): string {
   if (!value?.trim()) throw cleaningErrors.invalid('phone', 'required');
   const phone = tryNormalizePhone(value);
   if (!phone) throw cleaningErrors.invalid('phone', 'invalid_type');

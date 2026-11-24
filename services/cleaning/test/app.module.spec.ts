@@ -80,6 +80,9 @@ describe('configuration', () => {
       BILLING_GRPC_URL: 'dns:///billing-headless:50054',
       // Lot C : paiement direct par Mobile Money.
       PAYMENT_GRPC_URL: 'dns:///payment-headless:50055',
+      // Piste A : invitation d'un agent envoyée par notification, lien vers l'application agent.
+      NOTIFICATION_GRPC_URL: 'dns:///notification-headless:50052',
+      CLEANING_AGENT_APP_URL: 'https://agent.ksp.test',
     };
     expect(() => loadConfig(configSchema, production)).toThrow('SERVICE_CLIENT_SECRET');
     const withToken = {

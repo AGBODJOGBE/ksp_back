@@ -10,6 +10,9 @@ import {
   type AgentRecord,
   type AgentRoles,
   ConcurrentUpdateError,
+  type InvitationRecord,
+  type InvitationSender,
+  type PhoneFingerprints,
   type PlanningSettings,
   type TeamRecord,
 } from '../agents/agent.ports';
@@ -51,6 +54,8 @@ interface State {
   skills: Map<string, { name: string; active: boolean }>;
   zones: Set<string>;
   idempotency: Map<string, IdempotencyRecord>;
+  /** Piste A : invitations, avec l'empreinte du numéro. */
+  invitations: Map<string, InvitationRecord & { phoneFingerprint: string }>;
   events: OutboxMessage[];
   audit: AuditEntry[];
 }
@@ -77,6 +82,7 @@ export class InMemoryPlanning implements PlanningRepository {
     ]),
     zones: new Set(['cotonou', 'porto-novo']),
     idempotency: new Map(),
+    invitations: new Map(),
     events: [],
     audit: [],
   };
@@ -124,6 +130,13 @@ export class InMemoryPlanning implements PlanningRepository {
 
   async agentById(id: string) {
     return this.state.agents.get(id) ?? null;
+  }
+  /** Piste A : invitation rendue sans son empreinte, comme le dépôt. */
+  async invitationById(id: string): Promise<InvitationRecord | null> {
+    const stored = this.state.invitations.get(id);
+    if (!stored) return null;
+    const { phoneFingerprint: _fingerprint, ...invitation } = stored;
+    return invitation;
   }
   async agentByUserId(userId: string) {
     return [...this.state.agents.values()].find((a) => a.userId === userId) ?? null;
@@ -245,6 +258,7 @@ export class InMemoryPlanning implements PlanningRepository {
       targets: (refs: readonly TargetRef[]) => this.targets(refs),
       assignment: (id: string) => this.assignment(id),
       settings: () => this.settings(),
+      invitationById: (id: string) => this.invitationById(id),
     };
     return {
       ...reader,
@@ -346,6 +360,36 @@ export class InMemoryPlanning implements PlanningRepository {
       },
       remember: async (record) => {
         state().idempotency.set(`${record.actorId}|${record.operation}|${record.key}`, record);
+      },
+      // Piste A (agents) : invitations
+      openInvitation: async (row) => {
+        const open = [...state().invitations.values()].find(
+          (invitation) => invitation.phoneFingerprint === row.phoneFingerprint && !invitation.consumedAt,
+        );
+        if (open) Object.assign(open, { expiresAt: row.expiresAt, sentAt: null });
+        else {
+          state().invitations.set(row.id, {
+            ...row,
+            sentAt: null,
+            sendAttempts: 0,
+            consumedAt: null,
+            agentId: null,
+          });
+        }
+        return (await this.invitationById((open ?? row).id))!;
+      },
+      recordInvitationSend: async (id, sentAt) => {
+        const invitation = state().invitations.get(id)!;
+        invitation.sendAttempts += 1;
+        if (sentAt) invitation.sentAt = sentAt;
+      },
+      consumeInvitation: async (id, agentId, at) => {
+        const invitation = state().invitations.get(id);
+        if (!invitation || invitation.consumedAt || invitation.expiresAt.getTime() <= at.getTime()) {
+          return false;
+        }
+        Object.assign(invitation, { consumedAt: at, agentId, phoneEncrypted: null });
+        return true;
       },
     };
   }
@@ -502,7 +546,39 @@ export class FakeAgentAccounts implements AgentAccounts {
     this.created.push(account.userId);
     return { ...account, created: true };
   }
+
+  async findByPhone(phone: string): Promise<{ userId: string; status: string } | null> {
+    if (this.failure) throw this.failure;
+    return this.byPhone.get(phone) ?? null;
+  }
 }
+
+/**
+ * Faux de notification pour l'invitation d'un agent (piste A) : envois reçus, avec leur numéro de
+ * tentative ; `failure` simule une panne (AppError) ou un envoi refusé (InvitationSendFailedError).
+ */
+export class FakeInvitationSender implements InvitationSender {
+  readonly sent: { invitationId: string; attempt: number; phone: string; expiresAt: Date }[] = [];
+  /** Tentatives reçues, réussies ou non. */
+  readonly attempts: number[] = [];
+  failure: Error | null = null;
+
+  async send(input: {
+    invitationId: string;
+    attempt: number;
+    phone: string;
+    expiresAt: Date;
+  }): Promise<void> {
+    this.attempts.push(input.attempt);
+    if (this.failure) throw this.failure;
+    this.sent.push(input);
+  }
+}
+
+/** Empreinte de test du numéro invité : stable, sans le numéro en clair. */
+export const fakePhoneFingerprints: PhoneFingerprints = {
+  invitationPhone: (phone) => `k1.${Buffer.from(`empreinte:${phone}`).toString('base64url')}`,
+};
 
 /** Dépendances des cas d'usage du lot D, horloge fixe et identifiants prévisibles. */
 export function planningDeps(
@@ -529,6 +605,8 @@ export function planningDeps(
     // Piste A (agents)
     roles: new FakeAgentRoles(),
     accounts: new FakeAgentAccounts(),
+    invitations: new FakeInvitationSender(),
+    phoneFingerprints: fakePhoneFingerprints,
   } as unknown as AgentDeps;
   return { deps, planning, travelCalls };
 }

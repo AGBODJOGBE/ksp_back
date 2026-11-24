@@ -188,4 +188,63 @@ export interface AgentAccount {
  */
 export interface AgentAccounts {
   ensureByPhone(input: { phone: string; firstName: string; lastName: string }): Promise<AgentAccount>;
+  /**
+   * Compte d'un numéro, sans le créer (identity.FindUserByPhone) : null s'il n'y en a pas, ou s'il
+   * est supprimé. Sert à refuser l'invitation d'un numéro déjà agent, et à vérifier qu'une invitation
+   * vise bien le compte qui s'inscrit.
+   */
+  findByPhone(phone: string): Promise<Pick<AgentAccount, 'userId' | 'status'> | null>;
+}
+
+/**
+ * Invitation d'un agent par l'admin (R-AG-02). Le numéro invité reste chiffré ; son empreinte, qui
+ * retrouve l'invitation en cours d'un numéro, ne sort pas du dépôt.
+ */
+export interface InvitationRecord {
+  id: string;
+  /** Numéro invité, chiffré ; null une fois l'invitation consommée. */
+  phoneEncrypted: string | null;
+  createdBy: string;
+  createdAt: Date;
+  expiresAt: Date;
+  /** Dernier envoi réussi ; null : envoi à faire ou à refaire. */
+  sentAt: Date | null;
+  /** Envois terminés, réussis ou refusés par notification : le suivant porte le numéro suivant. */
+  sendAttempts: number;
+  consumedAt: Date | null;
+  /** Agent créé par l'inscription qui a consommé l'invitation. */
+  agentId: string | null;
+}
+
+export interface NewInvitation {
+  id: string;
+  phoneEncrypted: string;
+  phoneFingerprint: string;
+  createdBy: string;
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+/**
+ * Empreinte à clé du numéro invité (HMAC, clé du coffre à secrets) : la même pour toutes les formes
+ * d'un même numéro, jamais un simple condensé que l'on retrouverait en essayant les numéros.
+ */
+export interface PhoneFingerprints {
+  invitationPhone(phone: string): string;
+}
+
+/**
+ * Envoi de l'invitation au numéro invité (notification.SendNotification, modèle
+ * `cleaning.agent_invitation`, WhatsApp puis SMS). `attempt` numérote les envois d'une invitation :
+ * notification rejoue la réponse d'une clé déjà vue, un envoi refusé ne se retente donc qu'avec le
+ * numéro suivant. notification injoignable : AppError NOTIFICATION_UNAVAILABLE (UNAVAILABLE), l'envoi
+ * se rejoue avec le même numéro. Envoi refusé par tous les canaux : InvitationSendFailedError.
+ */
+export interface InvitationSender {
+  send(input: { invitationId: string; attempt: number; phone: string; expiresAt: Date }): Promise<void>;
+}
+
+/** notification a répondu que l'envoi a échoué sur tous les canaux : cette tentative est terminée. */
+export class InvitationSendFailedError extends Error {
+  override readonly name = 'InvitationSendFailedError';
 }

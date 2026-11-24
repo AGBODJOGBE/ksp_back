@@ -5,7 +5,7 @@ import {
   SubmitAgentApplicationUseCase,
 } from '../../application/agents/agent-registration.use-cases';
 import { AvailabilityUseCases } from '../../application/agents/availability.use-cases';
-import { CLEANING_DEPS, type CleaningDeps } from '../../application/deps';
+import { type AgentDeps, CLEANING_DEPS, type CleaningDeps } from '../../application/deps';
 import { AgentAssignmentUseCases } from '../../application/planning/agent-assignments.use-cases';
 import { toAgent, toAvailability } from './agent-mappers';
 // Lot C
@@ -43,7 +43,8 @@ export class AgentGrpcController implements cleaningV1.AgentServiceController {
     // Lot C
     @Inject(LOT_C_USE_CASES) private readonly lotC: LotCUseCases,
   ) {
-    this.submit = new SubmitAgentApplicationUseCase(deps);
+    // Piste A : l'inscription sur invitation lit le compte du numéro invité chez identity.
+    this.submit = new SubmitAgentApplicationUseCase(deps as AgentDeps);
     this.profile = new GetMyAgentProfileUseCase(deps);
     this.availability = new AvailabilityUseCases(deps);
     this.assignments = new AgentAssignmentUseCases(deps);

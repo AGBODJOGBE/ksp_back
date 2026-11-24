@@ -1,11 +1,12 @@
 import { type EmploymentKind } from '../../domain/planning/assignment-status';
-import { type CleaningDeps } from '../deps';
+import { type AgentDeps, type CleaningDeps } from '../deps';
 import { type PlanningTx } from '../planning/planning.ports';
 import { type OutboxMessage } from '../ports';
 import { requireConnectedUser } from '../shared/access';
 import { cleaningErrors } from '../shared/errors';
 import { replayed } from '../shared/idempotency';
 import { idempotencyKey, requestHash, requireUuid, text } from '../shared/input';
+import { agentErrors } from './agent-errors';
 import { AgentAlreadyRegisteredError, type PlanningSettings } from './agent.ports';
 import { agentProfile, type AgentProfile, cipherContext, parseWeekly } from './agent-views';
 
@@ -13,6 +14,10 @@ import { agentProfile, type AgentProfile, cipherContext, parseWeekly } from './a
  * Inscription d'un agent par lui-même (UC-NT-19, partie 9.1) et lecture de son profil. L'agent
  * devient « candidat » ; l'admin Nettoyage valide ses compétences une par une. Nom et prénom restent
  * dans identity : seul le nom d'affichage est recopié pour le planning.
+ *
+ * Inscription sur invitation (R-AG-02, piste A) : l'invitation présentée doit être en cours et avoir
+ * été envoyée au numéro du compte qui s'inscrit ; elle est consommée dans la transaction de
+ * l'inscription, et l'événement porte `source = invited`.
  */
 
 export interface AgentApplicationInput {
@@ -189,32 +194,62 @@ export async function insertAgentFromApplication(
   };
 }
 
+/**
+ * Invitation présentée à l'inscription : connue, ni consommée ni expirée, et envoyée au numéro du
+ * compte qui s'inscrit (identity rend le compte du numéro invité ; le numéro ne sort pas du service).
+ */
+export async function requireUsableInvitation(
+  deps: AgentDeps,
+  invitationId: string,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  const invitation = await deps.planning.invitationById(invitationId);
+  if (!invitation) throw agentErrors.invitationRefused('invitation_not_found');
+  if (invitation.consumedAt || !invitation.phoneEncrypted) {
+    throw agentErrors.invitationRefused('invitation_consumed');
+  }
+  if (invitation.expiresAt.getTime() <= now.getTime()) {
+    throw agentErrors.invitationRefused('invitation_expired');
+  }
+  const phone = deps.cipher.decrypt(invitation.phoneEncrypted, cipherContext.invitationPhone(invitation.id));
+  const account = await deps.accounts.findByPhone(phone);
+  if (account?.userId !== userId) throw agentErrors.invitationRefused('invitation_not_found');
+}
+
 export class SubmitAgentApplicationUseCase {
-  constructor(private readonly deps: CleaningDeps) {}
+  constructor(private readonly deps: AgentDeps) {}
 
   async execute(input: AgentApplicationInput): Promise<AgentProfile> {
     const userId = requireConnectedUser();
     const key = idempotencyKey(input.idempotencyKey);
     const application = parseApplication(input);
-    const hash = requestHash(application);
+    const invitationId = input.invitationId?.trim() ? requireUuid(input.invitationId, 'invitationId') : null;
+    // Sans invitation, l'empreinte reste celle de la candidature seule.
+    const hash = invitationId ? requestHash({ application, invitationId }) : requestHash(application);
     const ref = { actorId: userId, operation: 'agent.apply', key };
     const replay = await replayed<{ agentId: string }>(this.deps.planning, ref, hash);
     if (replay) return this.profile(replay.agentId);
 
     await requireCatalog(this.deps, application.skillCodes, application.zoneKeys);
     if (await this.deps.planning.agentByUserId(userId)) throw cleaningErrors.alreadyRegistered();
+    const now = this.deps.clock.now();
+    if (invitationId) await requireUsableInvitation(this.deps, invitationId, userId, now);
     const agentId = this.deps.ids.next();
     await attachApplicationFiles(this.deps, agentId, application, userId);
-    const now = this.deps.clock.now();
     const settings = await this.deps.planning.settings();
     try {
       await this.deps.planning.transaction(async (tx) => {
+        // Consommée avant toute écriture : une invitation utilisée entre-temps arrête l'inscription.
+        if (invitationId && !(await tx.consumeInvitation(invitationId, agentId, now))) {
+          throw agentErrors.invitationRefused('invitation_consumed');
+        }
         const applied = await insertAgentFromApplication(this.deps, tx, settings, {
           agentId,
           userId,
           status: 'applicant',
           createdBy: null,
-          source: 'self',
+          source: invitationId ? 'invited' : 'self',
           application,
           by: userId,
           now,

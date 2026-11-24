@@ -41,7 +41,12 @@ import {
 // Piste S
 import { type PersonalDataRepository } from './privacy/privacy.ports';
 // Piste A (agents)
-import { type AgentAccounts, type AgentRoles } from './agents/agent.ports';
+import {
+  type AgentAccounts,
+  type AgentRoles,
+  type InvitationSender,
+  type PhoneFingerprints,
+} from './agents/agent.ports';
 // Piste O
 import { type OrganizationUnitOfWork } from './organizations/organizations.ports';
 
@@ -114,6 +119,10 @@ export interface CleaningDeps {
   roles?: AgentRoles;
   /** Compte KSP d'un agent créé par l'admin (identity.EnsureUserByPhone, R-AG-02). */
   accounts?: AgentAccounts;
+  /** Envoi de l'invitation d'un agent (notification.SendNotification, R-AG-02). */
+  invitations?: InvitationSender;
+  /** Empreinte à clé du numéro invité. */
+  phoneFingerprints?: PhoneFingerprints;
   // --- Piste O : situation des organisations (factures impayées, suspension par KSP) ------------
   /** Transactions sous le verrou d'une organisation (R-PE-06, RV-85). */
   organizations?: OrganizationUnitOfWork;
@@ -128,7 +137,8 @@ export type ExecutionDeps = CleaningDeps &
 /** Dépendances des cas d'usage de la piste S (données personnelles). */
 export type PrivacyDeps = CleaningDeps & Required<Pick<CleaningDeps, 'personalData'>>;
 /** Dépendances des cas d'usage des agents (piste A). */
-export type AgentDeps = CleaningDeps & Required<Pick<CleaningDeps, 'roles' | 'accounts'>>;
+export type AgentDeps = CleaningDeps &
+  Required<Pick<CleaningDeps, 'roles' | 'accounts' | 'invitations' | 'phoneFingerprints'>>;
 
 /** Dépendances des cas d'usage de la piste O (situation des organisations). */
 export type OrganizationDeps = CleaningDeps & Required<Pick<CleaningDeps, 'organizations' | 'execution'>>;

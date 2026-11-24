@@ -11,7 +11,8 @@ function statusName(status: identityV1.UserStatus): string {
 }
 
 /**
- * Compte KSP d'un agent créé par l'admin (IdentityService.EnsureUserByPhone, R-AG-02), avec le jeton
+ * Compte KSP d'un agent créé ou invité par l'admin (IdentityService.EnsureUserByPhone et
+ * FindUserByPhone, R-AG-02), avec le jeton
  * de service de cleaning ; le membre du personnel à l'origine voyage dans les métadonnées de l'appel
  * (contexte de la requête), pour la trace d'audit d'identity. L'appel est idempotent chez identity
  * (un numéro n'a qu'un compte) : une panne passagère est retentée une fois, puis rendue en
@@ -32,5 +33,14 @@ export class IdentityAgentAccounts implements AgentAccounts {
     );
     if (!response.userId) throw new Error('Réponse d’identity sans compte.');
     return { userId: response.userId, status: statusName(response.status), created: response.created };
+  }
+
+  /** IdentityService.FindUserByPhone : lecture seule, même jeton, mêmes règles de panne. */
+  async findByPhone(phone: string): Promise<Pick<AgentAccount, 'userId' | 'status'> | null> {
+    const response = await callDependency('identity', this.caller, 'findUserByPhone', (metadata) =>
+      this.client.findUserByPhone({ phoneE164: phone }, metadata),
+    );
+    if (!response.found || !response.userId) return null;
+    return { userId: response.userId, status: statusName(response.status) };
   }
 }

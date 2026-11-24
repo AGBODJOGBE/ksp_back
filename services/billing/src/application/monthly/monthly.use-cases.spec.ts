@@ -393,6 +393,26 @@ describe('Facture mensuelle des organisations (lot F)', () => {
       ).rejects.toMatchObject({ code: 'BILLING_CREDIT_NOTE_EXCEEDS_INVOICE', details: { maximum: 0 } });
     });
 
+    it('même clé envoyée deux fois en même temps : l’appel devancé rend l’avoir déjà émis, jamais un refus', async () => {
+      const [invoice] = invoices();
+      const request = {
+        idempotencyKey: 'avoir-concurrent-1',
+        invoiceId: invoice!.id,
+        lines: [line(25_000)],
+        reason: 'Réclamation',
+      };
+      const first = await monthly.issueCreditNote.execute(request);
+      // L'appel devancé a cherché la clé avant l'enregistrement du premier : sa recherche est vide,
+      // puis il lit une facture déjà soldée par cet avoir.
+      const find = world.monthly.findCreditNoteByKey.bind(world.monthly);
+      let lookups = 0;
+      world.monthly.findCreditNoteByKey = async (issuedBy, key) =>
+        (lookups += 1) === 1 ? null : find(issuedBy, key);
+      const second = await monthly.issueCreditNote.execute(request);
+      expect(second.created).toBe(false);
+      expect(second.creditNote.number).toBe(first.creditNote.number);
+    });
+
     it('facture payée : la part de l’avoir va au portefeuille de l’organisation, une seule fois', async () => {
       const [invoice] = invoices();
       world.wallet.balances.set(ORGANIZATION_ID, 25_000);

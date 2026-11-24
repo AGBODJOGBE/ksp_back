@@ -3,7 +3,9 @@ import {
   AgentAlreadyRegisteredError,
   type AgentPatch,
   ConcurrentUpdateError,
+  type InvitationRecord,
   type NewAgent,
+  type NewInvitation,
   type TeamPatch,
 } from '../../../application/agents/agent.ports';
 import {
@@ -17,7 +19,7 @@ import { type Changes, type Clock, type IdGenerator } from '../../../application
 import { uuids } from '../agents/agent-rows';
 import { json, type Tx, writeChanges } from '../changes';
 import { IN_FORCE } from './planning-rows';
-import { PrismaPlanningReader } from './prisma-planning.reader';
+import { PrismaPlanningReader, toInvitationRecord } from './prisma-planning.reader';
 
 /** Violation d'une contrainte unique (Prisma P2002). */
 export function isUniqueViolation(error: unknown): boolean {
@@ -232,6 +234,42 @@ export class PrismaPlanningTx extends PrismaPlanningReader implements PlanningTx
 
   write(changes: Changes): Promise<void> {
     return writeChanges(this.client, changes, () => this.ids.next());
+  }
+
+  // --- Piste A (agents) : invitations (R-AG-02) ---
+
+  async openInvitation(row: NewInvitation): Promise<InvitationRecord> {
+    const open = await this.client.agentInvitation.findFirst({
+      where: { phoneFingerprint: row.phoneFingerprint, consumedAt: null },
+    });
+    try {
+      const saved = open
+        ? await this.client.agentInvitation.update({
+            where: { id: open.id },
+            data: { expiresAt: row.expiresAt, sentAt: null },
+          })
+        : await this.client.agentInvitation.create({ data: row });
+      return toInvitationRecord(saved);
+    } catch (error) {
+      // Index unique des invitations en cours : un autre appel vient d'inviter ce numéro.
+      if (isUniqueViolation(error)) throw new ConcurrentUpdateError();
+      throw error;
+    }
+  }
+
+  async recordInvitationSend(id: string, sentAt: Date | null): Promise<void> {
+    await this.client.agentInvitation.update({
+      where: { id },
+      data: { sendAttempts: { increment: 1 }, ...(sentAt ? { sentAt } : {}) },
+    });
+  }
+
+  async consumeInvitation(id: string, agentId: string, at: Date): Promise<boolean> {
+    const { count } = await this.client.agentInvitation.updateMany({
+      where: { id, consumedAt: null, expiresAt: { gt: at } },
+      data: { consumedAt: at, agentId, phoneEncrypted: null },
+    });
+    return count === 1;
   }
 
   async remember(record: IdempotencyRecord): Promise<void> {

@@ -44,6 +44,23 @@ PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cl
 - **Agent créé par l'admin** (R-AG-02) : le compte est trouvé ou créé par son téléphone chez identity
   (`EnsureUserByPhone`) ; cleaning ne garde pas le numéro. Un agent dont le compte n'a jamais ouvert
   de session ne peut pas encore être validé (identity répond `IDENTITY_ACCOUNT_NOT_ACTIVE`).
+- **Agent invité par l'admin** (R-AG-02, `InviteAgent`) : un lien d'inscription est envoyé au numéro
+  par notification (`SendNotification`, modèle `cleaning.agent_invitation`, WhatsApp puis SMS). Le
+  lien est `CLEANING_AGENT_APP_URL` suivi de `/invitations/<identifiant>` ; l'invitation vaut 7 jours.
+  Le numéro n'est gardé que chiffré (table `agent_invitations`), avec une empreinte à clé
+  (`CLEANING_BLIND_INDEX_KEYS`, obligatoire en production, distincte de la clé de chiffrement) ; il
+  est effacé quand l'invitation est consommée. Un numéro n'a qu'une invitation en cours : l'inviter
+  de nouveau la renouvelle et la renvoie. Un numéro dont le compte est déjà agent est refusé
+  (`CLEANING_AGENT_ALREADY_REGISTERED`, compte lu par `identity.FindUserByPhone`).
+  - L'invitation est enregistrée avant l'envoi. Envoi en échec : `NOTIFICATION_UNAVAILABLE` (503), à
+    rejouer avec la même clé d'idempotence, sans seconde invitation. La clé d'envoi porte le numéro
+    de la tentative : la même tant que notification n'a pas répondu, la suivante quand elle a répondu
+    que tous les canaux ont échoué.
+  - Inscription avec `invitationId` : l'invitation doit être en cours et avoir été envoyée au numéro
+    du compte qui s'inscrit ; elle est consommée dans la transaction de l'inscription et l'événement
+    `cleaning.agent.applied` porte `source = invited`. Sinon `CLEANING_VALIDATION_FAILED` sur le champ
+    `invitationId`, motif `invitation_not_found` (inconnue ou envoyée à un autre numéro),
+    `invitation_consumed` ou `invitation_expired`.
 - **Pièce d'identité** : lue par l'admin Nettoyage seulement, adresses temporaires de file, chaque
   lecture écrite au journal d'audit (`agent.id_document_read`).
 - identity injoignable pendant l'une de ces actions : `IDENTITY_UNAVAILABLE` (503), à rejouer avec la

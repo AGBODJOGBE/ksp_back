@@ -1,6 +1,7 @@
 import { type TargetRef } from '../../../domain/planning/agenda';
 import {
   type AgentRecord,
+  type InvitationRecord,
   type PlanningSettings,
   type TeamRecord,
 } from '../../../application/agents/agent.ports';
@@ -13,6 +14,12 @@ import { type Clock } from '../../../application/ports';
 import { agentInclude, isUuid, teamInclude, toAgentRecord, toTeamRecord, uuids } from '../agents/agent-rows';
 import { type Tx } from '../changes';
 import { agendas, findAssignment, loadTargets } from './planning-rows';
+
+/** Invitation telle que les cas d'usage la lisent : l'empreinte du numéro reste dans le dépôt. */
+export function toInvitationRecord(row: InvitationRecord & { phoneFingerprint: string }): InvitationRecord {
+  const { phoneFingerprint: _fingerprint, ...invitation } = row;
+  return invitation;
+}
 
 /**
  * Lectures de la planification sur un client Prisma : le client du service (lectures hors
@@ -41,6 +48,13 @@ export class PrismaPlanningReader implements PlanningReader {
       include: agentInclude(this.clock.now()),
     });
     return row ? toAgentRecord(row) : null;
+  }
+
+  /** Piste A : invitation d'un agent, sans son empreinte. */
+  async invitationById(id: string): Promise<InvitationRecord | null> {
+    if (!isUuid(id)) return null;
+    const row = await this.client.agentInvitation.findUnique({ where: { id } });
+    return row ? toInvitationRecord(row) : null;
   }
 
   async agentsByIds(ids: readonly string[]): Promise<AgentRecord[]> {
