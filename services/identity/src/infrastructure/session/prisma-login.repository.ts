@@ -149,6 +149,32 @@ export class PrismaLoginRepository implements AccountRepository, LoginRepository
               { producer: 'identity', occurredAt: plan.now },
             ),
           );
+        } else {
+          // Compte créé à la demande d'un service (EnsureUserByPhone), encore « en attente de
+          // vérification » : le code reçu vérifie son téléphone, il devient actif. Mise à jour
+          // conditionnelle : de deux premières connexions simultanées, une seule publie l'événement.
+          const activated = await tx.user.updateMany({
+            where: { id: plan.existingUserId as string, status: 'pending_verification' },
+            data: { status: 'active' },
+          });
+          if (activated.count === 1) {
+            await tx.userPhone.updateMany({
+              where: {
+                userId: plan.existingUserId as string,
+                phoneE164: { in: phoneLookupForms(plan.phoneE164) },
+                verifiedAt: null,
+              },
+              data: { verifiedAt: plan.now },
+            });
+            await appendToOutbox(
+              tx as unknown as SqlExecutor,
+              createEnvelope(
+                'identity.user.verified',
+                { userId: plan.existingUserId as string, verifiedVia: 'phone' },
+                { producer: 'identity', occurredAt: plan.now },
+              ),
+            );
+          }
         }
 
         await openSession(tx, {

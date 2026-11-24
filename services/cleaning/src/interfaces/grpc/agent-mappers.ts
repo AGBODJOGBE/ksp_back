@@ -1,4 +1,8 @@
 import { type cleaningV1 } from '@ksp/contracts';
+import {
+  type AgentIdDocument,
+  type IdDocumentFile,
+} from '../../application/agents/agent-id-document.use-case';
 import { type TeamRecord } from '../../application/agents/agent.ports';
 import { type AgentProfile, type AvailabilityView, weeklyRules } from '../../application/agents/agent-views';
 import { type Page } from '../../application/shared/input';
@@ -84,4 +88,24 @@ export function toTeam(team: TeamRecord): cleaningV1.Team {
     active: team.active,
     createdAt: team.createdAt.toISOString(),
   };
+}
+
+// --- Piste A (agents) --------------------------------------------------------------------------
+
+/**
+ * `Photo.kind` n'a pas de valeur pour une pièce d'identité : elle est rendue comme une pièce jointe
+ * à la candidature (« request »), pour rester dans les valeurs que le contrat énumère.
+ */
+const ID_DOCUMENT_PHOTO_KIND = 'request';
+
+/** Pièce d'identité (recto, verso) → message du contrat ; adresse absente : fichier non conservé. */
+export function toIdDocument(document: AgentIdDocument): cleaningV1.IdDocument {
+  const photo = (file: IdDocumentFile): cleaningV1.Photo => ({
+    fileId: file.fileId,
+    kind: ID_DOCUMENT_PHOTO_KIND,
+    takenAt: file.uploadedAt.toISOString(),
+    ...(file.url ? { url: file.url } : {}),
+    ...(file.urlExpiresAt ? { urlExpiresAt: file.urlExpiresAt.toISOString() } : {}),
+  });
+  return { front: photo(document.front), back: photo(document.back) };
 }

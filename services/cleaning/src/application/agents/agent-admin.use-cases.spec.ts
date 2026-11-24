@@ -65,7 +65,7 @@ function withAssignment(planning: InMemoryPlanning) {
 }
 
 describe('validation d’une candidature (UC-NT-34, R-AG-01)', () => {
-  it('en vérification → actif ; compétences validées ; événement pour le rôle cleaning_agent', async () => {
+  it('en vérification → actif ; compétences validées ; événement de validation', async () => {
     const { planning, change } = setup();
     planning.addAgent(
       agentRecord('a1', {

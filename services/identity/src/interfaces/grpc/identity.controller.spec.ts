@@ -5,6 +5,10 @@ import {
   type OrganizationDirectory,
 } from '../../application/directory/get-organizations.use-case';
 import { GetUsersUseCase, type UserDirectory } from '../../application/directory/get-users.use-case';
+import {
+  EnsureUserByPhoneUseCase,
+  FindUserByPhoneUseCase,
+} from '../../application/provisioning/phone-accounts.use-cases';
 import { GetCatalogUseCase, RegisterCatalogUseCase } from '../../application/rbac/catalog.use-cases';
 import {
   CheckPermissionUseCase,
@@ -14,6 +18,7 @@ import {
 } from '../../application/rbac/service-roles.use-cases';
 import { type StaffDirectory } from '../../application/rbac/rbac.ports';
 import { type Account } from '../../application/session/session.ports';
+import { InMemoryChallenges, InMemoryIdentityStore } from '../../application/testing/fakes';
 import { InMemoryRoles } from '../../application/testing/mfa-fakes';
 import { InMemoryRbac } from '../../application/testing/rbac-fakes';
 import { type Organization } from '../../domain/organization/organization';
@@ -69,6 +74,7 @@ const staff: StaffDirectory = {
 };
 const ids = { next: () => '0192f1c4-0000-7000-8000-0000000000c1' };
 const clock = { now: () => new Date('2026-11-20T10:00:00Z') };
+const accounts = new InMemoryIdentityStore(new InMemoryChallenges());
 const controller = new IdentityGrpcController(
   new GetUsersUseCase(directory),
   new GetOrganizationsUseCase(organizations),
@@ -78,6 +84,8 @@ const controller = new IdentityGrpcController(
   new RevokeRoleUseCase(roles, staff, ids, clock),
   new ListStaffByPermissionUseCase(staff),
   new CheckPermissionUseCase(roles, staff),
+  new FindUserByPhoneUseCase(accounts),
+  new EnsureUserByPhoneUseCase(accounts, accounts, ids, clock),
 );
 
 const asCaller = <T>(callerService: string, fn: () => Promise<T>) =>
@@ -202,5 +210,48 @@ describe('IdentityGrpcController', () => {
         }),
       ),
     ).resolves.toEqual({ allowed: false, reason: 'permission_missing' });
+  });
+});
+
+describe('IdentityGrpcController : compte d’un numéro pour cleaning (R-AG-02)', () => {
+  const ADMIN = '0192f1c4-0000-7000-8000-00000000ad01';
+  const PHONE = '+2290197000099';
+  const find = (caller: string) => asCaller(caller, () => controller.findUserByPhone({ phoneE164: PHONE }));
+  const ensure = () =>
+    controller.ensureUserByPhone({ phoneE164: PHONE, firstName: 'Awa', lastName: 'Dossou' });
+
+  it('FindUserByPhone : numéro sans compte, réponse vide ; appelant non autorisé refusé', async () => {
+    await expect(find('cleaning')).resolves.toEqual({
+      found: false,
+      userId: '',
+      status: identityV1.UserStatus.USER_STATUS_UNSPECIFIED,
+    });
+    await expect(find('billing')).rejects.toMatchObject({ code: 'IDENTITY_CALLER_FORBIDDEN' });
+  });
+
+  it('EnsureUserByPhone : compte créé en attente, tracé avec l’admin lu dans les métadonnées', async () => {
+    const response = await runWithContext(
+      {
+        correlationId: 'c',
+        callerService: 'cleaning',
+        user: { userId: ADMIN, sessionId: 's', activeContext: 'personal', roles: [], mfa: true },
+      },
+      ensure,
+    );
+    expect(response).toEqual({
+      userId: expect.any(String),
+      status: identityV1.UserStatus.USER_STATUS_PENDING_VERIFICATION,
+      created: true,
+    });
+    expect(accounts.audit).toEqual([
+      expect.objectContaining({ actorId: 'cleaning', details: { requestedBy: ADMIN } }),
+    ]);
+    // Le compte existe désormais : il est rendu aux deux appels, jamais son numéro.
+    await expect(find('cleaning')).resolves.toEqual({
+      found: true,
+      userId: response.userId,
+      status: identityV1.UserStatus.USER_STATUS_PENDING_VERIFICATION,
+    });
+    await expect(asCaller('cleaning', ensure)).resolves.toEqual({ ...response, created: false });
   });
 });

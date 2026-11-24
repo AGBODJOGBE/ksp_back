@@ -1353,6 +1353,9 @@ model Agent {
   createdAt                 DateTime           @map("created_at") @db.Timestamptz(3)
   updatedAt                 DateTime           @map("updated_at") @db.Timestamptz(3)
   version                   Int                @default(0)
+  /// Piste A : attribution du rôle cleaning_agent chez identity (GrantRole, R-AG-01), posée quand
+  /// l'agent devient actif, effacée une fois le rôle retiré après la désactivation.
+  roleAssignmentId          String?            @map("role_assignment_id") @db.Uuid
   skills                    AgentSkill[]
   zones                     AgentZone[]
   availabilityRules         AvailabilityRule[]

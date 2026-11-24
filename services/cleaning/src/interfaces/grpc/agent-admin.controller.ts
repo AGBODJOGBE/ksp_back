@@ -7,16 +7,18 @@ import {
   ListAgentsUseCase,
   UpdateAgentUseCase,
 } from '../../application/agents/agent-admin.use-cases';
+import { CreateAgentUseCase } from '../../application/agents/agent-creation.use-case';
+import { GetAgentIdDocumentUseCase } from '../../application/agents/agent-id-document.use-case';
 import { AvailabilityUseCases } from '../../application/agents/availability.use-cases';
 import { TeamUseCases } from '../../application/agents/team.use-cases';
-import { CLEANING_DEPS, type CleaningDeps } from '../../application/deps';
-import { toAgent, toAgentPage, toAvailability, toTeam } from './agent-mappers';
+import { type AgentDeps, CLEANING_DEPS, type CleaningDeps } from '../../application/deps';
+import { toAgent, toAgentPage, toAvailability, toIdDocument, toTeam } from './agent-mappers';
 import { notImplemented } from './not-implemented';
 
 /**
  * Adaptateur gRPC d'AgentAdminService — back-office : agents, disponibilités, équipes (UC-NT-34 à
- * 36, lot D). Pas encore livrés : la pièce d'identité (lecture chez file), la création d'un agent
- * par l'admin (compte trouvé ou créé par téléphone chez identity) et l'invitation par SMS.
+ * 36, lot D) ; pièce d'identité d'un agent et création d'un agent par l'admin, compte trouvé ou créé
+ * par son téléphone chez identity (piste A). Pas encore livrée : l'invitation par SMS.
  */
 @Controller()
 @cleaningV1.AgentAdminServiceControllerMethods()
@@ -27,14 +29,20 @@ export class AgentAdminGrpcController implements cleaningV1.AgentAdminServiceCon
   private readonly status: ChangeAgentStatusUseCase;
   private readonly availability: AvailabilityUseCases;
   private readonly teams: TeamUseCases;
+  // Piste A (agents)
+  private readonly idDocument: GetAgentIdDocumentUseCase;
+  private readonly create: CreateAgentUseCase;
 
   constructor(@Inject(CLEANING_DEPS) deps: CleaningDeps) {
     this.list = new ListAgentsUseCase(deps);
     this.get = new GetAgentUseCase(deps);
     this.update = new UpdateAgentUseCase(deps);
-    this.status = new ChangeAgentStatusUseCase(deps);
+    this.status = new ChangeAgentStatusUseCase(deps as AgentDeps);
     this.availability = new AvailabilityUseCases(deps);
     this.teams = new TeamUseCases(deps);
+    // Piste A (agents)
+    this.idDocument = new GetAgentIdDocumentUseCase(deps);
+    this.create = new CreateAgentUseCase(deps as AgentDeps);
   }
 
   async listAgents(request: cleaningV1.ListAgentsRequest): Promise<cleaningV1.ListAgentsResponse> {
@@ -45,12 +53,14 @@ export class AgentAdminGrpcController implements cleaningV1.AgentAdminServiceCon
     return { agent: toAgent(await this.get.execute(request.agentId)) };
   }
 
-  getAgentIdDocument(): Promise<cleaningV1.GetAgentIdDocumentResponse> {
-    return notImplemented('GetAgentIdDocument');
+  async getAgentIdDocument(
+    request: cleaningV1.GetAgentIdDocumentRequest,
+  ): Promise<cleaningV1.GetAgentIdDocumentResponse> {
+    return { idDocument: toIdDocument(await this.idDocument.execute(request.agentId)) };
   }
 
-  createAgent(): Promise<cleaningV1.CreateAgentResponse> {
-    return notImplemented('CreateAgent');
+  async createAgent(request: cleaningV1.CreateAgentRequest): Promise<cleaningV1.CreateAgentResponse> {
+    return { agent: toAgent(await this.create.execute(request)) };
   }
 
   inviteAgent(): Promise<cleaningV1.InviteAgentResponse> {

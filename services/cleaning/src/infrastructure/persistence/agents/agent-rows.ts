@@ -45,6 +45,7 @@ export function toAgentRecord(row: AgentRow): AgentRecord {
     ratingSum: row.ratingSum,
     ratingCount: row.ratingCount,
     statusReason: row.statusReason,
+    roleAssignmentId: row.roleAssignmentId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     version: row.version,

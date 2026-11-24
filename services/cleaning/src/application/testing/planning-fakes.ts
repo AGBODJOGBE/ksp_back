@@ -4,13 +4,16 @@ import { type AgendaEntry, type TargetRef, travelFromMatrix } from '../../domain
 import { IN_FORCE_STATUSES } from '../../domain/planning/assignment-status';
 import { overlaps } from '../../domain/planning/time';
 import {
+  type AgentAccount,
+  type AgentAccounts,
   AgentAlreadyRegisteredError,
   type AgentRecord,
+  type AgentRoles,
   ConcurrentUpdateError,
   type PlanningSettings,
   type TeamRecord,
 } from '../agents/agent.ports';
-import { type CleaningDeps } from '../deps';
+import { type AgentDeps } from '../deps';
 import { type AuditEntry, type FieldCipher, type OutboxMessage } from '../ports';
 import {
   type AgentAssignmentRecord,
@@ -258,6 +261,7 @@ export class InMemoryPlanning implements PlanningRepository {
           ratingSum: 0,
           ratingCount: 0,
           statusReason: null,
+          roleAssignmentId: null,
           updatedAt: agent.createdAt,
           version: 0,
           skills: [],
@@ -388,6 +392,7 @@ export function agentRecord(id: string, extra: Partial<AgentRecord> = {}): Agent
     ratingSum: 0,
     ratingCount: 0,
     statusReason: null,
+    roleAssignmentId: null,
     createdAt: new Date('2026-11-01T08:00:00Z'),
     updatedAt: new Date('2026-11-01T08:00:00Z'),
     version: 0,
@@ -437,6 +442,68 @@ export const fakeCipher: FieldCipher = {
 
 export const NOW = new Date('2026-11-20T07:00:00Z');
 
+/**
+ * Faux d'identity pour le rôle cleaning_agent (piste A) : attributions en mémoire, idempotentes
+ * comme GrantRole et RevokeRole ; `failure` simule une panne ou un refus d'identity.
+ */
+export class FakeAgentRoles implements AgentRoles {
+  /** Attribution active de chaque compte. */
+  readonly active = new Map<string, string>();
+  readonly granted: { userId: string; reason: string }[] = [];
+  readonly revoked: { assignmentId: string; reason: string }[] = [];
+  /** Erreur levée par chaque appel tant qu'elle est posée. */
+  failure: Error | null = null;
+  private sequence = 0;
+
+  async grant(input: { userId: string; reason: string }): Promise<{ assignmentId: string }> {
+    if (this.failure) throw this.failure;
+    this.granted.push(input);
+    let assignmentId = this.active.get(input.userId);
+    if (!assignmentId) {
+      assignmentId = `0192f1c4-0000-7000-9000-${String(++this.sequence).padStart(12, '0')}`;
+      this.active.set(input.userId, assignmentId);
+    }
+    return { assignmentId };
+  }
+
+  async revoke(input: { assignmentId: string; reason: string }): Promise<void> {
+    if (this.failure) throw this.failure;
+    for (const [userId, assignmentId] of this.active) {
+      if (assignmentId !== input.assignmentId) continue;
+      this.active.delete(userId);
+      this.revoked.push(input);
+    }
+  }
+}
+
+/**
+ * Faux d'identity pour le compte d'un agent créé par l'admin (piste A) : un compte par numéro, créé
+ * « en attente de vérification » s'il manque ; `failure` simule une panne ou un refus d'identity.
+ */
+export class FakeAgentAccounts implements AgentAccounts {
+  /** Compte de chaque numéro normalisé. */
+  readonly byPhone = new Map<string, { userId: string; status: string }>();
+  readonly ensured: { phone: string; firstName: string; lastName: string }[] = [];
+  /** Comptes créés par un appel. */
+  readonly created: string[] = [];
+  failure: Error | null = null;
+  private sequence = 0;
+
+  async ensureByPhone(input: { phone: string; firstName: string; lastName: string }): Promise<AgentAccount> {
+    if (this.failure) throw this.failure;
+    this.ensured.push(input);
+    const existing = this.byPhone.get(input.phone);
+    if (existing) return { ...existing, created: false };
+    const account = {
+      userId: `0192f1c4-0000-7000-a000-${String(++this.sequence).padStart(12, '0')}`,
+      status: 'pending_verification',
+    };
+    this.byPhone.set(input.phone, account);
+    this.created.push(account.userId);
+    return { ...account, created: true };
+  }
+}
+
 /** Dépendances des cas d'usage du lot D, horloge fixe et identifiants prévisibles. */
 export function planningDeps(
   planning = new InMemoryPlanning(),
@@ -459,7 +526,10 @@ export function planningDeps(
       userNames: async (ids: readonly string[]) => new Map(ids.map((id) => [id, `Nom ${id}`])),
       organizationNames: async () => new Map<string, string>(),
     },
-  } as unknown as CleaningDeps;
+    // Piste A (agents)
+    roles: new FakeAgentRoles(),
+    accounts: new FakeAgentAccounts(),
+  } as unknown as AgentDeps;
   return { deps, planning, travelCalls };
 }
 

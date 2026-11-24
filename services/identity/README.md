@@ -124,6 +124,22 @@ organisation validée (`business`, avec `organization_name`), voir ci-dessous.
   numéro complet. Rôles `cleaning_admin`, `super_admin`, double authentification revérifiée.
 - `GetUsersByIds` sert aussi cleaning (noms affichés au back-office), sans téléphone ni e-mail.
 
+## Compte d'un numéro pour un service (CDC Nettoyage v2, R-AG-02)
+
+`IdentityService.FindUserByPhone` et `EnsureUserByPhone` servent cleaning, quand l'admin du Nettoyage
+crée un agent ou invite une personne par son numéro. Appelants : liste fermée dans le code
+(`PHONE_ACCOUNT_CALLERS`, cleaning seul), sur le modèle de `ROLE_GRANT_CALLERS` ; tout autre
+service → `IDENTITY_CALLER_FORBIDDEN`.
+
+| Règle               | Fonctionnement                                                                                                                                                                                                                                                                                                             |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Numéro              | Contrôlé et normalisé par identity (`PhoneNumber`, ADR-063) ; mal formé → `IDENTITY_PHONE_INVALID`. La réponse ne rend que l'identifiant et l'état du compte, jamais le numéro ni le nom.                                                                                                                                  |
+| `FindUserByPhone`   | Lecture seule. Aucun compte pour ce numéro, ou compte supprimé : `found = false`.                                                                                                                                                                                                                                          |
+| `EnsureUserByPhone` | Rend le compte du numéro, ou le crée `pending_verification` avec le prénom et le nom reçus (règles du profil, sinon `IDENTITY_NAME_INVALID`) et un numéro principal non vérifié. Un compte existant n'est jamais modifié. Deux appels simultanés ne créent qu'un compte (index unique des numéros).                        |
+| Compte inutilisable | Suspendu, verrouillé, en cours de suppression ou supprimé : `IDENTITY_ACCOUNT_NOT_USABLE` (`details.status`), rien n'est créé.                                                                                                                                                                                             |
+| Traces              | Compte créé : `identity.user.registered` (sans téléphone, comme à la première vérification) et ligne `user.registered_by_service` dans `audit_log`, dans la même transaction. Auteur : le service appelant ; `details.requestedBy` : le membre du personnel à l'origine, lu dans les métadonnées de l'appel (`x-user-id`). |
+| Première connexion  | À la première validation d'un code (`VerifyOtp`), le compte en attente devient actif, son numéro est vérifié et `identity.user.verified` (`verifiedVia: phone`) est publié, dans la transaction de la connexion. Tant qu'il est en attente, `GrantRole` le refuse (`IDENTITY_ACCOUNT_NOT_ACTIVE`).                         |
+
 ## Confiance et comptes (ADR-050)
 
 - **Essais des codes** (téléphone, e-mail, double authentification) : l'essai est pris en base, de façon atomique, avant de comparer le code ; des essais simultanés ne dépassent jamais le plafond.

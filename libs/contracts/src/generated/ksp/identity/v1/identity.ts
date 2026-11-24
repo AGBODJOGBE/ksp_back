@@ -344,6 +344,40 @@ export interface GetCatalogResponse {
   roles: RoleDefinition[];
 }
 
+export interface FindUserByPhoneRequest {
+  /** Numéro au format E.164 ; espaces, points, tirets et préfixe 00 tolérés. */
+  phoneE164: string;
+}
+
+export interface FindUserByPhoneResponse {
+  /** false : aucun compte pour ce numéro, ou compte supprimé ; les autres champs sont alors vides. */
+  found: boolean;
+  userId: string;
+  status: UserStatus;
+}
+
+export interface EnsureUserByPhoneRequest {
+  /** Numéro au format E.164 ; espaces, points, tirets et préfixe 00 tolérés. */
+  phoneE164: string;
+  /**
+   * Prénom et nom du compte à créer : lettres, espaces, trait d'union, apostrophe et point, 100
+   * caractères au plus (règles du profil). Contrôlés à chaque appel, ignorés si le compte existe.
+   */
+  firstName: string;
+  lastName: string;
+}
+
+export interface EnsureUserByPhoneResponse {
+  userId: string;
+  /**
+   * USER_STATUS_ACTIVE, ou USER_STATUS_PENDING_VERIFICATION tant que le titulaire ne s'est pas
+   * connecté par code.
+   */
+  status: UserStatus;
+  /** true : le compte vient d'être créé par cet appel. */
+  created: boolean;
+}
+
 export interface RequestOtpRequest {
   phoneE164: string;
   /**
@@ -1337,6 +1371,34 @@ export interface IdentityServiceClient {
   registerCatalog(request: RegisterCatalogRequest, metadata?: Metadata): Observable<RegisterCatalogResponse>;
 
   getCatalog(request: GetCatalogRequest, metadata?: Metadata): Observable<GetCatalogResponse>;
+
+  /**
+   * Compte d'un numéro de téléphone, pour un service (R-AG-02 du CDC Nettoyage v2 : agent créé ou
+   * invité par l'admin du Nettoyage). Appelants autorisés (IDENTITY_PHONE_ACCOUNT_CALLERS) : cleaning
+   * seulement. Le numéro est contrôlé et normalisé par identity (E.164 ; numéro béninois à 8 chiffres
+   * ramené à 10, ADR-063). La réponse ne rend ni le numéro ni le nom : l'identifiant et l'état du
+   * compte seulement.
+   * - FindUserByPhone : lecture seule. Aucun compte pour ce numéro, ou compte supprimé : found = false.
+   * - EnsureUserByPhone : rend le compte du numéro, ou le crée « en attente de vérification »
+   *   (USER_STATUS_PENDING_VERIFICATION) avec le prénom et le nom reçus ; le compte devient actif à sa
+   *   première connexion par code (VerifyOtp), qui vérifie son téléphone. Un compte existant n'est
+   *   jamais modifié : son nom et son état restent les siens. Deux appels simultanés pour le même
+   *   numéro ne créent qu'un compte. Compte créé : événement identity.user.registered et trace
+   *   d'audit (auteur : le service appelant ; le membre du personnel à l'origine de la demande est lu
+   *   dans les métadonnées de l'appel, x-user-id).
+   * Erreurs :
+   *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED    service appelant non autorisé
+   *   IDENTITY_PHONE_INVALID       INVALID_ARGUMENT     numéro mal formé
+   *   IDENTITY_NAME_INVALID        INVALID_ARGUMENT     EnsureUserByPhone : prénom ou nom absent ou mal
+   *                                                     formé (details.field : firstName, lastName)
+   *   IDENTITY_ACCOUNT_NOT_USABLE  FAILED_PRECONDITION  EnsureUserByPhone : compte suspendu, verrouillé,
+   *                                                     en cours de suppression ou supprimé
+   *                                                     (details.status) ; rien n'est créé
+   */
+
+  findUserByPhone(request: FindUserByPhoneRequest, metadata?: Metadata): Observable<FindUserByPhoneResponse>;
+
+  ensureUserByPhone(request: EnsureUserByPhoneRequest, metadata?: Metadata): Observable<EnsureUserByPhoneResponse>;
 }
 
 /** Appelé par tous les services autorisés par la carte des services. */
@@ -1456,6 +1518,40 @@ export interface IdentityServiceController {
     request: GetCatalogRequest,
     metadata?: Metadata,
   ): Promise<GetCatalogResponse> | Observable<GetCatalogResponse> | GetCatalogResponse;
+
+  /**
+   * Compte d'un numéro de téléphone, pour un service (R-AG-02 du CDC Nettoyage v2 : agent créé ou
+   * invité par l'admin du Nettoyage). Appelants autorisés (IDENTITY_PHONE_ACCOUNT_CALLERS) : cleaning
+   * seulement. Le numéro est contrôlé et normalisé par identity (E.164 ; numéro béninois à 8 chiffres
+   * ramené à 10, ADR-063). La réponse ne rend ni le numéro ni le nom : l'identifiant et l'état du
+   * compte seulement.
+   * - FindUserByPhone : lecture seule. Aucun compte pour ce numéro, ou compte supprimé : found = false.
+   * - EnsureUserByPhone : rend le compte du numéro, ou le crée « en attente de vérification »
+   *   (USER_STATUS_PENDING_VERIFICATION) avec le prénom et le nom reçus ; le compte devient actif à sa
+   *   première connexion par code (VerifyOtp), qui vérifie son téléphone. Un compte existant n'est
+   *   jamais modifié : son nom et son état restent les siens. Deux appels simultanés pour le même
+   *   numéro ne créent qu'un compte. Compte créé : événement identity.user.registered et trace
+   *   d'audit (auteur : le service appelant ; le membre du personnel à l'origine de la demande est lu
+   *   dans les métadonnées de l'appel, x-user-id).
+   * Erreurs :
+   *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED    service appelant non autorisé
+   *   IDENTITY_PHONE_INVALID       INVALID_ARGUMENT     numéro mal formé
+   *   IDENTITY_NAME_INVALID        INVALID_ARGUMENT     EnsureUserByPhone : prénom ou nom absent ou mal
+   *                                                     formé (details.field : firstName, lastName)
+   *   IDENTITY_ACCOUNT_NOT_USABLE  FAILED_PRECONDITION  EnsureUserByPhone : compte suspendu, verrouillé,
+   *                                                     en cours de suppression ou supprimé
+   *                                                     (details.status) ; rien n'est créé
+   */
+
+  findUserByPhone(
+    request: FindUserByPhoneRequest,
+    metadata?: Metadata,
+  ): Promise<FindUserByPhoneResponse> | Observable<FindUserByPhoneResponse> | FindUserByPhoneResponse;
+
+  ensureUserByPhone(
+    request: EnsureUserByPhoneRequest,
+    metadata?: Metadata,
+  ): Promise<EnsureUserByPhoneResponse> | Observable<EnsureUserByPhoneResponse> | EnsureUserByPhoneResponse;
 }
 
 export function IdentityServiceControllerMethods() {
@@ -1470,6 +1566,8 @@ export function IdentityServiceControllerMethods() {
       "revokeRole",
       "registerCatalog",
       "getCatalog",
+      "findUserByPhone",
+      "ensureUserByPhone",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);

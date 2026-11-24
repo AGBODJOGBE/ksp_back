@@ -74,6 +74,29 @@ service IdentityService {
   // d'un autre service, rôle qui coche une permission inconnue).
   rpc RegisterCatalog(RegisterCatalogRequest) returns (RegisterCatalogResponse);
   rpc GetCatalog(GetCatalogRequest) returns (GetCatalogResponse);
+  // Compte d'un numéro de téléphone, pour un service (R-AG-02 du CDC Nettoyage v2 : agent créé ou
+  // invité par l'admin du Nettoyage). Appelants autorisés (IDENTITY_PHONE_ACCOUNT_CALLERS) : cleaning
+  // seulement. Le numéro est contrôlé et normalisé par identity (E.164 ; numéro béninois à 8 chiffres
+  // ramené à 10, ADR-063). La réponse ne rend ni le numéro ni le nom : l'identifiant et l'état du
+  // compte seulement.
+  // - FindUserByPhone : lecture seule. Aucun compte pour ce numéro, ou compte supprimé : found = false.
+  // - EnsureUserByPhone : rend le compte du numéro, ou le crée « en attente de vérification »
+  //   (USER_STATUS_PENDING_VERIFICATION) avec le prénom et le nom reçus ; le compte devient actif à sa
+  //   première connexion par code (VerifyOtp), qui vérifie son téléphone. Un compte existant n'est
+  //   jamais modifié : son nom et son état restent les siens. Deux appels simultanés pour le même
+  //   numéro ne créent qu'un compte. Compte créé : événement identity.user.registered et trace
+  //   d'audit (auteur : le service appelant ; le membre du personnel à l'origine de la demande est lu
+  //   dans les métadonnées de l'appel, x-user-id).
+  // Erreurs :
+  //   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED    service appelant non autorisé
+  //   IDENTITY_PHONE_INVALID       INVALID_ARGUMENT     numéro mal formé
+  //   IDENTITY_NAME_INVALID        INVALID_ARGUMENT     EnsureUserByPhone : prénom ou nom absent ou mal
+  //                                                     formé (details.field : firstName, lastName)
+  //   IDENTITY_ACCOUNT_NOT_USABLE  FAILED_PRECONDITION  EnsureUserByPhone : compte suspendu, verrouillé,
+  //                                                     en cours de suppression ou supprimé
+  //                                                     (details.status) ; rien n'est créé
+  rpc FindUserByPhone(FindUserByPhoneRequest) returns (FindUserByPhoneResponse);
+  rpc EnsureUserByPhone(EnsureUserByPhoneRequest) returns (EnsureUserByPhoneResponse);
 }
 
 enum UserStatus {
@@ -301,6 +324,36 @@ message GetCatalogRequest {
 message GetCatalogResponse {
   repeated Permission permissions = 1;
   repeated RoleDefinition roles = 2;
+}
+
+message FindUserByPhoneRequest {
+  // Numéro au format E.164 ; espaces, points, tirets et préfixe 00 tolérés.
+  string phone_e164 = 1;
+}
+
+message FindUserByPhoneResponse {
+  // false : aucun compte pour ce numéro, ou compte supprimé ; les autres champs sont alors vides.
+  bool found = 1;
+  string user_id = 2;
+  UserStatus status = 3;
+}
+
+message EnsureUserByPhoneRequest {
+  // Numéro au format E.164 ; espaces, points, tirets et préfixe 00 tolérés.
+  string phone_e164 = 1;
+  // Prénom et nom du compte à créer : lettres, espaces, trait d'union, apostrophe et point, 100
+  // caractères au plus (règles du profil). Contrôlés à chaque appel, ignorés si le compte existe.
+  string first_name = 2;
+  string last_name = 3;
+}
+
+message EnsureUserByPhoneResponse {
+  string user_id = 1;
+  // USER_STATUS_ACTIVE, ou USER_STATUS_PENDING_VERIFICATION tant que le titulaire ne s'est pas
+  // connecté par code.
+  UserStatus status = 2;
+  // true : le compte vient d'être créé par cet appel.
+  bool created = 3;
 }
 
 // ---------------------------------------------------------------------------

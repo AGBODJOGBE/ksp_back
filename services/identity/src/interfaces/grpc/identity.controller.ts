@@ -3,6 +3,10 @@ import { currentContext } from '@ksp/platform';
 import { Controller } from '@nestjs/common';
 import { GetOrganizationsUseCase } from '../../application/directory/get-organizations.use-case';
 import { GetUsersUseCase } from '../../application/directory/get-users.use-case';
+import {
+  EnsureUserByPhoneUseCase,
+  FindUserByPhoneUseCase,
+} from '../../application/provisioning/phone-accounts.use-cases';
 import { GetCatalogUseCase, RegisterCatalogUseCase } from '../../application/rbac/catalog.use-cases';
 import {
   CheckPermissionUseCase,
@@ -12,7 +16,7 @@ import {
 } from '../../application/rbac/service-roles.use-cases';
 import { type RoleScopeType } from '../../domain/role/role';
 import { toPermissionMessage } from './account-admin.controller';
-import { toOrganizationProfileMessage, toUserMessage } from './mappers';
+import { toOrganizationProfileMessage, toUserMessage, USER_STATUS } from './mappers';
 
 const SCOPE_TYPE: Record<RoleScopeType, identityV1.ScopeType> = {
   global: identityV1.ScopeType.SCOPE_TYPE_GLOBAL,
@@ -33,6 +37,7 @@ const SCOPE_TYPE_IN = new Map<identityV1.ScopeType, RoleScopeType>(
  * GetOrganizationsByIds sert billing (en-tête des factures) et notification (e-mail de facturation).
  * Rôles et permissions (ADR-057) : catalogue déclaré par chaque service, attribution par cleaning,
  * personnel à prévenir pour notification, contrôle à jour des actions sensibles.
+ * Compte d'un numéro de téléphone, lu ou créé pour cleaning (agent créé ou invité, R-AG-02).
  */
 @Controller()
 @identityV1.IdentityServiceControllerMethods()
@@ -46,6 +51,8 @@ export class IdentityGrpcController implements identityV1.IdentityServiceControl
     private readonly revokeRoleUseCase: RevokeRoleUseCase,
     private readonly listStaffByPermissionUseCase: ListStaffByPermissionUseCase,
     private readonly checkPermissionUseCase: CheckPermissionUseCase,
+    private readonly findUserByPhoneUseCase: FindUserByPhoneUseCase,
+    private readonly ensureUserByPhoneUseCase: EnsureUserByPhoneUseCase,
   ) {}
 
   async getUser(request: identityV1.GetUserRequest): Promise<identityV1.GetUserResponse> {
@@ -139,6 +146,29 @@ export class IdentityGrpcController implements identityV1.IdentityServiceControl
     return { accepted: true, ...result };
   }
 
+  async findUserByPhone(
+    request: identityV1.FindUserByPhoneRequest,
+  ): Promise<identityV1.FindUserByPhoneResponse> {
+    const result = await this.findUserByPhoneUseCase.execute(callerService(), {
+      phone: request.phoneE164,
+    });
+    return result.found
+      ? { found: true, userId: result.userId, status: USER_STATUS[result.status] }
+      : { found: false, userId: '', status: identityV1.UserStatus.USER_STATUS_UNSPECIFIED };
+  }
+
+  async ensureUserByPhone(
+    request: identityV1.EnsureUserByPhoneRequest,
+  ): Promise<identityV1.EnsureUserByPhoneResponse> {
+    const account = await this.ensureUserByPhoneUseCase.execute(callerService(), {
+      phone: request.phoneE164,
+      firstName: request.firstName,
+      lastName: request.lastName,
+      requestedBy: originUserId(),
+    });
+    return { userId: account.userId, status: USER_STATUS[account.status], created: account.created };
+  }
+
   async getCatalog(request: identityV1.GetCatalogRequest): Promise<identityV1.GetCatalogResponse> {
     const catalog = await this.getCatalogUseCase.execute(request.service);
     return {
@@ -155,6 +185,11 @@ export class IdentityGrpcController implements identityV1.IdentityServiceControl
       })),
     };
   }
+}
+
+/** Membre du personnel à l'origine de l'appel d'un service, transmis par le kit (x-user-id) ; null sinon. */
+function originUserId(): string | null {
+  return currentContext()?.user?.userId ?? null;
 }
 
 /** Renseigné par le kit après vérification du jeton de service ; absent sans vérificateur (développement). */

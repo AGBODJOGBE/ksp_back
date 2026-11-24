@@ -74,6 +74,15 @@ import {
   RETENTION_PURGE_INTERVAL_MS,
   RetentionPurgeService,
 } from './infrastructure/scheduling/retention-purge.service';
+// Piste A (agents)
+import { IdentityAgentAccounts } from './infrastructure/identity/identity-agent-accounts';
+import { IdentityAgentRoles } from './infrastructure/identity/identity-agent-roles';
+import { IdentityPermissionCatalog } from './infrastructure/identity/identity-permission-catalog';
+import {
+  CATALOG_REGISTRATION_RETRY_MS,
+  PERMISSION_CATALOG_REGISTRY,
+  PermissionCatalogRegistrationService,
+} from './infrastructure/identity/permission-catalog-registration.service';
 
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
 const WALLET_CLIENT = Symbol('WALLET_CLIENT');
@@ -225,6 +234,15 @@ export class AppModule {
               claims: new PrismaClaimRepository(prisma, ids),
               // --- Piste S : obligations, effacement à la suppression d'un compte, purge ------
               personalData: new PrismaPersonalDataRepository(prisma),
+              // --- Piste A (agents) ----------------------------------------------------------
+              roles: new IdentityAgentRoles(
+                identityGrpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
+                caller('identity'),
+              ),
+              accounts: new IdentityAgentAccounts(
+                identityGrpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
+                caller('identity'),
+              ),
             };
           },
         },
@@ -245,6 +263,21 @@ export class AppModule {
         AccountErasureConsumer,
         { provide: RETENTION_PURGE_INTERVAL_MS, useValue: config.CLEANING_LOCATION_PURGE_INTERVAL_MS },
         RetentionPurgeService,
+        // --- Piste A (agents) : catalogue des permissions déclaré à identity au démarrage ---------
+        {
+          provide: PERMISSION_CATALOG_REGISTRY,
+          inject: [IDENTITY_CLIENT, { token: SERVICE_TOKEN_PROVIDER, optional: true }],
+          useFactory: (identityGrpc: ClientGrpc, serviceTokens: ServiceTokenProvider | undefined) =>
+            new IdentityPermissionCatalog(
+              identityGrpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
+              new GrpcCaller({
+                target: 'identity',
+                ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
+              }),
+            ),
+        },
+        { provide: CATALOG_REGISTRATION_RETRY_MS, useValue: config.CLEANING_CATALOG_REGISTRATION_RETRY_MS },
+        PermissionCatalogRegistrationService,
       ],
     };
   }

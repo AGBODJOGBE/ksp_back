@@ -43,6 +43,12 @@ export interface AgentRecord {
   ratingSum: number;
   ratingCount: number;
   statusReason: string | null;
+  /**
+   * Attribution du rôle cleaning_agent chez identity (R-AG-01) : posée quand l'agent devient actif,
+   * gardée pendant une suspension, effacée une fois le rôle retiré après la désactivation. Null :
+   * l'agent n'a pas de rôle attribué par le service.
+   */
+  roleAssignmentId: string | null;
   createdAt: Date;
   updatedAt: Date;
   version: number;
@@ -104,6 +110,8 @@ export interface AgentPatch {
   emergencyContactEncrypted?: string | null;
   maxHoursDay?: number;
   maxHoursWeek?: number;
+  /** Attribution du rôle cleaning_agent chez identity ; null : rôle retiré. */
+  roleAssignmentId?: string | null;
   updatedAt: Date;
 }
 
@@ -145,4 +153,39 @@ export class AgentAlreadyRegisteredError extends Error {
 /** Version attendue dépassée : un autre appel a modifié l'enregistrement entre-temps. */
 export class ConcurrentUpdateError extends Error {
   override readonly name = 'ConcurrentUpdateError';
+}
+
+// --- Piste A (agents) --------------------------------------------------------------------------
+
+/**
+ * Rôle cleaning_agent chez identity (GrantRole et RevokeRole, R-AG-01 ; ADR-057, décision 8) : la
+ * seule attribution faite par un service, avec son jeton de service. Les deux appels sont
+ * idempotents : attribuer rend l'attribution active du compte quand elle existe déjà ; retirer une
+ * attribution déjà retirée, ou inconnue d'identity, est sans effet. identity injoignable : AppError
+ * IDENTITY_UNAVAILABLE (UNAVAILABLE) ; ses refus (compte inconnu ou pas actif, rôle désactivé) sont
+ * transmis tels quels.
+ */
+export interface AgentRoles {
+  grant(input: { userId: string; reason: string }): Promise<{ assignmentId: string }>;
+  revoke(input: { assignmentId: string; reason: string }): Promise<void>;
+}
+
+/** Compte KSP d'un agent chez identity : jamais son numéro ni son nom. */
+export interface AgentAccount {
+  userId: string;
+  /** État du compte chez identity : `active`, ou `pending_verification` avant sa première connexion. */
+  status: string;
+  /** Le compte vient d'être créé par cet appel. */
+  created: boolean;
+}
+
+/**
+ * Compte KSP d'un agent créé par l'admin (identity.EnsureUserByPhone, R-AG-02) : identity rend le
+ * compte du numéro, ou le crée « en attente de vérification » avec le prénom et le nom reçus ; il
+ * contrôle et normalise le numéro. Appel idempotent : rejoué, il rend le même compte. identity
+ * injoignable : AppError IDENTITY_UNAVAILABLE (UNAVAILABLE) ; ses refus (numéro ou nom mal formé,
+ * compte suspendu ou supprimé) sont transmis tels quels.
+ */
+export interface AgentAccounts {
+  ensureByPhone(input: { phone: string; firstName: string; lastName: string }): Promise<AgentAccount>;
 }

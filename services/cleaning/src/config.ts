@@ -57,6 +57,13 @@ export const configSchema = baseServiceConfigSchema
      * 0 : tâche désactivée.
      */
     CLEANING_LOCATION_PURGE_INTERVAL_MS: z.coerce.number().int().min(0).max(86_400_000).default(21_600_000),
+    // --- Piste A (agents) ----------------------------------------------------------------------
+    /**
+     * Déclaration du catalogue des permissions à identity au démarrage (RegisterCatalog, R-RB-01) :
+     * attente avant le deuxième essai, en ms, doublée à chaque échec (10 minutes au plus) ;
+     * 0 = déclaration désactivée.
+     */
+    CLEANING_CATALOG_REGISTRATION_RETRY_MS: z.coerce.number().int().min(0).max(600_000).default(5_000),
   })
   .refine(
     (cfg) =>

@@ -8,7 +8,7 @@ import {
 } from '../../domain/agents/agent';
 import { type EmploymentKind } from '../../domain/planning/assignment-status';
 import { planningError } from '../../domain/planning/errors';
-import { type CleaningDeps } from '../deps';
+import { type AgentDeps, type CleaningDeps } from '../deps';
 import { type AuditEntry, type OutboxMessage } from '../ports';
 import { assignmentsByIds, audit, releaseAssignments } from '../planning/assignment-support';
 import { type PlanningTx } from '../planning/planning.ports';
@@ -202,9 +202,41 @@ const ACTIONS: Readonly<Record<AgentAction, { to: AgentStatus; from?: AgentStatu
 /** Motifs système enregistrés sur les affectations retirées (R-PL-09). */
 const RELEASE_REASONS = { suspend: 'agent_suspended', deactivate: 'agent_deactivated' } as const;
 
-/** Changement de statut d'un agent (partie 9.1, transitions de 15.2). */
+/** Motifs tracés par identity dans son journal d'audit, avec cleaning pour auteur (R-AG-01). */
+const ROLE_REASONS = {
+  approve: 'Agent validé',
+  reactivate: 'Agent réactivé',
+  deactivate: 'Agent désactivé',
+  unused: 'Validation non enregistrée',
+} as const;
+
+/** Transition refusée d'après le statut de départ exigé par l'action. */
+function requireStart(action: AgentAction, status: AgentStatus): void {
+  const { to, from } = ACTIONS[action];
+  if (from && status !== from) {
+    throw planningAppError(planningError('CLEANING_INVALID_TRANSITION', { from: status, to }));
+  }
+}
+
+/**
+ * Changement de statut d'un agent (partie 9.1, transitions de 15.2).
+ *
+ * Rôle cleaning_agent (R-AG-01, ADR-057 décision 8) : jamais d'agent actif sans rôle. identity et
+ * cleaning n'écrivent pas dans la même transaction ; l'ordre des deux écritures fait qu'un échec
+ * laisse toujours un état sans danger et rejouable :
+ * - validation et réactivation : le rôle est attribué (GrantRole, idempotent) AVANT que l'agent ne
+ *   devienne actif. identity injoignable ou qui refuse : l'action échoue, rien n'est écrit. Écriture
+ *   locale en échec après l'attribution : il reste un rôle sans agent actif, sans effet (le service
+ *   contrôle le statut de l'agent à chaque appel) ; rejouer l'action retrouve la même attribution ;
+ * - désactivation : le statut est écrit AVANT le retrait du rôle (RevokeRole, idempotent).
+ *   L'attribution reste notée sur la fiche tant que le rôle n'est pas retiré : si identity est
+ *   injoignable, l'action échoue (indisponibilité) alors que l'agent est déjà désactivé, et la
+ *   rejouer avec la même clé reprend le retrait. L'ordre inverse laisserait, sur un échec de
+ *   l'écriture locale, un agent actif sans rôle ;
+ * - suspension : le rôle est gardé (un agent suspendu n'est plus affecté et ne peut plus agir).
+ */
 export class ChangeAgentStatusUseCase {
-  constructor(private readonly deps: CleaningDeps) {}
+  constructor(private readonly deps: AgentDeps) {}
 
   async execute(input: {
     action: AgentAction;
@@ -229,20 +261,66 @@ export class ChangeAgentStatusUseCase {
     if (!(await replayed(this.deps.planning, ref, hash))) {
       if (input.action === 'approve') await requireCatalog(this.deps, skillCodes, []);
       const existing = await requireAgent(this.deps.planning, input.agentId);
+      // Refusée d'après une première lecture, avant tout appel à identity ; relue sous verrou ensuite.
+      requireStart(input.action, existing.status);
+      const role =
+        input.action === 'approve' || input.action === 'reactivate'
+          ? await this.deps.roles.grant({ userId: existing.userId, reason: ROLE_REASONS[input.action] })
+          : null;
       const now = this.deps.clock.now();
       try {
         await this.deps.planning.transaction(async (tx) => {
           await tx.lockAgents([existing.id]);
           const agent = await requireAgent(tx, existing.id);
-          const changes = await this.apply(tx, agent, input, reason, actorId, now);
+          const changes = await this.apply(tx, agent, input, reason, actorId, now, role?.assignmentId);
           await tx.write(changes);
           await tx.remember({ ...ref, requestHash: hash, response: { agentId: agent.id } });
         });
       } catch (error) {
+        if (role) await this.dropUnusedRole(existing.id, role.assignmentId);
         throw writeError(error);
       }
     }
-    return agentProfile(this.deps, await requireAgent(this.deps.planning, input.agentId));
+    const agent = await this.withoutPendingRole(await requireAgent(this.deps.planning, input.agentId));
+    return agentProfile(this.deps, agent);
+  }
+
+  /**
+   * Agent désactivé dont l'attribution est encore notée : le rôle est retiré chez identity, puis
+   * l'attribution effacée de la fiche. Fait après chaque action, rejeu compris : un retrait resté en
+   * attente (identity injoignable) reprend quand l'admin rejoue la désactivation.
+   */
+  private async withoutPendingRole(agent: AgentRecord): Promise<AgentRecord> {
+    const assignmentId = agent.roleAssignmentId;
+    if (agent.status !== 'deactivated' || !assignmentId) return agent;
+    await this.deps.roles.revoke({ assignmentId, reason: ROLE_REASONS.deactivate });
+    const now = this.deps.clock.now();
+    try {
+      await this.deps.planning.transaction(async (tx) => {
+        await tx.lockAgents([agent.id]);
+        const current = await requireAgent(tx, agent.id);
+        if (current.roleAssignmentId !== assignmentId) return;
+        await tx.updateAgent(current.id, current.version, { roleAssignmentId: null, updatedAt: now });
+      });
+    } catch (error) {
+      throw writeError(error);
+    }
+    return requireAgent(this.deps.planning, agent.id);
+  }
+
+  /**
+   * L'écriture a échoué après l'attribution du rôle (agent modifié entre-temps par un autre appel) :
+   * le rôle est retiré s'il n'appartient ni à un agent actif ni à la fiche de l'agent. Au mieux : un
+   * échec ici laisse un rôle sans agent actif, sans effet, que le rejeu de l'action retrouve.
+   */
+  private async dropUnusedRole(agentId: string, assignmentId: string): Promise<void> {
+    try {
+      const agent = await this.deps.planning.agentById(agentId);
+      if (!agent || agent.status === 'active' || agent.roleAssignmentId === assignmentId) return;
+      await this.deps.roles.revoke({ assignmentId, reason: ROLE_REASONS.unused });
+    } catch {
+      // L'erreur rendue à l'appelant reste celle de l'écriture.
+    }
   }
 
   private async apply(
@@ -252,11 +330,10 @@ export class ChangeAgentStatusUseCase {
     reason: string | null,
     actorId: string,
     now: Date,
+    roleAssignmentId: string | undefined,
   ): Promise<{ events: OutboxMessage[]; audit: AuditEntry[] }> {
-    const { to, from } = ACTIONS[input.action];
-    if (from && agent.status !== from) {
-      throw planningAppError(planningError('CLEANING_INVALID_TRANSITION', { from: agent.status, to }));
-    }
+    const { to } = ACTIONS[input.action];
+    requireStart(input.action, agent.status);
     const decision = transitionAgent(agent.status, to, reason);
     if (!decision.ok) throw refusal(decision.errors);
     const events: OutboxMessage[] = [];
@@ -290,6 +367,8 @@ export class ChangeAgentStatusUseCase {
       status: to,
       statusReason: reason,
       ...(reviewing ? { reviewedBy: actorId, reviewedAt: now } : {}),
+      // Agent qui devient actif : attribution du rôle notée avec le statut (retirée à la désactivation).
+      ...(roleAssignmentId ? { roleAssignmentId } : {}),
       updatedAt: now,
     });
 
@@ -299,7 +378,8 @@ export class ChangeAgentStatusUseCase {
       await tx.replaceSkills(agent.id, skills, actorId, now);
       const validated = skills.filter((s) => s.status === 'validated').map((s) => s.code);
       trail.push(audit(actorId, 'agent.skills_validated', 'agent', agent.id, now, { skillCodes: validated }));
-      // R-AG-01 : identity donne le rôle cleaning_agent à l'écoute de cet événement.
+      // R-AG-01 : le rôle cleaning_agent est déjà attribué (GrantRole, avant cette écriture) ;
+      // l'événement prévient l'agent de sa validation (notification).
       events.push({
         type: 'cleaning.agent.approved',
         payload: {

@@ -27,6 +27,10 @@ import {
 } from './application/deletion/account-deletion.use-cases';
 import { GetOrganizationsUseCase } from './application/directory/get-organizations.use-case';
 import { GetUsersUseCase } from './application/directory/get-users.use-case';
+import {
+  EnsureUserByPhoneUseCase,
+  FindUserByPhoneUseCase,
+} from './application/provisioning/phone-accounts.use-cases';
 import { ChangeEmailUseCase } from './application/email/change-email.use-case';
 import { ConfirmEmailUseCase } from './application/email/confirm-email.use-case';
 import { PendingEmails } from './application/email/pending-email';
@@ -107,6 +111,7 @@ import { CryptoOtpCodeGenerator } from './infrastructure/otp/crypto-otp-code-gen
 import { HmacOtpHasher } from './infrastructure/otp/hmac-otp-hasher';
 import { NotificationOtpSender } from './infrastructure/otp/notification-otp-sender';
 import { PrismaOtpChallengeRepository } from './infrastructure/otp/prisma-otp-challenge.repository';
+import { PrismaPendingAccountRepository } from './infrastructure/provisioning/prisma-pending-account.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { ConfigServiceClientRegistry } from './infrastructure/service-token/config-service-client-registry';
 import { AccountAdminGrpcController } from './interfaces/grpc/account-admin.controller';
@@ -243,6 +248,19 @@ export class AppModule {
             ),
         },
         PrismaLoginRepository,
+        // Compte d'un numéro lu ou créé pour cleaning (FindUserByPhone, EnsureUserByPhone ; R-AG-02).
+        PrismaPendingAccountRepository,
+        {
+          provide: FindUserByPhoneUseCase,
+          inject: [PrismaLoginRepository],
+          useFactory: (accounts: PrismaLoginRepository) => new FindUserByPhoneUseCase(accounts),
+        },
+        {
+          provide: EnsureUserByPhoneUseCase,
+          inject: [PrismaLoginRepository, PrismaPendingAccountRepository],
+          useFactory: (accounts: PrismaLoginRepository, pending: PrismaPendingAccountRepository) =>
+            new EnsureUserByPhoneUseCase(accounts, pending, new UuidV7Generator(), new SystemClock()),
+        },
         PrismaRoleRepository,
         PrismaRbacRepository,
         PrismaMfaRepository,

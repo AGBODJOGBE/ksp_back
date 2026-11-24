@@ -1,10 +1,12 @@
 import { type EmploymentKind } from '../../domain/planning/assignment-status';
 import { type CleaningDeps } from '../deps';
+import { type PlanningTx } from '../planning/planning.ports';
+import { type OutboxMessage } from '../ports';
 import { requireConnectedUser } from '../shared/access';
 import { cleaningErrors } from '../shared/errors';
 import { replayed } from '../shared/idempotency';
 import { idempotencyKey, requestHash, requireUuid, text } from '../shared/input';
-import { AgentAlreadyRegisteredError } from './agent.ports';
+import { AgentAlreadyRegisteredError, type PlanningSettings } from './agent.ports';
 import { agentProfile, type AgentProfile, cipherContext, parseWeekly } from './agent-views';
 
 /**
@@ -86,6 +88,107 @@ export async function requireCatalog(
   if (zones.length) throw cleaningErrors.zoneNotFound(zones);
 }
 
+export type AgentApplication = ReturnType<typeof parseApplication>;
+
+/** Prénom et nom de la candidature, contrôlés comme dans parseApplication (créés chez identity). */
+export function applicantName(input: Pick<AgentApplicationInput, 'firstName' | 'lastName'>): {
+  firstName: string;
+  lastName: string;
+} {
+  return {
+    firstName: required(input.firstName, 'firstName'),
+    lastName: required(input.lastName, 'lastName'),
+  };
+}
+
+/**
+ * Fichiers de la candidature (photo, pièce d'identité) rattachés chez file au nom de l'agent, avant
+ * d'enregistrer leur référence (RV-102). `ownerId` : le compte qui les a envoyés, l'agent pour une
+ * inscription, l'admin quand il crée l'agent.
+ */
+export async function attachApplicationFiles(
+  deps: CleaningDeps,
+  agentId: string,
+  application: AgentApplication,
+  ownerId: string,
+): Promise<void> {
+  for (const fileId of [
+    application.photoFileId,
+    application.idDocument.frontFileId,
+    application.idDocument.backFileId,
+  ]) {
+    await deps.photos.attach({ fileId, subject: { type: 'cleaning_agent', id: agentId }, ownerId });
+  }
+}
+
+/**
+ * Agent écrit dans la transaction, pour une inscription comme pour une création par l'admin : fiche
+ * (données personnelles chiffrées), compétences déclarées, zones et plages hebdomadaires. Rend
+ * l'événement cleaning.agent.applied, que l'appelant publie avec ses traces.
+ */
+export async function insertAgentFromApplication(
+  deps: CleaningDeps,
+  tx: PlanningTx,
+  settings: PlanningSettings,
+  input: {
+    agentId: string;
+    userId: string;
+    status: 'applicant' | 'under_review';
+    /** Admin qui crée l'agent ; null pour une inscription. */
+    createdBy: string | null;
+    source: 'self' | 'admin_created' | 'invited';
+    application: AgentApplication;
+    /** Auteur des plages hebdomadaires : l'agent, ou l'admin. */
+    by: string;
+    now: Date;
+  },
+): Promise<OutboxMessage> {
+  const { agentId, application, now } = input;
+  const { cipher } = deps;
+  await tx.insertAgent({
+    id: agentId,
+    userId: input.userId,
+    status: input.status,
+    employmentKind: application.employmentKind,
+    displayName: application.displayName,
+    photoFileId: application.photoFileId,
+    homeCommuneKey: application.homeCommuneKey,
+    idDocumentEncrypted: cipher.encrypt(
+      JSON.stringify(application.idDocument),
+      cipherContext.idDocument(agentId),
+    ),
+    emergencyContactEncrypted: cipher.encrypt(
+      JSON.stringify(application.emergencyContact),
+      cipherContext.emergencyContact(agentId),
+    ),
+    mobileMoneyEncrypted: application.mobileMoneyNumber
+      ? cipher.encrypt(application.mobileMoneyNumber, cipherContext.mobileMoney(agentId))
+      : null,
+    maxHoursDay: settings.defaultMaxHoursDay,
+    maxHoursWeek: settings.defaultMaxHoursWeek,
+    createdBy: input.createdBy,
+    createdAt: now,
+  });
+  await tx.replaceSkills(
+    agentId,
+    application.skillCodes.map((code) => ({ code, status: 'declared' as const })),
+    null,
+    now,
+  );
+  await tx.replaceZones(agentId, application.zoneKeys);
+  await tx.replaceWeekly(agentId, application.weekly, input.by, now);
+  return {
+    type: 'cleaning.agent.applied',
+    payload: {
+      agentId,
+      userId: input.userId,
+      source: input.source,
+      appliedAt: now.toISOString(),
+      zoneKeys: application.zoneKeys,
+    },
+  };
+}
+
 export class SubmitAgentApplicationUseCase {
   constructor(private readonly deps: CleaningDeps) {}
 
@@ -101,70 +204,22 @@ export class SubmitAgentApplicationUseCase {
     await requireCatalog(this.deps, application.skillCodes, application.zoneKeys);
     if (await this.deps.planning.agentByUserId(userId)) throw cleaningErrors.alreadyRegistered();
     const agentId = this.deps.ids.next();
-    // Fichiers rattachés chez file au nom de l'agent, avant d'enregistrer leur référence (RV-102).
-    for (const fileId of [
-      application.photoFileId,
-      application.idDocument.frontFileId,
-      application.idDocument.backFileId,
-    ]) {
-      await this.deps.photos.attach({
-        fileId,
-        subject: { type: 'cleaning_agent', id: agentId },
-        ownerId: userId,
-      });
-    }
+    await attachApplicationFiles(this.deps, agentId, application, userId);
     const now = this.deps.clock.now();
     const settings = await this.deps.planning.settings();
-    const { cipher } = this.deps;
     try {
       await this.deps.planning.transaction(async (tx) => {
-        await tx.insertAgent({
-          id: agentId,
+        const applied = await insertAgentFromApplication(this.deps, tx, settings, {
+          agentId,
           userId,
           status: 'applicant',
-          employmentKind: application.employmentKind,
-          displayName: application.displayName,
-          photoFileId: application.photoFileId,
-          homeCommuneKey: application.homeCommuneKey,
-          idDocumentEncrypted: cipher.encrypt(
-            JSON.stringify(application.idDocument),
-            cipherContext.idDocument(agentId),
-          ),
-          emergencyContactEncrypted: cipher.encrypt(
-            JSON.stringify(application.emergencyContact),
-            cipherContext.emergencyContact(agentId),
-          ),
-          mobileMoneyEncrypted: application.mobileMoneyNumber
-            ? cipher.encrypt(application.mobileMoneyNumber, cipherContext.mobileMoney(agentId))
-            : null,
-          maxHoursDay: settings.defaultMaxHoursDay,
-          maxHoursWeek: settings.defaultMaxHoursWeek,
           createdBy: null,
-          createdAt: now,
-        });
-        await tx.replaceSkills(
-          agentId,
-          application.skillCodes.map((code) => ({ code, status: 'declared' as const })),
-          null,
+          source: 'self',
+          application,
+          by: userId,
           now,
-        );
-        await tx.replaceZones(agentId, application.zoneKeys);
-        await tx.replaceWeekly(agentId, application.weekly, userId, now);
-        await tx.write({
-          events: [
-            {
-              type: 'cleaning.agent.applied',
-              payload: {
-                agentId,
-                userId,
-                source: 'self',
-                appliedAt: now.toISOString(),
-                zoneKeys: application.zoneKeys,
-              },
-            },
-          ],
-          audit: [],
         });
+        await tx.write({ events: [applied], audit: [] });
         await tx.remember({ ...ref, requestHash: hash, response: { agentId } });
       });
     } catch (error) {

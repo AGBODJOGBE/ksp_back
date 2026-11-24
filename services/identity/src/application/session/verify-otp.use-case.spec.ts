@@ -358,3 +358,57 @@ describe('VerifyOtpUseCase (UC-ID-09, connexion au back-office)', () => {
     await expectAppError(useCase.execute(backoffice(id)), 'IDENTITY_OTP_EXPIRED');
   });
 });
+
+describe('première connexion d’un compte créé à la demande d’un service (EnsureUserByPhone)', () => {
+  /** Compte « en attente de vérification », tel que cleaning le fait créer pour un agent. */
+  function pendingAccount(store: ReturnType<typeof setup>['store']) {
+    store.accounts.push({
+      id: 'compte-en-attente',
+      status: 'pending_verification',
+      firstName: 'Awa',
+      lastName: 'Dossou',
+      phoneE164: '+2290197000045',
+      email: null,
+      emailVerifiedAt: null,
+      preferredLanguage: 'fr',
+      createdAt: new Date('2026-10-18T09:00:00Z'),
+    });
+  }
+
+  it('le code vérifie son téléphone : le compte devient actif et ouvre une session, sans second compte', async () => {
+    const { useCase, store, issued, sentChallenge } = setup();
+    pendingAccount(store);
+    const opened = await login(useCase, input(await sentChallenge()));
+    expect(opened.isNewUser).toBe(false);
+    expect(opened.account).toMatchObject({ id: 'compte-en-attente', status: 'active', firstName: 'Awa' });
+    expect(opened.profileIncomplete).toBe(false);
+    expect(store.accounts).toHaveLength(1);
+    // Le compte existait : pas de second identity.user.registered, mais son téléphone est vérifié.
+    expect(store.registered).toEqual([]);
+    expect(store.verified).toEqual(['compte-en-attente']);
+    expect(issued).toEqual([
+      expect.objectContaining({
+        userId: 'compte-en-attente',
+        roles: [{ role: 'customer', scopeType: 'personal' }],
+      }),
+    ]);
+    // Connexions suivantes : compte actif, rien de plus.
+    await login(useCase, input(await sentChallenge()));
+    expect(store.verified).toHaveLength(1);
+  });
+
+  it('un code faux ne l’active pas ; le back-office reste fermé à un compte sans rôle', async () => {
+    const { useCase, store, sentChallenge } = setup();
+    pendingAccount(store);
+    await expectAppError(
+      useCase.execute(input(await sentChallenge(), { code: '000000' })),
+      'IDENTITY_OTP_INVALID',
+    );
+    await expectAppError(
+      useCase.execute(input(await sentChallenge(), { clientKind: 'backoffice' })),
+      'IDENTITY_BACKOFFICE_FORBIDDEN',
+    );
+    expect(store.accounts[0]!.status).toBe('pending_verification');
+    expect(store.verified).toEqual([]);
+  });
+});

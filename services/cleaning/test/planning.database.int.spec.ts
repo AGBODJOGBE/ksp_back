@@ -5,7 +5,7 @@ import { type Pool } from 'pg';
 import { ChangeAgentStatusUseCase } from '../src/application/agents/agent-admin.use-cases';
 import { SubmitAgentApplicationUseCase } from '../src/application/agents/agent-registration.use-cases';
 import { AvailabilityUseCases } from '../src/application/agents/availability.use-cases';
-import { type CleaningDeps } from '../src/application/deps';
+import { type AgentDeps } from '../src/application/deps';
 import {
   CreateAssignmentsUseCase,
   RemoveAssignmentUseCase,
@@ -13,7 +13,7 @@ import {
 import { ScheduleOverlapError } from '../src/application/planning/planning.ports';
 import { PlanningViewUseCases } from '../src/application/planning/planning-view.use-cases';
 import { travelFromMatrix } from '../src/domain/planning/agenda';
-import { asStaff, asUser } from '../src/application/testing/planning-fakes';
+import { asStaff, asUser, FakeAgentRoles } from '../src/application/testing/planning-fakes';
 import { AesGcmFieldCipher } from '../src/infrastructure/crypto/aes-gcm-field-cipher';
 import { PrismaPlanningRepository } from '../src/infrastructure/persistence/planning/prisma-planning.repository';
 import { type PrismaService } from '../src/infrastructure/prisma/prisma.service';
@@ -38,7 +38,7 @@ describeWithDatabase('planification du lot D (PostgreSQL)', () => {
   const ids = new UuidV7Generator();
   let pool: Pool;
   let prisma: PrismaService;
-  let deps: CleaningDeps;
+  let deps: AgentDeps;
   const sessions: Record<'s1' | 's2' | 's3', string> = { s1: ids.next(), s2: ids.next(), s3: ids.next() };
 
   beforeAll(async () => {
@@ -62,7 +62,9 @@ describeWithDatabase('planification du lot D (PostgreSQL)', () => {
       ids,
       people: { userNames: async () => new Map(), organizationNames: async () => new Map() },
       photos: { attach: async () => undefined, remove: async () => undefined, list: async () => [] },
-    } as unknown as CleaningDeps;
+      // Piste A : rôle cleaning_agent attribué par identity à la validation (R-AG-01).
+      roles: new FakeAgentRoles(),
+    } as unknown as AgentDeps;
   }, HOOK_TIMEOUT_MS);
 
   afterAll(() => db?.close(), HOOK_TIMEOUT_MS);

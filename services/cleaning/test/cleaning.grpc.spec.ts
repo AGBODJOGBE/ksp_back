@@ -188,10 +188,15 @@ const LOT_G: Readonly<Record<string, readonly string[]>> = {
 const PISTE_S: Readonly<Record<string, readonly string[]>> = {
   ObligationService: ['HasPendingObligations'],
 };
+
+/** RPC branchées par la piste A (agents : UC-NT-34, UC-NT-35). */
+const PISTE_A: Readonly<Record<string, readonly string[]>> = {
+  AgentAdminService: ['GetAgentIdDocument', 'CreateAgent'],
+};
 const inLot = (lot: Readonly<Record<string, readonly string[]>>, service: string, rpc: string) =>
   lot[service]?.includes(rpc) ?? false;
 const delivered = (service: string, rpc: string) =>
-  [LOT_D, LOT_C, LOT_E, LOT_G].some((lot) => inLot(lot, service, rpc));
+  [LOT_D, LOT_C, LOT_E, LOT_G, PISTE_A].some((lot) => inLot(lot, service, rpc));
 const serviceOnly = (service: string, rpc: string) =>
   SERVICE_ONLY.some(([s, r]) => s === service && r === rpc) || inLot(PISTE_S, service, rpc);
 
@@ -335,7 +340,7 @@ describe('cleaning en gRPC', () => {
     for (const [service, rpcs] of Object.entries(LOT_C)) {
       for (const rpc of rpcs) expect(all).toContain(`${service}.${rpc}`);
     }
-    expect(DELIVERED).toHaveLength(32 + 44 + 33 + 14);
+    expect(DELIVERED).toHaveLength(32 + 44 + 33 + 14 + Object.values(PISTE_A).flat().length);
   });
 
   it('les RPC du lot E sont toutes dans le contrat', () => {
@@ -374,6 +379,15 @@ describe('cleaning en gRPC', () => {
       code: 'CLEANING_VALIDATION_FAILED',
       details: { field: 'userId', reason: 'invalid_type' },
     });
+  });
+
+  it('les RPC de la piste A sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    const pisteA = Object.entries(PISTE_A).flatMap(([service, rpcs]) =>
+      rpcs.map((rpc) => `${service}.${rpc}`),
+    );
+    for (const rpc of pisteA) expect(all).toContain(rpc);
+    expect(RPCS.filter(([, service, rpc]) => inLot(PISTE_A, service, rpc))).toHaveLength(pisteA.length);
   });
 
   it.each(DELIVERED)('%s : %s.%s est branchée et exige une connexion', async (pkg, service, rpc) => {

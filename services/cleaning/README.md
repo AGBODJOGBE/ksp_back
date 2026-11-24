@@ -29,6 +29,26 @@ PGOPTIONS='-c ksp.demo=on' psql postgresql://cleaning:cleaning@localhost:5432/cl
   -f services/cleaning/prisma/demo/demo-data.sql
 ```
 
+## Agents : permissions, rôle et compte chez identity
+
+- **Catalogue des permissions** (R-RB-01) : la liste fermée est dans
+  `src/application/rbac/permission-catalog.ts` (16 permissions du cahier des charges, rôles livrés
+  par défaut). Elle est déclarée à identity à chaque démarrage (`RegisterCatalog`), hors du chemin
+  critique : un échec est journalisé et réessayé avec une attente qui double
+  (`CLEANING_CATALOG_REGISTRATION_RETRY_MS`, 5 s au départ, 10 minutes au plus ; 0 la désactive).
+  Toute modification de la liste augmente `version` (un test le rappelle). identity n'écrase jamais
+  un rôle existant : les rôles déjà présents chez lui gardent les permissions cochées au back-office.
+- **Rôle `cleaning_agent`** (R-AG-01) : attribué par `identity.GrantRole` avant qu'un agent ne
+  devienne actif (validation, réactivation), retiré par `RevokeRole` après sa désactivation ; la
+  suspension le garde. L'attribution est notée sur l'agent (`agents.role_assignment_id`).
+- **Agent créé par l'admin** (R-AG-02) : le compte est trouvé ou créé par son téléphone chez identity
+  (`EnsureUserByPhone`) ; cleaning ne garde pas le numéro. Un agent dont le compte n'a jamais ouvert
+  de session ne peut pas encore être validé (identity répond `IDENTITY_ACCOUNT_NOT_ACTIVE`).
+- **Pièce d'identité** : lue par l'admin Nettoyage seulement, adresses temporaires de file, chaque
+  lecture écrite au journal d'audit (`agent.id_document_read`).
+- identity injoignable pendant l'une de ces actions : `IDENTITY_UNAVAILABLE` (503), à rejouer avec la
+  même clé d'idempotence.
+
 ## Organisation
 
 | Dossier              | Contenu                                                                                   |
