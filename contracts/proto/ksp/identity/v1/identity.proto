@@ -68,6 +68,10 @@ service IdentityService {
   //   rôles qui la cochaient (à valider).
   // - Rôles (roles) : rôles livrés par défaut. Un rôle absent est créé ; un rôle existant n'est
   //   jamais écrasé (le super administrateur a pu le modifier, R-RB-02).
+  //   Seule exception : un rôle livré par défaut qu'aucun administrateur n'a modifié reçoit celles
+  //   des permissions du service déclarant, déclarées pour lui, qui lui manquent (ajout seulement,
+  //   jamais de retrait, tracé au journal d'audit avec le service pour auteur) : les rôles par
+  //   défaut portent ainsi leurs permissions dès la première déclaration de chaque service.
   // - Rejouable : une version de catalogue déjà enregistrée (catalog_version inférieure ou égale)
   //   est acceptée sans effet.
   // Erreurs : IDENTITY_CATALOG_INVALID (INVALID_ARGUMENT, details.field : code mal formé, permission

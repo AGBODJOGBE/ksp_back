@@ -569,3 +569,81 @@ describe('SendNotificationUseCase — messages au débiteur du recouvrement (ADR
     ).rejects.toMatchObject({ code: 'NOTIFICATION_TEMPLATE_UNKNOWN' });
   });
 });
+
+describe('SendNotificationUseCase — invitation d’un agent de nettoyage (cleaning, R-AG-02)', () => {
+  const LINK = 'https://agent.ksp.bj/invitations/0192f1c4-0000-7000-8000-0000000000a1';
+  const invitation = (overrides: Partial<SendNotificationInput> = {}): SendNotificationInput =>
+    otp({
+      callerService: 'cleaning',
+      templateCode: 'cleaning.agent_invitation',
+      channel: 'whatsapp',
+      fallbackChannels: ['sms'],
+      recipient: { userId: '', phoneE164: '+2290197000045', email: '' },
+      variables: { link: LINK, expires_on: '30 novembre 2026' },
+      idempotencyKey: '0192f1c4-0000-7000-8000-0000000000a1:1',
+      ttlSeconds: 0,
+      ...overrides,
+    });
+
+  it('cleaning envoie l’invitation à une personne sans compte : WhatsApp, lien et date limite, rien de conservé', async () => {
+    const whatsapp = new FakeProvider('whatsapp', [{ accepted: true, providerMessageId: 'wamid.9' }]);
+    const { notifications, useCase } = setup([whatsapp]);
+    await expect(useCase.execute(invitation())).resolves.toMatchObject({
+      channelUsed: 'whatsapp',
+      status: 'accepted',
+    });
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'cleaning.agent_invitation',
+      phoneE164: '+2290197000045',
+      variables: { link: LINK, expires_on: '30 novembre 2026' },
+    });
+    expect(whatsapp.sent[0]!.content!.text).toContain(LINK);
+    expect(whatsapp.sent[0]!.content!.text).toContain("valable jusqu'au 30 novembre 2026");
+    // Modèle secret : ni le lien ni le numéro complet en base.
+    expect(JSON.stringify(notifications.rows)).not.toContain('invitations/');
+    expect(notifications.rows[0]).toMatchObject({ targetMasked: '+229********45', recipientUserId: null });
+  });
+
+  it('bascule sur le SMS quand WhatsApp échoue ; la même clé ne renvoie pas le message', async () => {
+    const whatsapp = new FakeProvider('whatsapp', [{ accepted: false, reason: 'provider_unavailable' }]);
+    const sms = new FakeProvider('sms', [{ accepted: true, providerMessageId: 'sms-1' }]);
+    const { useCase } = setup([whatsapp, sms]);
+    await expect(useCase.execute(invitation())).resolves.toMatchObject({ channelUsed: 'sms' });
+    await expect(useCase.execute(invitation())).resolves.toMatchObject({ channelUsed: 'sms' });
+    expect(sms.sent).toHaveLength(1);
+  });
+
+  it('variables de l’invitation contrôlées : lien et date limite obligatoires', async () => {
+    const { useCase } = setup();
+    await expect(useCase.execute(invitation({ variables: { link: 'pas-un-lien' } }))).rejects.toMatchObject({
+      code: 'NOTIFICATION_VARIABLES_INVALID',
+      details: { invalidVariables: ['link', 'expires_on'] },
+    });
+  });
+
+  it.each([
+    ['identity.otp', 'NOTIFICATION_CALLER_FORBIDDEN'],
+    ['document.signature_requested', 'NOTIFICATION_CALLER_FORBIDDEN'],
+    ['recovery.debtor_reminder', 'NOTIFICATION_CALLER_FORBIDDEN'],
+    // Messages des événements du Nettoyage : jamais par appel direct, même pour cleaning.
+    ['cleaning.agent_applied.agent', 'NOTIFICATION_TEMPLATE_UNKNOWN'],
+    ['cleaning.session_reminder.customer', 'NOTIFICATION_TEMPLATE_UNKNOWN'],
+  ])('cleaning ne peut envoyer aucun autre modèle : %s → %s', async (templateCode, code) => {
+    const whatsapp = new FakeProvider('whatsapp');
+    const { notifications, useCase } = setup([whatsapp]);
+    await expect(useCase.execute(invitation({ templateCode }))).rejects.toMatchObject({ code });
+    expect(notifications.rows).toHaveLength(0);
+    expect(whatsapp.sent).toHaveLength(0);
+  });
+
+  it.each(['identity', 'document', 'recovery'])(
+    '%s ne peut pas envoyer l’invitation d’un agent',
+    async (callerService) => {
+      const { notifications, useCase } = setup();
+      await expect(useCase.execute(invitation({ callerService }))).rejects.toMatchObject({
+        code: 'NOTIFICATION_CALLER_FORBIDDEN',
+      });
+      expect(notifications.rows).toHaveLength(0);
+    },
+  );
+});

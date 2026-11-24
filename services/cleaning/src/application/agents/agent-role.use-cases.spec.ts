@@ -65,18 +65,35 @@ describe('rôle cleaning_agent à la validation et à la réactivation (R-AG-01,
     expect(planning.events.map((event) => event.type)).toEqual(['cleaning.agent.approved']);
   });
 
-  it('refus d’identity (compte pas encore actif) : transmis tel quel, agent toujours en vérification', async () => {
+  it('compte jamais utilisé : la validation est refusée, et l’admin sait que l’agent doit d’abord se connecter', async () => {
     const { planning, roles, change, stored } = setup();
     planning.addAgent(agentRecord('a1', { status: 'under_review' }));
     roles.failure = AppError.precondition('IDENTITY_ACCOUNT_NOT_ACTIVE', 'Ce compte n’est pas actif.', {
       status: 'pending_verification',
     });
-    expect(await failure(change('approve', { validatedSkillCodes: ['interior'] }))).toMatchObject({
+    const refusal = await failure(change('approve', { validatedSkillCodes: ['interior'] }));
+    expect(refusal).toMatchObject({
+      kind: 'FAILED_PRECONDITION',
       code: 'IDENTITY_ACCOUNT_NOT_ACTIVE',
-      details: { status: 'pending_verification' },
+      details: { status: 'pending_verification', reason: 'agent_never_signed_in' },
     });
+    expect(refusal!.message).toContain('doit s’y connecter une fois');
     expect(stored().status).toBe('under_review');
     expect(planning.events).toEqual([]);
+  });
+
+  it('autre refus d’identity (compte suspendu) : transmis tel quel, agent toujours en vérification', async () => {
+    const { planning, roles, change, stored } = setup();
+    planning.addAgent(agentRecord('a1', { status: 'under_review' }));
+    roles.failure = AppError.precondition('IDENTITY_ACCOUNT_NOT_ACTIVE', 'Ce compte n’est pas actif.', {
+      status: 'suspended',
+    });
+    expect(await failure(change('approve', { validatedSkillCodes: ['interior'] }))).toMatchObject({
+      code: 'IDENTITY_ACCOUNT_NOT_ACTIVE',
+      message: 'Ce compte n’est pas actif.',
+      details: { status: 'suspended' },
+    });
+    expect(stored().status).toBe('under_review');
   });
 
   it('transition interdite : refusée avant tout appel à identity', async () => {

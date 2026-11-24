@@ -238,6 +238,9 @@ const CLEANING_V2: Readonly<Record<string, WhatsAppTemplateSpec>> = {
     [],
   ),
   'cleaning.agent_approved.agent': spec('ksp_cleaning_agent_approved', []),
+  // Invitation d'un agent par l'admin (appel direct de cleaning, R-AG-02) : le lien porte
+  // l'identifiant de l'invitation (modèle secret).
+  'cleaning.agent_invitation': spec('ksp_cleaning_agent_invitation', ['expires_on', 'link']),
   // Personnel du back-office (le lien reste dans l'e-mail et l'espace KSP).
   'cleaning.request_submitted.staff': spec('ksp_cleaning_staff_request_submitted', [
     'request_number',

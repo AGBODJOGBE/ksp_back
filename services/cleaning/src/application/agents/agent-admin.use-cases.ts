@@ -1,3 +1,4 @@
+import { AppError } from '@ksp/platform';
 import {
   type AgentSkillStatus,
   AGENT_STATUSES,
@@ -25,6 +26,7 @@ import {
   requiredReason,
   text,
 } from '../shared/input';
+import { agentErrors } from './agent-errors';
 import { type AgentFilter, type AgentRecord, type AgentSort } from './agent.ports';
 import { requireCatalog } from './agent-registration.use-cases';
 import { agentProfile, type AgentProfile, agentProfiles, cipherContext } from './agent-views';
@@ -265,7 +267,7 @@ export class ChangeAgentStatusUseCase {
       requireStart(input.action, existing.status);
       const role =
         input.action === 'approve' || input.action === 'reactivate'
-          ? await this.deps.roles.grant({ userId: existing.userId, reason: ROLE_REASONS[input.action] })
+          ? await this.grantRole(existing.userId, ROLE_REASONS[input.action])
           : null;
       const now = this.deps.clock.now();
       try {
@@ -283,6 +285,26 @@ export class ChangeAgentStatusUseCase {
     }
     const agent = await this.withoutPendingRole(await requireAgent(this.deps.planning, input.agentId));
     return agentProfile(this.deps, agent);
+  }
+
+  /**
+   * Rôle attribué avant l'activation. Compte jamais utilisé (agent créé par l'admin, pas encore
+   * connecté) : identity refuse le rôle, et l'admin est prévenu que l'agent doit d'abord se connecter
+   * une fois à l'application. Les autres refus d'identity passent tels quels.
+   */
+  private async grantRole(userId: string, reason: string): Promise<{ assignmentId: string }> {
+    try {
+      return await this.deps.roles.grant({ userId, reason });
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        error.code === 'IDENTITY_ACCOUNT_NOT_ACTIVE' &&
+        error.details.status === 'pending_verification'
+      ) {
+        throw agentErrors.accountNeverSignedIn();
+      }
+      throw error;
+    }
   }
 
   /**

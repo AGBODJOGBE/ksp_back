@@ -219,7 +219,7 @@ describe('AccountAdminGrpcController', () => {
       service: 'cleaning',
       scopeType: identityV1.ScopeType.SCOPE_TYPE_DOMAIN,
       description: 'Agent de terrain du nettoyage',
-      backofficeAccess: true,
+      backofficeAccess: false,
       // Administrateur de métier : lecture seule (R-RB-02, v2).
       grantable: false,
       name: 'cleaning_agent',

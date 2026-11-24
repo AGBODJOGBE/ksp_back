@@ -412,3 +412,24 @@ describe('première connexion d’un compte créé à la demande d’un service 
     expect(store.verified).toEqual([]);
   });
 });
+
+describe('compte qui n’a que le rôle cleaning_agent (rôle de terrain, R-RB-07)', () => {
+  it('application agent : session ouverte, sans étape de double authentification', async () => {
+    const { useCase, roles, sentChallenge } = setup();
+    const { account } = await login(useCase, input(await sentChallenge()));
+    roles.assign(account.id, 'cleaning_agent');
+    const outcome = await useCase.execute(input(await sentChallenge()));
+    expect(outcome.status).toBe('authenticated');
+  });
+
+  it('back-office : refusé comme un compte sans rôle, jamais envoyé vers l’inscription à la double authentification', async () => {
+    const { useCase, roles, mfa, sentChallenge } = setup();
+    const { account } = await login(useCase, input(await sentChallenge()));
+    roles.assign(account.id, 'cleaning_agent');
+    await expectAppError(
+      useCase.execute(input(await sentChallenge(), { clientKind: 'backoffice' })),
+      'IDENTITY_BACKOFFICE_FORBIDDEN',
+    );
+    expect(mfa.challenges.size).toBe(0);
+  });
+});

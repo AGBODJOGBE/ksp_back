@@ -105,12 +105,84 @@ describe('RegisterCatalogUseCase (R-RB-01)', () => {
     });
   });
 
-  it('un rôle déjà présent n’est jamais écrasé', async () => {
+  it('un rôle modifié par un administrateur n’est jamais écrasé (R-RB-02)', async () => {
     const { register, rbac } = setup();
-    rbac.addRole({ code: 'cleaning_supervisor', name: 'Modifié par le super admin' });
+    rbac.addRole({
+      code: 'cleaning_supervisor',
+      name: 'Modifié par le super admin',
+      permissions: ['cleaning.zone.manage'],
+      updatedAt: new Date('2026-11-01T10:00:00Z'),
+      updatedBy: '0192f1c4-0000-7000-8000-00000000ad01',
+    });
     const result = await register.execute('cleaning', catalog);
     expect(result.rolesCreated).toBe(0);
-    expect(rbac.roleRows.get('cleaning_supervisor')?.name).toBe('Modifié par le super admin');
+    expect(rbac.roleRows.get('cleaning_supervisor')).toMatchObject({
+      name: 'Modifié par le super admin',
+      permissions: ['cleaning.zone.manage'],
+    });
+    expect(rbac.audit).toEqual([]);
+  });
+
+  it('un rôle par défaut jamais modifié reçoit les permissions déclarées pour lui, sans rien perdre', async () => {
+    const { register, rbac } = setup();
+    rbac.declare('wallet.cash.record');
+    rbac.addRole({ code: 'cleaning_supervisor', name: 'Superviseur Nettoyage', permissions: [] });
+    rbac.addRole({ code: 'finance_officer', service: 'wallet', permissions: ['wallet.cash.record'] });
+    const shared = {
+      ...catalog.roles[0]!,
+      code: 'finance_officer',
+      // La permission d'un autre service n'est jamais ajoutée par cleaning.
+      permissions: ['cleaning.zone.manage', 'wallet.withdrawal.approve'],
+    };
+    const result = await register.execute('cleaning', { ...catalog, roles: [...catalog.roles, shared] });
+    expect(result.rolesCreated).toBe(0);
+    // Nom gardé, permissions ajoutées seulement.
+    expect(rbac.roleRows.get('cleaning_supervisor')).toMatchObject({
+      name: 'Superviseur Nettoyage',
+      permissions: ['cleaning.request.read'],
+    });
+    expect(rbac.roleRows.get('finance_officer')?.permissions).toEqual([
+      'cleaning.zone.manage',
+      'wallet.cash.record',
+    ]);
+    // Tracé comme une écriture de rôle, avec le service pour auteur.
+    expect(rbac.audit).toEqual([
+      {
+        actorId: 'cleaning',
+        action: 'role.default_permissions_added',
+        entityId: 'cleaning_supervisor',
+        details: {
+          permissionsAdded: ['cleaning.request.read'],
+          before: [],
+          after: ['cleaning.request.read'],
+        },
+      },
+      {
+        actorId: 'cleaning',
+        action: 'role.default_permissions_added',
+        entityId: 'finance_officer',
+        details: {
+          permissionsAdded: ['cleaning.zone.manage'],
+          before: ['wallet.cash.record'],
+          after: ['cleaning.zone.manage', 'wallet.cash.record'],
+        },
+      },
+    ]);
+    // Rejoué (même version, ou version suivante sans nouveauté) : sans effet.
+    await register.execute('cleaning', { ...catalog, roles: [...catalog.roles, shared] });
+    await register.execute('cleaning', { ...catalog, version: 3, roles: [...catalog.roles, shared] });
+    expect(rbac.audit).toHaveLength(2);
+  });
+
+  it('un rôle créé au back-office, ou désactivé, n’est pas complété', async () => {
+    const { register, rbac } = setup();
+    rbac.addRole({ code: 'cleaning_supervisor', origin: 'custom', permissions: [] });
+    await register.execute('cleaning', catalog);
+    expect(rbac.roleRows.get('cleaning_supervisor')?.permissions).toEqual([]);
+    const other = setup();
+    other.rbac.addRole({ code: 'cleaning_supervisor', active: false, permissions: [] });
+    await other.register.execute('cleaning', catalog);
+    expect(other.rbac.roleRows.get('cleaning_supervisor')?.permissions).toEqual([]);
   });
 
   it('le service déclaré est celui du jeton : une permission d’un autre service est refusée', async () => {

@@ -65,12 +65,14 @@ export const INITIAL_BACKOFFICE_ROLES: readonly RoleDefinition[] = [
   internal('wallet', 'finance_officer', 'domain', 'Validation des versements'),
   internal('cleaning', 'cleaning_admin', 'domain', 'Responsable du métier Nettoyage'),
   internal('cleaning', 'cleaning_supervisor', 'domain', 'Superviseur des missions de nettoyage'),
-  internal('cleaning', 'cleaning_agent', 'domain', 'Agent de terrain du nettoyage'),
   internal('recovery', 'recovery_admin', 'domain', 'Responsable du métier Recouvrement'),
   internal('recovery', 'recovery_agent', 'domain', 'Agent de recouvrement'),
 ];
 
-/** Rôle d'un partenaire externe (huissier, avocat) : ni back-office ni double authentification (ADR-060). */
+/**
+ * Rôle hors du back-office : partenaire externe (huissier, avocat, ADR-060) ou agent de terrain. Ni
+ * back-office ni double authentification.
+ */
 const partner = (service: string, code: string, description: string): RoleDefinition => ({
   service,
   code,
@@ -93,8 +95,21 @@ export const RECOVERY_ROLES: readonly RoleDefinition[] = [
   partner('recovery', 'recovery_lawyer', 'Avocat partenaire du recouvrement'),
 ];
 
+/**
+ * Rôle de terrain du Nettoyage (CDC Nettoyage v2, R-RB-07) : l'agent se connecte à l'application agent
+ * par code et appareil enregistré, sans back-office ni application d'authentification. La migration
+ * 0004 l'avait enregistré comme un rôle du back-office ; la migration 0013 le corrige.
+ */
+export const FIELD_ROLES: readonly RoleDefinition[] = [
+  partner('cleaning', 'cleaning_agent', 'Agent de terrain du nettoyage'),
+];
+
 /** Catalogue complet enregistré par les migrations. */
-export const ROLE_CATALOG: readonly RoleDefinition[] = [...INITIAL_BACKOFFICE_ROLES, ...RECOVERY_ROLES];
+export const ROLE_CATALOG: readonly RoleDefinition[] = [
+  ...INITIAL_BACKOFFICE_ROLES,
+  ...FIELD_ROLES,
+  ...RECOVERY_ROLES,
+];
 
 const ROLE_CODE = /^[a-z][a-z0-9_]*$/;
 

@@ -245,11 +245,14 @@ export interface ListMessageTemplatesResponse {
 /**
  * Envoi direct d'une notification. Utilisé pour les envois prioritaires dont l'appelant
  * doit connaître le résultat immédiatement : codes de vérification d'identity (ADR-014),
- * codes de signature de document, et messages de recovery au débiteur sans compte (ADR-061).
+ * codes de signature de document, messages de recovery au débiteur sans compte (ADR-061), et
+ * invitation d'un agent de nettoyage qui n'a pas encore de compte (cleaning, R-AG-02).
  * Les autres notifications passent par les événements.
  *
- * Appelants autorisés : identity, document et recovery uniquement (jeton de service, ADR-013),
- * chacun limité à ses propres modèles (identity.*, document.*, recovery.*).
+ * Appelants autorisés : identity, document, recovery et cleaning uniquement (jeton de service,
+ * ADR-013). identity, document et recovery sont limités à leurs propres modèles (identity.*,
+ * document.*, recovery.*) ; cleaning à un seul modèle, cleaning.agent_invitation (ses autres
+ * messages partent de ses événements).
  *
  * Modèles utilisés par ces appels :
  *   identity.otp   variables : code, expires_in_minutes. Modèle secret : l'historique des envois
@@ -274,6 +277,11 @@ export interface ListMessageTemplatesResponse {
  *                  WhatsApp puis e-mail ; messages au débiteur (lien personnel, porte un jeton),
  *                  first_name facultatif ; variables détaillées dans le README du service
  *                  notification. Modèles secrets.
+ *   cleaning.agent_invitation
+ *                  WhatsApp puis SMS, recipient.phone_e164 obligatoire (destinataire sans compte) ;
+ *                  variables : link (lien d'inscription de l'application agent, porte
+ *                  l'identifiant de l'invitation), expires_on (date limite), first_name facultatif.
+ *                  Invitation d'un agent par l'admin du Nettoyage (R-AG-02). Modèle secret.
  *
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal
@@ -296,11 +304,14 @@ export interface NotificationServiceClient {
 /**
  * Envoi direct d'une notification. Utilisé pour les envois prioritaires dont l'appelant
  * doit connaître le résultat immédiatement : codes de vérification d'identity (ADR-014),
- * codes de signature de document, et messages de recovery au débiteur sans compte (ADR-061).
+ * codes de signature de document, messages de recovery au débiteur sans compte (ADR-061), et
+ * invitation d'un agent de nettoyage qui n'a pas encore de compte (cleaning, R-AG-02).
  * Les autres notifications passent par les événements.
  *
- * Appelants autorisés : identity, document et recovery uniquement (jeton de service, ADR-013),
- * chacun limité à ses propres modèles (identity.*, document.*, recovery.*).
+ * Appelants autorisés : identity, document, recovery et cleaning uniquement (jeton de service,
+ * ADR-013). identity, document et recovery sont limités à leurs propres modèles (identity.*,
+ * document.*, recovery.*) ; cleaning à un seul modèle, cleaning.agent_invitation (ses autres
+ * messages partent de ses événements).
  *
  * Modèles utilisés par ces appels :
  *   identity.otp   variables : code, expires_in_minutes. Modèle secret : l'historique des envois
@@ -325,6 +336,11 @@ export interface NotificationServiceClient {
  *                  WhatsApp puis e-mail ; messages au débiteur (lien personnel, porte un jeton),
  *                  first_name facultatif ; variables détaillées dans le README du service
  *                  notification. Modèles secrets.
+ *   cleaning.agent_invitation
+ *                  WhatsApp puis SMS, recipient.phone_e164 obligatoire (destinataire sans compte) ;
+ *                  variables : link (lien d'inscription de l'application agent, porte
+ *                  l'identifiant de l'invitation), expires_on (date limite), first_name facultatif.
+ *                  Invitation d'un agent par l'admin du Nettoyage (R-AG-02). Modèle secret.
  *
  * Erreurs (code AppError → statut gRPC) :
  *   NOTIFICATION_TEMPLATE_UNKNOWN     NOT_FOUND         modèle inexistant pour ce canal

@@ -18,6 +18,9 @@ export class InMemoryRbac implements PermissionCatalog, ManagedRoleRepository {
   readonly events: { type: string; payload: Record<string, unknown> }[] = [];
   /** Attributions actives par code de rôle. */
   readonly activeAssignments = new Map<string, number>();
+  /** Traces d'audit des rôles par défaut complétés par un catalogue. */
+  readonly audit: { actorId: string; action: string; entityId: string; details: Record<string, unknown> }[] =
+    [];
 
   declare(code: string, retired = false): void {
     this.permissionRows.set(code, { code, description: code, service: code.split('.')[0] ?? '', retired });
@@ -67,7 +70,26 @@ export class InMemoryRbac implements PermissionCatalog, ManagedRoleRepository {
     }
     let created = 0;
     for (const role of input.roles) {
-      if (this.roleRows.has(role.code)) continue;
+      const existing = this.roleRows.get(role.code);
+      if (existing) {
+        // Comme le dépôt réel : rôle par défaut jamais modifié → permissions du service ajoutées.
+        const untouched =
+          existing.origin === 'default' && !existing.updatedAt && !existing.updatedBy && existing.active;
+        const missing = [...new Set(role.permissions)]
+          .filter((code) => declared.has(code) && !existing.permissions.includes(code))
+          .sort();
+        if (untouched && missing.length) {
+          const before = [...existing.permissions].sort();
+          existing.permissions = [...before, ...missing].sort();
+          this.audit.push({
+            actorId: input.service,
+            action: 'role.default_permissions_added',
+            entityId: role.code,
+            details: { permissionsAdded: missing, before, after: existing.permissions },
+          });
+        }
+        continue;
+      }
       this.addRole({ ...role, service: input.service, createdAt: input.now });
       created += 1;
     }

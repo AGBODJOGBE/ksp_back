@@ -60,6 +60,7 @@ describeWithDatabase('PrismaRbacRepository (PostgreSQL)', () => {
     ],
     now,
     newRoleId: uuid,
+    newAuditId: uuid,
   });
 
   beforeAll(async () => {
@@ -105,8 +106,31 @@ describeWithDatabase('PrismaRbacRepository (PostgreSQL)', () => {
       permissionsRetired: 0,
       rolesCreated: 1,
     });
-    // Rôle déjà livré par la migration : jamais écrasé ; rôle nouveau : créé avec ses permissions.
-    expect((await rbac.find('cleaning_supervisor'))?.name).toBe('Superviseur Nettoyage');
+    // Rôle déjà livré par la migration, jamais modifié au back-office : nom gardé, permissions
+    // déclarées pour lui ajoutées, tracées avec le service pour auteur ; rôle nouveau : créé.
+    expect(await rbac.find('cleaning_supervisor')).toMatchObject({
+      name: 'Superviseur Nettoyage',
+      permissions: ['cleaning.request.read'],
+      updatedAt: null,
+      updatedBy: null,
+    });
+    const completed = await pool.query(
+      `SELECT actor_id, entity_type, entity_id, details FROM audit_log WHERE action = 'role.default_permissions_added'`,
+    );
+    expect(completed.rows).toEqual([
+      {
+        actor_id: 'cleaning',
+        entity_type: 'role',
+        entity_id: 'cleaning_supervisor',
+        details: {
+          service: 'cleaning',
+          catalogVersion: 1,
+          permissionsAdded: ['cleaning.request.read'],
+          before: [],
+          after: ['cleaning.request.read'],
+        },
+      },
+    ]);
     expect(await rbac.find('cleaning_auditor')).toMatchObject({
       origin: 'default',
       service: 'cleaning',
@@ -194,6 +218,70 @@ describeWithDatabase('PrismaRbacRepository (PostgreSQL)', () => {
     const updated = audit.rows.find((row: { action: string }) => row.action === 'role.updated');
     expect(updated.details.before.permissions).toEqual(['cleaning.planning.manage', 'cleaning.request.read']);
     expect(updated.details.after.permissions).toEqual(['cleaning.request.read', 'cleaning.zone.manage']);
+  });
+
+  it('rôles par défaut : complétés tant qu’aucun administrateur ne les a modifiés, jamais écrasés ensuite', async () => {
+    const codes = ['cleaning.request.read', 'cleaning.planning.manage', 'cleaning.zone.manage'];
+    const defaults = (code: string, permissions: string[], backofficeAccess = true) => ({
+      code,
+      name: 'Nom du catalogue',
+      description: 'Rôle livré par défaut',
+      scopeType: 'domain' as const,
+      requiresMfa: backofficeAccess,
+      backofficeAccess,
+      sensitive: false,
+      permissions,
+    });
+    // cleaning_admin est modifié au back-office avant la déclaration : il ne sera plus touché.
+    await rbac.update({ ...write(), code: 'cleaning_admin', name: 'Admin Nettoyage (modifié)' });
+    const registration = (version: number) => ({
+      ...catalog(version, codes),
+      roles: [
+        defaults('cleaning_admin', codes),
+        defaults('cleaning_agent', ['cleaning.planning.manage'], false),
+        // Rôle d'un autre service : seule la part cleaning.* est ajoutée.
+        defaults('finance_officer', ['cleaning.zone.manage']),
+      ],
+    });
+    const audits = async () =>
+      (
+        await pool.query(
+          `SELECT entity_id FROM audit_log WHERE action = 'role.default_permissions_added' ORDER BY entity_id`,
+        )
+      ).rows.map((row) => row.entity_id as string);
+    const before = await audits();
+
+    expect(await rbac.register(registration(10))).toMatchObject({ rolesCreated: 0 });
+    expect(await rbac.find('cleaning_admin')).toMatchObject({
+      name: 'Admin Nettoyage (modifié)',
+      permissions: [],
+    });
+    // Migration 0013 : rôle de terrain, ni back-office ni double authentification ; complété.
+    expect(await rbac.find('cleaning_agent')).toMatchObject({
+      name: 'Agent de nettoyage',
+      permissions: ['cleaning.planning.manage'],
+      backofficeAccess: false,
+      requiresMfa: false,
+      updatedBy: null,
+    });
+    expect(await rbac.find('finance_officer')).toMatchObject({
+      service: 'wallet',
+      permissions: ['cleaning.zone.manage'],
+    });
+    expect(await audits()).toEqual([...before, 'cleaning_agent', 'finance_officer'].sort());
+
+    // Déclaration suivante : ajout seulement, jamais de retrait ; rejouée, elle est sans effet.
+    const next = {
+      ...registration(11),
+      roles: [defaults('cleaning_agent', ['cleaning.request.read'], false)],
+    };
+    await rbac.register(next);
+    await rbac.register(next);
+    expect((await rbac.find('cleaning_agent'))?.permissions).toEqual([
+      'cleaning.planning.manage',
+      'cleaning.request.read',
+    ]);
+    expect(await audits()).toHaveLength(before.length + 3);
   });
 
   it('permissions et zones lues pour le jeton ; un rôle attribué ne se désactive pas', async () => {

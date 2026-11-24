@@ -140,7 +140,10 @@ export class PrismaRbacRepository implements PermissionCatalog, ManagedRoleRepos
 
       let rolesCreated = 0;
       for (const role of input.roles) {
-        if (await tx.role.findUnique({ where: { code: role.code }, select: { id: true } })) continue;
+        if (await tx.role.findUnique({ where: { code: role.code }, select: { id: true } })) {
+          await this.completeDefaultRole(tx, input, role);
+          continue;
+        }
         const usable = await tx.permission.count({
           where: { code: { in: role.permissions }, retiredAt: null },
         });
@@ -171,6 +174,62 @@ export class PrismaRbacRepository implements PermissionCatalog, ManagedRoleRepos
         data: { version: input.version, registeredAt: input.now },
       });
       return { permissionsAdded, permissionsRetired: retired.count, rolesCreated };
+    });
+  }
+
+  /**
+   * Rôle déjà en base, déclaré de nouveau par un service. S'il est livré par défaut et qu'aucun
+   * administrateur ne l'a modifié ni désactivé, il reçoit celles des permissions du service déclarant,
+   * déclarées pour lui, qui lui manquent : ajout seulement, jamais de retrait, jamais la permission
+   * d'un autre service. Tout autre rôle (modifié au back-office, créé au back-office, désactivé) reste
+   * tel quel (R-RB-02). Les colonnes de modification ne sont pas touchées : un autre service peut
+   * encore compléter le même rôle avec ses propres permissions.
+   */
+  private async completeDefaultRole(
+    tx: Prisma.TransactionClient,
+    input: CatalogRegistration,
+    role: DefaultRole,
+  ): Promise<void> {
+    // Verrou du rôle : une modification simultanée au back-office passe avant ou après.
+    const [locked] = await tx.$queryRaw<
+      {
+        id: string;
+        origin: string;
+        updated_at: Date | null;
+        updated_by: string | null;
+        deactivated_at: Date | null;
+      }[]
+    >`SELECT "id", "origin", "updated_at", "updated_by", "deactivated_at"
+        FROM "roles" WHERE "code" = ${role.code} FOR UPDATE`;
+    if (!locked || locked.origin !== 'default') return;
+    if (locked.updated_at !== null || locked.updated_by !== null || locked.deactivated_at !== null) return;
+    const held = (
+      await tx.rolePermission.findMany({ where: { roleId: locked.id }, select: { permissionCode: true } })
+    ).map((row) => row.permissionCode);
+    const declared = new Set(input.permissions.map((permission) => permission.code));
+    const missing = [...new Set(role.permissions)]
+      .filter((code) => declared.has(code) && !held.includes(code))
+      .sort();
+    if (!missing.length) return;
+    await tx.rolePermission.createMany({
+      data: missing.map((permissionCode) => ({ roleId: locked.id, permissionCode })),
+    });
+    await tx.auditEntry.create({
+      data: {
+        id: input.newAuditId(),
+        actorId: input.service,
+        action: 'role.default_permissions_added',
+        entityType: 'role',
+        entityId: role.code,
+        at: input.now,
+        details: {
+          service: input.service,
+          catalogVersion: input.version,
+          permissionsAdded: missing,
+          before: [...held].sort(),
+          after: [...held, ...missing].sort(),
+        } as Prisma.InputJsonValue,
+      },
     });
   }
 

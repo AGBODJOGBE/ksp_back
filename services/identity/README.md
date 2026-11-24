@@ -140,6 +140,25 @@ service → `IDENTITY_CALLER_FORBIDDEN`.
 | Traces              | Compte créé : `identity.user.registered` (sans téléphone, comme à la première vérification) et ligne `user.registered_by_service` dans `audit_log`, dans la même transaction. Auteur : le service appelant ; `details.requestedBy` : le membre du personnel à l'origine, lu dans les métadonnées de l'appel (`x-user-id`). |
 | Première connexion  | À la première validation d'un code (`VerifyOtp`), le compte en attente devient actif, son numéro est vérifié et `identity.user.verified` (`verifiedVia: phone`) est publié, dans la transaction de la connexion. Tant qu'il est en attente, `GrantRole` le refuse (`IDENTITY_ACCOUNT_NOT_ACTIVE`).                         |
 
+## Rôles, permissions et agents de terrain (ADR-057 ; CDC Nettoyage v2, partie 2)
+
+- **Rôle de terrain** : `cleaning_agent` ne donne ni accès au back-office ni double authentification
+  (R-RB-07 ; migration `0013_cleaning_agent_field_role`, qui corrige la `0004`). Un compte qui n'a
+  que ce rôle se connecte comme un client ; le back-office lui reste fermé.
+- **Catalogue d'un service** (`RegisterCatalog`) : les permissions reçues remplacent celles du
+  service ; un rôle absent est créé. Un rôle existant n'est jamais écrasé (R-RB-02), avec une seule
+  exception : un rôle livré par défaut qu'aucun administrateur n'a modifié ni désactivé (origine
+  `default`, `updated_at` et `updated_by` vides) reçoit celles des permissions du service déclarant,
+  déclarées pour lui, qui lui manquent. Ajout seulement, jamais de retrait, jamais la permission
+  d'un autre service ; tracé dans `audit_log` (`role.default_permissions_added`, auteur : le
+  service). Les rôles par défaut portent ainsi leurs permissions dès la première déclaration de
+  chaque service ; `finance_officer` et `support_agent` reçoivent la part de chacun.
+- **Permissions dans le jeton** : une session du back-office porte `perms` et `zone_perms` de tous
+  les rôles du compte. Une session du portail ou d'une application ne porte que celles des rôles
+  sans accès au back-office (agent de terrain, partenaire), relues à chaque jeton ; un compte sans
+  tel rôle garde un jeton sans permissions, et la session restreinte d'un compte en cours de
+  suppression aussi.
+
 ## Confiance et comptes (ADR-050)
 
 - **Essais des codes** (téléphone, e-mail, double authentification) : l'essai est pris en base, de façon atomique, avant de comparer le code ; des essais simultanés ne dépassent jamais le plafond.

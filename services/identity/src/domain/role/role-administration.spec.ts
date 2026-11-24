@@ -1,4 +1,4 @@
-import { INITIAL_BACKOFFICE_ROLES, type RoleDefinition } from './role';
+import { INITIAL_BACKOFFICE_ROLES, ROLE_CATALOG, type RoleDefinition } from './role';
 import {
   accountTransition,
   canManageAccounts,
@@ -9,7 +9,7 @@ import {
   seesFullPhone,
 } from './role-administration';
 
-const role = (code: string): RoleDefinition => INITIAL_BACKOFFICE_ROLES.find((r) => r.code === code)!;
+const role = (code: string): RoleDefinition => ROLE_CATALOG.find((r) => r.code === code)!;
 
 describe("périmètre d'un administrateur", () => {
   it('super_admin : tout ; administrateur de métier : ses métiers ; les autres : rien', () => {

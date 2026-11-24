@@ -5,6 +5,7 @@
 import { type StoredMfaChallenge } from '../../domain/mfa/mfa-challenge';
 import {
   type AssignedRole,
+  FIELD_ROLES,
   INITIAL_BACKOFFICE_ROLES,
   type RoleDefinition,
   type RoleScopeType,
@@ -62,7 +63,9 @@ export interface FakeAuditEntry {
 
 export class InMemoryRoles implements RoleRepository {
   /** Copies : un test qui modifie un rôle (désactivé, sensible) ne touche pas le catalogue initial. */
-  readonly definitions: RoleDefinition[] = INITIAL_BACKOFFICE_ROLES.map((role) => ({ ...role }));
+  readonly definitions: RoleDefinition[] = [...INITIAL_BACKOFFICE_ROLES, ...FIELD_ROLES].map((role) => ({
+    ...role,
+  }));
   readonly assignments: FakeAssignment[] = [];
   /** Événements identity.role.granted écrits. */
   readonly granted: RoleGrant[] = [];

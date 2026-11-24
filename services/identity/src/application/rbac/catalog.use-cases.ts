@@ -25,7 +25,9 @@ export interface CatalogInput {
 /**
  * R-RB-01 : un service déclare son catalogue de permissions (et ses rôles livrés par défaut) à chaque
  * déploiement. Le service déclaré est toujours celui du jeton de service ; sans vérificateur
- * (développement seulement), celui de la requête.
+ * (développement seulement), celui de la requête. Un rôle livré par défaut que personne n'a modifié
+ * au back-office reçoit les permissions du service déclarées pour lui (R-RB-02 : un rôle modifié par
+ * un administrateur n'est jamais écrasé).
  */
 export class RegisterCatalogUseCase {
   constructor(
@@ -64,6 +66,7 @@ export class RegisterCatalogUseCase {
       roles: input.roles,
       now: this.clock.now(),
       newRoleId: () => this.ids.next(),
+      newAuditId: () => this.ids.next(),
     });
   }
 }

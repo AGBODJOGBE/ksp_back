@@ -198,13 +198,15 @@ export class AppModule {
         },
         {
           provide: AccessTokenIssuer,
-          inject: [TOKEN_SIGNER],
-          useFactory: (signer: KeyRingSigner) =>
+          inject: [TOKEN_SIGNER, PrismaRoleRepository],
+          useFactory: (signer: KeyRingSigner, roles: PrismaRoleRepository) =>
             new AccessTokenIssuer(
               signer,
               new UuidV7Generator(),
               new SystemClock(),
               config.ACCESS_TOKEN_TTL_SECONDS,
+              // Permissions des rôles de terrain dans le jeton des applications (R-RB-07).
+              roles,
             ),
         },
         {

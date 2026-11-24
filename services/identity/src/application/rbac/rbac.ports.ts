@@ -28,6 +28,8 @@ export interface CatalogRegistration {
   now: Date;
   /** Identifiant donné à chaque rôle créé. */
   newRoleId: () => string;
+  /** Identifiant donné à chaque trace d'audit (rôle par défaut complété). */
+  newAuditId: () => string;
 }
 
 export interface CatalogRegistrationResult {
@@ -40,7 +42,10 @@ export interface CatalogRegistrationResult {
 export interface PermissionCatalog {
   /**
    * Enregistre le catalogue d'un service en une transaction : les permissions reçues remplacent les
-   * siennes (absentes : retirées ; revenues : rétablies), les rôles absents sont créés, jamais écrasés.
+   * siennes (absentes : retirées ; revenues : rétablies), les rôles absents sont créés. Un rôle
+   * existant n'est jamais écrasé (R-RB-02) ; s'il est livré par défaut et qu'aucun administrateur ne
+   * l'a modifié, il reçoit celles des permissions du service, déclarées pour lui, qui lui manquent
+   * (ajout seulement, tracé au journal d'audit avec le service pour auteur).
    * Une version inférieure ou égale à la dernière enregistrée est sans effet (bilan à 0).
    */
   register(registration: CatalogRegistration): Promise<CatalogRegistrationResult>;
