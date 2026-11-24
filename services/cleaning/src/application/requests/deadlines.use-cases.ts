@@ -14,6 +14,7 @@ import {
   sentQuote,
 } from './case-support';
 import { visitCancelledEvent } from './client-requests.use-cases';
+import { expireProgramQuoteOf, isProgramQuote } from './program-quotes.use-cases';
 import { type CaseRecord, type QuoteRecord } from './requests.ports';
 import { releaseVisitAgents } from './visit-agenda';
 import { applyDebitOutcome, sendDebit, sendRefund, SYSTEM_ACTOR } from './visit-fee-money';
@@ -164,6 +165,11 @@ export class CaseDeadlinesUseCase {
   private async expire(record: CaseRecord, now: Date): Promise<boolean> {
     const quote = sentQuote(record);
     if (!quote) return false;
+    // Piste P : un devis de renouvellement ou d'avenant expire sans clore le dossier du programme.
+    if (isProgramQuote(quote)) {
+      await expireProgramQuoteOf(this.deps, record, quote, now);
+      return true;
+    }
     const outcome = expireQuote({ quote, requestStatus: record.request.status, fees: record.fees, now });
     const expired: QuoteRecord = { ...quote, ...outcome.quote };
     const next: CaseRecord = {

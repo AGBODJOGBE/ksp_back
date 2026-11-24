@@ -30,7 +30,7 @@ export const caseInclude = {
   visitFees: true,
   visits: true,
   retainedValues: true,
-  quotes: true,
+  quotes: { include: { createdProgram: { select: { id: true } } } },
   reactivations: true,
   programs: { where: { renewalOfProgramId: null }, select: { id: true, number: true, status: true } },
 } satisfies Prisma.CleaningRequestInclude;
@@ -46,6 +46,8 @@ interface QuoteBody {
   paymentTerms: PaymentTerms;
   termsVersion: string;
   validityDays: number | null;
+  /** Devis d'avenant : dates (ISO) et types ajoutés. */
+  amendment?: { addedStarts: string[]; addedCleaningTypeIds: string[] } | null;
 }
 
 interface RevisionBody {
@@ -198,6 +200,15 @@ function quoteOf(row: CaseRow['quotes'][number]): QuoteRecord {
     schedulePlan: row.schedulePlan as unknown as SchedulePlan,
     sentBy: row.sentBy,
     validityDays: body.validityDays,
+    kind: row.kind,
+    programId: row.programId,
+    createdProgramId: row.createdProgram?.id ?? null,
+    amendment: body.amendment
+      ? {
+          addedStarts: body.amendment.addedStarts.map((value) => new Date(value)),
+          addedCleaningTypeIds: body.amendment.addedCleaningTypeIds,
+        }
+      : null,
   };
 }
 
@@ -330,6 +341,14 @@ export function quoteData(quote: QuoteRecord, retainedValuesId: string | null) {
     paymentTerms: quote.paymentTerms,
     termsVersion: quote.termsVersion,
     validityDays: quote.validityDays,
+    ...(quote.amendment
+      ? {
+          amendment: {
+            addedStarts: quote.amendment.addedStarts.map((start) => start.toISOString()),
+            addedCleaningTypeIds: quote.amendment.addedCleaningTypeIds,
+          },
+        }
+      : {}),
   };
   const manual = quote.adjustments.reduce((sum, item) => sum + item.amount, 0);
   return {

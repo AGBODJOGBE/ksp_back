@@ -11,6 +11,10 @@ import { cleaningErrors } from '../shared/errors';
 type Kind = 'invalid' | 'notFound' | 'forbidden' | 'conflict' | 'precondition';
 
 const RULES: Readonly<Record<ExecutionErrorCode, [Kind, string]>> = {
+  CLEANING_AMENDMENT_REQUIRED: [
+    'precondition',
+    'Ce changement modifie le prix du programme : préparez un avenant.',
+  ],
   CLEANING_BALANCE_GUARANTEE_NOT_MET: [
     'precondition',
     'Le solde du wallet ne couvre pas la séance : rechargez-le avant le démarrage.',
@@ -31,6 +35,7 @@ const RULES: Readonly<Record<ExecutionErrorCode, [Kind, string]>> = {
   CLEANING_REASON_REQUIRED: ['invalid', 'Le motif est obligatoire.'],
   CLEANING_RESCHEDULE_LIMIT_REACHED: ['precondition', 'Les reports de ce mois sont épuisés.'],
   CLEANING_RESCHEDULE_OVERLAP: ['conflict', 'Ce créneau chevauche une autre séance du programme.'],
+  CLEANING_SCHEDULE_EMPTY: ['precondition', 'Ce programme ne donne aucune date de séance.'],
   CLEANING_SECOND_APPROVER_REQUIRED: [
     'forbidden',
     'La validation doit être faite par une autre personne que l’auteur de la demande.',

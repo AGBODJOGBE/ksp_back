@@ -6,13 +6,19 @@ import { CUSTOMER, presentPaymentOutcome, presentProgram, presentSession } from 
 // Lot G
 import { ClaimUseCases } from '../../application/claims/claims.use-cases';
 import { toClaim, toClaimPage } from './claim.presenters';
-import { notImplemented } from './not-implemented';
+// Piste P
+import { ProgramRenewalUseCases } from '../../application/requests/program-renewal.use-cases';
+import { type Audience as CaseAudience, CasePresenter } from './case.presenters';
+import { scheduleFromProto } from './simulation.presenters';
+
+/** Demande rendue au client par le renouvellement et la nouvelle commande. */
+const CUSTOMER_CASE: CaseAudience = { kind: 'customer', amounts: true };
 
 /**
  * Adaptateur gRPC de ProgramService — programmes, séances, paiements, notes et réclamations du
  * client (UC-NT-11 à 18). Lot E livré : programmes et séances, report, annulation, arrêt, paiement
- * et note d'une séance. Lot G livré : réclamations (UC-NT-17). Renouvellement et nouvelle commande
- * (UC-NT-18) répondent encore NOT_IMPLEMENTED.
+ * et note d'une séance. Lot G livré : réclamations (UC-NT-17). Piste P livrée : renouvellement et
+ * nouvelle commande (UC-NT-18).
  */
 @Controller()
 @cleaningV1.ProgramServiceControllerMethods()
@@ -116,11 +122,24 @@ export class ProgramGrpcController implements cleaningV1.ProgramServiceControlle
     return { claim: toClaim(view) };
   }
 
-  renewProgram(): Promise<cleaningV1.RenewProgramResponse> {
-    return notImplemented('RenewProgram');
+  // --- Piste P : renouveler, commander à nouveau (UC-NT-18) ------------------------------------
+  async renewProgram(request: cleaningV1.RenewProgramRequest): Promise<cleaningV1.RenewProgramResponse> {
+    const record = await new ProgramRenewalUseCases(this.lotGDeps as ExecutionDeps).renew({
+      programId: request.programId,
+      idempotencyKey: request.idempotencyKey,
+      startDate: request.startDate,
+    });
+    return { request: await new CasePresenter(this.lotGDeps).request(record, CUSTOMER_CASE) };
   }
 
-  reorderProgram(): Promise<cleaningV1.ReorderProgramResponse> {
-    return notImplemented('ReorderProgram');
+  async reorderProgram(
+    request: cleaningV1.ReorderProgramRequest,
+  ): Promise<cleaningV1.ReorderProgramResponse> {
+    const record = await new ProgramRenewalUseCases(this.lotGDeps as ExecutionDeps).reorder({
+      programId: request.programId,
+      idempotencyKey: request.idempotencyKey,
+      schedule: scheduleFromProto(request.schedule),
+    });
+    return { request: await new CasePresenter(this.lotGDeps).request(record, CUSTOMER_CASE) };
   }
 }

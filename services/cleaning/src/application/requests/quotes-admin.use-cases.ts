@@ -34,6 +34,7 @@ import {
   saveCase,
   sentQuote,
 } from './case-support';
+import { sendAmendment } from './program-quotes.use-cases';
 import { comparisonOf } from './retained.use-cases';
 import { type CaseRecord, type QuoteRecord } from './requests.ports';
 import { CASE_PERMISSIONS, staffWith } from './staff';
@@ -56,7 +57,7 @@ export interface QuoteDraftInput {
   validityDays?: number | undefined;
 }
 
-function adjustmentsOf(input: QuoteDraftInput['adjustments']): AdjustmentInput[] {
+export function adjustmentsOf(input: QuoteDraftInput['adjustments']): AdjustmentInput[] {
   return (input ?? []).map((item, index) => {
     if (item.kind !== 'discount' && item.kind !== 'surcharge') {
       throw cleaningErrors.invalid(`adjustments[${index}].kind`, 'invalid_type');
@@ -70,7 +71,7 @@ function adjustmentsOf(input: QuoteDraftInput['adjustments']): AdjustmentInput[]
   });
 }
 
-function validity(days: number | undefined): number | null {
+export function validity(days: number | undefined): number | null {
   if (days === undefined) return null;
   if (!Number.isInteger(days) || days < 1 || days > MAX_VALIDITY_DAYS)
     throw cleaningErrors.invalid('validityDays', 'out_of_range');
@@ -78,7 +79,7 @@ function validity(days: number | undefined): number | null {
 }
 
 /** Prix fixés au devis pour les offres « sur devis » (OnQuotePrice), puis lignes R-DV-07. */
-function linesWith(pricing: SessionPricing, onQuote: QuoteDraftInput['onQuotePrices']): PricedLine[] {
+export function linesWith(pricing: SessionPricing, onQuote: QuoteDraftInput['onQuotePrices']): PricedLine[] {
   const fixed = new Map((onQuote ?? []).map((item) => [item.offerId, item.price]));
   for (const [offerId, price] of fixed) {
     if (!Number.isSafeInteger(price) || price <= 0)
@@ -96,8 +97,16 @@ function linesWith(pricing: SessionPricing, onQuote: QuoteDraftInput['onQuotePri
   );
 }
 
+/**
+ * Nature du devis composé sur une demande (R-PG-08) : une demande née d'une nouvelle commande sans
+ * visite n'a ni frais ni visite, son devis est « reorder » ; sinon c'est un devis initial.
+ */
+export function quoteKindOf(record: Pick<CaseRecord, 'fees' | 'visits'>): 'initial' | 'reorder' {
+  return record.fees.length === 0 && record.visits.length === 0 ? 'reorder' : 'initial';
+}
+
 /** Une remise ou majoration exige cleaning.quote.adjust_price (R-DV-03). */
-function requireAdjustPermission(adjustments: readonly AdjustmentInput[], zoneKey: string): void {
+export function requireAdjustPermission(adjustments: readonly AdjustmentInput[], zoneKey: string): void {
   if (adjustments.length) staffWith(CASE_PERMISSIONS.adjustPrice, zoneKey);
 }
 
@@ -189,7 +198,16 @@ export class QuotesAdminUseCases {
             now,
           }),
         );
-        const draft: QuoteRecord = { ...quote, schedulePlan, sentBy: null, validityDays };
+        const draft: QuoteRecord = {
+          ...quote,
+          schedulePlan,
+          sentBy: null,
+          validityDays,
+          kind: quoteKindOf(record),
+          programId: null,
+          createdProgramId: null,
+          amendment: null,
+        };
         const saved = await saveCase(
           this.deps,
           { ...record, quotes: [...record.quotes, draft] },
@@ -323,6 +341,18 @@ export class QuotesAdminUseCases {
       run: async (stub) => {
         const { record, quote } = await this.get(input.quoteId);
         const settings = await this.deps.caseSettings.caseSettings();
+        // Piste P — R-PG-06 : un devis d'avenant s'envoie sans toucher à la demande, déjà acceptée.
+        if (quote.kind === 'amendment') {
+          return sendAmendment(this.deps, {
+            record,
+            quote: quoteById(record, quote.id),
+            staffId,
+            validityDays: quote.validityDays ?? settings.quoteValidityDays,
+            firstSessionLeadHours: settings.firstSessionLeadHours,
+            now,
+            stub,
+          });
+        }
         const preview = await previewSchedule(this.deps, quote.schedulePlan);
         const previous = sentQuote(record);
         const sent = decide(() =>
@@ -366,7 +396,7 @@ export class QuotesAdminUseCases {
                 payload: {
                   ...caseParty(record.request),
                   quoteId: quote.id,
-                  kind: 'initial',
+                  kind: quote.kind,
                   version: quote.version,
                   sessionPrice: money(sentRecord.sessionPrice),
                   sessionsCount: sentRecord.sessionsCount,

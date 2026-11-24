@@ -129,11 +129,54 @@ export interface RevisionRecord extends RetainedRevision {
   reasons: ValueReason[];
 }
 
+/** Nature d'un devis (contrat Quote.kind) : initial, avenant, renouvellement, nouvelle commande. */
+export type QuoteKind = 'initial' | 'amendment' | 'renewal' | 'reorder';
+
 export interface QuoteRecord extends Quote {
   schedulePlan: SchedulePlan;
   sentBy: string | null;
   /** Validité choisie à la composition ; null : réglage (15 jours) au moment de l'envoi. */
   validityDays: number | null;
+  kind: QuoteKind;
+  /** Programme visé par un avenant (R-PG-06) ou un renouvellement (R-PG-07) ; null sinon. */
+  programId: string | null;
+  /** Programme créé à l'acceptation de ce devis ; lu de la base, jamais écrit par le dossier. */
+  createdProgramId: string | null;
+  /** Ce qu'un devis d'avenant ajoute au programme (R-PG-06) ; null pour les autres devis. */
+  amendment: { addedStarts: Date[]; addedCleaningTypeIds: string[] } | null;
+}
+
+/** Avenant accepté (R-PG-06), appliqué au programme dans la transaction du dossier. */
+export interface ProgramAmendmentWrite {
+  programId: string;
+  /** Version du programme lue à la décision : une écriture concurrente fait échouer l'avenant. */
+  expectedVersion: number;
+  sessionPrice: number;
+  teamSize: number;
+  durationMinutes: number;
+  schedulePlan: unknown;
+  communeKey: string;
+  /**
+   * Séances non démarrées et non payées : nouveau prix, nouvelle fin ; `release` : agents retirés,
+   * séance de nouveau « à affecter ».
+   */
+  sessions: { id: string; version: number; price: number; scheduledEnd: Date; release: boolean }[];
+  addedSessions: { id: string; rank: number; scheduledStart: Date; scheduledEnd: Date; price: number }[];
+  /** Offres des types ajoutés, à inscrire sur la demande du programme. */
+  addedItems: { offerId: string; tariffVersionId: string | null }[];
+  at: Date;
+  by: string;
+}
+
+/** Proposition de renouvellement d'un programme (R-PG-07), écrite avec le dossier. */
+export interface ProgramRenewalWrite {
+  programId: string;
+  status: 'proposed' | 'accepted' | 'declined';
+  at: Date;
+  /** Auteur de la réponse ; null pour une proposition. */
+  by: string | null;
+  /** Proposition automatique : seulement si le programme n'en a encore aucune. */
+  onlyIfNone?: boolean;
 }
 
 export interface ReactivationRecord extends Reactivation {
@@ -170,6 +213,8 @@ export interface NewProgram {
   durationMinutes: number;
   schedulePlan: SchedulePlan;
   visitFeeToDeduct: number;
+  /** Programme renouvelé (R-PG-07) ; absent ou null pour le premier programme d'une demande. */
+  renewalOfProgramId?: string | null;
   createdAt: Date;
   sessions: {
     id: string;
@@ -231,6 +276,16 @@ export interface CaseWrites {
   place?: { record: PlaceRecord; expectedVersion: number };
   walletOperations?: WalletOperationRecord[];
   directPayments?: DirectPaymentRecord[];
+  /**
+   * Piste P : état de la proposition de renouvellement du programme visé, dans la même transaction.
+   * Refusé (ConcurrentUpdateError) si le programme n'est plus dans l'état attendu.
+   */
+  programRenewal?: ProgramRenewalWrite;
+  /**
+   * Piste P : avenant accepté. Refusé (ConcurrentUpdateError) si le programme ou l'une de ses
+   * séances a changé depuis la décision.
+   */
+  programAmendment?: ProgramAmendmentWrite;
 }
 
 export interface CaseFilter {
@@ -307,6 +362,11 @@ export interface CaseRepository {
   withDeadlinesLock(work: () => Promise<void>): Promise<boolean>;
   /** Inbox des événements reçus : false si l'événement est déjà traité par ce consommateur. */
   markProcessed(eventId: string, consumer: string): Promise<boolean>;
+  /**
+   * Piste P — R-PG-07 : proposition de renouvellement sans devis (nouvelle visite nécessaire). Sans
+   * effet (false) si le programme a déjà une proposition.
+   */
+  proposeRenewalWithoutQuote(programId: string, at: Date, changes: Changes): Promise<boolean>;
 }
 
 /** Réglages du dossier (partie 16.1). */

@@ -4,12 +4,16 @@ Vie d'un programme de nettoyage (cahier des charges Nettoyage v2, parties 8, 11.
 transitions, progression d'après les séances, suspension et reprise, rattrapage, arrêt. Domaine pur,
 sans horloge implicite ; erreurs : `../sessions/errors.ts`.
 
-| Fichier             | Rôle                                                                          |
-| ------------------- | ----------------------------------------------------------------------------- |
-| `program-status.ts` | Transitions de 15.2, « en cours » et « terminé » d'après les séances          |
-| `suspension.ts`     | Causes cumulables, suspension, reprise, seuil des séances en retard           |
-| `catch-up.ts`       | Reprise des séances suspendues, date de rattrapage proposée (R-SU-03)         |
-| `program-stop.ts`   | Arrêt par le client (règle des 24 h), arrêt par KSP validé par un autre admin |
+| Fichier              | Rôle                                                                          |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `program-status.ts`  | Transitions de 15.2, « en cours » et « terminé » d'après les séances          |
+| `suspension.ts`      | Causes cumulables, suspension, reprise, seuil des séances en retard           |
+| `catch-up.ts`        | Reprise des séances suspendues, date de rattrapage proposée (R-SU-03)         |
+| `program-stop.ts`    | Arrêt par le client (règle des 24 h), arrêt par KSP validé par un autre admin |
+| `schedule-change.ts` | Changement du jour ou de l'heure des séances à venir (R-PG-06, R-RP-01)       |
+| `amendment.ts`       | Avenant : conditions, séances changées, séances ajoutées (R-PG-06)            |
+| `renewal.ts`         | Conditions du renouvellement et de la nouvelle commande (R-PG-07, R-PG-08)    |
+| `renewal-plan.ts`    | Plan recalé d'un programme renouvelé, même nombre de séances (R-PG-07)        |
 
 ## Matrice règle → test
 
@@ -27,6 +31,16 @@ sans horloge implicite ; erreurs : `../sessions/errors.ts`.
 | Partie 12 Client     | `maintainedSessionId`                    | `program-stop.spec` « plus de 24 h avant la plus proche » | 24 h − 1 s : maintenue ; séance suspendue jamais maintenue ; terminé refusé |
 | Partie 12 KSP        | `CLEANING_SECOND_APPROVER_REQUIRED`      | `program-stop.spec` « validation par un autre admin »     | même personne ; motif vide                                                  |
 
+### Vie du programme (piste P)
+
+| Règle                     | Code ou issue                                            | Cas nominal                                                     | Cas limite                                                                       |
+| ------------------------- | -------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| R-PG-06 Changer le plan   | séances déplacées, `to_assign`                           | `schedule-change.spec` « déplace les séances à venir »          | date d'effet ; durée ; créneau inchangé ; date passée ; chevauchement            |
+| R-PG-06 Prix inchangé     | `CLEANING_AMENDMENT_REQUIRED`, `CLEANING_SCHEDULE_EMPTY` | `schedule-change.spec` « un nombre de séances différent »       | plan sans date ; programme suspendu, terminé, annulé                             |
+| R-PG-06 Avenant           | `updated`, `added`                                       | `amendment.spec` « nouveau prix sur les séances non démarrées » | séance payée ou démarrée ; équipe ou durée changée ; prix sous les frais déduits |
+| R-PG-06 Demande d'avenant | `CLEANING_VALIDATION_FAILED`                             | `amendment.spec` « au moins un type ou une séance »             | type déjà au programme ; date déjà prise ; date d'une séance annulée             |
+| R-PG-07 Plan renouvelé    | plan recalé, même nombre de séances                      | `renewal-plan.spec` « hebdomadaire : même jour »                | jour férié ; début en milieu de semaine ; toutes les 12 semaines ; mensuel       |
+
 ## Interprétations prudentes (isolées dans une fonction nommée)
 
 - `programProgress` : un programme confirmé dont toutes les séances sont closes passe par « en cours »
@@ -40,3 +54,9 @@ sans horloge implicite ; erreurs : `../sessions/errors.ts`.
   `maxWeeks`, fixé par l'appelant (le cahier des charges ne donne pas de limite).
 - `stopProgramByCustomer` : seule une séance qui aura lieu (à affecter ou planifiée) est maintenue par
   la règle des 24 h, jamais une séance gelée.
+- `changeSchedule` : les séances concernées sont « à affecter » ou « planifiées » ; une séance
+  suspendue en attente de rattrapage garde son rattrapage. Une séance dont le créneau ne change pas
+  n'est pas touchée (ni report, ni retrait d'agents).
+- `amendableSessions` : une séance déjà payée d'avance ne prend pas le prix de l'avenant.
+- `renewedPlan` : la période du plan renouvelé s'arrête le jour de sa dernière séance ; les jours
+  exclus ou ajoutés à la main de l'ancienne période ne sont pas repris.

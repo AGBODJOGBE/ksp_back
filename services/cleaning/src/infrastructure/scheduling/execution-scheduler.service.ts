@@ -75,7 +75,7 @@ export class ExecutionSchedulerService implements OnApplicationBootstrap, Before
     }
   }
 
-  /** Dans l'ordre : débits en cours, retards, couverture, rappels, factures. */
+  /** Dans l'ordre : débits en cours, retards, couverture, rappels, factures, renouvellements. */
   async runAll(): Promise<void> {
     const steps: [string, () => Promise<TaskReport>][] = [
       ['reprise des débits', () => this.tasks.replayWalletOperations()],
@@ -83,6 +83,8 @@ export class ExecutionSchedulerService implements OnApplicationBootstrap, Before
       ['couverture des séances', () => this.tasks.watchStaffing()],
       ['rappels de la veille', () => this.tasks.sendReminders()],
       ['factures de séance', () => this.tasks.issuePendingInvoices()],
+      // Piste P — R-PG-07.
+      ['propositions de renouvellement', () => this.tasks.proposeRenewals()],
     ];
     for (const [name, step] of steps) {
       try {

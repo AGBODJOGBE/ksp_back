@@ -19,7 +19,7 @@ import { type ActiveCause, type SuspensionCauseCode } from '../../../domain/prog
 import { type Reschedule } from '../../../domain/sessions/reschedule';
 import { type Incident } from '../../../domain/sessions/session';
 import { isUuid } from '../agents/agent-rows';
-import { type Tx, writeChanges } from '../changes';
+import { json, type Tx, writeChanges } from '../changes';
 import { lockOrganization } from '../organizations/organization-lock';
 import { PrismaOrganizationTransaction } from '../organizations/prisma-organization.tx';
 import { checklistJson, PROGRAM_INCLUDE, SESSION_INCLUDE, toProgram, toSession } from './execution-rows';
@@ -236,6 +236,8 @@ export class PrismaExecutionTx extends PrismaExecutionReader implements Executio
               cancellationApprovedBy: patch.cancellation.approvedBy,
             }
           : {}),
+        ...(patch.schedulePlan !== undefined ? { schedulePlan: json(patch.schedulePlan) } : {}),
+        ...(patch.durationMinutes !== undefined ? { durationMinutes: patch.durationMinutes } : {}),
         updatedAt: this.clock.now(),
         version: { increment: 1 },
       },

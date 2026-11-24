@@ -35,8 +35,7 @@ import { CLEANING_GRPC_CONTROLLERS } from '../src/interfaces/grpc/controllers';
  * - Lots C, D, E et G : les RPC livrées exigent une connexion ; appelées sans utilisateur, elles
  *   répondent AUTH_REQUIRED avant tout accès aux données.
  * - Piste S : ObligationService.HasPendingObligations répond avec son cas d'usage (réservée à identity).
- * - Toute autre RPC répond UNIMPLEMENTED avec le code CLEANING_NOT_IMPLEMENTED. Une méthode absente du
- *   serveur répondrait aussi UNIMPLEMENTED, mais sans ce code : le test la repère.
+ * - Toutes les RPC du contrat sont branchées : plus aucune ne répond CLEANING_NOT_IMPLEMENTED.
  */
 
 /** RPC branchées par le lot D (UC-NT-19 à 21, 34 à 37). */
@@ -193,10 +192,15 @@ const PISTE_S: Readonly<Record<string, readonly string[]>> = {
 const PISTE_A: Readonly<Record<string, readonly string[]>> = {
   AgentAdminService: ['GetAgentIdDocument', 'CreateAgent', 'InviteAgent'],
 };
+/** RPC branchées par la piste P (vie du programme : UC-NT-18, UC-NT-39). */
+const PISTE_P: Readonly<Record<string, readonly string[]>> = {
+  ProgramAdminService: ['ChangeProgramSchedule', 'CreateAmendment'],
+  ProgramService: ['RenewProgram', 'ReorderProgram'],
+};
 const inLot = (lot: Readonly<Record<string, readonly string[]>>, service: string, rpc: string) =>
   lot[service]?.includes(rpc) ?? false;
 const delivered = (service: string, rpc: string) =>
-  [LOT_D, LOT_C, LOT_E, LOT_G, PISTE_A].some((lot) => inLot(lot, service, rpc));
+  [LOT_D, LOT_C, LOT_E, LOT_G, PISTE_A, PISTE_P].some((lot) => inLot(lot, service, rpc));
 const serviceOnly = (service: string, rpc: string) =>
   SERVICE_ONLY.some(([s, r]) => s === service && r === rpc) || inLot(PISTE_S, service, rpc);
 
@@ -340,7 +344,9 @@ describe('cleaning en gRPC', () => {
     for (const [service, rpcs] of Object.entries(LOT_C)) {
       for (const rpc of rpcs) expect(all).toContain(`${service}.${rpc}`);
     }
-    expect(DELIVERED).toHaveLength(32 + 44 + 33 + 14 + Object.values(PISTE_A).flat().length);
+    expect(DELIVERED).toHaveLength(
+      32 + 44 + 33 + 14 + Object.values(PISTE_A).flat().length + Object.values(PISTE_P).flat().length,
+    );
   });
 
   it('les RPC du lot E sont toutes dans le contrat', () => {
@@ -390,6 +396,15 @@ describe('cleaning en gRPC', () => {
     expect(RPCS.filter(([, service, rpc]) => inLot(PISTE_A, service, rpc))).toHaveLength(pisteA.length);
   });
 
+  it('les RPC de la piste P sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    const pisteP = Object.entries(PISTE_P).flatMap(([service, rpcs]) =>
+      rpcs.map((rpc) => `${service}.${rpc}`),
+    );
+    for (const rpc of pisteP) expect(all).toContain(rpc);
+    expect(RPCS.filter(([, service, rpc]) => inLot(PISTE_P, service, rpc))).toHaveLength(pisteP.length);
+  });
+
   it.each(DELIVERED)('%s : %s.%s est branchée et exige une connexion', async (pkg, service, rpc) => {
     expect(await anonymous(() => call(pkg, service, rpc, {}))).toMatchObject({
       kind: 'UNAUTHENTICATED',
@@ -397,13 +412,8 @@ describe('cleaning en gRPC', () => {
     });
   });
 
-  it.each(NOT_IMPLEMENTED)('%s : %s.%s répond UNIMPLEMENTED', async (pkg, service, rpc) => {
-    const failure = await anonymous(() => call(pkg, service, rpc, {}));
-    expect(failure).toMatchObject({
-      kind: 'NOT_IMPLEMENTED',
-      code: 'CLEANING_NOT_IMPLEMENTED',
-      message: `La méthode ${rpc} n'est pas encore disponible.`,
-    });
+  it('toutes les RPC du contrat sont branchées : plus aucune ne répond CLEANING_NOT_IMPLEMENTED', () => {
+    expect(NOT_IMPLEMENTED).toEqual([]);
   });
 
   it.each(LOT_A)('%s : %s.%s est branchée (lot A)', async (pkg, service, rpc) => {

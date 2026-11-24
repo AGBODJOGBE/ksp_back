@@ -1,6 +1,7 @@
 import { hasPermission, requirePermission, requireUser } from '@ksp/platform';
 import { type ProgramStatus, PROGRAM_STATUSES } from '../../domain/programs/program-status';
 import { cancelProgramByKsp } from '../../domain/programs/program-stop';
+import { changeSchedule } from '../../domain/programs/schedule-change';
 import { cancelSessionAsKsp } from '../../domain/sessions/cancellation';
 import { ExecutionRuleError, invalidTransition, requireReason } from '../../domain/sessions/errors';
 import { resumeSession } from '../../domain/sessions/field-outcomes';
@@ -10,16 +11,19 @@ import { SESSION_STATUSES, type SessionStatus } from '../../domain/sessions/sess
 import { completeSessionAsKsp, reportSessionMissedAsKsp } from '../../domain/sessions/staff-closure';
 import { type ExecutionDeps } from '../deps';
 import { reevaluateStanding, StandingSettings } from '../organizations/standing.use-cases';
+import { planProgramNow } from '../requests/client-quotes.use-cases';
 import { requireStaff } from '../shared/access';
 import { cleaningErrors } from '../shared/errors';
 import { instant, optionalInstant, page, requireUuid, requiredReason } from '../shared/input';
 import { type Page, pageOf, parsePage } from '../shared/paging';
+import { previewSchedule, type SchedulePlanInput, toSchedulePlan } from '../simulation/schedule';
 import { stopEffects } from './customer-programs.use-cases';
 import { executionAction } from './execution-actions';
 import { executionErrors } from './execution-errors';
 import { type ProgramRecord, type SessionRecord } from './execution.ports';
 import { applyAddCause, applyLiftCause, audit, type CatchUp, noEffects } from './execution-support';
 import { closeSession } from './field.use-cases';
+import { applyScheduleChange } from './schedule-changes';
 import { applyCancellation, applyReschedule } from './session-changes';
 import { SessionPayments } from './session-payments';
 import { type SessionDetails, sessionDetails } from './session-views';
@@ -212,6 +216,66 @@ export class AdminProgramUseCases {
         return { effects: noEffects() };
       },
     });
+  }
+
+  /**
+   * R-PG-06, R-RP-01 : changement du jour ou de l'heure des séances à venir, sans nouveau devis. Le
+   * nouveau plan donne autant de séances que celles qu'il remplace (sinon : avenant) ; la durée peut
+   * changer, jamais le prix. Les séances déplacées sont de nouveau « à affecter » : la planification
+   * du programme est relancée après la transaction, sans jamais faire échouer l'appel.
+   */
+  async changeProgramSchedule(input: {
+    programId: string;
+    idempotencyKey: string;
+    effectiveFrom: string;
+    schedule?: SchedulePlanInput | undefined;
+    reason: string;
+    durationMinutes?: number | null | undefined;
+  }): Promise<ProgramRecord> {
+    const program = await this.program(input.programId);
+    const staffId = staffWith(PROGRAM_MANAGE, program.communeKey);
+    if (!input.schedule) throw cleaningErrors.invalid('schedule', 'required');
+    const plan = toSchedulePlan(input.schedule);
+    const durationMinutes = input.durationMinutes ?? null;
+    const changed = await executionAction(this.deps, this.payments, {
+      actorId: staffId,
+      operation: 'program.schedule_change',
+      key: input.idempotencyKey,
+      body: {
+        programId: program.id,
+        effectiveFrom: input.effectiveFrom,
+        schedule: plan,
+        reason: input.reason,
+        durationMinutes,
+      },
+      programId: program.id,
+      view: () => this.getProgram(program.id),
+      decide: async (ctx) => {
+        const preview = await previewSchedule(this.deps, plan);
+        const change = changeSchedule(
+          { status: ctx.program.status, causes: ctx.program.causes.map((cause) => cause.cause) },
+          ctx.sessions,
+          {
+            effectiveFrom: input.effectiveFrom,
+            newStarts: preview.occurrences.map((occurrence) => occurrence.start),
+            durationMinutes,
+            reason: input.reason,
+            actorId: staffId,
+            now: ctx.now,
+          },
+        );
+        return {
+          effects: await applyScheduleChange(ctx, change, {
+            plan,
+            effectiveFrom: input.effectiveFrom,
+            reason: input.reason.trim(),
+            actorId: staffId,
+          }),
+        };
+      },
+    });
+    await planProgramNow(this.deps, program.id);
+    return changed;
   }
 
   /**
