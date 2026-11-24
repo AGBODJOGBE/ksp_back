@@ -191,7 +191,7 @@ const PISTE_S: Readonly<Record<string, readonly string[]>> = {
 
 /** RPC branchées par la piste A (agents : UC-NT-34, UC-NT-35). */
 const PISTE_A: Readonly<Record<string, readonly string[]>> = {
-  AgentAdminService: ['GetAgentIdDocument', 'CreateAgent'],
+  AgentAdminService: ['GetAgentIdDocument', 'CreateAgent', 'InviteAgent'],
 };
 const inLot = (lot: Readonly<Record<string, readonly string[]>>, service: string, rpc: string) =>
   lot[service]?.includes(rpc) ?? false;

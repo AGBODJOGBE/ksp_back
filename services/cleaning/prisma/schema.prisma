@@ -1910,3 +1910,28 @@ model CleaningSettings {
 
   @@map("cleaning_settings")
 }
+
+/// Piste A : invitation d'un agent par l'admin Nettoyage (R-AG-02). Le numéro invité n'est jamais en
+/// clair : chiffré (FieldCipher) et retrouvé par son empreinte à clé. Un numéro n'a qu'une invitation
+/// non consommée : index unique partiel agent_invitations_open_phone_key, écrit dans la migration.
+model AgentInvitation {
+  id               String    @id @db.Uuid
+  /// Numéro invité, chiffré ; effacé quand l'invitation est consommée.
+  phoneEncrypted   String?   @map("phone_encrypted")
+  /// Empreinte à clé du numéro normalisé (finalité agent_invitation_phone).
+  phoneFingerprint String    @map("phone_fingerprint")
+  /// Admin qui a invité.
+  createdBy        String    @map("created_by") @db.Uuid
+  createdAt        DateTime  @map("created_at") @db.Timestamptz(3)
+  /// Échéance : 7 jours après l'invitation, ou après son renouvellement.
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  /// Dernier envoi réussi ; null : envoi à faire ou à refaire.
+  sentAt           DateTime? @map("sent_at") @db.Timestamptz(3)
+  /// Envois terminés (réussis ou refusés par notification) : le suivant porte le numéro suivant.
+  sendAttempts     Int       @default(0) @map("send_attempts")
+  consumedAt       DateTime? @map("consumed_at") @db.Timestamptz(3)
+  /// Agent créé par l'inscription qui a consommé l'invitation.
+  agentId          String?   @map("agent_id") @db.Uuid
+
+  @@map("agent_invitations")
+}

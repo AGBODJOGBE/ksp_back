@@ -9,7 +9,9 @@ import {
   type AgentPatch,
   type AgentRecord,
   type AgentStatsRecord,
+  type InvitationRecord,
   type NewAgent,
+  type NewInvitation,
   type PlanningSettings,
   type TeamPatch,
   type TeamRecord,
@@ -146,6 +148,8 @@ export interface PlanningReader {
   targets(refs: readonly TargetRef[]): Promise<TargetRecord[]>;
   assignment(id: string): Promise<AssignmentRecord | null>;
   settings(): Promise<PlanningSettings>;
+  /** Piste A : invitation d'un agent (R-AG-02). */
+  invitationById(id: string): Promise<InvitationRecord | null>;
 }
 
 export interface PlanningTx extends PlanningReader {
@@ -194,6 +198,20 @@ export interface PlanningTx extends PlanningReader {
   write(changes: Changes): Promise<void>;
   /** Réponse d'une requête idempotente, dans la transaction de l'action. */
   remember(record: IdempotencyRecord): Promise<void>;
+  // --- Piste A (agents) : invitations (R-AG-02) ---
+  /**
+   * Invitation en cours du numéro : créée si le numéro n'en a pas ; sinon la sienne, renouvelée
+   * (nouvelle échéance, envoi à refaire). Deux appels simultanés pour un même numéro : le second
+   * échoue (ConcurrentUpdateError).
+   */
+  openInvitation(row: NewInvitation): Promise<InvitationRecord>;
+  /** Envoi terminé : compté ; `sentAt` non null s'il a réussi. */
+  recordInvitationSend(id: string, sentAt: Date | null): Promise<void>;
+  /**
+   * Invitation consommée par l'inscription de l'agent ; son numéro chiffré est effacé. Faux si elle
+   * est inconnue, déjà consommée ou expirée à cet instant.
+   */
+  consumeInvitation(id: string, agentId: string, at: Date): Promise<boolean>;
 }
 
 export interface PlanningRepository extends PlanningReader {

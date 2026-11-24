@@ -16,6 +16,8 @@ export const cipherContext = {
   idDocument: (agentId: string) => `agent:${agentId}:id_document`,
   emergencyContact: (agentId: string) => `agent:${agentId}:emergency_contact`,
   mobileMoney: (agentId: string) => `agent:${agentId}:mobile_money`,
+  /** Piste A : numéro invité (R-AG-02). */
+  invitationPhone: (invitationId: string) => `agent_invitation:${invitationId}:phone`,
 };
 
 export interface EmergencyContact {

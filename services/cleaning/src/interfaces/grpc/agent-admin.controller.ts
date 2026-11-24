@@ -9,16 +9,16 @@ import {
 } from '../../application/agents/agent-admin.use-cases';
 import { CreateAgentUseCase } from '../../application/agents/agent-creation.use-case';
 import { GetAgentIdDocumentUseCase } from '../../application/agents/agent-id-document.use-case';
+import { InviteAgentUseCase } from '../../application/agents/agent-invitation.use-case';
 import { AvailabilityUseCases } from '../../application/agents/availability.use-cases';
 import { TeamUseCases } from '../../application/agents/team.use-cases';
 import { type AgentDeps, CLEANING_DEPS, type CleaningDeps } from '../../application/deps';
 import { toAgent, toAgentPage, toAvailability, toIdDocument, toTeam } from './agent-mappers';
-import { notImplemented } from './not-implemented';
 
 /**
  * Adaptateur gRPC d'AgentAdminService — back-office : agents, disponibilités, équipes (UC-NT-34 à
- * 36, lot D) ; pièce d'identité d'un agent et création d'un agent par l'admin, compte trouvé ou créé
- * par son téléphone chez identity (piste A). Pas encore livrée : l'invitation par SMS.
+ * 36, lot D) ; pièce d'identité d'un agent, création d'un agent par l'admin (compte trouvé ou créé
+ * par son téléphone chez identity) et invitation d'un agent, envoyée par notification (piste A).
  */
 @Controller()
 @cleaningV1.AgentAdminServiceControllerMethods()
@@ -32,6 +32,7 @@ export class AgentAdminGrpcController implements cleaningV1.AgentAdminServiceCon
   // Piste A (agents)
   private readonly idDocument: GetAgentIdDocumentUseCase;
   private readonly create: CreateAgentUseCase;
+  private readonly invite: InviteAgentUseCase;
 
   constructor(@Inject(CLEANING_DEPS) deps: CleaningDeps) {
     this.list = new ListAgentsUseCase(deps);
@@ -43,6 +44,7 @@ export class AgentAdminGrpcController implements cleaningV1.AgentAdminServiceCon
     // Piste A (agents)
     this.idDocument = new GetAgentIdDocumentUseCase(deps);
     this.create = new CreateAgentUseCase(deps as AgentDeps);
+    this.invite = new InviteAgentUseCase(deps as AgentDeps);
   }
 
   async listAgents(request: cleaningV1.ListAgentsRequest): Promise<cleaningV1.ListAgentsResponse> {
@@ -63,8 +65,15 @@ export class AgentAdminGrpcController implements cleaningV1.AgentAdminServiceCon
     return { agent: toAgent(await this.create.execute(request)) };
   }
 
-  inviteAgent(): Promise<cleaningV1.InviteAgentResponse> {
-    return notImplemented('InviteAgent');
+  async inviteAgent(request: cleaningV1.InviteAgentRequest): Promise<cleaningV1.InviteAgentResponse> {
+    const invitation = await this.invite.execute(request);
+    return {
+      agentInvitation: {
+        id: invitation.id,
+        phone: invitation.phone,
+        expiresAt: invitation.expiresAt.toISOString(),
+      },
+    };
   }
 
   async updateAgent(request: cleaningV1.UpdateAgentRequest): Promise<cleaningV1.UpdateAgentResponse> {

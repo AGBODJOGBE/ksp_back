@@ -72,3 +72,50 @@ describe('IdentityAgentAccounts (identity.EnsureUserByPhone, R-AG-02)', () => {
     );
   });
 });
+
+describe('IdentityAgentAccounts (identity.FindUserByPhone, R-AG-02)', () => {
+  function finder(answer: () => unknown) {
+    const requests: identityV1.FindUserByPhoneRequest[] = [];
+    const client = {
+      findUserByPhone: (request: identityV1.FindUserByPhoneRequest) => {
+        requests.push(request);
+        return answer();
+      },
+    } as unknown as identityV1.IdentityServiceClient;
+    return {
+      requests,
+      accounts: new IdentityAgentAccounts(client, new GrpcCaller({ target: 'identity', retryBackoffMs: 1 })),
+    };
+  }
+
+  it('rend le compte du numéro sans le créer ; aucun compte : null', async () => {
+    const found = finder(() =>
+      of({ found: true, userId: USER, status: identityV1.UserStatus.USER_STATUS_ACTIVE }),
+    );
+    await expect(found.accounts.findByPhone(INPUT.phone)).resolves.toEqual({
+      userId: USER,
+      status: 'active',
+    });
+    expect(found.requests).toEqual([{ phoneE164: '+2290197000045' }]);
+    const none = finder(() =>
+      of({ found: false, userId: '', status: identityV1.UserStatus.USER_STATUS_UNSPECIFIED }),
+    );
+    await expect(none.accounts.findByPhone(INPUT.phone)).resolves.toBeNull();
+  });
+
+  it('identity injoignable : IDENTITY_UNAVAILABLE ; refus transmis tel quel', async () => {
+    const down = finder(() =>
+      throwError(() => new AppError('UNAVAILABLE', 'GRPC_UNAVAILABLE', 'identity injoignable')),
+    );
+    await expect(down.accounts.findByPhone(INPUT.phone)).rejects.toMatchObject({
+      kind: 'UNAVAILABLE',
+      code: 'IDENTITY_UNAVAILABLE',
+    });
+    const refused = finder(() =>
+      throwError(() => AppError.invalid('IDENTITY_PHONE_INVALID', 'Numéro mal formé.')),
+    );
+    await expect(refused.accounts.findByPhone('+229')).rejects.toMatchObject({
+      code: 'IDENTITY_PHONE_INVALID',
+    });
+  });
+});

@@ -1,4 +1,4 @@
-import { baseServiceConfigSchema, requireGrpcAddressesInProduction } from '@ksp/platform';
+import { baseServiceConfigSchema, fieldKeyringEnv, requireGrpcAddressesInProduction } from '@ksp/platform';
 import { z } from 'zod';
 
 /**
@@ -64,6 +64,19 @@ export const configSchema = baseServiceConfigSchema
      * 0 = déclaration désactivée.
      */
     CLEANING_CATALOG_REGISTRATION_RETRY_MS: z.coerce.number().int().min(0).max(600_000).default(5_000),
+    /** Adresse gRPC de notification : envoi de l'invitation d'un agent (SendNotification, R-AG-02). */
+    NOTIFICATION_GRPC_URL: z.string().min(1).default('localhost:50052'),
+    /**
+     * Adresse de l'application agent : le lien d'une invitation est cette adresse suivie de
+     * `/invitations/<identifiant de l'invitation>`. Jamais une adresse locale en production.
+     */
+    CLEANING_AGENT_APP_URL: z.url().default('http://localhost:3020'),
+    /**
+     * Trousseau de l'empreinte du numéro invité (BlindIndex, ADR-063) : « clé » ou « id:clé,id:clé »
+     * en base64 (32 octets), du coffre à secrets, distinct de la clé de chiffrement. Obligatoire en
+     * production ; ailleurs, clé temporaire si absent.
+     */
+    CLEANING_BLIND_INDEX_KEYS: fieldKeyringEnv('CLEANING_BLIND_INDEX_KEYS'),
   })
   .refine(
     (cfg) =>
@@ -76,6 +89,17 @@ export const configSchema = baseServiceConfigSchema
     },
   )
   // Adresses gRPC des services appelés : jamais localhost en production (ADR-051).
-  .superRefine(requireGrpcAddressesInProduction);
+  .superRefine(requireGrpcAddressesInProduction)
+  // Piste A (agents) : le lien d'une invitation part chez la personne invitée.
+  .refine(
+    (cfg) =>
+      cfg.NODE_ENV !== 'production' ||
+      !/^https?:\/\/(localhost|127\.0\.0\.1)\b/.test(cfg.CLEANING_AGENT_APP_URL),
+    {
+      message:
+        'Obligatoire en production, jamais une adresse locale : adresse publique de l’application agent.',
+      path: ['CLEANING_AGENT_APP_URL'],
+    },
+  );
 
 export type ServiceConfig = z.infer<typeof configSchema>;

@@ -1,5 +1,6 @@
-import { billingV1, fileV1, geoV1, identityV1, paymentV1, walletV1 } from '@ksp/contracts';
+import { billingV1, fileV1, geoV1, identityV1, notificationV1, paymentV1, walletV1 } from '@ksp/contracts';
 import {
+  BlindIndex,
   GrpcCaller,
   grpcClientOptions,
   PlatformModule,
@@ -75,6 +76,7 @@ import {
   RetentionPurgeService,
 } from './infrastructure/scheduling/retention-purge.service';
 // Piste A (agents)
+import { BlindIndexPhoneFingerprints } from './infrastructure/crypto/phone-fingerprints';
 import { IdentityAgentAccounts } from './infrastructure/identity/identity-agent-accounts';
 import { IdentityAgentRoles } from './infrastructure/identity/identity-agent-roles';
 import { IdentityPermissionCatalog } from './infrastructure/identity/identity-permission-catalog';
@@ -83,6 +85,7 @@ import {
   PERMISSION_CATALOG_REGISTRY,
   PermissionCatalogRegistrationService,
 } from './infrastructure/identity/permission-catalog-registration.service';
+import { NotificationInvitationSender } from './infrastructure/notification/notification-invitation-sender';
 // Piste O
 import { OrganizationEventsConsumer } from './infrastructure/messaging/organization-events.consumer';
 import { PrismaOrganizationUnitOfWork } from './infrastructure/persistence/organizations/prisma-organization.repository';
@@ -95,6 +98,8 @@ const FILE_CLIENT = Symbol('FILE_CLIENT');
 const BILLING_CLIENT = Symbol('BILLING_CLIENT');
 // Lots C et E
 const PAYMENT_CLIENT = Symbol('PAYMENT_CLIENT');
+// Piste A (agents)
+const NOTIFICATION_CLIENT = Symbol('NOTIFICATION_CLIENT');
 
 /**
  * Racine de composition : relie les ports à leurs adaptateurs. Le métier v2 (dépôts Prisma, cas
@@ -116,6 +121,8 @@ export class AppModule {
           grpcClientOptions(BILLING_CLIENT, 'billing', config.BILLING_GRPC_URL),
           // Lots C et E
           grpcClientOptions(PAYMENT_CLIENT, 'payment', config.PAYMENT_GRPC_URL),
+          // Piste A (agents)
+          grpcClientOptions(NOTIFICATION_CLIENT, 'notification', config.NOTIFICATION_GRPC_URL),
         ]),
       ],
       controllers: CLEANING_GRPC_CONTROLLERS,
@@ -135,6 +142,8 @@ export class AppModule {
             BILLING_CLIENT,
             // Lots C et E
             PAYMENT_CLIENT,
+            // Piste A (agents)
+            NOTIFICATION_CLIENT,
           ],
           useFactory: (
             prisma: PrismaService,
@@ -147,6 +156,8 @@ export class AppModule {
             billingGrpc: ClientGrpc,
             // Lots C et E
             paymentGrpc: ClientGrpc,
+            // Piste A (agents)
+            notificationGrpc: ClientGrpc,
           ): CleaningDeps => {
             if (!serviceTokens) {
               new Logger('Cleaning').warn(
@@ -245,6 +256,20 @@ export class AppModule {
               accounts: new IdentityAgentAccounts(
                 identityGrpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
                 caller('identity'),
+              ),
+              invitations: new NotificationInvitationSender(
+                notificationGrpc.getService<notificationV1.NotificationServiceClient>(
+                  notificationV1.NOTIFICATION_SERVICE_NAME,
+                ),
+                caller('notification'),
+                config.CLEANING_AGENT_APP_URL,
+              ),
+              phoneFingerprints: new BlindIndexPhoneFingerprints(
+                BlindIndex.fromConfig(
+                  config.CLEANING_BLIND_INDEX_KEYS,
+                  config.NODE_ENV,
+                  'CLEANING_BLIND_INDEX_KEYS',
+                ),
               ),
               // --- Piste O : situation des organisations (impayés, suspension par KSP) -------
               organizations: new PrismaOrganizationUnitOfWork(prisma, clock, ids),
