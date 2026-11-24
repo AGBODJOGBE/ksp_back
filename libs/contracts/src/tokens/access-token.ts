@@ -6,8 +6,11 @@ export type AccessTokenClientId = 'web' | 'mobile' | 'backoffice';
 
 export interface AccessTokenRoleClaim {
   role: string;
-  scopeType: 'global' | 'domain' | 'org' | 'personal';
+  /** `zone` : attribution limitée à des communes (R-RB-03 du CDC Nettoyage v2). */
+  scopeType: 'global' | 'domain' | 'org' | 'personal' | 'zone';
   scopeId?: string | null;
+  /** Portée zone : clés des communes (référentiel de geo). */
+  zoneKeys?: string[];
 }
 
 /** Méthodes d’authentification (RFC 8176) : code par téléphone, puis seconde étape. */
@@ -27,6 +30,13 @@ export interface AccessTokenClaims {
   roles: AccessTokenRoleClaim[];
   mfa: boolean;
   auth_time: number;
+  /**
+   * Permissions valables partout (v2, R-RB-05) : union des permissions des rôles actifs du contexte.
+   * Facultatif : absent des jetons émis avant son ajout (liste vide).
+   */
+  perms?: string[];
+  /** Permissions limitées à des zones (v2, R-RB-03) : clé de commune → permissions. */
+  zone_perms?: Record<string, string[]>;
   /** Facultatif : absent des jetons émis avant son ajout. */
   amr?: AccessTokenAuthMethod[];
 }

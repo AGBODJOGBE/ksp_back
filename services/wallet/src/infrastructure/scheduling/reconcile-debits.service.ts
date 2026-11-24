@@ -49,7 +49,8 @@ export class ReconcileDebitsService implements OnApplicationBootstrap, OnApplica
       if (result.examined) {
         this.logger.log(
           `Débits rapprochés : ${result.examined} examinés, ${result.recorded} enregistrés, ` +
-            `${result.refunded} remboursés, ${result.errors} en erreur`,
+            `${result.refunded} remboursés, ${result.inProgress} encore en cours chez le service, ` +
+            `${result.errors} en erreur`,
         );
       }
     } catch (error) {

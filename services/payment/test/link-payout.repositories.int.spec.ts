@@ -122,6 +122,8 @@ describeWithDatabase('dépôts des liens et reversements (PostgreSQL)', () => {
       customerId: null,
       organizationId: null,
       paymentLinkId: link.id,
+      target: null,
+      description: null,
       status: 'pending',
       provider: 'fedapay',
       providerTransactionId: null,

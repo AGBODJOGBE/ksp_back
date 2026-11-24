@@ -39,6 +39,8 @@ export function presentPayment(intent: PaymentIntent): paymentV1.Payment {
     mismatchResolvedBy: '',
     mismatchResolutionNote: '',
     paymentLinkId: intent.paymentLinkId ?? '',
+    // Paiement direct (v2) : objet que la recharge doit régler ; absent sinon.
+    target: intent.target ? { ...intent.target, part: intent.target.part ?? '' } : undefined,
   };
 }
 

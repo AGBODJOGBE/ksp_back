@@ -1,4 +1,5 @@
-import { type ClientInfo, type VerifiedAccessToken } from '@ksp/platform';
+import { type ClientInfo } from '@ksp/platform';
+import { type AuthenticatedCaller } from '../../application/access/access.ports';
 import { type ClientKind } from '../../domain/client/client-kind';
 import { type RouteDefinition } from '../../domain/routing/route-manifest';
 
@@ -16,7 +17,7 @@ export interface GatewayRequest {
   gateway?: {
     route: RouteDefinition;
     clientKind: ClientKind | null;
-    caller: VerifiedAccessToken | null;
+    caller: AuthenticatedCaller | null;
   };
 }
 

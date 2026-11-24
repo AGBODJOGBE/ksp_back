@@ -44,21 +44,23 @@ export function isAssignableScope(scopeType: RoleScopeType): boolean {
 }
 
 /**
- * L'administrateur peut-il attribuer ou retirer ce rôle ? super_admin : tout rôle attribuable ;
- * administrateur de métier : les rôles de portée métier de son métier, sauf le sien (personne ne
- * crée un pair ni un supérieur).
+ * L'administrateur peut-il attribuer ou retirer ce rôle ? super_admin seul, pour tout rôle de portée
+ * globale ou métier (CDC Nettoyage v2, R-RB-02 ; ADR-057 : l'administrateur de métier ne garde que la
+ * lecture de son équipe, et la validation des agents passe par cleaning).
  */
 export function canManageRole(
   perimeter: AdminPerimeter,
   role: Pick<RoleDefinition, 'code' | 'service' | 'scopeType'>,
 ): boolean {
-  if (!isAssignableScope(role.scopeType)) return false;
-  if (perimeter.kind === 'all') return true;
-  return (
-    role.scopeType === 'domain' &&
-    perimeter.services.includes(role.service) &&
-    DOMAIN_ADMIN_ROLES[role.service] !== role.code
-  );
+  return perimeter.kind === 'all' && isAssignableScope(role.scopeType);
+}
+
+/** Attribuable maintenant : géré par l'appelant et encore actif (un rôle désactivé ne s'attribue plus). */
+export function canGrantRole(
+  perimeter: AdminPerimeter,
+  role: Pick<RoleDefinition, 'code' | 'service' | 'scopeType' | 'active'>,
+): boolean {
+  return role.active !== false && canManageRole(perimeter, role);
 }
 
 /**

@@ -1,4 +1,4 @@
-import { BACKOFFICE_MFA_SECONDS, CRITICAL_MFA_SECONDS } from './cleaning-routes';
+import { BACKOFFICE_MFA_SECONDS, CRITICAL_MFA_SECONDS } from '../access/mfa-age';
 import { type RouteDefinition } from './route-manifest';
 
 const ACCOUNT_ADMIN = 'ksp.identity.v1.AccountAdminService';
@@ -7,11 +7,15 @@ const ACCOUNT_ADMIN = 'ksp.identity.v1.AccountAdminService';
 const ACCOUNT_LOOKUP = ['cleaning_admin', 'super_admin'] as const;
 
 /**
- * Administration des comptes et des rôles (ADR-043) : la direction, et l'administrateur de chaque
- * métier pour les rôles de son métier (périmètre revérifié par identity).
+ * Administration des comptes (ADR-043) : lecture par la direction et par l'administrateur de chaque
+ * métier (son équipe, périmètre revérifié par identity). L'attribution et le retrait des rôles sont
+ * réservés au super administrateur (CDC Nettoyage v2, partie 2, R-RB-02, 13.3).
  */
 const ACCOUNT_ADMINS = ['cleaning_admin', 'recovery_admin', 'super_admin'] as const;
-/** Suspension, réactivation, réinitialisation de la double authentification : la direction seule. */
+/**
+ * Attribution et retrait des rôles (R-RB-02), suspension, réactivation, réinitialisation de la
+ * double authentification : la direction seule.
+ */
 const ACCOUNT_MANAGERS = ['super_admin'] as const;
 
 const admins = {
@@ -19,12 +23,21 @@ const admins = {
   anyRole: ACCOUNT_ADMINS,
   recentMfaSeconds: BACKOFFICE_MFA_SECONDS,
 } as const;
-/** Écritures (rôles, suspension, double authentification) : double authentification récente (ADR-050). */
-const adminWrites = { ...admins, recentMfaSeconds: CRITICAL_MFA_SECONDS } as const;
+/**
+ * Écritures (attribution et retrait des rôles, suspension, double authentification) : super_admin
+ * seul, double authentification récente (ADR-050).
+ */
 const managers = {
   level: 'authenticated',
   anyRole: ACCOUNT_MANAGERS,
   recentMfaSeconds: CRITICAL_MFA_SECONDS,
+} as const;
+
+/** Lecture des rôles et des permissions : super_admin, double authentification de la session. */
+const roleReaders = {
+  level: 'authenticated',
+  anyRole: ACCOUNT_MANAGERS,
+  recentMfaSeconds: BACKOFFICE_MFA_SECONDS,
 } as const;
 
 /**
@@ -75,7 +88,7 @@ export const ACCOUNT_ROUTES = [
     method: 'POST',
     path: '/api/v1/admin/identity/accounts/{id}/roles',
     grpc: `${ACCOUNT_ADMIN}/GrantAccountRole`,
-    access: adminWrites,
+    access: managers,
     rateLimit: 'authenticated',
     requiresKnownClient: false,
   },
@@ -84,7 +97,7 @@ export const ACCOUNT_ROUTES = [
     method: 'POST',
     path: '/api/v1/admin/identity/accounts/{id}/roles/revoke',
     grpc: `${ACCOUNT_ADMIN}/RevokeAccountRole`,
-    access: adminWrites,
+    access: managers,
     rateLimit: 'authenticated',
     requiresKnownClient: false,
   },
@@ -111,6 +124,54 @@ export const ACCOUNT_ROUTES = [
     method: 'POST',
     path: '/api/v1/admin/identity/accounts/{id}/mfa/reset',
     grpc: `${ACCOUNT_ADMIN}/ResetAccountMfa`,
+    access: managers,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  // Rôles dynamiques (R-RB-01, R-RB-02 ; ADR-057) : super_admin seul ; lectures avec la double
+  // authentification de la session, écritures avec une double authentification récente.
+  {
+    operationId: 'createRole',
+    method: 'POST',
+    path: '/api/v1/admin/identity/roles',
+    grpc: `${ACCOUNT_ADMIN}/CreateRole`,
+    access: managers,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+    successStatus: 201,
+  },
+  {
+    operationId: 'listPermissions',
+    method: 'GET',
+    path: '/api/v1/admin/identity/permissions',
+    grpc: `${ACCOUNT_ADMIN}/ListPermissions`,
+    access: roleReaders,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
+    operationId: 'getRole',
+    method: 'GET',
+    path: '/api/v1/admin/identity/roles/{code}',
+    grpc: `${ACCOUNT_ADMIN}/GetRole`,
+    access: roleReaders,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
+    operationId: 'updateRole',
+    method: 'PATCH',
+    path: '/api/v1/admin/identity/roles/{code}',
+    grpc: `${ACCOUNT_ADMIN}/UpdateRole`,
+    access: managers,
+    rateLimit: 'authenticated',
+    requiresKnownClient: false,
+  },
+  {
+    operationId: 'deactivateRole',
+    method: 'POST',
+    path: '/api/v1/admin/identity/roles/{code}/deactivate',
+    grpc: `${ACCOUNT_ADMIN}/DeactivateRole`,
     access: managers,
     rateLimit: 'authenticated',
     requiresKnownClient: false,

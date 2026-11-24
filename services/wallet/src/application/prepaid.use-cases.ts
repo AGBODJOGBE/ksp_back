@@ -1,11 +1,12 @@
+import { type WalletEventPayloads, type WalletObjectRef } from '@ksp/contracts';
 import { currentContext } from '@ksp/platform';
 import {
   type Holder,
   type LedgerTransaction,
   type PaidObject,
-  refundEntries,
   reversalEntries,
   sameDebit,
+  serviceCreditEntries,
   servicePaymentEntries,
   topUpEntries,
 } from '../domain/ledger';
@@ -17,6 +18,7 @@ import {
   IDEMPOTENCY_KEY,
   OBJECT_PART,
   OBJECT_TYPE,
+  oneOf,
   requireCaller,
   requireHolder,
   requireText,
@@ -43,8 +45,18 @@ export function recipient(holder: Holder, actorId: string | null): string | null
   return holder.type === 'user' ? holder.id : actorId;
 }
 
-export function prepaidAfter(t: LedgerTransaction, balance: number): PrepaidSummary {
-  return { holder: t.holder, balance, lastEntryAt: t.createdAt };
+/** Portefeuille du titulaire juste après une écriture (solde rendu par l'écriture elle-même). */
+export async function prepaidAfter(
+  deps: WalletDeps,
+  t: LedgerTransaction,
+  balance: number,
+): Promise<PrepaidSummary> {
+  return {
+    holder: t.holder,
+    balance,
+    lastEntryAt: t.createdAt,
+    withdrawalsInProgress: await deps.ledger.withdrawalsInProgress(t.holder),
+  };
 }
 
 function debitedEvent(t: LedgerTransaction, balance: number): WalletOutboxMessage {
@@ -67,6 +79,16 @@ function debitedEvent(t: LedgerTransaction, balance: number): WalletOutboxMessag
   };
 }
 
+type CreditedPayload = WalletEventPayloads['wallet.prepaid.credited'];
+
+/** Version de wallet.prepaid.credited publiée : la v2 seule (RV-101, consommateurs prêts). */
+export const CREDITED_EVENT_VERSION = 2;
+
+/**
+ * wallet.prepaid.credited version 2 : la v1 plus le geste commercial (`commercial_gesture`), le moyen
+ * d'une recharge (`topUpChannel`) et l'objet à régler aussitôt (`forObject`, paiement direct). Les
+ * champs v2 absents ne sont pas écrits (tout message v1 est un message v2 valide).
+ */
 export function creditedEvent(
   t: LedgerTransaction,
   balance: number,
@@ -74,13 +96,22 @@ export function creditedEvent(
     origin: 'payment' | 'service' | 'finance';
     userId: string | null;
     paymentId?: string;
+    /** Par défaut : `top_up` pour une recharge, `refund` sinon. */
+    kind?: CreditedPayload['kind'];
+    topUpChannel?: CreditedPayload['topUpChannel'];
+    forObject?: WalletObjectRef | null;
+    /** Par défaut : débit annulé par l'écriture (remboursement en entier). */
+    refundedTransactionId?: string | null;
   },
 ): WalletOutboxMessage {
   return {
     type: 'wallet.prepaid.credited',
+    version: CREDITED_EVENT_VERSION,
     payload: {
       transactionId: t.id,
-      kind: t.kind === 'top_up' ? 'top_up' : 'refund',
+      kind: input.kind ?? (t.kind === 'top_up' ? 'top_up' : 'refund'),
+      ...(input.topUpChannel ? { topUpChannel: input.topUpChannel } : {}),
+      ...(input.forObject ? { forObject: { ...input.forObject } } : {}),
       origin: input.origin,
       holder: { ...t.holder },
       userId: input.userId,
@@ -88,7 +119,8 @@ export function creditedEvent(
       balanceAfter: xof(balance),
       description: t.description,
       paymentId: input.paymentId ?? null,
-      refundedTransactionId: t.reversesTransactionId,
+      refundedTransactionId:
+        input.refundedTransactionId === undefined ? t.reversesTransactionId : input.refundedTransactionId,
       creditedAt: t.createdAt.toISOString(),
     },
   };
@@ -152,7 +184,11 @@ export class DebitPrepaidUseCase {
     });
     if (outcome.kind === 'insufficient') throw WalletErrors.insufficientFunds(outcome.balance, amount);
     if (outcome.kind === 'recorded') {
-      return { transaction: debit, wallet: prepaidAfter(debit, outcome.holderBalance), created: true };
+      return {
+        transaction: debit,
+        wallet: await prepaidAfter(this.deps, debit, outcome.holderBalance),
+        created: true,
+      };
     }
     // Envoi simultané de la même clé : le premier débit fait foi.
     const raced = await this.deps.ledger.findByReference(caller, reference);
@@ -216,7 +252,11 @@ async function refundDebit(
     ],
   });
   if (outcome.kind === 'recorded') {
-    return { transaction: refund, wallet: prepaidAfter(refund, outcome.holderBalance), created: true };
+    return {
+      transaction: refund,
+      wallet: await prepaidAfter(deps, refund, outcome.holderBalance),
+      created: true,
+    };
   }
   const raced = await done();
   if (raced) return raced;
@@ -234,26 +274,104 @@ export class RefundDebitUseCase {
   }
 }
 
+/** Sortes de crédit décidé par un service (CreditRequest.kind). */
+export const SERVICE_CREDIT_KINDS = ['commercial_gesture', 'refund'] as const;
+type ServiceCreditKind = (typeof SERVICE_CREDIT_KINDS)[number];
+
 /**
- * cleaning.mission.refunded (ADR-046) : chaque débit cité est remboursé, une seule fois (un
- * événement rejoué ne rembourse rien de plus). Émetteur hors de WALLET_DEBIT_CALLERS : ignoré.
+ * WalletService.Credit (CDC Nettoyage v2, R-WL-04, R-RC-03) : crédit au portefeuille décidé par un
+ * service de WALLET_CREDIT_CALLERS, sans débit à rembourser en entier (geste commercial, crédit d'une
+ * réclamation, remboursement d'une part de séance). Le service a fait ses contrôles (double
+ * validation au-delà de 50 000 FCFA pour une réclamation). Écriture `service_credit`, contrepartie
+ * `ksp:service_revenue`, objet d'origine gardé. Idempotent par (appelant, clé) : le rejeu rend le même
+ * crédit, une autre demande avec la même clé est refusée. Débit d'origine facultatif : un paiement de
+ * service de l'appelant, pour ce titulaire ; repris dans l'événement (`refundedTransactionId`), sans
+ * colonne propre dans le grand livre.
  */
-export class RefundFromEventUseCase {
+export class CreditByServiceUseCase {
   constructor(private readonly deps: WalletDeps) {}
 
   async execute(input: {
-    producer: string;
-    transactionIds: readonly string[];
-    reason: string;
-  }): Promise<{ refunded: number; already: number } | 'ignored'> {
-    if (!this.deps.settings.debitCallers.includes(input.producer)) return 'ignored';
-    const counts = { refunded: 0, already: 0 };
-    for (const id of input.transactionIds) {
-      const result = await refundDebit(this.deps, input.producer, id, input.reason);
-      if (result.created) counts.refunded += 1;
-      else counts.already += 1;
+    idempotencyKey: string;
+    holder: { type: string; id: string } | undefined;
+    amount: { amount: number; currency: string } | undefined;
+    object: { objectType: string; objectId: string; part: string } | undefined;
+    kind: string;
+    description: string;
+    relatedTransactionId: string;
+  }): Promise<{ transaction: LedgerTransaction; wallet: PrepaidSummary; created: boolean }> {
+    const caller = requireCaller(this.deps.settings.creditCallers);
+    if (!DEBIT_KEY.test(input.idempotencyKey)) {
+      throw WalletErrors.invalid('idempotencyKey', 'Clé d’idempotence invalide (8 à 150 caractères).');
     }
-    return counts;
+    const holder = requireHolder('holder', input.holder);
+    const amount = requireXof('amount', input.amount);
+    const object = requireObject(input.object);
+    const kind = oneOf<ServiceCreditKind>('kind', input.kind, SERVICE_CREDIT_KINDS);
+    const description = requireText('description', input.description, 140);
+    const relatedId = input.relatedTransactionId
+      ? requireUuid('relatedTransactionId', input.relatedTransactionId)
+      : null;
+    const reference = `credit:${input.idempotencyKey}`;
+
+    const replay = async (existing: LedgerTransaction) => {
+      const same =
+        existing.kind === 'service_credit' &&
+        existing.holder.type === holder.type &&
+        existing.holder.id === holder.id &&
+        existing.amount === amount &&
+        existing.object?.type === object.type &&
+        existing.object.id === object.id &&
+        existing.object.part === object.part;
+      if (!same) throw WalletErrors.keyReused();
+      return { transaction: existing, wallet: await this.deps.ledger.prepaidSummary(holder), created: false };
+    };
+    const existing = await this.deps.ledger.findByReference(caller, reference);
+    if (existing) return replay(existing);
+
+    if (relatedId) {
+      const related = await this.deps.ledger.findTransaction(relatedId);
+      const ownDebit =
+        related?.kind === 'service_payment' &&
+        related.caller === caller &&
+        related.holder.type === holder.type &&
+        related.holder.id === holder.id;
+      if (!ownDebit) throw WalletErrors.transactionNotFound();
+    }
+
+    const actorId = currentContext()?.user?.userId ?? null;
+    const credit = transaction(this.deps, {
+      kind: 'service_credit',
+      caller,
+      reference,
+      holder,
+      amount,
+      description,
+      actorId,
+      object,
+      entries: serviceCreditEntries(holder, amount),
+    });
+    const outcome = await this.deps.ledger.record({
+      transaction: credit,
+      events: (balance) => [
+        creditedEvent(credit, balance, {
+          origin: 'service',
+          userId: recipient(holder, actorId),
+          kind,
+          refundedTransactionId: relatedId,
+        }),
+      ],
+    });
+    if (outcome.kind === 'recorded') {
+      return {
+        transaction: credit,
+        wallet: await prepaidAfter(this.deps, credit, outcome.holderBalance),
+        created: true,
+      };
+    }
+    const raced = await this.deps.ledger.findByReference(caller, reference);
+    if (raced) return replay(raced);
+    throw WalletErrors.concurrentUpdate();
   }
 }
 
@@ -264,31 +382,40 @@ export const UNRECORDED_DEBIT_REASON = 'paiement non enregistré par le service'
  * Tâche planifiée (ADR-048) : débits du portefeuille plus anciens que le délai réglable, ni vérifiés
  * ni remboursés, rapprochés avec le service qui les a faits (« débit enregistré ? »). Enregistré :
  * noté vérifié. Non enregistré (panne entre le débit et l'enregistrement du paiement) : remboursé au
- * portefeuille, une seule fois, avec une alerte. Service injoignable : laissé pour le prochain
+ * portefeuille, une seule fois, avec une alerte. Opération encore en cours chez l'appelant (RV-80) :
+ * redemandée au passage suivant, jamais remboursée. Service injoignable : laissé pour le prochain
  * passage, jamais remboursé à l'aveugle. Une erreur sur un débit n'empêche pas l'examen des suivants.
  */
 export class ReconcileDebitsUseCase {
   constructor(private readonly deps: WalletDeps) {}
 
-  async execute(
-    limit = 50,
-  ): Promise<{ examined: number; recorded: number; refunded: number; errors: number }> {
+  async execute(limit = 50): Promise<{
+    examined: number;
+    recorded: number;
+    refunded: number;
+    inProgress: number;
+    errors: number;
+  }> {
     const before = new Date(
       this.deps.clock.now().getTime() - this.deps.settings.debitCheckDelayMinutes * 60_000,
     );
     const debits = await this.deps.ledger.listUncheckedDebits(before, limit);
-    const counts = { examined: debits.length, recorded: 0, refunded: 0, errors: 0 };
+    const counts = { examined: debits.length, recorded: 0, refunded: 0, inProgress: 0, errors: 0 };
     for (const debit of debits) {
       try {
         if (!debit.object) continue;
-        const recorded = await this.deps.debitChecks.isRecorded({
+        const status = await this.deps.debitChecks.debitStatus({
           caller: debit.caller,
           objectType: debit.object.type,
           objectId: debit.object.id,
           transactionId: debit.id,
         });
-        if (recorded === null) continue;
-        if (recorded) {
+        if (status === null) continue;
+        if (status === 'in_progress') {
+          counts.inProgress += 1;
+          continue;
+        }
+        if (status === 'recorded') {
           await this.deps.ledger.markDebitChecked(debit.id, 'recorded', this.deps.clock.now());
           counts.recorded += 1;
           continue;
@@ -301,53 +428,6 @@ export class ReconcileDebitsUseCase {
       }
     }
     return counts;
-  }
-}
-
-/** Émetteur de cleaning.mission.credited. */
-const CLEANING = 'cleaning';
-
-/**
- * cleaning.mission.credited (ADR-049) : montant payé pour des passages non faits d'une mission
- * récurrente arrêtée, crédité au portefeuille prépayé du client (écriture `refund`, quel que soit le
- * moyen de paiement d'origine). Une seule fois par crédit : référence `mission-credit:<creditId>`
- * propre à cleaning, et inbox dans la même transaction. Émetteur autre que cleaning : ignoré.
- */
-export class CreditFromMissionUseCase {
-  constructor(private readonly deps: WalletDeps) {}
-
-  async execute(input: {
-    eventId: string;
-    eventType: string;
-    producer: string;
-    missionId: string;
-    customerId: string;
-    creditId: string;
-    amount: number;
-  }): Promise<'recorded' | 'duplicate' | 'ignored'> {
-    if (input.producer !== CLEANING || !this.deps.settings.debitCallers.includes(CLEANING)) return 'ignored';
-    const holder: Holder = { type: 'user', id: requireUuid('customerId', input.customerId) };
-    const amount = requireXof('amount', { amount: input.amount, currency: 'XOF' });
-    const reference = `mission-credit:${requireUuid('creditId', input.creditId)}`;
-    if (await this.deps.ledger.findByReference(CLEANING, reference)) return 'duplicate';
-    const credit = transaction(this.deps, {
-      kind: 'refund',
-      caller: CLEANING,
-      reference,
-      holder,
-      amount,
-      description: 'Remboursement au prorata — passages non effectués',
-      object: { type: 'cleaning_mission', id: requireUuid('missionId', input.missionId), part: null },
-      entries: refundEntries(holder, amount),
-    });
-    const outcome = await this.deps.ledger.record({
-      transaction: credit,
-      inbox: { eventId: input.eventId, consumer: `wallet.${input.eventType}` },
-      events: (balance) => [creditedEvent(credit, balance, { origin: 'service', userId: holder.id })],
-    });
-    if (outcome.kind === 'recorded') return 'recorded';
-    if (outcome.kind === 'already_processed' || outcome.kind === 'duplicate') return 'duplicate';
-    throw WalletErrors.concurrentUpdate();
   }
 }
 
@@ -417,6 +497,8 @@ export class CreditTopUpUseCase {
     customerId: string;
     organizationId: string | null;
     amount: number;
+    /** Paiement direct (v2, R-WL-05) : objet que la recharge doit régler aussitôt. */
+    target?: { service: string; objectType: string; objectId: string; part: string | null } | null;
   }): Promise<TopUpCreditOutcome> {
     const holder: Holder = input.organizationId
       ? { type: 'organization', id: input.organizationId }
@@ -450,6 +532,16 @@ export class CreditTopUpUseCase {
           origin: 'payment',
           userId: recipient(holder, input.customerId),
           paymentId: input.paymentId,
+          // Recharge en ligne par payment : Mobile Money (seul moyen publié par payment.intent.succeeded).
+          topUpChannel: 'mobile_money_online',
+          forObject: input.target
+            ? {
+                service: input.target.service,
+                objectType: input.target.objectType,
+                objectId: input.target.objectId,
+                part: input.target.part,
+              }
+            : null,
         }),
       ],
     });

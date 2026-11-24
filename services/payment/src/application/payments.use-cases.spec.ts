@@ -14,10 +14,10 @@ import {
   type InMemoryPayments,
   type InMemoryPeople,
   makeDeps,
-  MISSION_ID,
-  missionDue,
   ORGANIZATION_ID,
   OTHER_CUSTOMER_ID,
+  PERSONAL_INVOICE_ID,
+  personalInvoiceDue,
   type RecordingAlerts,
   STAFF_ID,
 } from './testing/fakes';
@@ -46,17 +46,18 @@ describe('paiement en ligne (cas d’usage)', () => {
   beforeEach(() => {
     deps = makeDeps();
     useCases = createUseCases(deps);
-    dues().missions.set(MISSION_ID, missionDue());
+    dues().invoices.set(PERSONAL_INVOICE_ID, personalInvoiceDue());
     dues().invoices.set(INVOICE_ID, invoiceDue());
   });
 
-  const createMission = (part = 'deposit', key = KEY, userId = CUSTOMER_ID) =>
+  /** Facture personnelle du client, payée dans son contexte personnel. */
+  const payPersonal = (key = KEY, userId = CUSTOMER_ID) =>
     asCustomer(
       () =>
         useCases.createPayment.execute({
-          subjectType: 'cleaning_mission',
-          subjectId: MISSION_ID,
-          part,
+          subjectType: 'billing_invoice',
+          subjectId: PERSONAL_INVOICE_ID,
+          part: '',
           idempotencyKey: key,
         }),
       userId,
@@ -74,15 +75,20 @@ describe('paiement en ligne (cas d’usage)', () => {
     );
 
   describe('création', () => {
-    it('acompte d’une mission : montant lu dans cleaning, page de paiement du prestataire', async () => {
-      const { payment, created } = await createMission();
+    it('facture personnelle : reste dû lu dans billing, page de paiement du prestataire', async () => {
+      const { payment, created } = await payPersonal();
       expect(created).toBe(true);
       expect(payment).toMatchObject({
         status: 'pending',
         amount: 15000,
         customerId: CUSTOMER_ID,
         organizationId: null,
-        subject: { type: 'cleaning_mission', id: MISSION_ID, part: 'deposit', reference: null },
+        subject: {
+          type: 'billing_invoice',
+          id: PERSONAL_INVOICE_ID,
+          part: null,
+          reference: 'FAC-2026-000043',
+        },
         checkoutUrl: 'https://process.fedapay.com/tok1',
         providerTransactionId: '1001',
       });
@@ -90,39 +96,45 @@ describe('paiement en ligne (cas d’usage)', () => {
       expect(provider().checkouts[0]).toMatchObject({
         amount: 15000,
         currency: 'XOF',
-        description: 'KSP Nettoyage - Acompte',
+        description: 'KSP - Facture FAC-2026-000043',
         returnUrl: `https://ksp.bj/mon-espace/paiements/${payment.id}`,
       });
     });
 
-    it('solde : le reste dû', async () => {
-      const { payment } = await createMission('balance');
-      expect(payment.amount).toBe(50000);
-    });
-
     it('idempotente : même clé → même paiement, aucun nouvel appel au prestataire', async () => {
-      const first = await createMission();
-      const second = await createMission();
+      const first = await payPersonal();
+      const second = await payPersonal();
       expect(second).toEqual({ payment: first.payment, created: false });
       expect(provider().checkouts).toHaveLength(1);
     });
 
     it('même clé pour un autre objet : 409', async () => {
-      await createMission('deposit');
-      expect((await rejection(createMission('balance'))).code).toBe('PAYMENT_IDEMPOTENCY_KEY_REUSED');
+      await payPersonal();
+      const other = asCustomer(
+        () =>
+          useCases.createPayment.execute({
+            subjectType: 'billing_invoice',
+            subjectId: INVOICE_ID,
+            part: '',
+            idempotencyKey: KEY,
+          }),
+        CUSTOMER_ID,
+        ORGANIZATION_ID,
+      );
+      expect((await rejection(other)).code).toBe('PAYMENT_IDEMPOTENCY_KEY_REUSED');
     });
 
     it('un paiement en attente pour le même objet et le même montant est réutilisé', async () => {
-      const first = await createMission('deposit', 'pay-key-0001');
-      const second = await createMission('deposit', 'pay-key-0002');
+      const first = await payPersonal('pay-key-0001');
+      const second = await payPersonal('pay-key-0002');
       expect(second.created).toBe(false);
       expect(second.payment.id).toBe(first.payment.id);
     });
 
     it('montant changé entre-temps (paiement manuel) : nouveau paiement', async () => {
-      const first = await createMission('balance', 'pay-key-0001');
-      dues().missions.set(MISSION_ID, missionDue({ remainingDue: 20000 }));
-      const second = await createMission('balance', 'pay-key-0002');
+      const first = await payPersonal('pay-key-0001');
+      dues().invoices.set(PERSONAL_INVOICE_ID, personalInvoiceDue({ balance: 20000 }));
+      const second = await payPersonal('pay-key-0002');
       expect(second.created).toBe(true);
       expect(second.payment.id).not.toBe(first.payment.id);
       expect(second.payment.amount).toBe(20000);
@@ -140,30 +152,35 @@ describe('paiement en ligne (cas d’usage)', () => {
       ]);
     });
 
-    it('mission d’un autre client : 404, sans rien révéler', async () => {
-      const error = await rejection(createMission('deposit', KEY, OTHER_CUSTOMER_ID));
+    it('facture personnelle d’un autre client : 404, sans rien révéler', async () => {
+      const error = await rejection(payPersonal(KEY, OTHER_CUSTOMER_ID));
       expect(error.code).toBe('PAYMENT_SUBJECT_NOT_FOUND');
     });
 
-    it('mission inconnue : 404', async () => {
-      dues().missions.clear();
-      expect((await rejection(createMission())).code).toBe('PAYMENT_SUBJECT_NOT_FOUND');
+    it('facture inconnue : 404', async () => {
+      dues().invoices.clear();
+      expect((await rejection(payPersonal())).code).toBe('PAYMENT_SUBJECT_NOT_FOUND');
     });
 
-    it('mission d’entreprise : réglée par sa facture', async () => {
-      dues().missions.set(MISSION_ID, missionDue({ organizationId: ORGANIZATION_ID }));
-      expect((await rejection(createMission())).code).toBe('PAYMENT_VIA_INVOICE');
+    it('facture annulée : refus', async () => {
+      dues().invoices.set(PERSONAL_INVOICE_ID, personalInvoiceDue({ status: 'cancelled' }));
+      expect((await rejection(payPersonal())).code).toBe('PAYMENT_SUBJECT_NOT_PAYABLE');
     });
 
-    it('mission annulée, acompte déjà reçu : refus', async () => {
-      dues().missions.set(MISSION_ID, missionDue({ status: 'cancelled' }));
-      expect((await rejection(createMission())).code).toBe('PAYMENT_SUBJECT_NOT_PAYABLE');
-      dues().missions.set(MISSION_ID, missionDue({ depositDue: 0 }));
-      expect((await rejection(createMission('deposit', 'pay-key-0009'))).code).toBe('PAYMENT_NOTHING_DUE');
+    it('mission du Nettoyage v1 : objet refusé, retiré avec la v1 (ADR-054)', async () => {
+      const mission = asCustomer(() =>
+        useCases.createPayment.execute({
+          subjectType: 'cleaning_mission',
+          subjectId: PERSONAL_INVOICE_ID,
+          part: 'deposit',
+          idempotencyKey: KEY,
+        }),
+      );
+      expect((await rejection(mission)).details).toEqual({ field: 'subjectType' });
+      expect(dues().calls).toBe(0);
     });
 
-    it('part obligatoire pour une mission, interdite pour une facture ; clé valide', async () => {
-      expect((await rejection(createMission('all'))).details).toEqual({ field: 'part' });
+    it('part interdite pour une facture ; clé valide', async () => {
       const invoiceWithPart = asCustomer(() =>
         useCases.createPayment.execute({
           subjectType: 'billing_invoice',
@@ -173,7 +190,7 @@ describe('paiement en ligne (cas d’usage)', () => {
         }),
       );
       expect((await rejection(invoiceWithPart)).details).toEqual({ field: 'part' });
-      expect((await rejection(createMission('deposit', 'court'))).details).toEqual({
+      expect((await rejection(payPersonal('court'))).details).toEqual({
         field: 'idempotencyKey',
       });
     });
@@ -230,81 +247,71 @@ describe('paiement en ligne (cas d’usage)', () => {
       expect(error.code).toBe('PAYMENT_NOTHING_DUE');
     });
 
-    it('paiement réussi pas encore enregistré par cleaning : pas de second paiement (409)', async () => {
-      const first = await createMission('deposit', 'pay-key-0001');
+    it('paiement réussi pas encore enregistré par billing : pas de second paiement (409)', async () => {
+      const first = await payPersonal('pay-key-0001');
       provider().set('1001', { status: 'approved' });
       await notify('1001');
-      // cleaning n'a pas encore reçu l'événement : le montant dû ne déduit pas encore l'acompte.
-      const error = await rejection(createMission('deposit', 'pay-key-0002'));
+      // billing n'a pas encore reçu l'événement : le reste dû ne déduit pas encore le paiement.
+      const error = await rejection(payPersonal('pay-key-0002'));
       expect(error.code).toBe('PAYMENT_ALREADY_RECEIVED');
-      // Toutes parts confondues : le solde attend aussi.
-      expect((await rejection(createMission('balance', 'pay-key-0003'))).code).toBe(
-        'PAYMENT_ALREADY_RECEIVED',
-      );
       expect(provider().checkouts).toHaveLength(1);
       // Rejeu de la même clé : toujours le même paiement (réussi).
-      expect((await createMission('deposit', 'pay-key-0001')).payment).toMatchObject({
+      expect((await payPersonal('pay-key-0001')).payment).toMatchObject({
         id: first.payment.id,
         status: 'succeeded',
       });
-      // Enregistré par cleaning : le montant dû est à jour, un nouveau paiement est permis.
-      dues().missions.set(
-        MISSION_ID,
-        missionDue({ depositDue: 0, remainingDue: 35000, recordedPaymentIds: [first.payment.id] }),
+      // Enregistré par billing : le reste dû est à jour, un nouveau paiement est permis.
+      dues().invoices.set(
+        PERSONAL_INVOICE_ID,
+        personalInvoiceDue({ balance: 5000, recordedPaymentIds: [first.payment.id] }),
       );
-      const balance = await createMission('balance', 'pay-key-0004');
-      expect(balance).toMatchObject({ created: true, payment: { amount: 35000 } });
+      const rest = await payPersonal('pay-key-0003');
+      expect(rest).toMatchObject({ created: true, payment: { amount: 5000 } });
     });
 
     it('toujours pas enregistré après 15 min : autre refus (support) et alerte, jamais de second paiement', async () => {
-      const first = await createMission('deposit', 'pay-key-0001');
+      const first = await payPersonal('pay-key-0001');
       provider().set('1001', { status: 'approved' });
       await notify('1001');
       const succeededAt = clock().now();
       // Juste avant 15 min : « réessayez dans quelques instants », sans alerte.
       clock().advance(15 * 60_000 - 1);
-      expect((await rejection(createMission('deposit', 'pay-key-0002'))).code).toBe(
-        'PAYMENT_ALREADY_RECEIVED',
-      );
+      expect((await rejection(payPersonal('pay-key-0002'))).code).toBe('PAYMENT_ALREADY_RECEIVED');
       expect(alerts().unrecordedPayments).toEqual([]);
       // 15 min après la réussite : le client est orienté vers le support, l'équipe est alertée.
       clock().advance(1);
-      const late = await rejection(createMission('balance', 'pay-key-0003'));
+      const late = await rejection(payPersonal('pay-key-0003'));
       expect(late.code).toBe('PAYMENT_RECONCILIATION_PENDING');
       expect(late.message).toContain('contactez le support');
       expect(alerts().unrecordedPayments).toEqual([
         {
-          subjectType: 'cleaning_mission',
-          subjectId: MISSION_ID,
+          subjectType: 'billing_invoice',
+          subjectId: PERSONAL_INVOICE_ID,
           paymentIds: [first.payment.id],
           since: succeededAt,
         },
       ]);
       // Des heures plus tard, toujours refusé : une seule page de paiement a été ouverte.
       clock().advance(6 * 3_600_000);
-      expect((await rejection(createMission('deposit', 'pay-key-0004'))).code).toBe(
-        'PAYMENT_RECONCILIATION_PENDING',
-      );
+      expect((await rejection(payPersonal('pay-key-0004'))).code).toBe('PAYMENT_RECONCILIATION_PENDING');
       expect(provider().checkouts).toHaveLength(1);
       // Enregistré enfin : le paiement suivant est permis.
-      dues().missions.set(
-        MISSION_ID,
-        missionDue({ depositDue: 0, remainingDue: 35000, recordedPaymentIds: [first.payment.id] }),
+      dues().invoices.set(
+        PERSONAL_INVOICE_ID,
+        personalInvoiceDue({ balance: 5000, recordedPaymentIds: [first.payment.id] }),
       );
-      expect((await createMission('balance', 'pay-key-0005')).created).toBe(true);
+      expect((await payPersonal('pay-key-0005')).created).toBe(true);
     });
 
     it('délai avant l’orientation vers le support réglable', async () => {
       deps = makeDeps({ settings: { ...makeDeps().settings, unrecordedGraceMinutes: 2 } });
       useCases = createUseCases(deps);
-      dues().missions.set(MISSION_ID, missionDue());
-      await createMission('deposit', 'pay-key-0001');
+      dues().invoices.set(PERSONAL_INVOICE_ID, personalInvoiceDue());
+      await payPersonal('pay-key-0001');
       provider().set('1001', { status: 'approved' });
       await notify('1001');
       clock().advance(2 * 60_000);
-      expect((await rejection(createMission('deposit', 'pay-key-0002'))).code).toBe(
-        'PAYMENT_RECONCILIATION_PENDING',
-      );
+      expect((await rejection(payPersonal('pay-key-0002'))).code).toBe('PAYMENT_RECONCILIATION_PENDING');
     });
 
     it('facture : même refus tant que billing n’a pas enregistré le paiement réussi', async () => {
@@ -341,19 +348,19 @@ describe('paiement en ligne (cas d’usage)', () => {
     });
 
     it('un paiement non abouti (échec, abandon) ne bloque pas un nouveau paiement', async () => {
-      await createMission('deposit', 'pay-key-0001');
+      await payPersonal('pay-key-0001');
       provider().set('1001', { status: 'declined' });
       await notify('1001');
-      const again = await createMission('deposit', 'pay-key-0002');
+      const again = await payPersonal('pay-key-0002');
       expect(again.created).toBe(true);
     });
 
     it('prestataire en panne : 503, puis la même clé reprend la page', async () => {
       provider().down = true;
-      expect((await rejection(createMission())).code).toBe('PAYMENT_PROVIDER_UNAVAILABLE');
+      expect((await rejection(payPersonal())).code).toBe('PAYMENT_PROVIDER_UNAVAILABLE');
       expect([...payments().rows.values()][0]).toMatchObject({ status: 'pending', checkoutUrl: null });
       provider().down = false;
-      const { payment } = await createMission();
+      const { payment } = await payPersonal();
       expect(payment.checkoutUrl).toBe('https://process.fedapay.com/tok1');
       expect(payments().rows.size).toBe(1);
     });
@@ -363,7 +370,7 @@ describe('paiement en ligne (cas d’usage)', () => {
     let payment: PaymentIntent;
 
     beforeEach(async () => {
-      payment = (await createMission()).payment;
+      payment = (await payPersonal()).payment;
     });
 
     it('notification signée : transaction relue, paiement réussi, un seul événement', async () => {
@@ -377,10 +384,10 @@ describe('paiement en ligne (cas d’usage)', () => {
           type: 'payment.intent.succeeded',
           payload: {
             paymentId: payment.id,
-            subjectType: 'cleaning_mission',
-            subjectId: MISSION_ID,
-            part: 'deposit',
-            subjectReference: null,
+            subjectType: 'billing_invoice',
+            subjectId: PERSONAL_INVOICE_ID,
+            part: null,
+            subjectReference: 'FAC-2026-000043',
             customerId: CUSTOMER_ID,
             organizationId: null,
             amount: { amount: 15000, currency: 'XOF' },
@@ -536,7 +543,7 @@ describe('paiement en ligne (cas d’usage)', () => {
 
   describe('consultation', () => {
     it('au retour du client : statut relu chez le prestataire, au plus une fois par intervalle', async () => {
-      const { payment } = await createMission();
+      const { payment } = await payPersonal();
       provider().set('1001', { status: 'approved' });
       const read = await asCustomer(() => useCases.getMyPayment.execute(payment.id));
       expect(read.status).toBe('succeeded');
@@ -544,7 +551,7 @@ describe('paiement en ligne (cas d’usage)', () => {
     });
 
     it('prestataire injoignable : dernier statut connu', async () => {
-      const { payment } = await createMission();
+      const { payment } = await payPersonal();
       provider().down = true;
       expect((await asCustomer(() => useCases.getMyPayment.execute(payment.id))).status).toBe('pending');
     });
@@ -578,13 +585,13 @@ describe('paiement en ligne (cas d’usage)', () => {
     });
 
     it('back-office : rôle et double authentification exigés, filtres', async () => {
-      await createMission();
+      await payPersonal();
       const list = await asStaff(() =>
         useCases.listPayments.execute({
           page: { limit: 20, cursor: null },
           status: 'pending',
-          subjectType: 'cleaning_mission',
-          subjectId: MISSION_ID,
+          subjectType: 'billing_invoice',
+          subjectId: PERSONAL_INVOICE_ID,
           customerId: '',
           organizationId: '',
         }),
@@ -610,7 +617,7 @@ describe('paiement en ligne (cas d’usage)', () => {
       const people = deps.people as InMemoryPeople;
       people.users.set(CUSTOMER_ID, 'Koffi Adjovi');
       people.organizations.set(ORGANIZATION_ID, 'SARL Bénin Propre');
-      const mission = (await createMission()).payment;
+      const personal = (await payPersonal()).payment;
       const invoice = (
         await asCustomer(
           () =>
@@ -633,7 +640,7 @@ describe('paiement en ligne (cas d’usage)', () => {
         organizationId: '',
       };
       const list = await asStaff(() => useCases.listPayments.execute(all));
-      expect(list.items.map((p) => p.id).sort()).toEqual([mission.id, invoice.id].sort());
+      expect(list.items.map((p) => p.id).sort()).toEqual([personal.id, invoice.id].sort());
       expect(list.names.users.get(CUSTOMER_ID)).toBe('Koffi Adjovi');
       // Compte sans nom chez identity : absent.
       expect(list.names.users.has(OTHER_CUSTOMER_ID)).toBe(false);
@@ -674,16 +681,20 @@ describe('paiement en ligne (cas d’usage)', () => {
       role = 'finance_officer',
     ) => asStaff(() => useCases.resolveAmountMismatch.execute({ paymentId, note, idempotencyKey }), role);
 
-    it('mission : tout nouveau paiement refusé, toutes parts confondues, avec une alerte à chaque refus', async () => {
-      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
-      const deposit = await rejection(createMission('deposit', 'pay-key-0002'));
-      expect(deposit.code).toBe('PAYMENT_UNDER_REVIEW');
-      expect(deposit.message).toBe('Un paiement est en cours de vérification ; contactez le support KSP.');
-      expect((await rejection(createMission('balance', 'pay-key-0003'))).code).toBe('PAYMENT_UNDER_REVIEW');
+    it('facture personnelle : tout nouveau paiement refusé, avec une alerte à chaque refus', async () => {
+      const first = await mismatched(() => payPersonal('pay-key-0001'));
+      const again = await rejection(payPersonal('pay-key-0002'));
+      expect(again.code).toBe('PAYMENT_UNDER_REVIEW');
+      expect(again.message).toBe('Un paiement est en cours de vérification ; contactez le support KSP.');
+      expect((await rejection(payPersonal('pay-key-0003'))).code).toBe('PAYMENT_UNDER_REVIEW');
       // Des jours plus tard, toujours refusé : seule la finance lève le blocage.
       clock().advance(3 * 24 * 3_600_000);
-      expect((await rejection(createMission('balance', 'pay-key-0004'))).code).toBe('PAYMENT_UNDER_REVIEW');
-      const alert = { subjectType: 'cleaning_mission', subjectId: MISSION_ID, paymentIds: [first.id] };
+      expect((await rejection(payPersonal('pay-key-0004'))).code).toBe('PAYMENT_UNDER_REVIEW');
+      const alert = {
+        subjectType: 'billing_invoice',
+        subjectId: PERSONAL_INVOICE_ID,
+        paymentIds: [first.id],
+      };
       expect(alerts().underReview).toEqual([alert, alert, alert]);
       expect(provider().checkouts).toHaveLength(1);
       expect(payments().rows.size).toBe(1);
@@ -700,14 +711,14 @@ describe('paiement en ligne (cas d’usage)', () => {
     });
 
     it('rejeu de la même clé : toujours le même paiement, avant le contrôle', async () => {
-      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
-      const replay = await createMission('deposit', 'pay-key-0001');
+      const first = await mismatched(() => payPersonal('pay-key-0001'));
+      const replay = await payPersonal('pay-key-0001');
       expect(replay).toMatchObject({ created: false, payment: { id: first.id, status: 'amount_mismatch' } });
       expect(alerts().underReview).toEqual([]);
     });
 
     it('traité par la finance : statut conservé, traitement enregistré, blocage levé', async () => {
-      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const first = await mismatched(() => payPersonal('pay-key-0001'));
       clock().advance(60 * 60_000);
       const resolvedAt = clock().now();
       const treated = await resolve(first.id, `  ${NOTE}  `);
@@ -719,21 +730,21 @@ describe('paiement en ligne (cas d’usage)', () => {
       expect(await payments().findById(first.id)).toEqual(treated);
       // Aucun événement : cleaning et billing n'enregistrent rien pour un écart.
       expect(payments().outbox).toEqual([]);
-      const next = await createMission('deposit', 'pay-key-0002');
+      const next = await payPersonal('pay-key-0002');
       expect(next).toMatchObject({ created: true, payment: { status: 'pending', amount: 15000 } });
       expect(alerts().underReview).toEqual([]);
     });
 
     it('un second écart non traité bloque encore, même si le premier l’est', async () => {
-      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const first = await mismatched(() => payPersonal('pay-key-0001'));
       await resolve(first.id);
-      const second = await mismatched(() => createMission('deposit', 'pay-key-0002'));
-      expect((await rejection(createMission('balance', 'pay-key-0003'))).code).toBe('PAYMENT_UNDER_REVIEW');
+      const second = await mismatched(() => payPersonal('pay-key-0002'));
+      expect((await rejection(payPersonal('pay-key-0003'))).code).toBe('PAYMENT_UNDER_REVIEW');
       expect(alerts().underReview.at(-1)?.paymentIds).toEqual([second.id]);
     });
 
     it('rejouable sans effet (même clé, ou même compte et même note) ; second traitement différent refusé', async () => {
-      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const first = await mismatched(() => payPersonal('pay-key-0001'));
       const treated = await resolve(first.id);
       clock().advance(60_000);
       expect(await resolve(first.id, 'Autre note')).toEqual(treated);
@@ -748,19 +759,19 @@ describe('paiement en ligne (cas d’usage)', () => {
     });
 
     it('deux envois simultanés : un seul traitement, l’autre rejoué', async () => {
-      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const first = await mismatched(() => payPersonal('pay-key-0001'));
       const [a, b] = await Promise.all([resolve(first.id), resolve(first.id)]);
       expect(a).toEqual(b);
       expect((await payments().findById(first.id))!.version).toBe(a.version);
     });
 
     it('refusé pour un paiement qui n’est pas en écart, inconnu, ou une note invalide', async () => {
-      const { payment } = await createMission('deposit', 'pay-key-0001');
+      const { payment } = await payPersonal('pay-key-0001');
       expect((await rejection(resolve(payment.id))).code).toBe('PAYMENT_NOT_AMOUNT_MISMATCH');
       provider().set('1001', { status: 'approved' });
       await notify('1001');
       expect((await rejection(resolve(payment.id))).code).toBe('PAYMENT_NOT_AMOUNT_MISMATCH');
-      expect((await rejection(resolve(MISSION_ID))).code).toBe('PAYMENT_NOT_FOUND');
+      expect((await rejection(resolve(PERSONAL_INVOICE_ID))).code).toBe('PAYMENT_NOT_FOUND');
       const invalid = async (note: string, key = 'res-key-0001') =>
         (await rejection(resolve(payment.id, note, key))).details;
       expect(await invalid('   ')).toEqual({ field: 'note' });
@@ -769,12 +780,12 @@ describe('paiement en ligne (cas d’usage)', () => {
     });
 
     it('note de 500 caractères acceptée', async () => {
-      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const first = await mismatched(() => payPersonal('pay-key-0001'));
       expect((await resolve(first.id, 'x'.repeat(500))).mismatchResolution?.note).toHaveLength(500);
     });
 
     it('réservé au back-office des paiements, avec double authentification', async () => {
-      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const first = await mismatched(() => payPersonal('pay-key-0001'));
       const run = () =>
         useCases.resolveAmountMismatch.execute({ paymentId: first.id, note: NOTE, idempotencyKey: '' });
       expect((await rejection(asStaff(run, 'cleaning_agent'))).code).toBe('AUTH_FORBIDDEN');
@@ -783,12 +794,14 @@ describe('paiement en ligne (cas d’usage)', () => {
       expect((await payments().findById(first.id))!.mismatchResolution).toBeNull();
       // cleaning_admin et super_admin y ont accès (paiement inconnu : 404, et non 403).
       for (const role of ['cleaning_admin', 'super_admin']) {
-        expect((await rejection(resolve(MISSION_ID, NOTE, '', role))).code).toBe('PAYMENT_NOT_FOUND');
+        expect((await rejection(resolve(PERSONAL_INVOICE_ID, NOTE, '', role))).code).toBe(
+          'PAYMENT_NOT_FOUND',
+        );
       }
     });
 
     it('back-office : filtre des écarts à traiter', async () => {
-      const first = await mismatched(() => createMission('deposit', 'pay-key-0001'));
+      const first = await mismatched(() => payPersonal('pay-key-0001'));
       const treated = await mismatched(() => payInvoice('pay-key-0002'));
       await resolve(treated.id);
       const list = (underReview: boolean | undefined, status = '') =>
@@ -813,7 +826,7 @@ describe('paiement en ligne (cas d’usage)', () => {
 
   describe('rapprochement planifié', () => {
     it('plus de 50 paiements clos à relire : le paiement en attente est quand même traité', async () => {
-      const { payment } = await createMission();
+      const { payment } = await payPersonal();
       const base = (await payments().findById(payment.id))!;
       for (let n = 0; n < 60; n += 1) {
         const id = `0192f1c4-0000-7000-8000-00000000e${String(n).padStart(3, '0')}`;
@@ -836,7 +849,7 @@ describe('paiement en ligne (cas d’usage)', () => {
     });
 
     it('paiements clos relus moins souvent (15 minutes) que les paiements en attente', async () => {
-      const { payment } = await createMission();
+      const { payment } = await payPersonal();
       clock().advance(31 * 60_000);
       await useCases.reconcilePendingPayments.execute(); // expiré, relu à l'instant
       clock().advance(5 * 60_000);
@@ -847,7 +860,7 @@ describe('paiement en ligne (cas d’usage)', () => {
     });
 
     it('notification perdue : réussite constatée en relisant le prestataire', async () => {
-      const { payment } = await createMission();
+      const { payment } = await payPersonal();
       provider().set('1001', { status: 'approved' });
       clock().advance(2 * 60_000);
       expect(await useCases.reconcilePendingPayments.execute()).toMatchObject({ examined: 1, succeeded: 1 });
@@ -855,7 +868,7 @@ describe('paiement en ligne (cas d’usage)', () => {
     });
 
     it('toujours en attente au-delà du délai : expiré', async () => {
-      const { payment } = await createMission();
+      const { payment } = await payPersonal();
       clock().advance(31 * 60_000);
       expect(await useCases.reconcilePendingPayments.execute()).toMatchObject({ failed: 1 });
       expect(await payments().findById(payment.id)).toMatchObject({
@@ -867,7 +880,7 @@ describe('paiement en ligne (cas d’usage)', () => {
 
   describe('simulation (développement)', () => {
     it('désactivée par défaut (production, prestataire réel)', async () => {
-      const { payment } = await createMission();
+      const { payment } = await payPersonal();
       const call = asCustomer(() =>
         useCases.simulatePayment.execute({ paymentId: payment.id, outcome: 'succeeded' }),
       );
@@ -882,8 +895,8 @@ describe('paiement en ligne (cas d’usage)', () => {
       });
       deps = makeDeps({ provider: simulated, settings: { ...makeDeps().settings, simulationEnabled: true } });
       useCases = createUseCases(deps);
-      (deps.dues as InMemoryDues).missions.set(MISSION_ID, missionDue());
-      const { payment } = await createMission();
+      (deps.dues as InMemoryDues).invoices.set(PERSONAL_INVOICE_ID, personalInvoiceDue());
+      const { payment } = await payPersonal();
       const settled = await asCustomer(() =>
         useCases.simulatePayment.execute({ paymentId: payment.id, outcome: 'succeeded' }),
       );
@@ -910,15 +923,15 @@ describe('obligations avant la suppression d’un compte (UC-ID-11, ADR-036)', (
   beforeEach(() => {
     deps = makeDeps();
     useCases = createUseCases(deps);
-    (deps.dues as InMemoryDues).missions.set(MISSION_ID, missionDue());
+    (deps.dues as InMemoryDues).invoices.set(PERSONAL_INVOICE_ID, personalInvoiceDue());
   });
 
   const create = () =>
     asCustomer(() =>
       useCases.createPayment.execute({
-        subjectType: 'cleaning_mission',
-        subjectId: MISSION_ID,
-        part: 'deposit',
+        subjectType: 'billing_invoice',
+        subjectId: PERSONAL_INVOICE_ID,
+        part: '',
         idempotencyKey: KEY,
       }),
     );

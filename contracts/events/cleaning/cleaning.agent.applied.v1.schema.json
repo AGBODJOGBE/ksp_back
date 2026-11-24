@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.agent.applied.v1.schema.json",
+  "title": "cleaning.agent.applied",
+  "description": "Candidature d’agent (UC-NT-19) ou agent créé par l’admin (R-AG-02). Écouté par notification (admin).",
+  "x-event-type": "cleaning.agent.applied",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agentId", "userId", "source", "appliedAt", "zoneKeys"],
+  "properties": {
+    "agentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "userId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "enum": ["self", "admin_created", "invited"]
+    },
+    "appliedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "zoneKeys": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Communes de travail souhaitées"
+    }
+  }
+}

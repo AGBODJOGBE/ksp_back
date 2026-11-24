@@ -87,6 +87,37 @@ describe('AuthorizeRequestUseCase', () => {
     ).toMatchObject({ kind: 'PERMISSION_DENIED', code: 'GATEWAY_MFA_REQUIRED' });
   });
 
+  it('permission du manifeste (RBAC dynamique) : absente → 403 nommant la permission ; par commune → acceptée', async () => {
+    const { authorize, verifier } = setup();
+    const getRequest = route('cleaningGetRequest');
+    expect(getRequest.access).toMatchObject({ permission: 'cleaning.request.read', recentMfaSeconds: 43200 });
+    const fresh = { mfa: true, authTime: Math.floor(Date.parse('2026-10-20T09:00:00Z') / 1000) };
+
+    verifier.tokens.set('other', verifiedToken(fresh, { global: ['cleaning.catalog.read'], byZone: {} }));
+    expect(
+      await rejection(authorize.execute(getRequest, { ip: '1.2.3.4', authorization: 'Bearer other' })),
+    ).toMatchObject({
+      kind: 'PERMISSION_DENIED',
+      code: 'GATEWAY_FORBIDDEN',
+      details: { permission: 'cleaning.request.read' },
+    });
+
+    verifier.tokens.set(
+      'zone',
+      verifiedToken(fresh, { global: [], byZone: { 'abomey-calavi': ['cleaning.request.read'] } }),
+    );
+    const result = await authorize.execute(getRequest, { ip: '1.2.3.4', authorization: 'Bearer zone' });
+    expect(result.caller?.permissions.byZone).toEqual({ 'abomey-calavi': ['cleaning.request.read'] });
+
+    verifier.tokens.set(
+      'stale',
+      verifiedToken({ mfa: false }, { global: ['cleaning.request.read'], byZone: {} }),
+    );
+    expect(
+      await rejection(authorize.execute(getRequest, { ip: '1.2.3.4', authorization: 'Bearer stale' })),
+    ).toMatchObject({ code: 'GATEWAY_MFA_REQUIRED' });
+  });
+
   it('demande de code : 5 par minute et par adresse IP, puis 429 avec le délai', async () => {
     const { authorize } = setup();
     const request = { ip: '1.2.3.4', origin: 'https://ksp.bj' };

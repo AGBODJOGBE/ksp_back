@@ -2,6 +2,8 @@
 
 **Statut** : Proposé (corrections issues de la revue de code, 2026-11-10)
 
+**Remplacé en partie par ADR-055** (décision 1 pour les missions et les factures, décision 14 : plus de page payable par objet ni de crédit au prorata).
+
 ## Contexte
 
 La revue du code de `payment` et `wallet` a relevé des chemins par lesquels un client pouvait payer deux

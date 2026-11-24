@@ -1,4 +1,4 @@
-import { type Json } from '../cleaning/cleaning.ports';
+import { type Json } from '../common/api.ports';
 
 /**
  * Vue de la gateway sur le service file (ADR-038), indépendante de gRPC. Le contenu des fichiers

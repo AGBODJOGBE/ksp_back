@@ -1,5 +1,6 @@
 import { ACCOUNT_DELETION_PENDING_ROLE, type AccessTokenRoleClaim } from '@ksp/contracts';
 import { type OrgRole } from '../../domain/organization/organization';
+import { effectivePermissions } from '../../domain/role/permission';
 import { type AssignedRole } from '../../domain/role/role';
 
 /** Rôle de tout compte, attribué par défaut (cahier des charges Identité, partie 5). */
@@ -35,6 +36,30 @@ export function organizationRoleClaims(organizationId: string, role: OrgRole): A
 export function backofficeRoleClaims(assigned: readonly AssignedRole[]): AccessTokenRoleClaim[] {
   return [
     CUSTOMER_ROLE,
-    ...assigned.map((role) => ({ role: role.code, scopeType: role.scopeType, scopeId: role.scopeId })),
+    ...assigned.map((role) => ({
+      role: role.code,
+      scopeType: role.scopeType,
+      scopeId: role.scopeId,
+      ...(role.zoneKeys.length ? { zoneKeys: [...role.zoneKeys] } : {}),
+    })),
   ];
+}
+
+/** Droits d'une session du back-office : rôles et permissions effectives (ADR-057, décision 4). */
+export interface BackofficeGrants {
+  roles: AccessTokenRoleClaim[];
+  perms: string[];
+  zonePerms: Record<string, string[]>;
+}
+
+/**
+ * Rôles et permissions écrits dans le jeton d'une session du back-office (claims roles, perms et
+ * zone_perms), relus à chaque renouvellement : un changement de rôle prend effet en 15 minutes au
+ * plus (R-RB-05). Les permissions de super_admin (tout le catalogue) sont déjà dans `permissions`.
+ */
+export function backofficeGrants(assigned: readonly AssignedRole[]): BackofficeGrants {
+  return {
+    roles: backofficeRoleClaims(assigned),
+    ...effectivePermissions(assigned, { allPermissions: [] }),
+  };
 }

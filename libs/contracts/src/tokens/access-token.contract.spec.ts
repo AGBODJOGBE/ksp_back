@@ -28,11 +28,13 @@ const example: Required<AccessTokenClaims> = {
   roles: [{ role: 'customer', scopeType: 'personal' }],
   mfa: false,
   auth_time: 1792400000,
+  perms: [],
+  zone_perms: {},
   amr: ['otp'],
 };
 
 /** Champs facultatifs : ajoutés après la première version, absents des jetons plus anciens. */
-const OPTIONAL = ['amr'];
+const OPTIONAL = ['amr', 'perms', 'zone_perms'];
 
 describe('Contrat du jeton d’accès', () => {
   const ajv = new Ajv2020({ strict: true, allErrors: true });
@@ -56,8 +58,25 @@ describe('Contrat du jeton d’accès', () => {
   });
 
   it('accepte un jeton du lot 1, sans amr', () => {
-    const { amr: _amr, ...lot1 } = example;
+    const { amr: _amr, perms: _perms, zone_perms: _zonePerms, ...lot1 } = example;
     expect(validate(lot1)).toBe(true);
+  });
+
+  it('v2 : permissions portées par le jeton, dont certaines limitées à des zones (R-RB-03, R-RB-05)', () => {
+    const backoffice = {
+      ...example,
+      client_id: 'backoffice',
+      roles: [{ role: 'cleaning_supervisor', scopeType: 'zone', scopeId: null, zoneKeys: ['porto-novo'] }],
+      perms: ['cleaning.catalog.read'],
+      zone_perms: { 'porto-novo': ['cleaning.request.process', 'cleaning.planning.manage'] },
+      mfa: true,
+      amr: ['otp', 'mfa'],
+    };
+    expect(validate(backoffice)).toBe(true);
+    expect(validate({ ...backoffice, perms: ['cleaning:catalog:read'] })).toBe(false);
+    expect(validate({ ...backoffice, zone_perms: { 'Porto Novo': ['cleaning.request.process'] } })).toBe(
+      false,
+    );
   });
 
   it('accepte un jeton du back-office : rôles internes, double authentification faite', () => {

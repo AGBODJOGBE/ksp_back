@@ -106,8 +106,9 @@ export class InMemoryAccountAdmin implements AccountAdminRepository {
       .map((assignment) => ({
         id: assignment.id,
         role: assignment.role,
-        scopeType: assignment.role.scopeType,
+        scopeType: assignment.scopeType ?? assignment.role.scopeType,
         scopeId: assignment.scopeId,
+        zoneKeys: assignment.zoneKeys ?? [],
         grantedAt: assignment.grantedAt,
         grantedBy: assignment.grantedBy,
         grantedByName: name(assignment.grantedBy),

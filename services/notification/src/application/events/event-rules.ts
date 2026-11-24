@@ -24,7 +24,34 @@ export interface NotificationIntent {
    * sociale remplace `organization_name`. Organisation introuvable : personne n'est prévenu.
    */
   organizationId?: string;
+  /**
+   * Avec `organizationId` : `false` adresse le message aux administrateurs actuels seulement,
+   * chacun par ses canaux et à sa propre adresse, sans copie à l'e-mail de facturation (messages du
+   * Nettoyage : devis transmis pour accord, suspension). Par défaut : copie (factures, ADR-050).
+   */
+  billingEmailCopy?: boolean;
+  /**
+   * Message au personnel du Nettoyage (CDC Nettoyage v2, 16.2 ; RV-62) : `userId` est ignoré. Les
+   * destinataires sont lus dans identity au moment de l'événement (ListStaffByPermission) ; personne :
+   * repli configuré pour la permission, sinon l'équipe Nettoyage (`cleaningTeamUserIds`).
+   */
+  staff?: StaffAudience;
 }
+
+/** Personnel visé : la permission, et la clé de commune de la zone (null : attributions globales). */
+export interface StaffAudience {
+  permission: CleaningStaffPermission;
+  zoneKey: string | null;
+}
+
+/**
+ * Permissions qui désignent le personnel prévenu (RV-62) : traitement des demandes (superviseur),
+ * gestion des programmes (séances, paiements, suspensions), réclamations, agents (admin).
+ * Un admin Nettoyage porte ces permissions par une attribution globale : identity le rend aussi
+ * pour une zone.
+ */
+export type CleaningStaffPermission =
+  'cleaning.request.process' | 'cleaning.program.manage' | 'cleaning.claim.manage' | 'cleaning.agent.manage';
 
 /** Réglages utiles à la rédaction des messages. */
 export interface RuleContext {
@@ -36,6 +63,13 @@ export interface RuleContext {
   cleaningTeamUserIds: readonly string[];
   /** Comptes de l'équipe KSP qui valide les comptes entreprise (peut être vide). */
   accountsTeamUserIds: readonly string[];
+  /**
+   * Repli quand identity ne rend personne pour une permission (RV-62,
+   * NOTIFICATION_CLEANING_STAFF_FALLBACK) : comptes prévenus, par permission.
+   */
+  cleaningStaffFallback?: Readonly<Partial<Record<CleaningStaffPermission, readonly string[]>>>;
+  /** Adresse du back-office, sans barre finale, pour les liens du personnel ; absente : sans lien. */
+  backOfficeBaseUrl?: string | null;
   /** Superviseurs du recouvrement, prévenus de chaque nouveau dossier à examiner (peut être vide). */
   recoverySupervisorUserIds: readonly string[];
   /** Juristes du recouvrement, prévenus des contestations et des actes des partenaires (peut être vide). */

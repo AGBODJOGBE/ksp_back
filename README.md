@@ -89,7 +89,7 @@ la carte à jour (puis `docker compose --profile routing restart osrm`).
 | `pnpm lint` · `pnpm format:check`     | Règles de code et format                                                          |
 | `pnpm build`                          | Compilation de toutes les bibliothèques et services                               |
 | `pnpm contracts:lint`                 | Vérifie les `.proto`                                                              |
-| `pnpm contracts:breaking`             | Détecte une rupture de compatibilité par rapport à `main`                         |
+| `pnpm contracts:breaking`             | Ruptures de contrat par rapport à `main` : buf, OpenAPI, événements (ADR-054)     |
 | `pnpm contracts:generate`             | Régénère `libs/contracts/src/generated` après une modification de `.proto`        |
 | `pnpm prisma:generate`                | Génère le client Prisma de chaque service                                         |
 | `pnpm new-service <nom>`              | Crée un service complet et conforme                                               |

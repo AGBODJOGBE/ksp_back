@@ -51,7 +51,15 @@ function customer(
   };
 }
 
-export const BILLING_RULES: { readonly [T in BillingEventType]: EventRule<T> } = {
+/**
+ * Événements v2 de billing (CDC Nettoyage v2 : relances R-PE-05, avoirs R-PE-07) pas encore écoutés :
+ * leurs messages restent à écrire. Les retirer d'ici en livrant leurs règles.
+ */
+type BillingEventsNotYetNotified = 'billing.invoice.reminded' | 'billing.credit_note.issued';
+
+export const BILLING_RULES: {
+  readonly [T in Exclude<BillingEventType, BillingEventsNotYetNotified>]: EventRule<T>;
+} = {
   'billing.invoice.issued': (event, context) => [
     customer(
       event,

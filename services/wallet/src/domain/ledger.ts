@@ -21,6 +21,13 @@
  * - `ksp:service_revenue` : services payés depuis un portefeuille — produit, sens crédit.
  *
  * Invariant : fonds des recharges = Σ portefeuilles + services payés.
+ *
+ * CDC Nettoyage v2 (R-WL-04) : crédit décidé par un service (`service_credit`, contrepartie
+ * `ksp:service_revenue`) et retrait du portefeuille vers Mobile Money : montant retenu dans
+ * `ksp:prepaid_withdrawals_in_transit` (passif, crédit), puis sorti des fonds des recharges une fois
+ * le virement fait, ou rendu au portefeuille (échec, refus).
+ *
+ * Invariant v2 : fonds des recharges = Σ portefeuilles + services payés + retraits en transit.
  */
 export type HolderType = 'user' | 'organization';
 export const HOLDER_TYPES: readonly HolderType[] = ['user', 'organization'];
@@ -35,13 +42,15 @@ export type InternalAccount =
   | 'ksp:commission'
   | 'ksp:payouts_in_transit'
   | 'ksp:prepaid_funds'
-  | 'ksp:service_revenue';
+  | 'ksp:service_revenue'
+  | 'ksp:prepaid_withdrawals_in_transit';
 export const INTERNAL_ACCOUNTS: readonly InternalAccount[] = [
   'ksp:collections',
   'ksp:commission',
   'ksp:payouts_in_transit',
   'ksp:prepaid_funds',
   'ksp:service_revenue',
+  'ksp:prepaid_withdrawals_in_transit',
 ];
 export type AccountCode =
   InternalAccount | `holder:${HolderType}:${string}` | `prepaid:${HolderType}:${string}`;
@@ -82,10 +91,22 @@ export type TransactionKind =
   | 'reversal'
   | 'top_up'
   | 'service_payment'
-  | 'refund';
+  | 'refund'
+  | 'service_credit'
+  | 'withdrawal_hold'
+  | 'withdrawal_settlement'
+  | 'withdrawal_release';
 
-/** Écritures du portefeuille prépayé (ADR-046). */
-const PREPAID_KINDS: readonly TransactionKind[] = ['top_up', 'service_payment', 'refund'];
+/** Écritures du portefeuille prépayé (ADR-046 ; v2 : crédit d'un service et retraits, R-WL-04). */
+const PREPAID_KINDS: readonly TransactionKind[] = [
+  'top_up',
+  'service_payment',
+  'refund',
+  'service_credit',
+  'withdrawal_hold',
+  'withdrawal_settlement',
+  'withdrawal_release',
+];
 
 /** Compte du titulaire touché par une écriture : son portefeuille prépayé, ou ses fonds dus. */
 export function holderAccountKind(kind: TransactionKind): HolderAccountKind {
@@ -216,6 +237,39 @@ export function servicePaymentEntries(holder: Holder, amount: number): EntryLine
  */
 export function refundEntries(holder: Holder, amount: number): EntryLine[] {
   return reversalEntries({ entries: servicePaymentEntries(holder, amount) });
+}
+
+/**
+ * Crédit décidé par un service (WalletService.Credit : geste commercial, crédit d'une réclamation,
+ * remboursement partiel) : mêmes lignes qu'un remboursement accordé, contrepartie
+ * `ksp:service_revenue` (à valider par le comptable).
+ */
+export function serviceCreditEntries(holder: Holder, amount: number): EntryLine[] {
+  return refundEntries(holder, amount);
+}
+
+/** Retrait demandé (R-WL-04) : retenu sur le portefeuille, en transit jusqu'au virement. */
+export function withdrawalHoldEntries(holder: Holder, amount: number): EntryLine[] {
+  return [
+    { account: prepaidAccount(holder), direction: 'debit', amount },
+    { account: 'ksp:prepaid_withdrawals_in_transit', direction: 'credit', amount },
+  ];
+}
+
+/** Retrait viré par payment : l'argent quitte les fonds des recharges. */
+export function withdrawalSettlementEntries(amount: number): EntryLine[] {
+  return [
+    { account: 'ksp:prepaid_withdrawals_in_transit', direction: 'debit', amount },
+    { account: 'ksp:prepaid_funds', direction: 'credit', amount },
+  ];
+}
+
+/** Retrait refusé ou en échec : le montant retenu est rendu au portefeuille. */
+export function withdrawalReleaseEntries(holder: Holder, amount: number): EntryLine[] {
+  return [
+    { account: 'ksp:prepaid_withdrawals_in_transit', direction: 'debit', amount },
+    { account: prepaidAccount(holder), direction: 'credit', amount },
+  ];
 }
 
 /** Écriture inverse : mêmes comptes et montants, sens opposés. */

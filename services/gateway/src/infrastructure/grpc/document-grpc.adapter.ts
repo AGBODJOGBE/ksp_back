@@ -3,7 +3,7 @@ import { type documentV1 } from '@ksp/contracts';
 import { AppError, currentContext, type GrpcCaller } from '@ksp/platform';
 import { Logger } from '@nestjs/common';
 import { type Observable } from 'rxjs';
-import { type Json } from '../../application/cleaning/cleaning.ports';
+import { type Json } from '../../application/common/api.ports';
 import { type DocumentApi, type SignInput } from '../../application/document/document.ports';
 import { toUpstreamError } from './upstream-error';
 

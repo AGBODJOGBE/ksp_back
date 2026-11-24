@@ -15,6 +15,7 @@ import {
 } from '../../application/organization/organization.use-cases';
 import { type OrganizationStatus } from '../../domain/organization/organization';
 import { ORGANIZATION_STATUS, toMemberMessage, toMembershipMessage, toOrganizationMessage } from './mappers';
+import { notImplemented } from './not-implemented';
 
 const STATUS_IN = Object.fromEntries(
   Object.entries(ORGANIZATION_STATUS).map(([status, value]) => [value, status]),
@@ -89,6 +90,30 @@ export class OrganizationGrpcController implements identityV1.OrganizationServic
       code: request.code,
     });
     return { membership: toMembershipMessage(membership) };
+  }
+
+  listOrganizationMembers(): Promise<identityV1.ListOrganizationMembersResponse> {
+    return notImplemented('ListOrganizationMembers');
+  }
+
+  inviteOrganizationMember(): Promise<identityV1.InviteOrganizationMemberResponse> {
+    return notImplemented('InviteOrganizationMember');
+  }
+
+  listMyOrganizationInvitations(): Promise<identityV1.ListMyOrganizationInvitationsResponse> {
+    return notImplemented('ListMyOrganizationInvitations');
+  }
+
+  respondToOrganizationInvitation(): Promise<identityV1.RespondToOrganizationInvitationResponse> {
+    return notImplemented('RespondToOrganizationInvitation');
+  }
+
+  changeOrganizationMemberRole(): Promise<identityV1.ChangeOrganizationMemberRoleResponse> {
+    return notImplemented('ChangeOrganizationMemberRole');
+  }
+
+  removeOrganizationMember(): Promise<identityV1.RemoveOrganizationMemberResponse> {
+    return notImplemented('RemoveOrganizationMember');
   }
 }
 

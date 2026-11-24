@@ -2,6 +2,8 @@
 
 **Statut** : Proposé (corrections de l'essai réel du paiement, 2026-10-31 ; complété après relecture le 2026-11-03 ; écart de montant décidé le 2026-11-05)
 
+**Remplacé en partie par ADR-055** (décisions 7 à 10, pour le Nettoyage et les factures : plus de paiement direct d'un objet ; les décisions 1 à 6 sur l'outbox restent).
+
 ## Contexte
 
 Pendant l'essai réel du paiement en ligne (ADR-031), un `payment.intent.failed` en échec de publication (`ECONNRESET`, 1 397 tentatives) a retenu tous les événements suivants de l'outbox de `payment` : le relais publiait dans l'ordre et s'arrêtait au premier échec (ADR-005). Les `payment.intent.succeeded` suivants ne sont donc pas arrivés chez `cleaning` et `billing`, dont le montant dû ne déduisait pas l'argent reçu ; le client se voyait proposer de payer une seconde fois.

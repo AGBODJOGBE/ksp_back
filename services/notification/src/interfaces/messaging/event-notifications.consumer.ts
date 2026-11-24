@@ -6,12 +6,13 @@ import {
   Logger,
   type OnApplicationBootstrap,
 } from '@nestjs/common';
-import { LISTENED_EVENTS } from '../../application/events/listened-events';
+import { LISTENED_EVENT_VERSIONS, LISTENED_EVENTS } from '../../application/events/listened-events';
 import { NotifyEventUseCase } from '../../application/events/notify-event.use-case';
 
 /**
  * Adaptateur RabbitMQ : abonne notification aux événements écoutés (file `notification.<événement>`,
- * reprise puis file d'erreurs, gérées par le kit) et délègue au cas d'usage.
+ * reprise puis file d'erreurs, gérées par le kit), dans les versions d'enveloppe qu'il sait lire, et
+ * délègue au cas d'usage.
  * Ne journalise que l'identifiant, le type et les compteurs : jamais de coordonnées ni de texte.
  */
 @Injectable()
@@ -25,7 +26,12 @@ export class EventNotificationsConsumer implements OnApplicationBootstrap, Befor
 
   async onApplicationBootstrap(): Promise<void> {
     for (const eventType of LISTENED_EVENTS) {
-      await this.consumer.subscribe(eventType, (envelope) => this.handle(envelope));
+      const versions = LISTENED_EVENT_VERSIONS[eventType];
+      await this.consumer.subscribe(
+        eventType,
+        (envelope) => this.handle(envelope),
+        versions ? { versions } : {},
+      );
     }
   }
 

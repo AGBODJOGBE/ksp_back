@@ -1,454 +1,322 @@
-import { type CleaningEventType } from '@ksp/contracts';
-import { enumeration, paymentNote, quotedService, unpaidText } from '../../domain/messages/cleaning.messages';
-import { formatDuration, formatXof } from '../../domain/messages/format';
-import { type EventRule, type NotificationIntent, type RuleContext } from './event-rules';
+import { type CleaningEventPayloads, type CleaningEventType } from '@ksp/contracts';
+import { formatXof } from '../../domain/messages/format';
+import { CLEANING_PROGRAM_RULES } from './cleaning-programs.rules';
+import { CLEANING_SESSION_RULES } from './cleaning-sessions.rules';
+import {
+  agents,
+  backOffice,
+  backOfficePath,
+  customer,
+  DECLINE_REASONS,
+  placeLabel,
+  portal,
+  REJECTION_REASONS,
+  staff,
+} from './cleaning.recipients';
+import { type EventRule } from './event-rules';
 import { eventDate as day, eventDateTime as dateTime } from './rule-dates';
 
 /**
- * Messages des événements du Nettoyage (cahier des charges Nettoyage, parties 6 et 10).
+ * Messages des événements du Nettoyage, refonte v2 (ADR-054 ; CDC Nettoyage v2, 16.2 ; lot G, D40).
+ * Ce fichier : demande, visite des lieux et devis ; programmes, agents et réclamations dans
+ * cleaning-programs.rules.ts ; séances et leur paiement dans cleaning-sessions.rules.ts.
  *
- * Destinataires : le client (customerId) ; les agents affectés (visites, passages planifiés) ou
- * libérés (suspension) ; l'équipe Nettoyage configurée (NOTIFICATION_CLEANING_TEAM_USER_IDS) pour
- * la reprise après impayés et la reprogrammation à finir à la main, car ces événements ne désignent
- * ni l'admin ni le superviseur.
+ * Destinataires (cleaning.recipients.ts) : le client du dossier (customerId) ; les administrateurs
+ * d'une organisation pour un devis transmis pour accord ; les agents de la visite ; le superviseur
+ * de la zone (permission `cleaning.request.process` dans la commune du lieu, ListStaffByPermission,
+ * RV-62). Un dossier est désigné par son numéro (« dossier DN-000124 »), le lieu par les libellés du
+ * catalogue ; jamais d'adresse ni de texte libre (16.3).
  *
- * Liens « Mon espace KSP » (chemins du portail à valider) : /mon-espace/nettoyage/demandes/<requestId>,
- * /mon-espace/nettoyage/demandes/groupes/<groupId>, /mon-espace/nettoyage/missions/<missionId> et
- * /mon-espace/factures.
- *
- * Messages regroupés (ADR-035 point 14) : un envoi groupé, une visite commune et un envoi groupé de
- * devis donnent un seul message, qui liste les prestations ; les événements par demande marqués
- * `summarizedByGroup` n'envoient alors rien (l'événement de groupe, publié dans la même
- * transaction, les couvre). Sans ce marqueur (demande seule, devis envoyé seul, événement
- * antérieur), un message par demande, avec le nom de la prestation quand il est connu.
+ * Décisions du lot G hors du tableau 16.2 : la demande refusée, le devis retiré (R-VI-07, RV-50),
+ * le paiement laissé au portefeuille (R-PP-07) et le client absent à la visite (R-VI-05) préviennent
+ * aussi le client. La demande annulée garde son message v1, réécrit sur place.
  */
 
-/** Cause de suspension propre à l'organisation cliente, suspendue par KSP (ADR-030). */
-const ORGANIZATION_SUSPENDED = 'organization_suspended';
-
-function requestLink(context: RuleContext, requestId: string): string {
-  return `${context.portalBaseUrl}/mon-espace/nettoyage/demandes/${encodeURIComponent(requestId)}`;
+/** « dossier DN-000124 ». */
+function file(requestNumber: string): string {
+  return `dossier ${requestNumber}`;
 }
 
-function groupLink(context: RuleContext, groupId: string): string {
-  return `${context.portalBaseUrl}/mon-espace/nettoyage/demandes/groupes/${encodeURIComponent(groupId)}`;
-}
-
-/** Nom de la prestation, quand l'événement le donne (variable facultative des modèles). */
-function withService(serviceName: string | undefined): Record<string, string> {
-  const name = serviceName?.trim();
-  return name ? { service_name: name } : {};
-}
-
-/** « « Vitres », « Jardin » et « Bureaux » ». */
-function serviceList(items: readonly { serviceName?: string | undefined }[]): string {
-  return enumeration(items.map((item) => quotedService(item.serviceName)));
-}
-
-function invoicesLink(context: RuleContext): string {
-  return `${context.portalBaseUrl}/mon-espace/factures`;
-}
-
-/** Un message par membre de l'équipe Nettoyage configurée ; aucun si la liste est vide. */
-function team(
-  context: RuleContext,
-  templateCode: string,
-  variables: Record<string, string>,
-): NotificationIntent[] {
-  return context.cleaningTeamUserIds.map((userId) => ({ userId, templateCode, variables, link: null }));
-}
-
-function missionLink(context: RuleContext, missionId: string): string {
-  return `${context.portalBaseUrl}/mon-espace/nettoyage/missions/${encodeURIComponent(missionId)}`;
-}
-
-function customer(
-  userId: string,
-  templateCode: string,
-  link: string,
-  variables: Record<string, string>,
-): NotificationIntent {
-  return { userId, templateCode, variables: { ...variables, link }, link };
-}
-
-/** Devis cités par l'expiration ou son rappel (ADR-053) : « « Vitres » (25 000 FCFA) », un par devis. */
-function quoteList(quotes: readonly { serviceName?: string | undefined; total: { amount: number } }[]) {
-  return enumeration(
-    quotes.map((quote) => `${quotedService(quote.serviceName)} (${formatXof(quote.total.amount)})`),
-  );
-}
-
-/** Lien d'un lot de devis (ADR-053) : le groupe, sinon la demande du premier devis. */
-function quotesLink(
-  context: RuleContext,
-  event: { groupId?: string; quotes: readonly { requestId: string }[] },
-) {
-  return event.groupId ? groupLink(context, event.groupId) : requestLink(context, event.quotes[0]!.requestId);
-}
-
-/** Agents libérés d'un passage (ADR-053) : un message chacun, avec la date d'avant. */
-function released(agentIds: readonly string[], variables: Record<string, string>): NotificationIntent[] {
-  return [...new Set(agentIds)].map((agentId) => ({
-    userId: agentId,
-    templateCode: 'cleaning.intervention_released.agent',
-    variables,
-    link: null,
-  }));
+/** Devis cité par l'expiration ou son rappel : « du dossier DN-000124 (25 000 FCFA) ». */
+function quoteOf(event: { requestNumber: string; total: { amount: number } }): string {
+  return `du ${file(event.requestNumber)} (${formatXof(event.total.amount)})`;
 }
 
 /**
- * Tous les événements du Nettoyage, sauf cleaning.mission.refunded (ADR-046) et
- * cleaning.mission.credited (ADR-049) : le remboursement ou le crédit est annoncé par wallet quand il
- * est crédité (wallet.prepaid.credited).
+ * Motif de l'annulation d'une demande. `visit_fee_unpaid` : annulée par KSP, frais de visite non
+ * payés à temps (R-FV-03) ; le message d'une annulation par KSP en tient lieu.
  */
-type NotifiedCleaningEvent = Exclude<
+const CANCELLATION_CASES: Readonly<
+  Record<CleaningEventPayloads['cleaning.request.cancelled']['cause'], string>
+> = {
+  customer: 'cancelled_by_customer',
+  visit_fee_unpaid: 'cancelled_by_supervisor',
+};
+
+/**
+ * Causes d'une visite annulée avec sa demande : l'agent apprend que la demande a été close ; le
+ * client est prévenu par le message de sa demande.
+ */
+const CLOSED_REQUEST_CAUSES: ReadonlySet<string> = new Set(['request_cancelled', 'request_rejected']);
+
+type RequestEventType = Extract<
   CleaningEventType,
-  'cleaning.mission.refunded' | 'cleaning.mission.credited'
+  `cleaning.request.${string}` | `cleaning.visit.${string}` | `cleaning.quote.${string}`
 >;
 
-export const CLEANING_RULES: { readonly [T in NotifiedCleaningEvent]: EventRule<T> } = {
-  'cleaning.quote.requested': (event, context) =>
-    event.summarizedByGroup
-      ? []
-      : [
-          customer(
-            event.customerId,
-            'cleaning.quote_requested.customer',
-            requestLink(context, event.requestId),
-            { visit_required: String(event.visitRequired), ...withService(event.serviceName) },
-          ),
-        ],
-
-  // Envoi groupé : un message ; une seule prestation, le message d'une demande.
-  'cleaning.quote_group.requested': (event, context) => {
-    const visit_required = String(event.visitRequired);
-    const [only, ...others] = event.requests;
-    if (only && others.length === 0) {
-      return [
-        customer(
-          event.customerId,
-          'cleaning.quote_requested.customer',
-          requestLink(context, only.requestId),
-          {
-            visit_required,
-            ...withService(only.serviceName),
-          },
-        ),
-      ];
-    }
-    return [
-      customer(
-        event.customerId,
-        'cleaning.quote_group_requested.customer',
-        groupLink(context, event.groupId),
-        {
-          visit_required,
-          request_count: String(event.requests.length),
-          services: serviceList(event.requests),
-        },
-      ),
-    ];
-  },
-
-  'cleaning.visit.scheduled': (event, context) => {
-    const date = dateTime(event.scheduledAt, context);
-    // Visite commune à plusieurs demandes, prestations connues : un message qui les liste.
-    const requests = event.groupVisitId ? (event.requests ?? []) : [];
-    if (requests.length > 1) {
-      const services = serviceList(requests);
-      return [
-        customer(
-          event.customerId,
-          'cleaning.group_visit_scheduled.customer',
-          event.groupId ? groupLink(context, event.groupId) : requestLink(context, event.requestId),
-          { date, services },
-        ),
-        {
-          userId: event.agentId,
-          templateCode: 'cleaning.group_visit_scheduled.agent',
-          variables: { date, request_count: String(requests.length), services },
-          link: null,
-        },
-      ];
-    }
-    const service = withService(requests[0]?.serviceName ?? event.serviceName);
-    return [
-      customer(event.customerId, 'cleaning.visit_scheduled.customer', requestLink(context, event.requestId), {
-        date,
-        ...service,
-      }),
-      {
-        userId: event.agentId,
-        templateCode: 'cleaning.visit_scheduled.agent',
-        variables: { date, ...service },
-        link: null,
-      },
-    ];
-  },
-
-  'cleaning.quote.sent': (event, context) =>
-    event.summarizedByGroup
-      ? []
-      : [
-          customer(event.customerId, 'cleaning.quote_sent.customer', requestLink(context, event.requestId), {
-            total: formatXof(event.total.amount),
-            valid_until: day(event.validUntil, context),
-            ...withService(event.serviceName),
-          }),
-        ],
-
-  // Devis du groupe envoyés ensemble : un message ; un seul devis, le message d'une demande.
-  'cleaning.quote_group.sent': (event, context) => {
-    const valid_until = day(event.validUntil, context);
-    const [only, ...others] = event.quotes;
-    if (only && others.length === 0) {
-      return [
-        customer(event.customerId, 'cleaning.quote_sent.customer', requestLink(context, only.requestId), {
-          total: formatXof(only.total.amount),
-          valid_until,
-          ...withService(only.serviceName),
-        }),
-      ];
-    }
-    return [
-      customer(event.customerId, 'cleaning.quote_group_sent.customer', groupLink(context, event.groupId), {
-        quote_count: String(event.quotes.length),
-        quotes: enumeration(
-          event.quotes.map(
-            (quote) => `${quotedService(quote.serviceName)} (${formatXof(quote.total.amount)})`,
-          ),
-        ),
-        total: formatXof(event.total.amount),
-        valid_until,
-      }),
-    ];
-  },
-
-  'cleaning.booking.confirmed': (event, context) => [
-    customer(event.customerId, 'cleaning.booking_confirmed.customer', missionLink(context, event.missionId), {
-      total: formatXof(event.total.amount),
-      planned_interventions: String(event.plannedInterventions),
-      payment_note: paymentNote({
-        ...event.paymentPlan,
-        total: event.total.amount,
-        deposit: event.depositAmount.amount,
-      }),
-      ...withService(event.serviceName),
+const CLEANING_REQUEST_RULES: {
+  readonly [T in RequestEventType]: EventRule<T>;
+} = {
+  // Demande envoyée : le client ; le superviseur de la zone quand les frais de visite sont payés
+  // (sinon, au paiement : cleaning.request.visit_fee_paid).
+  'cleaning.request.submitted': (event, context) => [
+    customer(event, 'cleaning.request_submitted.customer', portal.request(context, event), {
+      request_number: event.requestNumber,
+      place: placeLabel(event),
+      case: event.visitFeeStatus,
+      visit_fee: formatXof(event.visitFee.amount),
     }),
-  ],
-
-  'cleaning.mission.scheduled': (event, context) => {
-    const variables = {
-      date: dateTime(event.scheduledStart, context),
-      duration: formatDuration(event.durationMinutes),
-      ...withService(event.serviceName),
-    };
-    return [
-      customer(
-        event.customerId,
-        'cleaning.mission_scheduled.customer',
-        missionLink(context, event.missionId),
-        variables,
-      ),
-      ...[...new Set(event.agentIds)].map((agentId) => ({
-        userId: agentId,
-        templateCode: 'cleaning.mission_scheduled.agent',
-        variables,
-        link: null,
-      })),
-    ];
-  },
-
-  // Planification en lot (ADR-052) : un seul message par destinataire, qui résume les passages.
-  'cleaning.interventions.batch_scheduled': (event, context) => {
-    const variables = {
-      count: String(event.count),
-      first_date: dateTime(event.firstStart, context),
-      last_date: dateTime(event.lastStart, context),
-      duration: formatDuration(event.durationMinutes),
-      ...withService(event.serviceName),
-    };
-    return [
-      customer(
-        event.customerId,
-        'cleaning.interventions_batch_scheduled.customer',
-        missionLink(context, event.missionId),
-        variables,
-      ),
-      ...[...new Set(event.agentIds)].map((agentId) => ({
-        userId: agentId,
-        templateCode: 'cleaning.interventions_batch_scheduled.agent',
-        variables,
-        link: null,
-      })),
-    ];
-  },
-
-  'cleaning.mission.completed': (event, context) => [
-    customer(event.customerId, 'cleaning.mission_completed.customer', missionLink(context, event.missionId), {
-      completed_interventions: String(event.completedInterventions),
-      completed_on: day(event.completedAt, context),
-    }),
+    ...(event.visitFeeStatus === 'paid'
+      ? [
+          staff(
+            'cleaning.request.process',
+            event.communeKey,
+            'cleaning.request_submitted.staff',
+            backOffice(context, backOfficePath.request(event.requestId)),
+            { request_number: event.requestNumber, place: placeLabel(event) },
+          ),
+        ]
+      : []),
   ],
 
   'cleaning.request.cancelled': (event, context) => [
+    customer(event, 'cleaning.request_cancelled.customer', portal.request(context, event), {
+      case: CANCELLATION_CASES[event.cause],
+      scope: 'request',
+    }),
+  ],
+
+  // Demande refusée par KSP (R-AC-05) : le client, motif de la liste et remboursement des frais.
+  'cleaning.request.rejected': (event, context) => [
+    customer(event, 'cleaning.request_rejected.customer', portal.request(context, event), {
+      request_number: event.requestNumber,
+      reason: REJECTION_REASONS[event.reasonCode],
+      ...(event.visitFeeRefund && event.visitFeeRefund.amount > 0
+        ? { refund: formatXof(event.visitFeeRefund.amount) }
+        : {}),
+    }),
+  ],
+
+  // Frais de visite payés : le client (reçu, ou la demande sans reçu) ; le personnel qui traite les
+  // demandes. Sans clé de commune dans l'événement : attributions globales seulement.
+  'cleaning.request.visit_fee_paid': (event, context) => [
     customer(
-      event.customerId,
-      'cleaning.request_cancelled.customer',
-      event.missionId ? missionLink(context, event.missionId) : requestLink(context, event.requestId),
+      event,
+      'cleaning.visit_fee_paid.customer',
+      event.invoiceId
+        ? portal.invoice(context, event.invoiceId, event.organizationId)
+        : portal.request(context, event),
+      { request_number: event.requestNumber, amount: formatXof(event.amount.amount) },
+    ),
+    staff(
+      'cleaning.request.process',
+      null,
+      'cleaning.visit_fee_paid.staff',
+      backOffice(context, backOfficePath.request(event.requestId)),
+      { request_number: event.requestNumber, rank: String(event.rank) },
+    ),
+  ],
+
+  // Réactivation d'un devis expiré (R-AC-04) : le superviseur l'accepte ou la refuse.
+  'cleaning.request.reactivation_requested': (event, context) => [
+    staff(
+      'cleaning.request.process',
+      event.communeKey,
+      'cleaning.reactivation_requested.staff',
+      backOffice(context, backOfficePath.request(event.requestId)),
+      { request_number: event.requestNumber },
+    ),
+  ],
+
+  // Visite planifiée : le client et chaque agent. Déplacée : la nouvelle date au client et aux agents
+  // de la visite, l'ancienne aux agents retirés.
+  'cleaning.visit.scheduled': (event, context) => {
+    const date = dateTime(event.scheduledAt, context);
+    const released = agents(event.releasedAgentIds, 'cleaning.visit_released.agent', {
+      request_number: event.requestNumber,
+      date: dateTime(event.previousScheduledAt ?? event.scheduledAt, context),
+    });
+    if (event.previousScheduledAt === null) {
+      return [
+        customer(event, 'cleaning.visit_scheduled.customer', portal.request(context, event), { date }),
+        ...agents(event.agentIds, 'cleaning.visit_scheduled.agent', { date }),
+        ...released,
+      ];
+    }
+    const moved = {
+      request_number: event.requestNumber,
+      date,
+      previous_date: dateTime(event.previousScheduledAt, context),
+    };
+    return [
+      customer(event, 'cleaning.visit_rescheduled.customer', portal.request(context, event), moved),
+      ...agents(event.agentIds, 'cleaning.visit_rescheduled.agent', moved),
+      ...released,
+    ];
+  },
+
+  // Visite annulée : les agents libérés ; le client, sauf quand sa demande est close (il est prévenu
+  // par le message de la demande).
+  'cleaning.visit.cancelled': (event, context) => {
+    const date = dateTime(event.scheduledAt, context);
+    if (CLOSED_REQUEST_CAUSES.has(event.cause)) {
+      return agents(event.releasedAgentIds, 'cleaning.visit_cancelled.agent', {
+        date,
+        services: file(event.requestNumber),
+      });
+    }
+    return [
+      customer(event, 'cleaning.visit_cancelled.customer', portal.request(context, event), {
+        case: event.cause,
+        request_number: event.requestNumber,
+        date,
+        ...(event.visitFeeRefund && event.visitFeeRefund.amount > 0
+          ? { refund: formatXof(event.visitFeeRefund.amount) }
+          : {}),
+      }),
+      ...agents(event.releasedAgentIds, 'cleaning.visit_released.agent', {
+        request_number: event.requestNumber,
+        date,
+      }),
+    ];
+  },
+
+  'cleaning.visit.arrived': (event, context) => [
+    customer(event, 'cleaning.visit_arrived.customer', portal.request(context, event), {
+      request_number: event.requestNumber,
+    }),
+  ],
+
+  // Constat terminé : le devis suit.
+  'cleaning.visit.completed': (event, context) => [
+    customer(event, 'cleaning.visit_completed.customer', portal.request(context, event), {
+      request_number: event.requestNumber,
+    }),
+  ],
+
+  // Client absent à la visite (R-VI-05) : le client, avec les nouveaux frais et leur échéance
+  // (R-FV-03) ; le superviseur de la zone.
+  'cleaning.visit.missed': (event, context) => [
+    customer(event, 'cleaning.visit_missed.customer', portal.request(context, event), {
+      request_number: event.requestNumber,
+      date: dateTime(event.missedAt, context),
+      visit_fee: formatXof(event.newVisitFee.amount),
+      pay_before: dateTime(event.newVisitFeePayBefore, context),
+    }),
+    staff(
+      'cleaning.request.process',
+      event.communeKey,
+      'cleaning.visit_missed.staff',
+      backOffice(context, backOfficePath.request(event.requestId)),
+      { request_number: event.requestNumber, date: dateTime(event.missedAt, context) },
+    ),
+  ],
+
+  // Devis envoyé ou révisé ; renouvellement proposé (16.2) : son propre message.
+  'cleaning.quote.sent': (event, context) =>
+    event.kind === 'renewal'
+      ? [
+          customer(event, 'cleaning.renewal_proposed.customer', portal.request(context, event), {
+            request_number: event.requestNumber,
+            total: formatXof(event.total.amount),
+            valid_until: day(event.validUntil, context),
+          }),
+        ]
+      : [
+          customer(event, 'cleaning.quote_sent.customer', portal.request(context, event), {
+            total: formatXof(event.total.amount),
+            valid_until: day(event.validUntil, context),
+          }),
+        ],
+
+  // Devis transmis pour accord (R-AC-02) : les administrateurs actuels de l'organisation, chacun par
+  // ses canaux (pas l'e-mail de facturation).
+  'cleaning.quote.forwarded': (event, context) =>
+    event.organizationId
+      ? [
+          {
+            ...customer(event, 'cleaning.quote_forwarded.customer', portal.request(context, event), {
+              request_number: event.requestNumber,
+            }),
+            organizationId: event.organizationId,
+            billingEmailCopy: false,
+          },
+        ]
+      : [],
+
+  // Devis retiré, nouvelle visite demandée par KSP (R-VI-07, RV-50) : le client.
+  'cleaning.quote.withdrawn': (event, context) => [
+    customer(event, 'cleaning.quote_withdrawn.customer', portal.request(context, event), {
+      request_number: event.requestNumber,
+    }),
+  ],
+
+  // Devis accepté : le personnel des programmes (programme à planifier). Le client est prévenu par
+  // la confirmation du programme. Sans clé de commune : attributions globales.
+  'cleaning.quote.accepted': (event, context) => [
+    staff(
+      'cleaning.program.manage',
+      null,
+      'cleaning.quote_accepted.staff',
+      backOffice(context, backOfficePath.program(event.programId)),
+      { request_number: event.requestNumber },
+    ),
+  ],
+
+  // Devis refusé (R-AC-03) : le superviseur de la zone.
+  'cleaning.quote.declined': (event, context) => [
+    staff(
+      'cleaning.request.process',
+      event.communeKey,
+      'cleaning.quote_declined.staff',
+      backOffice(context, backOfficePath.request(event.requestId)),
       {
-        case: event.outcome === 'cancelled' ? `cancelled_by_${event.cancelledBy}` : event.outcome,
-        scope: event.missionId ? 'mission' : 'request',
-        ...withService(event.serviceName),
+        request_number: event.requestNumber,
+        reason: event.reasonCode ? DECLINE_REASONS[event.reasonCode] : 'sans motif',
       },
     ),
   ],
 
-  'cleaning.contract.suspension_warning': (event, context) => [
-    customer(event.customerId, 'cleaning.suspension_warning.customer', invoicesLink(context), {
-      unpaid_text: unpaidText('unpaid_invoices', event.unpaidCount),
-      threshold: String(event.suspensionThreshold),
-    }),
-  ],
-
-  'cleaning.contract.suspended': (event, context) => [
-    event.cause === ORGANIZATION_SUSPENDED
-      ? customer(
-          event.customerId,
-          'cleaning.contract_suspended_organization.customer',
-          missionLink(context, event.missionId),
-          {},
-        )
-      : customer(
-          event.customerId,
-          'cleaning.contract_suspended.customer',
-          event.cause === 'unpaid_invoices' ? invoicesLink(context) : missionLink(context, event.missionId),
-          { unpaid_text: unpaidText(event.cause, event.unpaidCount) },
-        ),
-    ...[...new Set(event.releasedAgentIds)].map((agentId) => ({
-      userId: agentId,
-      templateCode: 'cleaning.contract_suspended.agent',
-      variables: {},
-      link: null,
-    })),
-  ],
-
-  'cleaning.contract.resumed': (event, context) => {
-    const counts = {
-      rescheduled_count: String(event.rescheduledCount),
-      failed_count: String(event.failedCount),
-    };
-    // Motif de la reprise : dernière cause levée (règlement des impayés ou réactivation).
-    const variant =
-      event.cause === ORGANIZATION_SUSPENDED ? 'contract_resumed_organization' : 'contract_resumed';
-    return [
-      customer(
-        event.customerId,
-        `cleaning.${variant}.customer`,
-        missionLink(context, event.missionId),
-        counts,
-      ),
-      ...team(context, `cleaning.${variant}.team`, { ...counts, mission_id: event.missionId }),
-    ];
-  },
-
-  // Cause ajoutée ou levée, la mission restant suspendue (ADR-030).
-  'cleaning.contract.suspension_updated': (event, context) => {
-    const kind = event.cause === ORGANIZATION_SUSPENDED ? 'organization' : 'unpaid';
-    const unpaidCause = event.causes.find((cause) => cause !== ORGANIZATION_SUSPENDED) ?? 'unpaid_invoices';
-    // Lien vers les factures quand des factures impayées maintiennent ou rejoignent la suspension.
-    const invoicesMatter = event.causes.includes('unpaid_invoices');
-    return [
-      customer(
-        event.customerId,
-        'cleaning.suspension_updated.customer',
-        invoicesMatter ? invoicesLink(context) : missionLink(context, event.missionId),
-        {
-          case: `${kind}_${event.change === 'cause_added' ? 'added' : 'lifted'}`,
-          unpaid_text: unpaidText(unpaidCause, event.unpaidCount),
-        },
-      ),
-    ];
-  },
-
-  'cleaning.rescheduling.failed': (event, context) =>
-    team(context, 'cleaning.rescheduling_failed.team', {
-      mission_id: event.missionId,
-      failed_count: String(event.failedCount),
-    }),
-
-  // Compléments du Nettoyage (ADR-053).
-  // Rappel avant l'expiration : un message par lot (groupe, ou demande seule).
   'cleaning.quote.expiry_reminded': (event, context) => [
-    customer(event.customerId, 'cleaning.quote_expiry_reminder.customer', quotesLink(context, event), {
-      quote_count: String(event.quotes.length),
-      quotes: quoteList(event.quotes),
+    customer(event, 'cleaning.quote_expiry_reminder.customer', portal.request(context, event), {
+      quote_count: '1',
+      quotes: quoteOf(event),
       valid_until: day(event.validUntil, context),
     }),
   ],
 
+  // Devis expiré : le client ; le superviseur de la zone.
   'cleaning.quote.expired': (event, context) => [
-    customer(event.customerId, 'cleaning.quote_expired.customer', quotesLink(context, event), {
-      quote_count: String(event.quotes.length),
-      quotes: quoteList(event.quotes),
+    customer(event, 'cleaning.quote_expired.customer', portal.request(context, event), {
+      quote_count: '1',
+      quotes: quoteOf(event),
     }),
+    staff(
+      'cleaning.request.process',
+      event.communeKey,
+      'cleaning.quote_expired.staff',
+      backOffice(context, backOfficePath.request(event.requestId)),
+      { request_number: event.requestNumber },
+    ),
   ],
+};
 
-  // Passage reporté : le client, les agents du passage, et les agents qui n'y sont plus.
-  'cleaning.intervention.rescheduled': (event, context) => {
-    const service = withService(event.serviceName);
-    const previous_date = dateTime(event.previousStart, context);
-    const variables = {
-      date: dateTime(event.scheduledStart, context),
-      previous_date,
-      duration: formatDuration(event.durationMinutes),
-      ...service,
-    };
-    return [
-      customer(
-        event.customerId,
-        'cleaning.intervention_rescheduled.customer',
-        missionLink(context, event.missionId),
-        variables,
-      ),
-      ...[...new Set(event.agentIds)].map((agentId) => ({
-        userId: agentId,
-        templateCode: 'cleaning.intervention_rescheduled.agent',
-        variables,
-        link: null,
-      })),
-      ...released(event.releasedAgentIds, { previous_date, ...service }),
-    ];
-  },
-
-  // Passage annulé pour être replanifié : le client (nouvelle date à venir) et les agents libérés.
-  'cleaning.intervention.unscheduled': (event, context) => {
-    const variables = {
-      previous_date: dateTime(event.previousStart, context),
-      ...withService(event.serviceName),
-    };
-    return [
-      customer(
-        event.customerId,
-        'cleaning.intervention_unscheduled.customer',
-        missionLink(context, event.missionId),
-        variables,
-      ),
-      ...released(event.releasedAgentIds, variables),
-    ];
-  },
-
-  // Visite annulée avec sa demande (ou toutes celles de la visite commune) : l'agent seul ; le client
-  // est déjà prévenu de la clôture de sa demande.
-  'cleaning.visit.cancelled': (event, context) => [
-    {
-      userId: event.agentId,
-      templateCode: 'cleaning.visit_cancelled.agent',
-      variables: {
-        date: dateTime(event.scheduledAt, context),
-        services: serviceList(event.requests ?? [{}]),
-      },
-      link: null,
-    },
-  ],
+/**
+ * Toutes les règles du Nettoyage v2 : une par événement publié par cleaning (45). Un nouvel
+ * événement du contrat fait échouer la vérification des types tant qu'il n'a pas sa règle.
+ */
+export const CLEANING_RULES: { readonly [T in CleaningEventType]: EventRule<T> } = {
+  ...CLEANING_REQUEST_RULES,
+  ...CLEANING_PROGRAM_RULES,
+  ...CLEANING_SESSION_RULES,
 };

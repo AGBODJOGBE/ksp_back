@@ -1,7 +1,10 @@
 # Service `payment`
 
-Paiement en ligne par Mobile Money (MTN, Moov) via FedaPay : acompte ou solde d'une mission du
-Nettoyage, reste dû d'une facture mensuelle. Décision : `docs/adr/0031-paiement-mobile-money-fedapay.md`.
+Paiement en ligne par Mobile Money (MTN, Moov) via FedaPay : reste dû d'une facture mensuelle, recharge
+du portefeuille prépayé, liens de paiement et reversements. Décision :
+`docs/adr/0031-paiement-mobile-money-fedapay.md`. L'acompte et le solde d'une mission du Nettoyage v1
+(`cleaning_mission`, montant lu dans cleaning) sont retirés avec la v1 (ADR-054) ; le paiement direct
+d'un objet du Nettoyage v2 passe par `CreatePaymentRequest` (ADR-055, ci-dessous).
 Contrat gRPC : `contracts/proto/ksp/payment/v1/`. Événements : `contracts/events/payment/`.
 
 ## Démarrer en local
@@ -26,15 +29,14 @@ Avec FedaPay : `PAYMENT_PROVIDER=fedapay`, `FEDAPAY_ENVIRONMENT=sandbox`, `FEDAP
 
 ## Parcours
 
-1. `CreatePayment` : montant dû lu dans cleaning (`GetMissionAmountDue`) ou billing
-   (`GetInvoiceAmountDue`), payeur vérifié, transaction et page de paiement chez le prestataire.
+1. `CreatePayment` : reste dû lu dans billing (`GetInvoiceAmountDue`), payeur vérifié, transaction
+   et page de paiement chez le prestataire.
 2. Le client paie sur la page du prestataire, puis revient sur le portail.
 3. Confirmation par le prestataire seulement : notification signée (webhook) puis relecture de la
    transaction ; à défaut, relecture au passage de `GetMyPayment` ou par le rapprochement planifié.
-4. `payment.intent.succeeded` (outbox) : cleaning ou billing enregistre le paiement ; notification
-   envoie le reçu.
+4. `payment.intent.succeeded` (outbox) : billing enregistre le paiement ; notification envoie le reçu.
 
-Tant que cleaning ou billing n'a pas enregistré un paiement réussi, un nouveau paiement du même objet
+Tant que billing n'a pas enregistré un paiement réussi, un nouveau paiement du même objet
 est refusé (409, ADR-032) : `PAYMENT_ALREADY_RECEIVED` (« réessayez ») pendant
 `PAYMENT_UNRECORDED_GRACE_MINUTES` (15 par défaut) après la réussite, puis
 `PAYMENT_RECONCILIATION_PENDING` (contacter le support) avec une ligne `ALERTE paiement` dans le
@@ -42,7 +44,7 @@ journal. Cause habituelle : événement retenu dans l'outbox de payment ; s'il e
 rejouer avec `pnpm outbox:replay payment`.
 
 Un paiement `amount_mismatch` (montant ou devise approuvés différents) bloque lui aussi tout nouveau
-paiement du même objet, quel que soit le payeur ou la part, jusqu'à ce que la finance l'ait traité
+paiement du même objet, quel que soit le payeur, jusqu'à ce que la finance l'ait traité
 (ADR-032, décision 10) : `PAYMENT_UNDER_REVIEW` (409, contacter le support), avec une ligne
 `ALERTE paiement` à chaque refus. La finance traite l'écart au back-office
 (`POST /api/v1/admin/payment/payments/{id}/resolve-mismatch`, RPC `ResolveAmountMismatch`, note
@@ -51,7 +53,7 @@ levé. Écarts à traiter : `GET /api/v1/admin/payment/payments?underReview=true
 
 ## Une page payable par objet (ADR-048)
 
-- Mission (toutes parts) ou facture (tous payeurs) : une seule page en attente (index uniques partiels) ;
+- Facture (tous payeurs) : une seule page en attente (index uniques partiels) ;
   la même demande la réutilise, une autre reçoit `PAYMENT_CHECKOUT_OPEN` (409) tant qu'elle peut être payée.
 - Prestataire qui ne sait pas annuler sa page (FedaPay) : paiement en attente jusqu'à
   `PAYMENT_CHECKOUT_VALIDITY_MINUTES` (24 h, à valider) ; clôture sans annulation : alerte
@@ -68,8 +70,19 @@ levé. Écarts à traiter : `GET /api/v1/admin/payment/payments?underReview=true
 organisation active du payeur, sinon le payeur), montant choisi par le client et contrôlé par wallet,
 page réutilisée pour le même montant, remplacée sinon. Confirmation par le chemin commun ; la réussite
 publie `payment.intent.succeeded`, sur lequel wallet crédite le portefeuille. Les refus d'ADR-032 liés à
-un montant dû ne s'appliquent pas. `POST /api/v1/payment/payments` (mission, facture) est **déprécié**
+un montant dû ne s'appliquent pas. `POST /api/v1/payment/payments` (facture) est **déprécié**
 au profit du portefeuille, mais reste fonctionnel.
+
+## Paiement direct d'un objet (v2, ADR-055)
+
+`TopUpPaymentService.CreatePaymentRequest`, réservé aux services de `PAYMENT_DIRECT_CALLERS` (`cleaning`
+et `billing` par défaut, jeton de service) : recharge `wallet_top_up` du titulaire (organisation si
+`organization_id` est renseigné, sinon `customer_id`) qui porte l'objet visé (`target`, service tiré du
+jeton). Montant exact fixé par le demandeur ; échéance facultative (15 minutes à 7 jours). Idempotent
+par (service, clé) : clé enregistrée `<service>:<clé>`. Une page encore ouverte pour le même objet, le
+même montant et le même payeur est réutilisée ; sinon elle est remplacée. La réussite publie
+`payment.intent.succeeded` avec `target` : wallet crédite le portefeuille (`wallet.prepaid.credited`
+avec `forObject`), puis le service débite l'objet. Colonnes `target_*` et `description` : migration 0009.
 
 ## Liens de paiement (ADR-040)
 
@@ -108,9 +121,9 @@ paiement ne garde que l'identifiant du payeur (pièce comptable).
 
 ## Organisation
 
-| Dossier              | Contenu                                                         |
-| -------------------- | --------------------------------------------------------------- |
-| `src/domain`         | Machine à états du paiement, choix du montant dû                |
-| `src/application`    | Un cas d'usage par classe ; ports (prestataire, montants dus…)  |
-| `src/infrastructure` | Prisma, FedaPay, prestataire simulé, gRPC vers cleaning/billing |
-| `src/interfaces`     | Contrôleurs gRPC (client, webhook, back-office)                 |
+| Dossier              | Contenu                                                        |
+| -------------------- | -------------------------------------------------------------- |
+| `src/domain`         | Machine à états du paiement, choix du montant dû               |
+| `src/application`    | Un cas d'usage par classe ; ports (prestataire, montants dus…) |
+| `src/infrastructure` | Prisma, FedaPay, prestataire simulé, gRPC vers billing         |
+| `src/interfaces`     | Contrôleurs gRPC (client, webhook, back-office)                |

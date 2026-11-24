@@ -1,4 +1,4 @@
-import { AppError, type VerifiedAccessToken } from '@ksp/platform';
+import { AppError } from '@ksp/platform';
 import { checkAccess } from '../../domain/access/access-policy';
 import { type ClientKind, type ClientOrigins, resolveClientKind } from '../../domain/client/client-kind';
 import {
@@ -8,7 +8,12 @@ import {
   type RateLimitTable,
 } from '../../domain/rate-limit/rate-limits';
 import { type RouteDefinition } from '../../domain/routing/route-manifest';
-import { type AccessTokenVerifierPort, type Clock, type RateLimiter } from './access.ports';
+import {
+  type AccessTokenVerifierPort,
+  type AuthenticatedCaller,
+  type Clock,
+  type RateLimiter,
+} from './access.ports';
 
 export interface IncomingRequest {
   ip: string;
@@ -23,7 +28,7 @@ export interface IncomingRequest {
 export interface AuthorizedRequest {
   clientKind: ClientKind | null;
   /** Jeton d'accès vérifié, pour les routes connectées. */
-  caller: VerifiedAccessToken | null;
+  caller: AuthenticatedCaller | null;
 }
 
 /** Format d'une clé d'idempotence, le même pour toutes les routes. */
@@ -57,12 +62,16 @@ export class AuthorizeRequestUseCase {
       throw AppError.invalid('GATEWAY_CLIENT_UNKNOWN', "Ce client n'est pas autorisé à se connecter.");
     }
 
-    let caller: VerifiedAccessToken | null = null;
+    let caller: AuthenticatedCaller | null = null;
     if (route.access.level === 'authenticated') {
       // Avant le jeton : un jeton invalide compte aussi (ADR-051).
       await this.consume(authenticatedIpKey(request.ip), this.authenticatedIpLimit);
       caller = await this.verifier.verify(bearerToken(request.authorization));
-      const decision = checkAccess(route.access, caller.user, Math.floor(this.clock.now().getTime() / 1000));
+      const decision = checkAccess(
+        route.access,
+        { ...caller.user, permissions: caller.permissions },
+        Math.floor(this.clock.now().getTime() / 1000),
+      );
       if (!decision.allowed && decision.reason === 'account_deletion_pending') {
         throw AppError.forbidden(
           'GATEWAY_ACCOUNT_DELETION_PENDING',
@@ -74,6 +83,12 @@ export class AuthorizeRequestUseCase {
           'GATEWAY_MFA_REQUIRED',
           'Confirmez votre identité avec la double authentification.',
         );
+      }
+      if (!decision.allowed && decision.reason === 'permission_missing') {
+        // Permission nommée : le back-office sait laquelle demander (noms publics, dans le contrat).
+        throw AppError.forbidden('GATEWAY_FORBIDDEN', "Vous n'avez pas les droits nécessaires.", {
+          permission: route.access.permission,
+        });
       }
       if (!decision.allowed) {
         throw AppError.forbidden('GATEWAY_FORBIDDEN', "Vous n'avez pas les droits nécessaires.");

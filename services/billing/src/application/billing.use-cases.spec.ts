@@ -5,41 +5,22 @@ import {
   asCustomer,
   asStaff,
   CUSTOMER_ID,
+  MISSION_ID,
   ORGANIZATION_ID,
   ORGANIZATION_PROFILE,
+  organizationContract,
   OTHER_CUSTOMER_ID,
   testWorld,
   type TestWorld,
 } from './testing/fakes';
 import { createUseCases } from './use-cases';
 
-const MISSION_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000';
 const event = (n: number) => `0192f1c4-7a2b-7c3d-8e4f-${String(9000 + n).padStart(12, '0')}`;
 const code = (promise: Promise<unknown>) =>
   promise.then(
     () => 'ok',
     (error: AppError) => error.code,
   );
-
-const booking = (organizationId: string | null, eventId = event(1)) => ({
-  eventId,
-  type: 'cleaning.booking.confirmed' as const,
-  occurredAt: '2026-10-23T08:00:00Z',
-  payload: {
-    requestId: event(50),
-    quoteId: event(51),
-    missionId: MISSION_ID,
-    customerId: CUSTOMER_ID,
-    organizationId,
-    total: { amount: 300_000, currency: 'XOF' as const },
-    plannedInterventions: 13,
-    recurrence: { period: 'week' as const, visitsPerPeriod: 1, durationMonths: 3 },
-    paymentPlan: { option: 'full' as const, timing: 'after' as const, method: 'cash' as const },
-    depositAmount: { amount: 300_000, currency: 'XOF' as const },
-    // 1er novembre à 00:00, heure du Bénin : trois mois civils entiers.
-    startsAt: '2026-10-31T23:00:00.000Z',
-  },
-});
 
 describe('facturation mensuelle des contrats d’entreprise', () => {
   let world: TestWorld;
@@ -48,30 +29,14 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
   const payload = <K extends keyof BillingEventPayloads>(type: K) =>
     world.recorder.events.find((e) => e.type === type)?.payload as BillingEventPayloads[K];
 
-  beforeEach(async () => {
+  beforeEach(() => {
     world = testWorld();
     useCases = createUseCases(world);
-    await useCases.registerContract.execute(booking(ORGANIZATION_ID));
-  });
-
-  it('contrat appris par cleaning.booking.confirmed ; doublon et particulier ignorés', async () => {
-    expect(await useCases.registerContract.execute(booking(ORGANIZATION_ID))).toBe('duplicate');
-    expect(await useCases.registerContract.execute(booking(null, event(2)))).toBe('ignored');
-    expect(world.contracts.contracts.get(MISSION_ID)).toMatchObject({
-      total: 300_000,
-      durationMonths: 3,
-      startsAt: new Date('2026-10-31T23:00:00.000Z'),
-    });
+    world.contracts.add(organizationContract());
   });
 
   it('nom de la prestation repris dans le libellé de la facture (ADR-035)', async () => {
-    const named = booking(ORGANIZATION_ID, event(3));
-    named.payload.missionId = event(60);
-    await useCases.registerContract.execute({
-      ...named,
-      payload: { ...named.payload, serviceName: 'Nettoyage de bureaux' },
-    });
-    expect(world.contracts.contracts.get(event(60))!.serviceName).toBe('Nettoyage de bureaux');
+    world.contracts.add(organizationContract({ id: event(60), serviceName: 'Nettoyage de bureaux' }));
     world.clock.current = new Date('2026-12-01T09:00:00Z');
     await useCases.issueDueInvoices.execute();
     const labels = [...world.invoices.invoices.values()].map((invoice) => invoice.lines[0]!.label);
@@ -113,7 +78,7 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     world.clock.current = new Date('2027-01-01T09:00:00Z');
     await useCases.issueDueInvoices.execute();
     const [november, december] = [...world.invoices.invoices.values()].sort(
-      (a, b) => a.periodIndex - b.periodIndex,
+      (a, b) => (a.periodIndex ?? 0) - (b.periodIndex ?? 0),
     );
     expect(november?.organization).toEqual({
       legalName: 'SARL Bénin Propre',
@@ -288,52 +253,18 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
   });
 
   it('jours de suspension déduits au prorata ; annulation : prorata jusqu’au jour de l’annulation', async () => {
-    await useCases.suspendContract.execute({
-      eventId: event(3),
-      type: 'cleaning.contract.suspended',
-      occurredAt: '2026-12-01T00:00:00Z',
-      payload: {
-        missionId: MISSION_ID,
-        customerId: CUSTOMER_ID,
-        organizationId: ORGANIZATION_ID,
-        cause: 'unpaid_invoices',
-        unpaidCount: 2,
-        threshold: 2,
-        cancelledInterventionIds: [],
-        releasedAgentIds: [],
-        suspendedAt: '2026-12-01T00:00:00Z',
-      },
-    });
+    world.contracts.add(organizationContract({ suspendedSince: new Date('2026-12-01T00:00:00Z') }));
     world.clock.current = new Date('2026-12-06T00:00:00Z');
     // Novembre, non suspendu, est facturé en entier.
     expect(await useCases.issueDueInvoices.execute()).toEqual({ issued: 1, deferredContractIds: [] });
-    await useCases.resumeContract.execute({
-      eventId: event(4),
-      type: 'cleaning.contract.resumed',
-      occurredAt: '2026-12-10T00:00:00Z',
-      payload: {
-        missionId: MISSION_ID,
-        customerId: CUSTOMER_ID,
-        organizationId: ORGANIZATION_ID,
-        cause: 'unpaid_invoices',
-        unpaidCount: 1,
-        resumedAt: '2026-12-10T00:00:00Z',
-        rescheduledCount: 1,
-        failedCount: 0,
-      },
-    });
-    await useCases.terminateContract.execute({
-      eventId: event(5),
-      type: 'cleaning.request.cancelled',
-      occurredAt: '2027-01-20T00:00:00Z',
-      payload: {
-        requestId: event(50),
-        missionId: MISSION_ID,
-        customerId: CUSTOMER_ID,
-        cancelledBy: 'supervisor',
-        outcome: 'cancelled',
-      },
-    });
+    // Reprise le 10 décembre, annulation le 20 janvier.
+    world.contracts.add(
+      organizationContract({
+        suspensions: [{ from: new Date('2026-12-01T00:00:00Z'), to: new Date('2026-12-10T00:00:00Z') }],
+        lastResumedAt: new Date('2026-12-10T00:00:00Z'),
+        terminatedAt: new Date('2027-01-20T00:00:00Z'),
+      }),
+    );
     world.clock.current = new Date('2027-03-01T00:00:00Z');
     await useCases.issueDueInvoices.execute();
     // Décembre : 9 jours suspendus (1er au 9) ; janvier : 19 jours jusqu'à l'annulation du 20.
@@ -348,23 +279,8 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
     // La tâche lit le contrat avant la suspension ; la suspension est enregistrée avant l'émission.
     const stale = await world.contracts.listOpen();
     world.contracts.listOpen = async () => stale;
-    await useCases.suspendContract.execute({
-      eventId: event(30),
-      type: 'cleaning.contract.suspended',
-      occurredAt: '2026-11-16T00:00:00Z',
-      payload: {
-        missionId: MISSION_ID,
-        customerId: CUSTOMER_ID,
-        organizationId: ORGANIZATION_ID,
-        cause: 'unpaid_invoices',
-        unpaidCount: 2,
-        threshold: 2,
-        cancelledInterventionIds: [],
-        releasedAgentIds: [],
-        // 16 novembre à 00:00 au Bénin : 15 jours sur 30 suspendus.
-        suspendedAt: '2026-11-15T23:00:00Z',
-      },
-    });
+    // 16 novembre à 00:00 au Bénin : 15 jours sur 30 suspendus.
+    world.contracts.add(organizationContract({ suspendedSince: new Date('2026-11-15T23:00:00Z') }));
     world.clock.current = new Date('2026-12-01T09:00:00Z');
     await useCases.issueDueInvoices.execute();
     expect([...world.invoices.invoices.values()].map((i) => i.total)).toEqual([50_000]);
@@ -381,19 +297,16 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
 
   it('prestation ponctuelle : facturée en une fois, sur la facture du mois du passage (ADR-049)', async () => {
     const ONE_OFF_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1001';
-    const oneOff = booking(ORGANIZATION_ID, event(20));
-    await useCases.registerContract.execute({
-      ...oneOff,
-      payload: {
-        ...oneOff.payload,
-        missionId: ONE_OFF_ID,
-        total: { amount: 90_000, currency: 'XOF' },
-        plannedInterventions: 1,
-        recurrence: null,
+    world.contracts.add(
+      organizationContract({
+        id: ONE_OFF_ID,
+        total: 90_000,
+        durationMonths: 1,
+        oneOff: true,
         // 20 novembre, 09:00 heure du Bénin : un mois de durée aurait coupé la prestation en deux.
-        startsAt: '2026-11-20T08:00:00.000Z',
-      },
-    });
+        startsAt: new Date('2026-11-20T08:00:00.000Z'),
+      }),
+    );
     world.clock.current = new Date('2027-01-05T00:00:00Z');
     await useCases.issueDueInvoices.execute();
     const invoices = [...world.invoices.invoices.values()].filter((i) => i.contractId === ONE_OFF_ID);
@@ -406,29 +319,15 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
 
   it('prestation ponctuelle annulée avant son jour : rien n’est facturé', async () => {
     const ONE_OFF_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1002';
-    const oneOff = booking(ORGANIZATION_ID, event(21));
-    await useCases.registerContract.execute({
-      ...oneOff,
-      payload: {
-        ...oneOff.payload,
-        missionId: ONE_OFF_ID,
-        recurrence: null,
-        startsAt: '2026-11-20T08:00:00.000Z',
-      },
-    });
-    await useCases.terminateContract.execute({
-      eventId: event(22),
-      type: 'cleaning.request.cancelled',
-      occurredAt: '2026-11-18T10:00:00Z',
-      payload: {
-        requestId: event(52),
-        missionId: ONE_OFF_ID,
-        customerId: CUSTOMER_ID,
-        organizationId: ORGANIZATION_ID,
-        cancelledBy: 'customer',
-        outcome: 'cancelled',
-      },
-    });
+    world.contracts.add(
+      organizationContract({
+        id: ONE_OFF_ID,
+        durationMonths: 1,
+        oneOff: true,
+        startsAt: new Date('2026-11-20T08:00:00.000Z'),
+        terminatedAt: new Date('2026-11-18T10:00:00Z'),
+      }),
+    );
     world.clock.current = new Date('2027-01-05T00:00:00Z');
     await useCases.issueDueInvoices.execute();
     expect([...world.invoices.invoices.values()].filter((i) => i.contractId === ONE_OFF_ID)).toEqual([]);
@@ -503,109 +402,6 @@ describe('facturation mensuelle des contrats d’entreprise', () => {
   });
 });
 
-describe('événements de cleaning arrivés avant la confirmation (ADR-032)', () => {
-  let world: TestWorld;
-  let useCases: ReturnType<typeof createUseCases>;
-
-  beforeEach(() => {
-    world = testWorld();
-    useCases = createUseCases(world);
-  });
-
-  const cancellation = (
-    organizationId: string | null | undefined,
-    missionId: string | null = MISSION_ID,
-  ) => ({
-    eventId: event(5),
-    type: 'cleaning.request.cancelled' as const,
-    occurredAt: '2026-11-20T00:00:00Z',
-    payload: {
-      requestId: event(50),
-      missionId,
-      customerId: CUSTOMER_ID,
-      cancelledBy: 'customer' as const,
-      outcome: 'cancelled' as const,
-      ...(organizationId === undefined ? {} : { organizationId }),
-    },
-  });
-  const suspension = (organizationId: string | null) => ({
-    eventId: event(3),
-    type: 'cleaning.contract.suspended' as const,
-    occurredAt: '2026-11-10T00:00:00Z',
-    payload: {
-      missionId: MISSION_ID,
-      customerId: CUSTOMER_ID,
-      organizationId,
-      cause: 'unpaid_invoices' as const,
-      unpaidCount: 2,
-      threshold: 2,
-      cancelledInterventionIds: [],
-      releasedAgentIds: [],
-      suspendedAt: '2026-11-10T00:00:00Z',
-    },
-  });
-  const resumption = (organizationId: string | null) => ({
-    eventId: event(4),
-    type: 'cleaning.contract.resumed' as const,
-    occurredAt: '2026-11-15T00:00:00Z',
-    payload: {
-      missionId: MISSION_ID,
-      customerId: CUSTOMER_ID,
-      organizationId,
-      cause: 'unpaid_invoices' as const,
-      unpaidCount: 1,
-      resumedAt: '2026-11-15T00:00:00Z',
-      rescheduledCount: 0,
-      failedCount: 0,
-    },
-  });
-
-  it('annulation avant la confirmation : erreur réessayable, non marquée traitée, appliquée ensuite', async () => {
-    expect(await code(useCases.terminateContract.execute(cancellation(ORGANIZATION_ID)))).toBe(
-      'BILLING_CONTRACT_NOT_YET_REGISTERED',
-    );
-    // L'événement n'est pas enregistré dans l'inbox : la file de reprise le représentera.
-    expect(world.contracts.processed.size).toBe(0);
-    await useCases.registerContract.execute(booking(ORGANIZATION_ID));
-    await useCases.terminateContract.execute(cancellation(ORGANIZATION_ID));
-    expect(world.contracts.contracts.get(MISSION_ID)?.terminatedAt).toEqual(new Date('2026-11-20T00:00:00Z'));
-    // Le contrat annulé n'est plus facturé au-delà du jour de l'annulation.
-    world.clock.current = new Date('2027-03-01T00:00:00Z');
-    await useCases.issueDueInvoices.execute();
-    expect([...world.invoices.invoices.values()].map((i) => i.periodIndex)).toEqual([1]);
-  });
-
-  it('suspension et reprise avant la confirmation : réessayées, puis appliquées', async () => {
-    expect(await code(useCases.suspendContract.execute(suspension(ORGANIZATION_ID)))).toBe(
-      'BILLING_CONTRACT_NOT_YET_REGISTERED',
-    );
-    expect(await code(useCases.resumeContract.execute(resumption(ORGANIZATION_ID)))).toBe(
-      'BILLING_CONTRACT_NOT_YET_REGISTERED',
-    );
-    expect(world.contracts.processed.size).toBe(0);
-    await useCases.registerContract.execute(booking(ORGANIZATION_ID));
-    await useCases.resumeContract.execute(resumption(ORGANIZATION_ID));
-    await useCases.suspendContract.execute(suspension(ORGANIZATION_ID));
-    expect(world.contracts.contracts.get(MISSION_ID)).toMatchObject({
-      suspendedSince: null,
-      suspensions: [{ from: new Date('2026-11-10T00:00:00Z'), to: new Date('2026-11-15T00:00:00Z') }],
-    });
-  });
-
-  it('particulier, demande sans mission, ou événement sans organisation (antérieur) : rien à attendre', async () => {
-    await expect(useCases.terminateContract.execute(cancellation(null))).resolves.toBeUndefined();
-    await expect(
-      useCases.terminateContract.execute({ ...cancellation(ORGANIZATION_ID, null), eventId: event(6) }),
-    ).resolves.toBeUndefined();
-    await expect(
-      useCases.terminateContract.execute({ ...cancellation(undefined), eventId: event(7) }),
-    ).resolves.toBeUndefined();
-    await expect(useCases.suspendContract.execute(suspension(null))).resolves.toBeUndefined();
-    await expect(useCases.resumeContract.execute(resumption(null))).resolves.toBeUndefined();
-    expect(world.contracts.contracts.size).toBe(0);
-  });
-});
-
 describe('paiement en ligne d’une facture (ADR-031)', () => {
   let world: TestWorld;
   let useCases: ReturnType<typeof createUseCases>;
@@ -614,7 +410,7 @@ describe('paiement en ligne d’une facture (ADR-031)', () => {
   beforeEach(async () => {
     world = testWorld();
     useCases = createUseCases(world);
-    await useCases.registerContract.execute(booking(ORGANIZATION_ID));
+    world.contracts.add(organizationContract());
     world.clock.current = new Date('2026-12-01T09:00:00Z');
     await useCases.issueDueInvoices.execute();
   });
@@ -711,7 +507,7 @@ describe('facture payée par le portefeuille prépayé (ADR-046)', () => {
   beforeEach(async () => {
     world = testWorld();
     useCases = createUseCases(world);
-    await useCases.registerContract.execute(booking(ORGANIZATION_ID));
+    world.contracts.add(organizationContract());
     world.clock.current = new Date('2026-12-01T09:00:00Z');
     await useCases.issueDueInvoices.execute();
     world.wallet.balances.set(ORGANIZATION_ID, 150_000);

@@ -6,6 +6,7 @@ import {
   type AccountAction,
   accountTransition,
   type AdminPerimeter,
+  canGrantRole,
   canManageAccounts,
   canManageRole,
   isAssignableScope,
@@ -14,13 +15,16 @@ import {
   perimeterOf,
   seesFullPhone,
 } from '../../domain/role/role-administration';
+import { invalidZoneKeys } from '../../domain/role/permission';
 import { PhoneNumber } from '../../domain/user/phone-number';
+import { rbacErrors } from '../rbac/rbac-errors';
 import { isUuid } from '../context/active-contexts';
 import { requireStaff } from '../organization/organization-admin.use-cases';
 import {
   LastSuperAdminError,
   RoleAssignmentNotFoundError,
   RoleAssignmentRevokedError,
+  RoleInactiveError,
   type RoleRepository,
 } from '../role/role.ports';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
@@ -147,7 +151,7 @@ export class AccountDetails {
       history,
       actions: {
         grantRole:
-          account.status === 'active' && catalog.some((role) => canManageRole(actor.perimeter, role)),
+          account.status === 'active' && !self && catalog.some((role) => canGrantRole(actor.perimeter, role)),
         suspend: manages && !self && accountTransition(account.status, 'suspend') !== null,
         reactivate: manages && accountTransition(account.status, 'reactivate') !== null,
         resetMfa: manages && !self && mfa.resettable,
@@ -206,14 +210,15 @@ export class ListAssignableRolesUseCase {
     const actor = requireAccountAdmin();
     const catalog = await this.accounts.catalog();
     return catalog
-      .map((role) => ({ ...role, grantable: canManageRole(actor.perimeter, role) }))
+      .map((role) => ({ ...role, grantable: canGrantRole(actor.perimeter, role) }))
       .sort((a, b) => a.service.localeCompare(b.service) || a.code.localeCompare(b.code));
   }
 }
 
 /**
- * Attribuer un rôle du catalogue à un compte actif, avec la portée du rôle (globale, ou son métier).
- * Une attribution active identique est rendue telle quelle.
+ * Attribuer un rôle du catalogue à un compte actif (super_admin seul, R-RB-02), avec la portée du
+ * rôle (globale, ou son métier), ou limitée à des zones (R-RB-03). Jamais à soi-même (R-RB-04), jamais
+ * un rôle désactivé. Une attribution active identique est rendue telle quelle.
  */
 export class GrantAccountRoleUseCase {
   constructor(
@@ -223,26 +228,43 @@ export class GrantAccountRoleUseCase {
     private readonly clock: Clock,
   ) {}
 
-  async execute(input: { userId: string; roleCode: string; reason?: string }): Promise<AccountDetailView> {
+  async execute(input: {
+    userId: string;
+    roleCode: string;
+    reason?: string;
+    /** Absent : portée du rôle ; présent : 1 à 77 clés de commune. */
+    zoneKeys?: string[];
+  }): Promise<AccountDetailView> {
     const actor = requireAccountWriter();
     const reason = reasonOf(input.reason);
+    if (input.zoneKeys && invalidZoneKeys(input.zoneKeys)) throw rbacErrors.roleInvalid('zoneKeys');
     const account = await this.details.account(input.userId);
     const role = await this.roles.findDefinition(input.roleCode);
     if (!role) throw accountAdminErrors.roleNotFound();
-    const scope = isAssignableScope(role.scopeType) ? defaultAssignmentScope(role) : null;
-    if (!scope) throw accountAdminErrors.scopeInvalid();
+    const roleScope = isAssignableScope(role.scopeType) ? defaultAssignmentScope(role) : null;
+    if (!roleScope) throw accountAdminErrors.scopeInvalid();
     if (!canManageRole(actor.perimeter, role)) throw accountAdminErrors.roleForbidden();
+    if (role.active === false) throw rbacErrors.inactive();
+    if (account.id === actor.actorId) throw accountAdminErrors.selfAction();
     if (account.status !== 'active') throw accountAdminErrors.notActive(account.status);
+    const zoneKeys = input.zoneKeys ? [...input.zoneKeys].sort() : [];
+    const scope = zoneKeys.length ? { scopeType: 'zone' as const, scopeId: null } : roleScope;
 
-    await this.roles.grant({
-      assignmentId: this.ids.next(),
-      userId: account.id,
-      roleCode: role.code,
-      ...scope,
-      grantedBy: actor.actorId,
-      now: this.clock.now(),
-      audit: { id: this.ids.next(), reason },
-    });
+    try {
+      await this.roles.grant({
+        assignmentId: this.ids.next(),
+        userId: account.id,
+        roleCode: role.code,
+        ...scope,
+        zoneKeys,
+        grantedBy: actor.actorId,
+        now: this.clock.now(),
+        audit: { id: this.ids.next(), reason },
+      });
+    } catch (error) {
+      if (error instanceof RoleInactiveError) throw rbacErrors.inactive();
+      throw error;
+    }
     return this.details.load(account.id, actor);
   }
 }

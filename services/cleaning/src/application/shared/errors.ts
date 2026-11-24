@@ -1,208 +1,202 @@
-import { AppError } from '@ksp/platform';
-import { type AnswerProblemReason } from '../../domain/answers';
-import { CURRENCY, formatXof } from '../../domain/money';
-import { formatDateTimeFr, formatDayFr, localDay } from '../../domain/schedule';
+import { AppError, type ErrorDetails } from '@ksp/platform';
+import { type PlanningError, type PlanningErrorCode } from '../../domain/planning/errors';
 
-/** Erreurs du service (contrat gRPC, en-tête de cleaning.proto). Messages en français, pour l'utilisateur. */
-const ANSWER_MESSAGES: Record<AnswerProblemReason, string> = {
-  unknown_field: 'Ce champ ne fait pas partie du formulaire de la prestation.',
+/**
+ * Erreurs du service (tableau des erreurs de cleaning.proto). Messages en français, pour
+ * l'utilisateur ; les détails reprennent les noms du contrat (details.field, details.reason…).
+ */
+const REASON_MESSAGES: Record<string, string> = {
   required: 'Ce champ est obligatoire.',
-  invalid_type: "Le type de la réponse n'est pas le bon.",
+  invalid_type: "La valeur n'a pas le bon format.",
   out_of_range: 'Cette valeur est hors des bornes autorisées.',
+  duplicate: 'Cette valeur est en double.',
+  not_applicable: 'Ce champ ne s’applique pas ici.',
+  unknown_parameter: "Ce paramètre n'est pas demandé pour ce lieu ni pour les types choisis.",
   unknown_choice: "Cette valeur n'est pas proposée.",
-  unknown_option: "Cette option n'est pas proposée.",
-  duplicate_option: 'Cette option est choisie deux fois.',
-  unknown_frequency: "Cette fréquence n'est pas proposée pour cette prestation.",
+  team_rule_gap: 'Les tranches de superficie doivent se suivre, de 0 à une dernière tranche ouverte.',
+  area_parameter_invalid: 'La superficie doit être un paramètre nombre actif du lieu.',
+  unknown_commune: "Cette commune n'existe pas dans le référentiel.",
+  pack_item_also_selected: 'Un pack ne se choisit pas avec l’un de ses types.',
 };
 
 export const CleaningErrors = {
-  invalid: (field: string, message = 'La requête est invalide.') =>
-    AppError.invalid('CLEANING_VALIDATION_FAILED', message, { field }),
-  /** Réponse au formulaire refusée (ADR-033) : champ et raison. */
-  answerRefused: (field: string, reason: AnswerProblemReason) =>
-    AppError.invalid('CLEANING_VALIDATION_FAILED', ANSWER_MESSAGES[reason], { field, reason }),
-  slotInvalid: (message = 'Le créneau est invalide.') => AppError.invalid('CLEANING_SLOT_INVALID', message),
-  serviceNotFound: () => AppError.notFound('CLEANING_SERVICE_NOT_FOUND', 'Cette prestation est introuvable.'),
-  requestNotFound: () => AppError.notFound('CLEANING_REQUEST_NOT_FOUND', 'Cette demande est introuvable.'),
-  missionNotFound: () => AppError.notFound('CLEANING_MISSION_NOT_FOUND', 'Cette mission est introuvable.'),
-  /** Méthode réservée à un autre service (en-tête de cleaning.proto). */
-  callerForbidden: () =>
-    AppError.forbidden('CLEANING_CALLER_FORBIDDEN', "Ce service n'est pas autorisé à appeler cette méthode."),
-  visitNotFound: () => AppError.notFound('CLEANING_VISIT_NOT_FOUND', 'Cette visite est introuvable.'),
-  interventionNotFound: () =>
-    AppError.notFound('CLEANING_INTERVENTION_NOT_FOUND', 'Ce passage est introuvable.'),
-  agentNotFound: (agentIds: string[]) =>
-    AppError.notFound('CLEANING_AGENT_NOT_FOUND', 'Agent introuvable ou inactif.', { agentIds }),
-  teamNotFound: () => AppError.notFound('CLEANING_TEAM_NOT_FOUND', 'Cette équipe est introuvable.'),
-  invalidTransition: (from: string, to: string) =>
-    AppError.precondition(
-      'CLEANING_INVALID_TRANSITION',
-      "Cette action n'est pas possible dans l'état actuel du dossier.",
-      { from, to },
-    ),
-  zoneNotCovered: (commune: string) =>
-    AppError.precondition(
-      'CLEANING_ZONE_NOT_COVERED',
-      "KSP n'intervient pas encore dans cette commune. Le service est ouvert dans les zones desservies.",
-      { commune },
-    ),
-  zoneNotFound: () => AppError.notFound('CLEANING_ZONE_NOT_FOUND', 'Cette zone est introuvable.'),
-  placeTypeNotFound: () =>
-    AppError.notFound('CLEANING_PLACE_TYPE_NOT_FOUND', 'Ce type de lieu est introuvable.'),
-  /** Prestation non proposée pour le type de lieu choisi (ADR-034). */
-  serviceNotOffered: (field: string, placeType: string, serviceCode: string) =>
-    AppError.invalid(
-      'CLEANING_SERVICE_NOT_OFFERED',
-      "Cette prestation n'est pas proposée pour ce type de lieu.",
-      { field, placeType, serviceCode },
-    ),
-  /** Position non rattachée à une commune, et aucune commune choisie par le client (ADR-034). */
-  locationUnresolved: () =>
-    AppError.precondition(
-      'CLEANING_LOCATION_UNRESOLVED',
-      "Nous n'avons pas pu retrouver la commune de cette position : choisissez votre commune dans la liste des zones desservies.",
-    ),
-  requestGroupNotFound: () =>
-    AppError.notFound('CLEANING_REQUEST_GROUP_NOT_FOUND', 'Ce groupe de demandes est introuvable.'),
-  /** Opération de groupe sans aucune demande ou mission concernée (ADR-035). */
-  groupNothingEligible: (skipped: readonly object[]) =>
-    AppError.precondition(
-      'CLEANING_GROUP_NO_ELIGIBLE_REQUEST',
-      "Aucune demande du groupe n'est concernée par cette action dans son état actuel.",
-      { skipped: skipped.map((entry) => ({ ...entry })) },
-    ),
-  /** Clé d'idempotence déjà utilisée pour un autre groupe (ADR-035). */
+  /** Champ refusé : details.field et details.reason. */
+  validation: (field: string, reason: string) =>
+    AppError.invalid('CLEANING_VALIDATION_FAILED', REASON_MESSAGES[reason] ?? 'La requête est invalide.', {
+      field,
+      reason,
+    }),
   idempotencyKeyReused: () =>
     AppError.conflict(
       'CLEANING_IDEMPOTENCY_KEY_REUSED',
       'Cette clé a déjà servi pour une autre opération : utilisez une nouvelle clé.',
     ),
-  /** Zone avec des demandes ouvertes ou des missions actives, désactivée sans confirmation (ADR-035). */
-  zoneHasActivity: (openRequests: number, activeMissions: number) =>
-    AppError.conflict(
-      'CLEANING_ZONE_HAS_ACTIVITY',
-      `Cette zone a ${openRequests} demande(s) ouverte(s) et ${activeMissions} mission(s) active(s) : elles continueront. Confirmez la désactivation.`,
-      { openRequests, activeMissions },
-    ),
-  paymentViaInvoice: () =>
-    AppError.precondition(
-      'CLEANING_PAYMENT_VIA_INVOICE',
-      "Une mission d'entreprise se règle par sa facture mensuelle : enregistrez le paiement sur la facture.",
-    ),
-  contractSuspended: () =>
-    AppError.precondition(
-      'CLEANING_CONTRACT_SUSPENDED',
-      'Cette mission est suspendue : aucun passage ne peut être planifié avant sa reprise.',
-    ),
-  organizationSuspended: () =>
-    AppError.precondition(
-      'CLEANING_ORGANIZATION_SUSPENDED',
-      'Ce compte entreprise est suspendu par KSP : aucune demande de nettoyage ne peut être faite en son nom.',
-    ),
-  quoteExpired: () =>
-    AppError.precondition('CLEANING_QUOTE_EXPIRED', 'Ce devis a expiré. Demandez-en un nouveau.'),
-  priceNotSet: () =>
-    AppError.precondition(
-      'CLEANING_PRICE_NOT_SET',
-      "Le prix de cette prestation n'est pas encore fixé : complétez les lignes du devis.",
-    ),
-  /** Mesures constatées (ADR-037) : plus modifiables une fois un devis envoyé ou la demande close. */
-  measurementsLocked: (status: string) =>
-    AppError.precondition(
-      'CLEANING_MEASUREMENTS_LOCKED',
-      'Les mesures ne peuvent plus être modifiées : un devis a déjà été envoyé ou la demande est close. Planifiez une nouvelle visite pour les corriger.',
-      { status },
-    ),
-  visitRequired: () =>
-    AppError.precondition(
-      'CLEANING_VISIT_REQUIRED',
-      'Une visite des lieux doit être réalisée avant d’envoyer le devis.',
-    ),
-  leadTimeTooShort: (minimumHours: number) =>
-    AppError.precondition(
-      'CLEANING_LEAD_TIME_TOO_SHORT',
-      `Une intervention se réserve au moins ${minimumHours} heures à l'avance.`,
-      { minimumHours },
-    ),
-  cancellationTooLate: (freeCancellationHours: number) =>
-    AppError.precondition(
-      'CLEANING_CANCELLATION_TOO_LATE',
-      `L'annulation n'est plus possible en ligne à moins de ${freeCancellationHours} heures : contactez le support.`,
-      { freeCancellationHours },
-    ),
-  tooManyOpenRequests: (maximum: number) =>
-    AppError.precondition(
-      'CLEANING_TOO_MANY_OPEN_REQUESTS',
-      `Vous avez déjà ${maximum} demandes en cours. Attendez une réponse avant d'en créer une autre.`,
-      { maximum },
-    ),
-  checklistIncomplete: () =>
-    AppError.precondition(
-      'CLEANING_CHECKLIST_INCOMPLETE',
-      'Cochez toute la liste de contrôle avant de clôturer le passage.',
-    ),
-  noInterventionLeft: () =>
-    AppError.precondition('CLEANING_NO_INTERVENTION_LEFT', 'Tous les passages prévus sont déjà planifiés.'),
-  teamUnavailable: (agentIds: string[]) =>
-    AppError.conflict('CLEANING_TEAM_UNAVAILABLE', 'Un ou plusieurs agents sont déjà pris sur ce créneau.', {
-      agentIds,
-    }),
-  /** Planification en lot (ADR-052) : dates en conflit et leurs agents ; agentIds : tous les agents en cause. */
-  batchConflicts: (conflicts: { date: string; agentIds: string[] }[]) =>
-    AppError.conflict(
-      'CLEANING_TEAM_UNAVAILABLE',
-      `Des agents sont déjà pris ou indisponibles à ${conflicts.length} date(s) : aucun passage n'a été planifié.`,
-      { agentIds: [...new Set(conflicts.flatMap((conflict) => conflict.agentIds))], conflicts },
-    ),
   concurrentUpdate: () =>
     AppError.conflict(
       'CLEANING_CONCURRENT_UPDATE',
-      'Le dossier vient d’être modifié par ailleurs. Rechargez-le puis réessayez.',
+      'Cet élément a été modifié en même temps par un autre appel : relisez-le et recommencez.',
     ),
-  agentAlreadyRegistered: () =>
-    AppError.conflict('CLEANING_AGENT_ALREADY_REGISTERED', 'Ce compte est déjà rattaché comme agent.'),
-  /** Rien à payer pour cette part (ADR-046) : acompte déjà reçu, ou mission déjà payée. */
-  nothingDue: (part: string) =>
+  codeAlreadyUsed: (code: string) =>
+    AppError.conflict('CLEANING_CODE_ALREADY_USED', 'Ce code est déjà utilisé.', { code }),
+  invalidTransition: (from: string, to: string) =>
     AppError.precondition(
-      'CLEANING_NOTHING_DUE',
-      part === 'deposit'
-        ? 'Aucun acompte n’est attendu pour cette mission : payez le reste dû.'
-        : 'Cette mission est déjà entièrement payée.',
-      { part },
+      'CLEANING_INVALID_TRANSITION',
+      "Cette action n'est pas possible dans l'état actuel.",
+      { from, to },
     ),
-  paymentInvalid: (reason: string) =>
-    AppError.invalid('CLEANING_PAYMENT_INVALID', 'Ce paiement ne peut pas être enregistré.', { reason }),
-  /** Paiement au-delà du reste dû : le montant encore attendu est rappelé (message et détails). */
-  paymentExceedsBalance: (remainingDue: number) =>
-    AppError.invalid(
-      'CLEANING_PAYMENT_INVALID',
-      remainingDue > 0
-        ? `Ce paiement dépasse le reste dû : ${formatXof(remainingDue)}.`
-        : 'Cette mission est déjà entièrement payée : aucun paiement de plus ne peut être enregistré.',
-      { reason: 'exceeds_balance', remainingDue: { amount: remainingDue, currency: CURRENCY } },
+  placeCategoryNotFound: () =>
+    AppError.notFound('CLEANING_PLACE_CATEGORY_NOT_FOUND', 'Cette catégorie de lieu est introuvable.'),
+  placeTypeNotFound: () => AppError.notFound('CLEANING_PLACE_TYPE_NOT_FOUND', 'Ce lieu est introuvable.'),
+  cleaningTypeNotFound: () =>
+    AppError.notFound('CLEANING_TYPE_NOT_FOUND', 'Ce type de nettoyage est introuvable.'),
+  /** details.parameterId (paramètre cité par identifiant) ou details.parameterCode (par code). */
+  parameterNotFound: (details?: { parameterId: string } | { parameterCode: string }) =>
+    AppError.notFound('CLEANING_PARAMETER_NOT_FOUND', 'Ce paramètre est introuvable.', details),
+  offerNotFound: () => AppError.notFound('CLEANING_OFFER_NOT_FOUND', 'Cette offre est introuvable.'),
+  tariffNotFound: () =>
+    AppError.notFound('CLEANING_TARIFF_NOT_FOUND', 'Cette version de tarif est introuvable.'),
+  skillNotFound: (code?: string) =>
+    AppError.notFound(
+      'CLEANING_SKILL_NOT_FOUND',
+      'Cette compétence est introuvable.',
+      code ? { code } : undefined,
     ),
-  /** Paiement « avant » encore dû : le passage ne peut pas démarrer (ADR-049). */
-  upfrontPaymentDue: (amountDue: number) =>
+  holidayNotFound: () => AppError.notFound('CLEANING_HOLIDAY_NOT_FOUND', 'Ce jour férié est introuvable.'),
+  zoneNotFound: () => AppError.notFound('CLEANING_ZONE_NOT_FOUND', 'Cette zone est introuvable.'),
+  offerNotAvailable: (cleaningTypeId: string) =>
+    AppError.invalid('CLEANING_OFFER_NOT_AVAILABLE', "Ce type de nettoyage n'est pas proposé pour ce lieu.", {
+      cleaningTypeId,
+    }),
+  tariffIncomplete: (reason: string, index: number | null) =>
+    AppError.precondition('CLEANING_TARIFF_INCOMPLETE', 'Ce tarif est incomplet ou incohérent.', {
+      reason,
+      index,
+    }),
+  parameterInUse: (offerIds: string[], placeTypeIds: string[]) =>
     AppError.precondition(
-      'CLEANING_UPFRONT_PAYMENT_DUE',
-      `Le client a choisi de payer avant la prestation : ${formatXof(amountDue)} restent à régler ` +
-        'avant de démarrer ce passage.',
-      { amountDue: { amount: amountDue, currency: CURRENCY } },
+      'CLEANING_PARAMETER_IN_USE',
+      'Ce paramètre est utilisé par un tarif publié ou un lieu actif : il ne peut être ni resserré, ni privé d’une valeur, ni désactivé.',
+      { offerIds, placeTypeIds },
     ),
-  interventionTooEarly: (scheduledStart: Date, timeZone: string) =>
+  zoneHasActivity: (openRequests: number, activePrograms: number) =>
+    AppError.conflict(
+      'CLEANING_ZONE_HAS_ACTIVITY',
+      'Cette zone a des dossiers en cours : confirmez la désactivation.',
+      { openRequests, activePrograms },
+    ),
+  scheduleEmpty: () =>
+    AppError.precondition('CLEANING_SCHEDULE_EMPTY', 'Ce programme ne donne aucune date de séance.'),
+  scheduleLimitExceeded: (maxMonths: number, maxSessions: number) =>
     AppError.precondition(
-      'CLEANING_INTERVENTION_TOO_EARLY',
-      `Ce passage est prévu le ${formatDayFr(scheduledStart, timeZone)} : il ne peut pas être démarré avant ce jour.`,
+      'CLEANING_SCHEDULE_LIMIT_EXCEEDED',
+      'Ce programme dépasse la durée ou le nombre de séances autorisés.',
       {
-        scheduledStart: scheduledStart.toISOString(),
-        scheduledDate: localDay(scheduledStart, timeZone),
-        timeZone,
+        maxMonths,
+        maxSessions,
       },
     ),
-  visitTooEarly: (scheduledAt: Date, timeZone: string) =>
-    AppError.precondition(
-      'CLEANING_VISIT_TOO_EARLY',
-      `La visite est prévue le ${formatDateTimeFr(scheduledAt, timeZone)} : son compte rendu ne peut pas être enregistré avant cette heure.`,
-      { scheduledAt: scheduledAt.toISOString(), timeZone },
+  geoUnavailable: () =>
+    AppError.unavailable(
+      'CLEANING_GEO_UNAVAILABLE',
+      'Le référentiel des communes est indisponible pour le moment : réessayez.',
     ),
 };
+
+/** Premier défaut d'une liste de champs refusés, ou rien. */
+export function throwFirstProblem(problems: readonly { field: string; reason: string }[], prefix = ''): void {
+  const first = problems[0];
+  if (first) throw CleaningErrors.validation(`${prefix}${first.field}`, first.reason);
+}
+
+// --- Agents et planification (lot D) ---------------------------------------------------------
+
+/**
+ * Erreurs du service (tableau des erreurs de cleaning.proto). Les motifs de refus du domaine
+ * (PlanningError) gardent leur code et leurs détails ; seule la nature (statut gRPC) est ajoutée ici.
+ */
+export const cleaningErrors = {
+  invalid: (field: string, reason: string, message = 'Requête invalide.') =>
+    AppError.invalid('CLEANING_VALIDATION_FAILED', message, { field, reason }),
+  reasonRequired: (field = 'reason') =>
+    AppError.invalid('CLEANING_REASON_REQUIRED', 'Le motif est obligatoire.', { field }),
+  agentNotFound: () => AppError.notFound('CLEANING_AGENT_NOT_FOUND', 'Agent introuvable.'),
+  teamNotFound: () => AppError.notFound('CLEANING_TEAM_NOT_FOUND', 'Équipe introuvable.'),
+  assignmentNotFound: () => AppError.notFound('CLEANING_ASSIGNMENT_NOT_FOUND', 'Affectation introuvable.'),
+  unavailabilityNotFound: () =>
+    AppError.notFound('CLEANING_UNAVAILABILITY_NOT_FOUND', 'Indisponibilité introuvable.'),
+  visitNotFound: () => AppError.notFound('CLEANING_VISIT_NOT_FOUND', 'Visite introuvable.'),
+  sessionNotFound: () => AppError.notFound('CLEANING_SESSION_NOT_FOUND', 'Séance introuvable.'),
+  skillNotFound: (codes: readonly string[]) =>
+    AppError.notFound('CLEANING_SKILL_NOT_FOUND', 'Compétence inconnue.', { codes }),
+  zoneNotFound: (keys: readonly string[]) =>
+    AppError.notFound('CLEANING_ZONE_NOT_FOUND', 'Zone inconnue.', { zoneKeys: keys }),
+  alreadyRegistered: () =>
+    AppError.conflict('CLEANING_AGENT_ALREADY_REGISTERED', 'Ce compte a déjà un profil d’agent.'),
+  concurrentUpdate: () =>
+    AppError.conflict(
+      'CLEANING_CONCURRENT_UPDATE',
+      'Le dossier a été modifié en même temps par un autre appel : relisez et recommencez.',
+    ),
+  idempotencyKeyReused: () =>
+    AppError.conflict(
+      'CLEANING_IDEMPOTENCY_KEY_REUSED',
+      'Cette clé d’idempotence a déjà servi pour une autre opération ou un autre contenu.',
+    ),
+};
+
+const KINDS: Readonly<Record<PlanningErrorCode, 'invalid' | 'conflict' | 'precondition'>> = {
+  CLEANING_VALIDATION_FAILED: 'invalid',
+  CLEANING_REASON_REQUIRED: 'invalid',
+  CLEANING_INVALID_TRANSITION: 'precondition',
+  CLEANING_AGENT_NOT_ACTIVE: 'precondition',
+  CLEANING_SKILL_MISSING: 'precondition',
+  CLEANING_AGENT_OUT_OF_ZONE: 'precondition',
+  CLEANING_AGENT_UNAVAILABLE: 'precondition',
+  CLEANING_AGENT_ON_LEAVE: 'precondition',
+  CLEANING_AGENT_OVERLOADED: 'precondition',
+  CLEANING_TEAM_SIZE_MISMATCH: 'precondition',
+  CLEANING_TEAM_INACTIVE: 'precondition',
+  CLEANING_PROGRAM_SUSPENDED: 'precondition',
+  CLEANING_SCHEDULE_CONFLICT: 'conflict',
+  CLEANING_AGENT_HAS_ASSIGNMENTS: 'conflict',
+  CLEANING_UNAVAILABILITY_CONFLICT: 'conflict',
+  CLEANING_AVAILABILITY_IN_USE: 'conflict',
+};
+
+const MESSAGES: Readonly<Record<PlanningErrorCode, string>> = {
+  CLEANING_VALIDATION_FAILED: 'Requête invalide.',
+  CLEANING_REASON_REQUIRED: 'Le motif est obligatoire.',
+  CLEANING_INVALID_TRANSITION: 'Cette action n’est pas possible dans l’état actuel.',
+  CLEANING_AGENT_NOT_ACTIVE: 'Seul un agent actif peut être affecté.',
+  CLEANING_SKILL_MISSING: 'L’équipe ne couvre pas toutes les compétences demandées.',
+  CLEANING_AGENT_OUT_OF_ZONE: 'La commune du lieu est hors des zones de l’agent.',
+  CLEANING_AGENT_UNAVAILABLE: 'La période est hors des disponibilités de l’agent.',
+  CLEANING_AGENT_ON_LEAVE: 'L’agent a déclaré une indisponibilité sur la période.',
+  CLEANING_AGENT_OVERLOADED: 'La charge maximale de l’agent serait dépassée.',
+  CLEANING_TEAM_SIZE_MISMATCH: 'Le nombre d’agents diffère de celui du devis.',
+  CLEANING_TEAM_INACTIVE: 'Cette équipe est désactivée.',
+  CLEANING_PROGRAM_SUSPENDED: 'Le programme est suspendu.',
+  CLEANING_SCHEDULE_CONFLICT: 'L’agent est déjà pris sur la période, temps de trajet compris.',
+  CLEANING_AGENT_HAS_ASSIGNMENTS: 'L’agent a encore des affectations à venir.',
+  CLEANING_UNAVAILABILITY_CONFLICT: 'L’indisponibilité chevauche des affectations.',
+  CLEANING_AVAILABILITY_IN_USE: 'Cette plage est déjà occupée par une affectation.',
+};
+
+/** Motif de refus du domaine → AppError, même code et mêmes détails. */
+export function planningAppError(error: PlanningError, details: ErrorDetails = error.details): AppError {
+  return AppError[KINDS[error.code]](error.code, MESSAGES[error.code], details);
+}
+
+/**
+ * Refus d'une décision du domaine : le premier motif donne le code ; quand il y en a plusieurs, la
+ * liste complète suit dans details.errors (le superviseur voit tous les motifs d'un coup, 9.4).
+ */
+export function refusal(errors: readonly PlanningError[]): AppError {
+  const [first] = errors;
+  if (!first) throw new Error('Refus sans motif.');
+  const details =
+    errors.length > 1
+      ? { ...first.details, errors: errors.map((e) => ({ code: e.code, details: e.details })) }
+      : first.details;
+  return planningAppError(first, details);
+}

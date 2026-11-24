@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.sessions.batch_assigned.v1.schema.json",
+  "title": "cleaning.sessions.batch_assigned",
+  "description": "Plusieurs séances d’un programme affectées par un même appel (CreateAssignments, ApproveProposals, RunAutoPlanning, passage de nuit compris). Écouté par notification : un message par destinataire et par lot ; les événements unitaires qui portent ce batchId n’envoient rien.",
+  "x-event-type": "cleaning.sessions.batch_assigned",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "programId",
+    "customerId",
+    "organizationId",
+    "batchId",
+    "sessionIds",
+    "count",
+    "firstStart",
+    "lastStart",
+    "agentIds",
+    "leadAgentId",
+    "source",
+    "assignedAt"
+  ],
+  "properties": {
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "batchId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sessionIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "firstStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "lastStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "leadAgentId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "source": {
+      "enum": ["manual", "auto"]
+    },
+    "assignedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

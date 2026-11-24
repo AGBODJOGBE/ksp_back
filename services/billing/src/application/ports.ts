@@ -7,6 +7,7 @@ import {
   type InvoiceStatus,
 } from '../domain/invoice';
 import { type BillingSettings } from '../domain/settings';
+import { type InvoiceIssuance } from '../domain/issued-invoice';
 
 /**
  * Ports du service billing. Les événements sont écrits dans l'outbox, dans la transaction de
@@ -14,7 +15,8 @@ import { type BillingSettings } from '../domain/settings';
  * même transaction, d'où les fabriques d'événements passées aux adaptateurs.
  */
 export type OutboxMessage = {
-  [K in BillingEventType]: { type: K; payload: BillingEventPayloads[K] };
+  // Lot F : `version` 2 pour un événement de facture v2, sans contrat (RV-98) ; absente : 1.
+  [K in BillingEventType]: { type: K; payload: BillingEventPayloads[K]; version?: 1 | 2 };
 }[BillingEventType];
 
 export interface PageRequest {
@@ -36,18 +38,13 @@ export interface IdGenerator {
   next(): string;
 }
 
+/**
+ * Contrats de facturation v1 (ADR-025). Ils étaient appris par les événements de cleaning v1
+ * (mission confirmée, annulée, suspendue, reprise), retirés par la refonte du Nettoyage (ADR-054) :
+ * plus aucun contrat n'est créé. Les contrats déjà enregistrés restent facturés jusqu'à la facture
+ * mensuelle v2 (lot F, ADR-055), qui remplace ce port.
+ */
 export interface ContractRepository {
-  /**
-   * Applique un événement de cleaning au contrat (verrouillé), avec l'inbox dans la même
-   * transaction : un doublon n'a aucun effet. `change` reçoit le contrat actuel (ou null) et
-   * renvoie le contrat à enregistrer, ou null pour ne rien changer.
-   */
-  apply(
-    eventId: string,
-    consumer: string,
-    contractId: string,
-    change: (current: BillingContract | null) => BillingContract | null,
-  ): Promise<'processed' | 'duplicate'>;
   findById(id: string): Promise<BillingContract | null>;
   /** Contrats dont tous les mois civils ne sont pas encore facturés, avec les mois déjà facturés. */
   listOpen(): Promise<{ contract: BillingContract; invoicedIndexes: number[] }[]>;
@@ -78,6 +75,20 @@ export interface InvoiceRepository {
     draft: (contract: BillingContract) => Omit<Invoice, 'number'> | null,
     events: (invoice: Invoice) => OutboxMessage[],
   ): Promise<Invoice | null>;
+  /**
+   * Lot E (ADR-055) : enregistre une facture émise au paiement (séance, frais de visite), déjà
+   * payée. Numéro tiré du compteur de l'année `year` (sans trou), facture (nature posée), paiement
+   * (`draft.payments`), émission (`draft.issuance`) et événements dans la même transaction. Une
+   * facture déjà émise avec le même couple (émetteur, clé), y compris par un appel simultané, est
+   * renvoyée telle quelle (`created: false`) : rien n'est écrit.
+   */
+  issuePaid(
+    draft: Omit<Invoice, 'number'> & { issuance: InvoiceIssuance },
+    year: number,
+    events: (invoice: Invoice) => OutboxMessage[],
+  ): Promise<{ invoice: Invoice; created: boolean }>;
+  /** Lot E : facture émise par cet émetteur avec cette clé d'idempotence, ou null. */
+  findByIssueKey(issuer: string, idempotencyKey: string): Promise<Invoice | null>;
   findById(id: string): Promise<Invoice | null>;
   list(filter: InvoiceFilter, page: PageRequest): Promise<PageResult<Invoice>>;
   /** Factures en attente de paiement dont l'échéance est passée. */

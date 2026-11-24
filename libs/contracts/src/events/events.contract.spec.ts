@@ -13,15 +13,74 @@ import { type WalletEventPayloads, type WalletEventType } from './wallet.events'
 
 const EVENTS_ROOT = resolve(__dirname, '..', '..', '..', '..', 'contracts', 'events');
 
-function loadSchemas(service: string): Map<string, object> {
-  const dir = join(EVENTS_ROOT, service);
-  const schemas = new Map<string, object>();
-  for (const file of readdirSync(dir)) {
-    const schema = JSON.parse(readFileSync(join(dir, file), 'utf8'));
-    schemas.set(schema['x-event-type'], schema);
-  }
-  return schemas;
+interface EventSchema {
+  file: string;
+  type: string;
+  version: number;
+  schema: Record<string, unknown>;
 }
+
+const loaded = new Map<string, EventSchema[]>();
+
+/**
+ * Tous les schémas d'un service, toutes versions (<type>.v<version>.schema.json). Lus une seule
+ * fois : Ajv reconnaît un schéma déjà compilé à son objet, et refuse un second objet de même $id.
+ */
+function loadSchemaFiles(service: string): EventSchema[] {
+  const cached = loaded.get(service);
+  if (cached) return cached;
+  const dir = join(EVENTS_ROOT, service);
+  const files = readdirSync(dir).map((file) => {
+    const schema = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+    return { file, type: schema['x-event-type'], version: schema['x-event-version'], schema };
+  });
+  loaded.set(service, files);
+  return files;
+}
+
+/**
+ * Schéma de chaque type d'un service, dans sa version la plus récente : le type TypeScript d'un
+ * événement couvre toutes ses versions (une version suivante ne fait qu'élargir la précédente).
+ */
+function loadSchemas(service: string): Map<string, object> {
+  const latest = new Map<string, EventSchema>();
+  for (const entry of loadSchemaFiles(service)) {
+    const current = latest.get(entry.type);
+    if (!current || entry.version > current.version) latest.set(entry.type, entry);
+  }
+  return new Map([...latest].map(([type, entry]) => [type, entry.schema]));
+}
+
+/** Schéma d'une version donnée d'un type. */
+function loadSchemaVersion(service: string, type: string, version: number): object {
+  const found = loadSchemaFiles(service).find((entry) => entry.type === type && entry.version === version);
+  if (!found) throw new Error(`schéma ${type} v${version} absent`);
+  return found.schema;
+}
+
+const SERVICES = readdirSync(EVENTS_ROOT, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name);
+
+describe('Fichiers des schémas d’événements', () => {
+  it.each(SERVICES)('%s : nom du fichier, $id, type et version concordent', (service) => {
+    for (const { file, type, version, schema } of loadSchemaFiles(service)) {
+      expect(file).toBe(`${type}.v${version}.schema.json`);
+      expect(schema.$id).toBe(`https://contracts.ksp.bj/events/${service}/${file}`);
+      expect(type.startsWith(`${service}.`)).toBe(true);
+    }
+  });
+
+  it.each(SERVICES)('%s : versions d’un même type sans trou, à partir de 1', (service) => {
+    const versions = new Map<string, number[]>();
+    for (const { type, version } of loadSchemaFiles(service)) {
+      versions.set(type, [...(versions.get(type) ?? []), version]);
+    }
+    for (const list of versions.values()) {
+      expect(list.sort((a, b) => a - b)).toEqual(list.map((_, index) => index + 1));
+    }
+  });
+});
 
 const uuid = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0f';
 
@@ -83,6 +142,35 @@ const examples: { [K in IdentityEventType]: IdentityEventPayloads[K] } = {
     grantedBy: 'system',
   },
   'identity.role.revoked': { assignmentId: uuid, userId: uuid, roleCode: 'seller', revokedBy: uuid },
+  'identity.role.created': {
+    roleCode: 'cleaning_planner',
+    name: 'Planificateur Nettoyage',
+    permissions: ['cleaning.planning.manage', 'cleaning.request.read'],
+    sensitive: false,
+    createdBy: uuid,
+  },
+  'identity.role.updated': {
+    roleCode: 'cleaning_supervisor',
+    permissionsAdded: ['cleaning.claim.manage'],
+    permissionsRemoved: [],
+    updatedBy: uuid,
+  },
+  'identity.role.deactivated': { roleCode: 'cleaning_planner', deactivatedBy: uuid, reason: 'Rôle fusionné' },
+  'identity.member.role_changed': {
+    organizationId: uuid,
+    userId: uuid,
+    previousOrgRole: 'org_member',
+    orgRole: 'org_viewer',
+    changedBy: uuid,
+  },
+  'identity.member.invited': {
+    invitationId: uuid,
+    organizationId: uuid,
+    inviteeUserId: uuid,
+    orgRole: 'org_member',
+    invitedBy: uuid,
+    expiresAt: '2026-11-26T10:00:00.000Z',
+  },
 };
 
 describe('Contrats des événements identity', () => {
@@ -98,6 +186,37 @@ describe('Contrats des événements identity', () => {
   it.each(Object.entries(examples))('%s : l’exemple respecte le schéma', (type, payload) => {
     const validate = ajv.compile(schemas.get(type)!);
     expect(validate(payload)).toBe(true);
+  });
+
+  it('v2 : attribution limitée à des zones, révocation immédiate des sessions (R-RB-03, R-RB-05)', () => {
+    const granted = ajv.compile(schemas.get('identity.role.granted')!);
+    const zoned = {
+      ...examples['identity.role.granted'],
+      roleCode: 'cleaning_supervisor',
+      scopeType: 'zone' as const,
+      scopeId: null,
+      zoneKeys: ['porto-novo', 'abomey-calavi'],
+    };
+    expect(granted(zoned)).toBe(true);
+    expect(granted({ ...zoned, zoneKeys: ['Porto Novo'] })).toBe(false);
+    const { zoneKeys: _zoneKeys, ...zoneWithoutKeys } = zoned;
+    expect(granted(zoneWithoutKeys)).toBe(false);
+    expect(granted({ ...examples['identity.role.granted'], zoneKeys: ['porto-novo'] })).toBe(false);
+    const revoked = ajv.compile(schemas.get('identity.role.revoked')!);
+    expect(revoked({ ...examples['identity.role.revoked'], sessionsRevoked: true })).toBe(true);
+    const invited = ajv.compile(schemas.get('identity.member.invited')!);
+    expect(invited({ ...examples['identity.member.invited'], phone: '+2290197000045' })).toBe(false);
+  });
+
+  it('identity.role.granted : la v1 reste inchangée, la v2 l’élargit (portée zone)', () => {
+    const v1 = ajv.compile(loadSchemaVersion('identity', 'identity.role.granted', 1));
+    const v2 = ajv.compile(loadSchemaVersion('identity', 'identity.role.granted', 2));
+    const global = examples['identity.role.granted'];
+    expect(v1(global)).toBe(true);
+    expect(v2(global)).toBe(true);
+    const zoned = { ...global, scopeType: 'zone' as const, scopeId: null, zoneKeys: ['porto-novo'] };
+    expect(v1(zoned)).toBe(false);
+    expect(v2(zoned)).toBe(true);
   });
 
   it('identity.otp.requested refuse tout champ qui pourrait contenir le code', () => {
@@ -161,225 +280,609 @@ describe('Contrats des événements notification', () => {
 const xof = (amount: number) => ({ amount, currency: 'XOF' as const });
 
 const cleaningExamples: { [K in CleaningEventType]: CleaningEventPayloads[K] } = {
-  'cleaning.quote.requested': {
+  'cleaning.request.submitted': {
     requestId: uuid,
+    requestNumber: 'DN-000124',
     customerId: uuid,
     organizationId: null,
-    customerKind: 'individual',
-    serviceCode: 'home_cleaning',
-    visitRequired: false,
-  },
-  'cleaning.visit.scheduled': {
-    requestId: uuid,
-    visitId: uuid,
-    customerId: uuid,
-    agentId: uuid,
-    scheduledAt: '2026-11-02T09:00:00Z',
-  },
-  'cleaning.quote.sent': {
-    requestId: uuid,
-    quoteId: uuid,
-    customerId: uuid,
-    total: xof(45000),
-    validUntil: '2026-11-17T09:00:00Z',
-  },
-  'cleaning.quote_group.requested': {
-    groupId: uuid,
-    customerId: uuid,
-    organizationId: null,
-    customerKind: 'individual',
-    visitRequired: true,
-    requests: [{ requestId: uuid, serviceCode: 'house_cleaning', serviceName: 'Nettoyage de maison' }],
-  },
-  'cleaning.quote_group.sent': {
-    groupId: uuid,
-    customerId: uuid,
-    total: xof(45000),
-    validUntil: '2026-11-17T09:00:00Z',
-    quotes: [
-      {
-        requestId: uuid,
-        quoteId: uuid,
-        serviceCode: 'house_cleaning',
-        serviceName: 'Nettoyage de maison',
-        total: xof(45000),
-      },
-    ],
-  },
-  'cleaning.booking.confirmed': {
-    requestId: uuid,
-    quoteId: uuid,
-    missionId: uuid,
-    customerId: uuid,
-    organizationId: uuid,
-    total: xof(480000),
-    plannedInterventions: 12,
-    recurrence: { period: 'week', visitsPerPeriod: 1, durationMonths: 3 },
-    paymentPlan: { option: 'deposit', timing: 'before', method: 'cash' },
-    depositAmount: xof(144000),
-    startsAt: '2026-11-05T08:00:00Z',
-    schedulePeriod: { firstDate: '2026-11-05', lastDate: '2027-01-28' },
-  },
-  'cleaning.mission.scheduled': {
-    missionId: uuid,
-    interventionId: uuid,
-    customerId: uuid,
-    scheduledStart: '2026-11-05T08:00:00Z',
-    durationMinutes: 180,
-    agentIds: [uuid],
-  },
-  'cleaning.interventions.batch_scheduled': {
-    missionId: uuid,
-    customerId: uuid,
-    interventionIds: [uuid, uuid],
-    count: 2,
-    firstStart: '2026-11-11T07:00:00Z',
-    lastStart: '2026-11-18T07:00:00Z',
-    durationMinutes: 120,
-    agentIds: [uuid],
-    skippedDates: ['2026-11-14'],
-    amountDueBeforeStart: xof(36000),
-    serviceCode: 'house_cleaning',
-    serviceName: 'Nettoyage de maison',
-  },
-  'cleaning.mission.completed': {
-    missionId: uuid,
-    customerId: uuid,
-    completedInterventions: 1,
-    completedAt: '2026-11-05T11:00:00Z',
+    placeTypeId: uuid,
+    cleaningTypeIds: [uuid],
+    visitFee: xof(5000),
+    visitFeeStatus: 'paid',
+    submittedAt: '2026-12-01T08:00:00Z',
+    communeKey: 'cotonou',
+    placeTypeName: 'Villa',
+    cleaningTypeNames: ['Sol', 'Vitres'],
   },
   'cleaning.request.cancelled': {
     requestId: uuid,
-    missionId: null,
+    requestNumber: 'DN-000124',
     customerId: uuid,
     organizationId: null,
-    cancelledBy: 'customer',
-    outcome: 'cancelled',
+    cause: 'customer',
+    visitFeeRefund: xof(5000),
+    cancelledAt: '2026-12-01T08:00:00Z',
   },
-  'cleaning.contract.suspension_warning': {
-    missionId: uuid,
-    customerId: uuid,
-    organizationId: uuid,
-    unpaidCount: 1,
-    suspensionThreshold: 2,
-  },
-  'cleaning.contract.suspended': {
-    missionId: uuid,
-    customerId: uuid,
-    organizationId: uuid,
-    cause: 'unpaid_invoices',
-    unpaidCount: 2,
-    threshold: 2,
-    cancelledInterventionIds: [uuid],
-    releasedAgentIds: [uuid],
-    suspendedAt: '2026-12-15T06:00:00Z',
-  },
-  'cleaning.contract.resumed': {
-    missionId: uuid,
+  'cleaning.request.rejected': {
+    requestId: uuid,
+    requestNumber: 'DN-000124',
     customerId: uuid,
     organizationId: null,
-    cause: 'unpaid_interventions',
-    unpaidCount: 0,
-    resumedAt: '2026-12-20T06:00:00Z',
-    rescheduledCount: 3,
-    failedCount: 1,
+    reasonCode: 'place_inaccessible',
+    rejectedBy: uuid,
+    visitFeeRefund: xof(5000),
+    rejectedAt: '2026-12-01T08:00:00Z',
   },
-  'cleaning.contract.suspension_updated': {
-    missionId: uuid,
-    customerId: uuid,
-    organizationId: uuid,
-    change: 'cause_lifted',
-    cause: 'organization_suspended',
-    causes: ['unpaid_invoices'],
-    unpaidCount: 2,
-    updatedAt: '2026-12-18T06:00:00Z',
-  },
-  'cleaning.rescheduling.failed': {
-    missionId: uuid,
-    customerId: uuid,
-    organizationId: uuid,
-    interventionIds: [uuid],
-    failedCount: 1,
-  },
-  'cleaning.mission.refunded': {
-    missionId: uuid,
-    customerId: uuid,
-    refunds: [{ paymentRecordId: uuid, walletTransactionId: uuid, amount: xof(15000) }],
-    reason: 'mission_cancelled',
-    refundedAt: '2026-11-09T10:00:00Z',
-  },
-  'cleaning.mission.credited': {
-    missionId: uuid,
-    customerId: uuid,
-    creditId: uuid,
-    amount: xof(30000),
-    reason: 'recurring_cancelled',
-    creditedAt: '2026-11-10T10:00:00Z',
-  },
-  'cleaning.quote.expired': {
+  'cleaning.request.visit_fee_paid': {
+    requestId: uuid,
+    requestNumber: 'DN-000124',
     customerId: uuid,
     organizationId: null,
-    groupId: uuid,
-    quotes: [
-      {
-        requestId: uuid,
-        quoteId: uuid,
-        serviceCode: 'home_cleaning',
-        serviceName: 'Ménage',
-        total: xof(25000),
-        validUntil: '2026-11-10T08:00:00Z',
-      },
-    ],
-    expiredAt: '2026-11-10T08:05:00Z',
+    visitFeeId: uuid,
+    rank: 3,
+    amount: xof(5000),
+    invoiceId: uuid,
+    paidAt: '2026-12-01T08:00:00Z',
   },
-  'cleaning.quote.expiry_reminded': {
+  'cleaning.request.reactivation_requested': {
+    requestId: uuid,
+    requestNumber: 'DN-000124',
     customerId: uuid,
-    organizationId: uuid,
-    quotes: [
-      {
-        requestId: uuid,
-        quoteId: uuid,
-        serviceCode: 'home_cleaning',
-        total: xof(25000),
-        validUntil: '2026-11-12T08:00:00Z',
-      },
-    ],
-    validUntil: '2026-11-12T08:00:00Z',
-    reminderDays: 2,
+    organizationId: null,
+    communeKey: 'cotonou',
+    requestedAt: '2026-12-01T08:00:00Z',
   },
-  'cleaning.intervention.rescheduled': {
-    missionId: uuid,
-    interventionId: uuid,
+  'cleaning.visit.scheduled': {
+    visitId: uuid,
+    requestId: uuid,
+    requestNumber: 'DN-000124',
     customerId: uuid,
-    previousStart: '2026-11-12T08:00:00Z',
-    scheduledStart: '2026-11-14T08:00:00Z',
-    durationMinutes: 120,
+    organizationId: null,
     agentIds: [uuid],
-    releasedAgentIds: [],
-    serviceCode: 'home_cleaning',
-    serviceName: 'Ménage',
-  },
-  'cleaning.intervention.unscheduled': {
-    missionId: uuid,
-    interventionId: uuid,
-    customerId: uuid,
-    previousStart: '2026-11-12T08:00:00Z',
+    scheduledAt: '2026-12-01T08:00:00Z',
+    durationMinutes: 60,
+    previousScheduledAt: null,
     releasedAgentIds: [uuid],
-    groupId: uuid,
+    placeTypeName: 'Villa',
+    cleaningTypeNames: ['Sol', 'Vitres'],
+  },
+  'cleaning.visit.arrived': {
+    visitId: uuid,
+    requestId: uuid,
+    requestNumber: 'DN-000124',
+    customerId: uuid,
+    organizationId: null,
+    communeKey: 'cotonou',
+    distanceMeters: 1,
+    alert: false,
+    arrivedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.visit.completed': {
+    visitId: uuid,
+    requestId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    agentIds: [uuid],
+    completedAt: '2026-12-01T08:00:00Z',
+    requestNumber: 'DN-000124',
+    completedBy: 'agent',
+  },
+  'cleaning.visit.missed': {
+    visitId: uuid,
+    requestId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    missedAt: '2026-12-01T08:00:00Z',
+    requestNumber: 'DN-000124',
+    communeKey: 'cotonou',
+    reportedBy: 'agent',
+    newVisitFee: xof(5000),
+    newVisitFeePayBefore: '2026-12-01T08:00:00Z',
   },
   'cleaning.visit.cancelled': {
     visitId: uuid,
-    requestIds: [uuid],
+    requestId: uuid,
+    requestNumber: 'DN-000124',
     customerId: uuid,
+    organizationId: null,
+    communeKey: 'cotonou',
+    releasedAgentIds: [uuid],
+    scheduledAt: '2026-12-01T08:00:00Z',
+    cause: 'request_cancelled',
+    visitFeeRefund: xof(5000),
+    cancelledAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.quote.sent': {
+    quoteId: uuid,
+    requestId: uuid,
+    requestNumber: 'DN-000124',
+    customerId: uuid,
+    organizationId: null,
+    kind: 'initial',
+    version: 1,
+    sessionPrice: xof(32040),
+    sessionsCount: 15,
+    total: xof(480600),
+    visitFeeDeduction: xof(5000),
+    validUntil: '2026-12-01T08:00:00Z',
+    sentAt: '2026-12-01T08:00:00Z',
+    placeTypeName: 'Villa',
+    cleaningTypeNames: ['Sol', 'Vitres'],
+  },
+  'cleaning.quote.accepted': {
+    quoteId: uuid,
+    requestId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    acceptedBy: uuid,
+    total: xof(480600),
+    acceptedAt: '2026-12-01T08:00:00Z',
+    requestNumber: 'DN-000124',
+  },
+  'cleaning.quote.declined': {
+    quoteId: uuid,
+    requestId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    declinedBy: uuid,
+    reasonCode: null,
+    declinedAt: '2026-12-01T08:00:00Z',
+    requestNumber: 'DN-000124',
+    communeKey: 'cotonou',
+  },
+  'cleaning.quote.expired': {
+    quoteId: uuid,
+    requestId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    validUntil: '2026-12-01T08:00:00Z',
+    expiredAt: '2026-12-01T08:00:00Z',
+    requestNumber: 'DN-000124',
+    communeKey: 'cotonou',
+    total: xof(480600),
+    placeTypeName: 'Villa',
+    cleaningTypeNames: ['Sol', 'Vitres'],
+  },
+  'cleaning.quote.withdrawn': {
+    quoteId: uuid,
+    requestId: uuid,
+    requestNumber: 'DN-000124',
+    customerId: uuid,
+    organizationId: null,
+    version: 1,
+    withdrawnAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.quote.expiry_reminded': {
+    quoteId: uuid,
+    requestId: uuid,
+    requestNumber: 'DN-000124',
+    customerId: uuid,
+    organizationId: null,
+    total: xof(480600),
+    validUntil: '2026-12-01T08:00:00Z',
+    reminderDays: 2,
+    remindedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.quote.forwarded': {
+    quoteId: uuid,
+    requestId: uuid,
+    requestNumber: 'DN-000124',
+    customerId: uuid,
+    organizationId: null,
+    forwardedBy: uuid,
+    forwardedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.program.confirmed': {
+    programId: uuid,
+    programNumber: 'PN-000057',
+    quoteId: uuid,
+    requestId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    payerKind: 'individual',
+    sessionsCount: 15,
+    sessionPrice: xof(32040),
+    total: xof(480600),
+    visitFeeDeduction: xof(5000),
+    firstSessionAt: '2026-12-01T08:00:00Z',
+    lastSessionAt: '2026-12-01T08:00:00Z',
+    confirmedAt: '2026-12-01T08:00:00Z',
+    placeTypeName: 'Villa',
+    cleaningTypeNames: ['Sol', 'Vitres'],
+  },
+  'cleaning.program.suspended': {
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    causes: ['overdue_sessions'],
+    suspendedSessionIds: [uuid],
+    releasedAgentIds: [uuid],
+    suspendedAt: '2026-12-01T08:00:00Z',
+    communeKey: 'cotonou',
+    unpaidCount: 2,
+    overdueCount: 1,
+    threshold: 1,
+  },
+  'cleaning.program.suspension_updated': {
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    change: 'cause_added',
+    cause: 'overdue_sessions',
+    causes: ['overdue_sessions'],
+    unpaidCount: 2,
+    overdueCount: 1,
+    updatedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.program.resumed': {
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    sessionsToAssign: 9,
+    catchUpSessionIds: [uuid],
+    resumedAt: '2026-12-01T08:00:00Z',
+    communeKey: 'cotonou',
+    liftedCause: 'overdue_sessions',
+  },
+  'cleaning.program.completed': {
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    sessionsCompleted: 14,
+    sessionsMissed: 1,
+    sessionsCancelled: 0,
+    completedAt: '2026-12-01T08:00:00Z',
+    programNumber: 'PN-000057',
+    planKind: 'one_off',
+  },
+  'cleaning.program.cancelled': {
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    cancelledBy: 'customer',
+    cancelledByUserId: uuid,
+    cancelledSessionIds: [uuid],
+    cancelledAt: '2026-12-01T08:00:00Z',
+    releasedAgentIds: [uuid],
+  },
+  'cleaning.session.assigned': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    rank: 3,
+    scheduledStart: '2026-12-01T08:00:00Z',
+    agentIds: [uuid],
+    leadAgentId: uuid,
+    source: 'manual',
+    assignedAt: '2026-12-01T08:00:00Z',
+    programNumber: 'PN-000057',
+    sessionsCount: 15,
+    batchId: uuid,
+    teamIncomplete: false,
+  },
+  'cleaning.session.unassigned': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    agentIds: [uuid],
+    cause: 'manual',
+    unassignedAt: '2026-12-01T08:00:00Z',
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+    scheduledStart: '2026-12-01T08:00:00Z',
+    batchId: uuid,
+  },
+  'cleaning.sessions.batch_assigned': {
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    batchId: uuid,
+    sessionIds: [uuid],
+    count: 2,
+    firstStart: '2026-12-01T08:00:00Z',
+    lastStart: '2026-12-01T08:00:00Z',
+    agentIds: [uuid],
+    leadAgentId: uuid,
+    source: 'manual',
+    assignedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.session.staffing_alert': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+    communeKey: 'cotonou',
+    scheduledStart: '2026-12-01T08:00:00Z',
+    level: 'unassigned_48h',
+    missingAgents: 1,
+    alertedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.session.rescheduled': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    rank: 3,
+    previousStart: '2026-12-01T08:00:00Z',
+    scheduledStart: '2026-12-01T08:00:00Z',
+    scheduledEnd: '2026-12-01T08:00:00Z',
+    rescheduledBy: 'customer',
+    rescheduledAt: '2026-12-01T08:00:00Z',
+    programNumber: 'PN-000057',
+    sessionsCount: 15,
+    agentIds: [uuid],
+    releasedAgentIds: [uuid],
+    durationMinutes: 60,
+  },
+  'cleaning.session.cancelled': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+    scheduledStart: '2026-12-01T08:00:00Z',
+    cancelledBy: 'customer',
+    cause: 'customer',
+    releasedAgentIds: [uuid],
+    cancelledAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.session.reminder': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+    scheduledStart: '2026-12-01T08:00:00Z',
+    agentIds: [uuid],
+    amountDue: xof(32040),
+    balanceSufficient: false,
+    remindedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.session.balance_insufficient': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+    scheduledStart: '2026-12-01T08:00:00Z',
+    amountDue: xof(32040),
+    missing: xof(7000),
+    guaranteeRequired: false,
+    trigger: 'assigned',
+    detectedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.session.arrived': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+    communeKey: 'cotonou',
+    distanceMeters: 1,
+    alert: false,
+    arrivedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.session.started': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    leadAgentId: uuid,
+    startedAt: '2026-12-01T08:00:00Z',
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+  },
+  'cleaning.session.interrupted': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+    communeKey: 'cotonou',
+    incidentId: uuid,
+    category: 'equipment',
+    interruptedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.session.completed': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    payerKind: 'individual',
+    placeId: uuid,
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+    scheduledStart: '2026-12-01T08:00:00Z',
+    price: xof(32040),
+    visitFeeDeduction: xof(5000),
+    amountDue: xof(27040),
+    completedAt: '2026-12-01T08:00:00Z',
+    completedBy: 'team',
+  },
+  'cleaning.session.missed': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: uuid,
+    payerKind: 'organization',
+    placeId: uuid,
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+    scheduledStart: '2026-12-01T08:00:00Z',
+    price: xof(32040),
+    visitFeeDeduction: xof(0),
+    amountDue: xof(16020),
+    cause: 'customer_absent',
+    feeBps: 5000,
+    missedAt: '2026-12-01T08:00:00Z',
+    communeKey: 'cotonou',
+    reportedBy: 'team',
+  },
+  'cleaning.session.payment_due': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    amountDue: xof(32040),
+    dueBy: '2026-12-01T08:00:00Z',
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+    scheduledStart: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.session.paid': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    amountPaid: xof(27040),
+    visitFeeDeduction: xof(5000),
+    walletTransactionId: uuid,
+    invoiceId: uuid,
+    paidAt: '2026-12-01T08:00:00Z',
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+  },
+  'cleaning.session.overdue': {
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    amountDue: xof(32040),
+    overdueSince: '2026-12-01T08:00:00Z',
+    overdueCount: 1,
+    communeKey: 'cotonou',
+    programNumber: 'PN-000057',
+    rank: 3,
+    sessionsCount: 15,
+  },
+  'cleaning.organization.unpaid_warning': {
+    organizationId: uuid,
+    unpaidCount: 2,
+    warningThreshold: 1,
+    suspensionThreshold: 2,
+    overdueInvoiceIds: [uuid],
+    warnedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.direct_payment.left_in_wallet': {
+    directPaymentId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    objectType: 'visit_fee',
+    objectId: uuid,
+    amount: xof(5000),
+    cause: 'request_closed',
+    leftAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.agent.applied': {
     agentId: uuid,
-    scheduledAt: '2026-11-12T08:00:00Z',
-    outcome: 'rejected',
-    cancelledAt: '2026-11-10T08:00:00Z',
-    requests: [{ requestId: uuid, serviceCode: 'home_cleaning', serviceName: 'Ménage' }],
+    userId: uuid,
+    source: 'self',
+    appliedAt: '2026-12-01T08:00:00Z',
+    zoneKeys: ['cotonou', 'abomey-calavi'],
+  },
+  'cleaning.agent.approved': {
+    agentId: uuid,
+    userId: uuid,
+    approvedBy: uuid,
+    skillCodes: ['vidange', 'jardinage'],
+    employmentKind: 'employee',
+    approvedAt: '2026-12-01T08:00:00Z',
+  },
+  'cleaning.claim.opened': {
+    claimId: uuid,
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    category: 'incomplete_work',
+    openedAt: '2026-12-01T08:00:00Z',
+    communeKey: 'cotonou',
+  },
+  'cleaning.claim.resolved': {
+    claimId: uuid,
+    sessionId: uuid,
+    programId: uuid,
+    customerId: uuid,
+    organizationId: null,
+    outcome: 'wallet_credit',
+    creditAmount: xof(10000),
+    redoSessionId: null,
+    resolvedAt: '2026-12-01T08:00:00Z',
   },
 };
 
-describe('Contrats des événements cleaning', () => {
+/** Les 45 événements publiés de la partie 15.5 du cahier des charges Nettoyage v2. */
+const CLEANING_PUBLISHED_EVENTS = [
+  'cleaning.request.submitted',
+  'cleaning.request.cancelled',
+  'cleaning.request.rejected',
+  'cleaning.request.visit_fee_paid',
+  'cleaning.request.reactivation_requested',
+  'cleaning.visit.scheduled',
+  'cleaning.visit.arrived',
+  'cleaning.visit.completed',
+  'cleaning.visit.missed',
+  'cleaning.visit.cancelled',
+  'cleaning.quote.sent',
+  'cleaning.quote.accepted',
+  'cleaning.quote.declined',
+  'cleaning.quote.expired',
+  'cleaning.quote.withdrawn',
+  'cleaning.quote.expiry_reminded',
+  'cleaning.quote.forwarded',
+  'cleaning.program.confirmed',
+  'cleaning.program.suspended',
+  'cleaning.program.suspension_updated',
+  'cleaning.program.resumed',
+  'cleaning.program.completed',
+  'cleaning.program.cancelled',
+  'cleaning.session.assigned',
+  'cleaning.session.unassigned',
+  'cleaning.sessions.batch_assigned',
+  'cleaning.session.staffing_alert',
+  'cleaning.session.rescheduled',
+  'cleaning.session.cancelled',
+  'cleaning.session.reminder',
+  'cleaning.session.balance_insufficient',
+  'cleaning.session.arrived',
+  'cleaning.session.started',
+  'cleaning.session.interrupted',
+  'cleaning.session.completed',
+  'cleaning.session.missed',
+  'cleaning.session.payment_due',
+  'cleaning.session.paid',
+  'cleaning.session.overdue',
+  'cleaning.organization.unpaid_warning',
+  'cleaning.direct_payment.left_in_wallet',
+  'cleaning.agent.applied',
+  'cleaning.agent.approved',
+  'cleaning.claim.opened',
+  'cleaning.claim.resolved',
+];
+
+describe('Contrats des événements cleaning (v2)', () => {
   const ajv = new Ajv2020({ strict: true, allErrors: true });
   addFormats(ajv);
   ajv.addKeyword('x-event-type').addKeyword('x-event-version');
@@ -389,146 +892,199 @@ describe('Contrats des événements cleaning', () => {
     expect([...schemas.keys()].sort()).toEqual(Object.keys(cleaningExamples).sort());
   });
 
-  it.each(Object.entries(cleaningExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
-    const validate = ajv.compile(schemas.get(type)!);
-    expect(validate(payload)).toBe(true);
+  it('publie exactement les 45 événements de la partie 15.5', () => {
+    expect(Object.keys(cleaningExamples).sort()).toEqual([...CLEANING_PUBLISHED_EVENTS].sort());
   });
 
-  it.each(['address', 'comment', 'reason'])(
-    'aucun événement cleaning n’accepte le champ « %s » (données personnelles)',
-    (field) => {
-      for (const [type, payload] of Object.entries(cleaningExamples)) {
-        const validate = ajv.compile(schemas.get(type)!);
-        expect(validate({ ...payload, [field]: 'Rue 12, Cotonou' })).toBe(false);
-      }
-    },
-  );
+  it('chaque type respecte le format de l’enveloppe commune', () => {
+    const envelope = JSON.parse(readFileSync(join(EVENTS_ROOT, 'envelope.schema.json'), 'utf8'));
+    const validate = ajv.compile(envelope);
+    for (const type of CLEANING_PUBLISHED_EVENTS) {
+      const event = {
+        eventId: uuid,
+        type,
+        version: 1,
+        occurredAt: '2026-12-01T08:00:00Z',
+        producer: 'cleaning',
+        correlationId: 'c-1',
+        payload: cleaningExamples[type as CleaningEventType],
+      };
+      expect(validate(event)).toBe(true);
+    }
+  });
 
-  it('demande reçue : groupe facultatif (ADR-034), identifiant UUID, sans position ni repère', () => {
-    const validate = ajv.compile(schemas.get('cleaning.quote.requested')!);
-    const base = cleaningExamples['cleaning.quote.requested'];
-    expect(validate(base)).toBe(true);
-    expect(validate({ ...base, groupId: uuid })).toBe(true);
-    expect(validate({ ...base, groupId: 'groupe-1' })).toBe(false);
-    expect(validate({ ...base, latitude: 6.45 })).toBe(false);
-    expect(validate({ ...base, landmark: 'Portail bleu' })).toBe(false);
+  it.each(Object.entries(cleaningExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
+    const validate = ajv.compile(schemas.get(type)!);
+    expect(validate(payload) ? [] : validate.errors).toEqual([]);
   });
 
   it.each([
-    'cleaning.booking.confirmed',
-    'cleaning.quote.sent',
-    'cleaning.visit.scheduled',
-    'cleaning.request.cancelled',
-    'cleaning.mission.scheduled',
-  ] as const)('%s : prestation, son nom et groupe facultatifs (ADR-034)', (type) => {
-    const validate = ajv.compile(schemas.get(type)!);
-    const base = cleaningExamples[type];
-    const subject = { serviceCode: 'house_cleaning', serviceName: 'Nettoyage de maison', groupId: uuid };
-    expect(validate(base)).toBe(true);
-    expect(validate({ ...base, ...subject })).toBe(true);
-    expect(validate({ ...base, groupId: 'groupe-1' })).toBe(false);
-    expect(validate({ ...base, serviceName: '' })).toBe(false);
-    expect(validate({ ...base, landmark: 'Portail vert' })).toBe(false);
+    'address',
+    'landmark',
+    'location',
+    'latitude',
+    'longitude',
+    'gps',
+    'phone',
+    'comment',
+    'reason',
+    'note',
+    'text',
+  ])('aucun événement cleaning n’accepte le champ « %s » (données personnelles, texte libre)', (field) => {
+    for (const [type, payload] of Object.entries(cleaningExamples)) {
+      const validate = ajv.compile(schemas.get(type)!);
+      expect(validate({ ...payload, [field]: 'Rue 12, Cotonou' })).toBe(false);
+    }
   });
 
-  it('cleaning.mission.scheduled : paiement « avant » encore dû, facultatif (ADR-049)', () => {
-    const validate = ajv.compile(schemas.get('cleaning.mission.scheduled')!);
-    const base = cleaningExamples['cleaning.mission.scheduled'];
-    expect(validate({ ...base, amountDueBeforeStart: { amount: 15_000, currency: 'XOF' } })).toBe(true);
-    expect(validate({ ...base, amountDueBeforeStart: { amount: 0, currency: 'XOF' } })).toBe(false);
-    expect(validate({ ...base, amountDueBeforeStart: 15_000 })).toBe(false);
+  it('chaque schéma refuse les champs inconnus', () => {
+    for (const schema of schemas.values()) {
+      expect((schema as { additionalProperties?: boolean }).additionalProperties).toBe(false);
+    }
   });
 
-  it('cleaning.visit.scheduled : visite commune d’un groupe, demandes listées (ADR-035)', () => {
-    const validate = ajv.compile(schemas.get('cleaning.visit.scheduled')!);
-    const base = cleaningExamples['cleaning.visit.scheduled'];
-    const other = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e0e';
-    expect(validate({ ...base, groupId: uuid, groupVisitId: uuid, requestIds: [uuid, other] })).toBe(true);
-    expect(validate({ ...base, requestIds: [] })).toBe(false);
-    expect(validate({ ...base, requestIds: [uuid, uuid] })).toBe(false);
-    expect(validate({ ...base, requestIds: ['demande-1'] })).toBe(false);
+  it.each(['cleaning.session.completed', 'cleaning.session.missed'] as const)(
+    '%s porte le montant dû (billing construit la facture sans rappeler cleaning)',
+    (type) => {
+      const validate = ajv.compile(schemas.get(type)!);
+      const { amountDue: _amountDue, ...withoutAmount } = cleaningExamples[type];
+      expect(validate(withoutAmount)).toBe(false);
+      expect(validate({ ...cleaningExamples[type], amountDue: xof(0) })).toBe(true);
+    },
+  );
+
+  it('séance manquée : part due en points de base, cause dans la liste', () => {
+    const validate = ajv.compile(schemas.get('cleaning.session.missed')!);
+    const base = cleaningExamples['cleaning.session.missed'];
+    expect(validate({ ...base, feeBps: 10001 })).toBe(false);
+    expect(validate({ ...base, cause: 'late_cancellation' })).toBe(true);
+    expect(validate({ ...base, cause: 'weather' })).toBe(false);
   });
 
-  it('messages regroupés (ADR-035 point 14) : champs facultatifs, les événements antérieurs restent valides', () => {
-    const requested = ajv.compile(schemas.get('cleaning.quote.requested')!);
-    const sent = ajv.compile(schemas.get('cleaning.quote.sent')!);
-    const visit = ajv.compile(schemas.get('cleaning.visit.scheduled')!);
-    const grouped = { groupId: uuid, summarizedByGroup: true };
-    expect(
-      requested({ ...cleaningExamples['cleaning.quote.requested'], ...grouped, serviceName: 'Vitres' }),
-    ).toBe(true);
-    expect(requested({ ...cleaningExamples['cleaning.quote.requested'], serviceName: '' })).toBe(false);
-    expect(sent({ ...cleaningExamples['cleaning.quote.sent'], ...grouped })).toBe(true);
-    expect(sent({ ...cleaningExamples['cleaning.quote.sent'], summarizedByGroup: 'oui' })).toBe(false);
-    const requests = [{ requestId: uuid, serviceCode: 'windows', serviceName: 'Vitres' }];
-    const base = cleaningExamples['cleaning.visit.scheduled'];
-    expect(visit({ ...base, groupVisitId: uuid, requestIds: [uuid], requests })).toBe(true);
-    expect(visit({ ...base, requests: [] })).toBe(false);
-    expect(visit({ ...base, requests: [{ requestId: uuid }] })).toBe(false);
+  it('les montants sont des entiers positifs ou nuls en XOF', () => {
+    const validate = ajv.compile(schemas.get('cleaning.session.completed')!);
+    const base = cleaningExamples['cleaning.session.completed'];
+    expect(validate({ ...base, amountDue: { amount: 450.5, currency: 'XOF' } })).toBe(false);
+    expect(validate({ ...base, amountDue: { amount: 450, currency: 'EUR' } })).toBe(false);
+    expect(validate({ ...base, price: { amount: -1, currency: 'XOF' } })).toBe(false);
   });
 
-  it('événements de groupe : 1 à 10 demandes, montants entiers en XOF, sans adresse', () => {
-    const requested = ajv.compile(schemas.get('cleaning.quote_group.requested')!);
-    const sent = ajv.compile(schemas.get('cleaning.quote_group.sent')!);
-    const group = cleaningExamples['cleaning.quote_group.requested'];
-    const quotes = cleaningExamples['cleaning.quote_group.sent'];
-    const { serviceName: _serviceName, ...withoutName } = group.requests[0]!;
-    expect(requested({ ...group, requests: [withoutName] })).toBe(true);
-    expect(requested({ ...group, requests: [] })).toBe(false);
-    expect(requested({ ...group, requests: Array.from({ length: 11 }, () => withoutName) })).toBe(false);
-    expect(requested({ ...group, requests: [{ ...withoutName, landmark: 'Portail' }] })).toBe(false);
-    expect(sent({ ...quotes, total: xof(450.5) })).toBe(false);
-    expect(sent({ ...quotes, quotes: [{ ...quotes.quotes[0]!, total: xof(-1) }] })).toBe(false);
-    expect(sent({ ...quotes, quotes: [] })).toBe(false);
+  it('suspension : au moins une cause, sans doublon', () => {
+    const validate = ajv.compile(schemas.get('cleaning.program.suspended')!);
+    const base = cleaningExamples['cleaning.program.suspended'];
+    expect(validate({ ...base, causes: ['overdue_sessions', 'ksp_decision'] })).toBe(true);
+    expect(validate({ ...base, causes: [] })).toBe(false);
+    expect(validate({ ...base, causes: ['ksp_decision', 'ksp_decision'] })).toBe(false);
   });
 
-  it('annulation : organisation ajoutée (ADR-032), les événements antérieurs sans elle restent valides', () => {
-    const validate = ajv.compile(schemas.get('cleaning.request.cancelled')!);
-    const { organizationId: _organizationId, ...before } = cleaningExamples['cleaning.request.cancelled'];
-    expect(validate(before)).toBe(true);
-    expect(
-      validate({ ...cleaningExamples['cleaning.request.cancelled'], missionId: uuid, organizationId: uuid }),
-    ).toBe(true);
-    expect(validate({ ...cleaningExamples['cleaning.request.cancelled'], organizationId: 'acme' })).toBe(
+  it('les identifiants sont des UUID', () => {
+    const validate = ajv.compile(schemas.get('cleaning.request.submitted')!);
+    expect(validate({ ...cleaningExamples['cleaning.request.submitted'], requestId: 'DN-000124' })).toBe(
       false,
     );
   });
 
-  it('suspension et reprise portent aussi la cause « organisation suspendue » (ADR-030)', () => {
-    const suspended = ajv.compile(schemas.get('cleaning.contract.suspended')!);
-    const resumed = ajv.compile(schemas.get('cleaning.contract.resumed')!);
-    const cause = 'organization_suspended';
-    expect(suspended({ ...cleaningExamples['cleaning.contract.suspended'], cause, unpaidCount: 0 })).toBe(
-      true,
-    );
-    expect(resumed({ ...cleaningExamples['cleaning.contract.resumed'], cause })).toBe(true);
-    expect(suspended({ ...cleaningExamples['cleaning.contract.suspended'], cause: 'fraud' })).toBe(false);
+  it('demande envoyée : commune et libellés du catalogue en vigueur (RV-02)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.request.submitted')!);
+    const { placeTypeName: _name, ...withoutName } = cleaningExamples['cleaning.request.submitted'];
+    const { communeKey: _commune, ...withoutCommune } = cleaningExamples['cleaning.request.submitted'];
+    expect(validate(withoutName)).toBe(false);
+    expect(validate(withoutCommune)).toBe(false);
   });
 
-  it('changement de cause : la mission reste suspendue, au moins une cause active (ADR-030)', () => {
-    const validate = ajv.compile(schemas.get('cleaning.contract.suspension_updated')!);
-    const base = cleaningExamples['cleaning.contract.suspension_updated'];
-    expect(
-      validate({
-        ...base,
-        change: 'cause_added',
-        cause: 'unpaid_invoices',
-        causes: ['organization_suspended', 'unpaid_invoices'],
-      }),
-    ).toBe(true);
+  it('visite manquée : toujours le client absent, avec de nouveaux frais (R-VI-05)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.visit.missed')!);
+    const base = cleaningExamples['cleaning.visit.missed'];
+    const { newVisitFee: _fee, ...withoutFee } = base;
+    expect(validate(withoutFee)).toBe(false);
+    expect(validate({ ...base, cause: 'agent_no_show' })).toBe(false);
+    expect(validate({ ...base, reportedBy: 'ksp' })).toBe(true);
+  });
+
+  it('visite annulée : cause dans la liste, absence de l’agent comprise (R-VI-06, R-FV-06)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.visit.cancelled')!);
+    const base = cleaningExamples['cleaning.visit.cancelled'];
+    expect(validate({ ...base, cause: 'agent_no_show', visitFeeRefund: xof(5000) })).toBe(true);
+    expect(validate({ ...base, cause: 'weather' })).toBe(false);
+  });
+
+  it.each([
+    ['cleaning.visit.completed', 'completedBy', ['agent', 'ksp']],
+    ['cleaning.session.completed', 'completedBy', ['team', 'ksp']],
+    ['cleaning.session.missed', 'reportedBy', ['team', 'ksp']],
+  ] as const)(
+    '%s : %s dit si le back-office a clôturé pour l’équipe (R-EX-08, R-VI-08)',
+    (type, field, values) => {
+      const validate = ajv.compile(schemas.get(type)!);
+      for (const value of values) expect(validate({ ...cleaningExamples[type], [field]: value })).toBe(true);
+      expect(validate({ ...cleaningExamples[type], [field]: 'support' })).toBe(false);
+    },
+  );
+
+  it('séance désaffectée : la suspension n’est plus une cause (cleaning.program.suspended porte les agents libérés)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.session.unassigned')!);
+    const base = cleaningExamples['cleaning.session.unassigned'];
+    expect(validate({ ...base, cause: 'rescheduled' })).toBe(true);
+    expect(validate({ ...base, cause: 'program_suspended' })).toBe(false);
+  });
+
+  it('récapitulatif d’affectation : au moins deux séances d’un programme (R-PL-11)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.sessions.batch_assigned')!);
+    const base = cleaningExamples['cleaning.sessions.batch_assigned'];
+    expect(validate({ ...base, count: 1 })).toBe(false);
+    expect(validate({ ...base, count: 12 })).toBe(true);
+  });
+
+  it('alerte de couverture : niveau dans la liste (R-PL-10)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.session.staffing_alert')!);
+    const base = cleaningExamples['cleaning.session.staffing_alert'];
+    expect(validate({ ...base, level: 'agent_absent' })).toBe(true);
+    expect(validate({ ...base, level: 'late' })).toBe(false);
+  });
+
+  it('séance annulée : cause « aucun agent » possible, jamais l’arrêt du programme', () => {
+    const validate = ajv.compile(schemas.get('cleaning.session.cancelled')!);
+    const base = cleaningExamples['cleaning.session.cancelled'];
+    expect(validate({ ...base, cancelledBy: 'ksp', cause: 'no_agent' })).toBe(true);
+    expect(validate({ ...base, cause: 'program_stopped' })).toBe(false);
+  });
+
+  it('rappel de la veille : solde non précisé pour une entreprise (R-PP-05)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.session.reminder')!);
+    const base = cleaningExamples['cleaning.session.reminder'];
+    expect(validate({ ...base, organizationId: uuid, amountDue: null, balanceSufficient: null })).toBe(true);
+    expect(validate({ ...base, balanceSufficient: 'non' })).toBe(false);
+  });
+
+  it('cause de suspension mise à jour : au moins une cause encore active (R-SU-01)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.program.suspension_updated')!);
+    const base = cleaningExamples['cleaning.program.suspension_updated'];
+    expect(validate({ ...base, change: 'cause_lifted', causes: ['unpaid_invoices'] })).toBe(true);
     expect(validate({ ...base, causes: [] })).toBe(false);
-    expect(validate({ ...base, change: 'resumed' })).toBe(false);
-    expect(validate({ ...base, causes: ['unpaid_invoices', 'unpaid_invoices'] })).toBe(false);
   });
 
-  it('les montants sont des entiers en XOF', () => {
-    const validate = ajv.compile(schemas.get('cleaning.quote.sent')!);
-    const base = cleaningExamples['cleaning.quote.sent'];
-    expect(validate({ ...base, total: { amount: 450.5, currency: 'XOF' } })).toBe(false);
-    expect(validate({ ...base, total: { amount: 450, currency: 'EUR' } })).toBe(false);
+  it('reprise : la dernière cause levée est dite', () => {
+    const validate = ajv.compile(schemas.get('cleaning.program.resumed')!);
+    const { liftedCause: _cause, ...withoutCause } = cleaningExamples['cleaning.program.resumed'];
+    expect(validate(withoutCause)).toBe(false);
+  });
+
+  it('paiement laissé au wallet : objet et motif dans la liste (R-PP-07)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.direct_payment.left_in_wallet')!);
+    const base = cleaningExamples['cleaning.direct_payment.left_in_wallet'];
+    expect(validate({ ...base, objectType: 'session', cause: 'already_paid' })).toBe(true);
+    expect(validate({ ...base, cause: 'other' })).toBe(false);
+  });
+
+  it('avertissement d’impayés : par organisation, jamais anonyme (R-PE-06)', () => {
+    const validate = ajv.compile(schemas.get('cleaning.organization.unpaid_warning')!);
+    const base = cleaningExamples['cleaning.organization.unpaid_warning'];
+    expect(validate({ ...base, organizationId: null })).toBe(false);
+    expect(validate({ ...base, unpaidCount: 0 })).toBe(false);
   });
 });
 
+/** Facture v1 (contrat) : événements en version 1. */
 const invoice = {
   invoiceId: uuid,
   invoiceNumber: 'FAC-2026-000042',
@@ -539,16 +1095,62 @@ const invoice = {
   total: xof(160000),
 };
 
+/** Facture v2 (ici, mensuelle d'organisation) : événements en version 2, sans contrat (RV-98). */
+const monthlyInvoice = {
+  invoiceId: uuid,
+  invoiceNumber: 'FAC-2026-000042',
+  customerId: uuid,
+  organizationId: uuid,
+  source: 'cleaning' as const,
+  kind: 'monthly' as const,
+  total: xof(160000),
+};
+
 const billingExamples: { [K in BillingEventType]: BillingEventPayloads[K] } = {
   'billing.invoice.issued': {
-    ...invoice,
-    periodStart: '2026-11-05T08:00:00Z',
-    periodEnd: '2026-12-05T08:00:00Z',
-    issuedAt: '2026-12-05T08:00:00Z',
-    dueAt: '2026-12-15T08:00:00Z',
+    ...monthlyInvoice,
+    periodStart: '2026-10-31T23:00:00Z',
+    periodEnd: '2026-11-30T23:00:00Z',
+    issuedAt: '2026-11-30T23:00:00Z',
+    dueAt: '2026-12-10T23:00:00Z',
+    status: 'pending_payment',
   },
-  'billing.invoice.overdue': { ...invoice, dueAt: '2026-12-15T08:00:00Z', overdueCount: 1 },
-  'billing.invoice.paid': { ...invoice, paidAt: '2026-12-16T10:00:00Z', overdueCount: 0 },
+  'billing.invoice.overdue': {
+    ...monthlyInvoice,
+    dueAt: '2026-12-10T23:00:00Z',
+    overdueCount: 2,
+    holderOverdueCount: 2,
+  },
+  'billing.invoice.paid': {
+    ...monthlyInvoice,
+    paidAt: '2026-12-16T10:00:00Z',
+    overdueCount: 0,
+    holderOverdueCount: 0,
+    settledBy: 'payment',
+  },
+  'billing.invoice.reminded': {
+    invoiceId: uuid,
+    invoiceNumber: 'FAC-2026-000042',
+    customerId: uuid,
+    organizationId: uuid,
+    total: xof(160000),
+    balance: xof(160000),
+    dueAt: '2026-12-11T00:00:00Z',
+    offsetDays: -3,
+    remindedAt: '2026-12-08T07:00:00Z',
+  },
+  'billing.credit_note.issued': {
+    creditNoteId: uuid,
+    creditNoteNumber: 'AV-2026-000003',
+    invoiceId: uuid,
+    invoiceNumber: 'FAC-2026-000042',
+    customerId: uuid,
+    organizationId: uuid,
+    total: xof(20000),
+    appliedToBalance: xof(20000),
+    creditedToWallet: xof(0),
+    issuedAt: '2026-12-09T10:00:00Z',
+  },
 };
 
 describe('Contrats des événements billing', () => {
@@ -564,6 +1166,67 @@ describe('Contrats des événements billing', () => {
   it.each(Object.entries(billingExamples))('%s : l’exemple respecte le schéma', (type, payload) => {
     const validate = ajv.compile(schemas.get(type)!);
     expect(validate(payload)).toBe(true);
+  });
+
+  it('v2 : nature de la facture et impayés du titulaire (R-PE-06)', () => {
+    const issued = ajv.compile(schemas.get('billing.invoice.issued')!);
+    expect(issued({ ...billingExamples['billing.invoice.issued'], kind: 'session', status: 'paid' })).toBe(
+      true,
+    );
+    expect(issued({ ...billingExamples['billing.invoice.issued'], kind: 'weekly' })).toBe(false);
+    const overdue = ajv.compile(schemas.get('billing.invoice.overdue')!);
+    expect(overdue({ ...billingExamples['billing.invoice.overdue'], holderOverdueCount: 0 })).toBe(false);
+    const paid = ajv.compile(schemas.get('billing.invoice.paid')!);
+    for (const settledBy of ['payment', 'credit_note', 'cancellation']) {
+      expect(paid({ ...billingExamples['billing.invoice.paid'], settledBy })).toBe(true);
+    }
+    expect(paid({ ...billingExamples['billing.invoice.paid'], settledBy: 'refund' })).toBe(false);
+  });
+
+  it.each(['billing.invoice.issued', 'billing.invoice.overdue', 'billing.invoice.paid'] as const)(
+    '%s v2 (RV-98) : sans contrat, nature obligatoire',
+    (type) => {
+      const validate = ajv.compile(loadSchemaVersion('billing', type, 2));
+      const example = billingExamples[type];
+      expect(validate({ ...example, contractId: uuid })).toBe(false);
+      const { kind: _kind, ...withoutKind } = example as typeof example & { kind: string };
+      expect(validate(withoutKind)).toBe(false);
+    },
+  );
+
+  it('paid v2 : settledBy et impayés du titulaire obligatoires (RV-87)', () => {
+    const validate = ajv.compile(loadSchemaVersion('billing', 'billing.invoice.paid', 2));
+    const { settledBy: _settledBy, ...withoutSettlement } = billingExamples['billing.invoice.paid'];
+    expect(validate(withoutSettlement)).toBe(false);
+    const { holderOverdueCount: _count, ...withoutCount } = billingExamples['billing.invoice.paid'];
+    expect(validate(withoutCount)).toBe(false);
+  });
+
+  it('v1 inchangée : une facture de contrat reste publiée en version 1, avec son contrat', () => {
+    const issued = ajv.compile(loadSchemaVersion('billing', 'billing.invoice.issued', 1));
+    const v1Issued = {
+      ...invoice,
+      periodStart: '2026-11-05T08:00:00Z',
+      periodEnd: '2026-12-05T08:00:00Z',
+      issuedAt: '2026-12-05T08:00:00Z',
+      dueAt: '2026-12-15T08:00:00Z',
+    };
+    expect(issued(v1Issued)).toBe(true);
+    const { contractId: _contractId, ...withoutContract } = v1Issued;
+    expect(issued(withoutContract)).toBe(false);
+    const overdue = ajv.compile(loadSchemaVersion('billing', 'billing.invoice.overdue', 1));
+    expect(overdue({ ...invoice, dueAt: '2026-12-15T08:00:00Z', overdueCount: 1 })).toBe(true);
+    const paid = ajv.compile(loadSchemaVersion('billing', 'billing.invoice.paid', 1));
+    expect(paid({ ...invoice, paidAt: '2026-12-16T10:00:00Z', overdueCount: 0 })).toBe(true);
+    expect(
+      paid({
+        ...invoice,
+        paidAt: '2026-12-16T10:00:00Z',
+        overdueCount: 0,
+        kind: 'monthly',
+        settledBy: 'payment',
+      }),
+    ).toBe(true);
   });
 
   it('aucun événement billing n’accepte d’adresse, et les montants sont des entiers en XOF', () => {
@@ -632,6 +1295,25 @@ describe('Contrats des événements payment', () => {
   addFormats(ajv);
   ajv.addKeyword('x-event-type').addKeyword('x-event-version');
   const schemas = loadSchemas('payment');
+
+  it('v2 : paiement direct, recharge qui porte l’objet visé (R-WL-05)', () => {
+    const validate = ajv.compile(schemas.get('payment.intent.succeeded')!);
+    const succeeded = paymentExamples['payment.intent.succeeded'];
+    const direct = {
+      ...succeeded,
+      subjectType: 'wallet_top_up' as const,
+      part: null,
+      target: {
+        service: 'cleaning',
+        objectType: 'cleaning_request',
+        objectId: uuid,
+        part: 'visit_fee',
+        reference: 'DN-000124',
+      },
+    };
+    expect(validate(direct)).toBe(true);
+    expect(validate({ ...direct, target: { ...direct.target, reference: '' } })).toBe(false);
+  });
 
   it('chaque type TypeScript a un schéma, et inversement', () => {
     expect([...schemas.keys()].sort()).toEqual(Object.keys(paymentExamples).sort());
@@ -783,6 +1465,48 @@ describe('Contrats des événements wallet', () => {
   addFormats(ajv);
   ajv.addKeyword('x-event-type').addKeyword('x-event-version');
   const schemas = loadSchemas('wallet');
+
+  it('v2 : recharge en espèces et paiement direct qui règle un objet (R-WL-02, R-WL-05)', () => {
+    const validate = ajv.compile(schemas.get('wallet.prepaid.credited')!);
+    const credited = walletExamples['wallet.prepaid.credited'];
+    const direct = {
+      ...credited,
+      kind: 'top_up' as const,
+      origin: 'payment' as const,
+      topUpChannel: 'mobile_money_online' as const,
+      paymentId: uuid,
+      refundedTransactionId: null,
+      forObject: { service: 'cleaning', objectType: 'cleaning_session', objectId: uuid, part: null },
+    };
+    expect(validate(direct)).toBe(true);
+    const { forObject: _forObject, ...cash } = direct;
+    expect(validate({ ...cash, topUpChannel: 'cash', origin: 'finance', paymentId: null })).toBe(true);
+    expect(validate({ ...credited, kind: 'commercial_gesture' })).toBe(true);
+    expect(validate({ ...direct, forObject: { ...direct.forObject, address: 'Cotonou' } })).toBe(false);
+  });
+
+  it('wallet.prepaid.credited : la v1 reste inchangée, la v2 l’élargit (R-WL-02, R-WL-05, R-PE-04)', () => {
+    const v1 = ajv.compile(loadSchemaVersion('wallet', 'wallet.prepaid.credited', 1));
+    const v2 = ajv.compile(loadSchemaVersion('wallet', 'wallet.prepaid.credited', 2));
+    const refund = walletExamples['wallet.prepaid.credited'];
+    expect(v1(refund)).toBe(true);
+    expect(v2(refund)).toBe(true);
+    const gesture = { ...refund, kind: 'commercial_gesture' as const, refundedTransactionId: null };
+    expect(v1(gesture)).toBe(false);
+    expect(v2(gesture)).toBe(true);
+    const transfer = {
+      ...refund,
+      kind: 'top_up' as const,
+      origin: 'finance' as const,
+      userId: null,
+      holder: { type: 'organization' as const, id: uuid },
+      refundedTransactionId: null,
+      topUpChannel: 'bank_transfer' as const,
+      forObject: { service: 'billing', objectType: 'billing_invoice', objectId: uuid, part: null },
+    };
+    expect(v1(transfer)).toBe(false);
+    expect(v2(transfer)).toBe(true);
+  });
 
   it('chaque type TypeScript a un schéma, et inversement', () => {
     expect([...schemas.keys()].sort()).toEqual(Object.keys(walletExamples).sort());

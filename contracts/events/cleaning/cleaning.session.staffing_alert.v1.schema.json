@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.staffing_alert.v1.schema.json",
+  "title": "cleaning.session.staffing_alert",
+  "description": "Alerte de couverture d’une séance (R-PL-06, R-PL-10). Écouté par notification (superviseur de la zone, puis admin).",
+  "x-event-type": "cleaning.session.staffing_alert",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "programNumber",
+    "rank",
+    "sessionsCount",
+    "communeKey",
+    "scheduledStart",
+    "level",
+    "missingAgents",
+    "alertedAt"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PN-000057"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rang de la séance"
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre de séances du programme"
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    },
+    "scheduledStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "level": {
+      "enum": ["unassigned_48h", "unassigned_at_start", "agent_absent"]
+    },
+    "missingAgents": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "alertedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

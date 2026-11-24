@@ -2,10 +2,10 @@ import { Body, Controller, Headers, Inject, Param, Query } from '@nestjs/common'
 import { z } from 'zod';
 import { type WalletApi, type WalletHolder } from '../../application/wallet/wallet.ports';
 import { WALLET_API } from '../../tokens';
-import { keyFrom, pageFrom } from './cleaning.controller';
-import { parseParam } from './cleaning-schemas';
+import { keyFrom, pageFrom, parseParam } from './params';
 import { Route } from './route.decorator';
 import { parseBody, requestBodies } from './schemas';
+import { withdrawalStatus } from './wallet-schemas';
 
 type Query = Record<string, unknown>;
 
@@ -17,8 +17,9 @@ export const walletParams = {
   /** Compte du relevé (ADR-046) : fonds dus ou portefeuille prépayé ; absent : les deux. */
   statementAccount: z.enum(['collections', 'prepaid']).optional(),
   /** Statut d'une demande de crédit manuel (ADR-048) ; absent : toutes. */
-  creditRequestStatus: z.enum(['pending_approval', 'approved']).optional(),
+  creditRequestStatus: z.enum(['pending_approval', 'approved', 'rejected']).optional(),
   creditRequestId: z.guid(),
+  withdrawalId: z.guid(),
 };
 
 const holderFrom = (type: unknown, id: unknown, prefix = ''): WalletHolder => ({
@@ -87,6 +88,8 @@ export class WalletHttpController {
       amount: input.amount.amount,
       reason: input.reason,
       paymentId: input.paymentId,
+      receiptReference: input.receiptReference,
+      forObject: input.forObject,
       idempotencyKey,
     });
   }
@@ -115,5 +118,60 @@ export class WalletHttpController {
   @Route('getWalletLedgerOverview')
   overview() {
     return this.wallet.getLedgerOverview();
+  }
+
+  // Retraits vers Mobile Money (R-WL-04) : demande du titulaire, traitement puis validation par
+  // deux personnes de la finance (revérifié par wallet).
+  @Route('requestWithdrawal')
+  requestWithdrawal(@Body() body: unknown, @Headers('idempotency-key') key: unknown) {
+    const idempotencyKey = keyFrom(key);
+    const input = parseBody(requestBodies.requestWithdrawal, body);
+    return this.wallet.requestWithdrawal({
+      amount: input.amount.amount,
+      beneficiary: input.beneficiary,
+      idempotencyKey,
+    });
+  }
+
+  @Route('listMyWithdrawals')
+  myWithdrawals(@Query() query: Query) {
+    const status = parseParam(withdrawalStatus, query['status'], 'status');
+    return this.wallet.listMyWithdrawals(pageFrom(query), status);
+  }
+
+  @Route('rejectManualCredit')
+  rejectCredit(@Param('id') id: unknown, @Body() body: unknown) {
+    const requestId = parseParam(walletParams.creditRequestId, id, 'id');
+    return this.wallet.rejectManualCredit(
+      requestId,
+      parseBody(requestBodies.rejectManualCredit, body).reason,
+    );
+  }
+
+  @Route('listWithdrawals')
+  withdrawals(@Query() query: Query) {
+    const status = parseParam(withdrawalStatus, query['status'], 'status');
+    const holder =
+      query['holderType'] !== undefined || query['holderId'] !== undefined
+        ? holderFrom(query['holderType'], query['holderId'])
+        : undefined;
+    return this.wallet.listWithdrawals(pageFrom(query), { status, holder });
+  }
+
+  @Route('processWithdrawal')
+  processWithdrawal(@Param('id') id: unknown, @Body() body: unknown) {
+    const withdrawalId = parseParam(walletParams.withdrawalId, id, 'id');
+    return this.wallet.processWithdrawal(withdrawalId, parseBody(requestBodies.processWithdrawal, body).note);
+  }
+
+  @Route('approveWithdrawal')
+  approveWithdrawal(@Param('id') id: unknown) {
+    return this.wallet.approveWithdrawal(parseParam(walletParams.withdrawalId, id, 'id'));
+  }
+
+  @Route('rejectWithdrawal')
+  rejectWithdrawal(@Param('id') id: unknown, @Body() body: unknown) {
+    const withdrawalId = parseParam(walletParams.withdrawalId, id, 'id');
+    return this.wallet.rejectWithdrawal(withdrawalId, parseBody(requestBodies.rejectWithdrawal, body).reason);
   }
 }

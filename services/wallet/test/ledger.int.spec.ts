@@ -6,6 +6,7 @@ import { createUseCases } from '../src/application/use-cases';
 import { type PayoutExecutor } from '../src/application/ports';
 import { PrismaLedgerStore } from '../src/infrastructure/persistence/prisma-ledger.store';
 import { PrismaCreditRequests } from '../src/infrastructure/persistence/prisma-credit-requests';
+import { PrismaWithdrawals } from '../src/infrastructure/persistence/prisma-withdrawals';
 import { PrismaService } from '../src/infrastructure/prisma/prisma.service';
 import { HmacPhoneFingerprints } from '../src/infrastructure/security/hmac-phone-fingerprints';
 import { SystemClock, UuidV7Generator } from '../src/infrastructure/system/system';
@@ -60,6 +61,7 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
     useCases = createUseCases({
       ledger: store,
       payouts: store,
+      withdrawals: new PrismaWithdrawals(prisma),
       executor: {
         request: async (input) => {
           requests.push(input);
@@ -85,13 +87,14 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       settings: {
         ledgerCallers: ['recovery'],
         debitCallers: ['cleaning', 'billing'],
+        creditCallers: ['cleaning'],
         topUpMin: 500,
         topUpMax: 1_000_000,
         manualRefundMax: 100_000,
         creditApprovalThreshold: 50_000,
         debitCheckDelayMinutes: 30,
       },
-      debitChecks: { isRecorded: async () => true },
+      debitChecks: { debitStatus: async () => 'recorded' },
       creditRequests: new PrismaCreditRequests(prisma),
       clock: new SystemClock(),
       ids: new UuidV7Generator(),
@@ -125,6 +128,7 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       { code: 'ksp:commission', balance: '3125' },
       { code: 'ksp:payouts_in_transit', balance: '0' },
       { code: 'ksp:prepaid_funds', balance: '0' },
+      { code: 'ksp:prepaid_withdrawals_in_transit', balance: '0' },
       { code: 'ksp:service_revenue', balance: '0' },
     ]);
     const statement = await asRecovery(() =>
@@ -244,8 +248,11 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       expect(results.filter((r) => r === 'recorded')).toHaveLength(1);
       expect(await prepaidBalance()).toBe(20000);
       const [credited] = await outbox('wallet.prepaid.credited');
+      // Version 2 seulement (RV-101).
+      expect(credited.version).toBe(2);
       expect(credited.payload).toMatchObject({
         kind: 'top_up',
+        topUpChannel: 'mobile_money_online',
         origin: 'payment',
         userId: USER.id,
         balanceAfter: xof(20000),
@@ -293,14 +300,9 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       );
       const reference = debits[0].reference as string;
       const original = await store.findByReference('cleaning', reference);
-      const results = await Promise.all([
-        useCases.refundFromEvent.execute({
-          producer: 'cleaning',
-          transactionIds: [original!.id],
-          reason: 'mission annulée',
-        }),
-        asCleaning(() => useCases.refundDebit.execute({ transactionId: original!.id, reason: 'annulée' })),
-      ]);
+      const refund = () =>
+        asCleaning(() => useCases.refundDebit.execute({ transactionId: original!.id, reason: 'annulée' }));
+      const results = await Promise.all([refund(), refund()]);
       expect(results).toHaveLength(2);
       expect(await prepaidBalance()).toBe(12000);
       const { rows } = await pool.query(
@@ -314,25 +316,6 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       const balance = (code: string) => overview.internal.find((a) => a.account === code)!.balance;
       expect(balance('ksp:prepaid_funds')).toBe(overview.owedToCustomers + balance('ksp:service_revenue'));
       expect(overview).toMatchObject({ owedToCustomers: 12000, customersCount: 1 });
-    });
-
-    it('crédit au prorata d’une mission arrêtée : une seule fois par creditId (ADR-049)', async () => {
-      const holder = { type: 'user' as const, id: '0192f1c4-0000-7000-8000-00000000c0aa' };
-      const event = {
-        eventId: '0192f1c4-0000-7000-b000-00000000e0a1',
-        eventType: 'cleaning.mission.credited',
-        producer: 'cleaning',
-        missionId: MISSION_ID,
-        customerId: holder.id,
-        creditId: '0192f1c4-0000-7000-b000-00000000e0c1',
-        amount: 30000,
-      };
-      const results = await Promise.all([
-        useCases.creditFromMission.execute(event),
-        useCases.creditFromMission.execute({ ...event, eventId: '0192f1c4-0000-7000-b000-00000000e0a2' }),
-      ]);
-      expect(results.filter((r) => r === 'recorded')).toHaveLength(1);
-      expect((await asCleaning(() => useCases.getPrepaidBalance.execute(holder))).balance).toBe(30000);
     });
   });
 
@@ -353,6 +336,192 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       ]);
       expect(rows).toEqual([{ outcome: 'recorded' }]);
       expect(await store.listUncheckedDebits(new Date(0), 50)).toEqual([]);
+    });
+  });
+
+  describe('CDC Nettoyage v2 : crédits et retraits (R-WL-02, R-WL-04)', () => {
+    const STAFF_A = '0192f1c4-0000-7000-8000-00000000d001';
+    const STAFF_B = '0192f1c4-0000-7000-8000-00000000d002';
+    const as = <T>(userId: string, roles: string[], fn: () => Promise<T>, callerService?: string) =>
+      runWithContext(
+        {
+          correlationId: 'c-int-v2',
+          ...(callerService ? { callerService } : {}),
+          user: {
+            userId,
+            sessionId: 's-int',
+            activeContext: 'personal',
+            roles: roles.map((role) => ({ role, scopeType: 'global' as const })),
+            mfa: roles.includes('finance_officer'),
+            authTime: Math.floor(Date.now() / 1000),
+          },
+        },
+        fn,
+      );
+    const finance = <T>(userId: string, fn: () => Promise<T>) => as(userId, ['finance_officer'], fn);
+    const prepaid = () => store.prepaidSummary(USER as never);
+    const envelopes = async (type: string) =>
+      (await pool.query('SELECT payload FROM outbox WHERE event_type = $1', [type])).rows.map(
+        (row) => row.payload as { version: number; payload: Record<string, unknown> },
+      );
+    const accountBalance = async (code: string) =>
+      Number(
+        (await pool.query('SELECT balance FROM ledger_accounts WHERE code = $1', [code])).rows[0].balance,
+      );
+
+    it('recharge Mobile Money confirmée : portefeuille crédité, événement v2 avec l’objet visé', async () => {
+      const paymentId = '0192f1c4-0000-7000-b000-00000000d0f1';
+      const before = (await prepaid()).balance;
+      const outcome = await useCases.creditTopUp.execute({
+        eventId: '0192f1c4-0000-7000-b000-00000000d001',
+        eventType: 'payment.intent.succeeded',
+        paymentId,
+        subjectId: USER.id,
+        customerId: USER.id,
+        organizationId: null,
+        amount: TOP_UP_AMOUNT,
+        target: { service: 'cleaning', objectType: 'cleaning_session', objectId: MISSION_ID, part: null },
+      });
+      expect(outcome).toBe('recorded');
+      expect((await prepaid()).balance).toBe(before + TOP_UP_AMOUNT);
+      const event = (await envelopes('wallet.prepaid.credited')).find(
+        (e) => e.payload.paymentId === paymentId,
+      );
+      expect(event).toMatchObject({
+        version: 2,
+        payload: {
+          kind: 'top_up',
+          topUpChannel: 'mobile_money_online',
+          forObject: {
+            service: 'cleaning',
+            objectType: 'cleaning_session',
+            objectId: MISSION_ID,
+            part: null,
+          },
+        },
+      });
+    });
+
+    it('crédit d’un service, recharge en espèces validée ou rejetée : écritures v2 acceptées par la base', async () => {
+      const before = (await prepaid()).balance;
+      const gesture = await as(
+        USER.id,
+        [],
+        () =>
+          useCases.creditByService.execute({
+            idempotencyKey: `cleaning_claim:${MISSION_ID}`,
+            holder: USER,
+            amount: xof(1500),
+            object: { objectType: 'cleaning_claim', objectId: MISSION_ID, part: '' },
+            kind: 'commercial_gesture',
+            description: 'Nettoyage — geste commercial',
+            relatedTransactionId: '',
+          }),
+        'cleaning',
+      );
+      expect(gesture).toMatchObject({ created: true, transaction: { kind: 'service_credit' } });
+
+      const cash = (key: string) =>
+        finance(STAFF_A, () =>
+          useCases.creditPrepaidWallet.execute({
+            idempotencyKey: key,
+            holder: USER,
+            kind: 'cash_top_up',
+            amount: xof(2000),
+            reason: 'Recharge en espèces au guichet',
+            paymentId: '',
+            receiptReference: `REC-${key}`,
+          }),
+        );
+      const pending = await cash('cash-int-0001');
+      expect(pending.pendingRequest).toMatchObject({
+        status: 'pending_approval',
+        receiptReference: 'REC-cash-int-0001',
+      });
+      const approved = await finance(STAFF_B, () =>
+        useCases.approveManualCredit.execute(pending.pendingRequest!.id),
+      );
+      expect(approved).toMatchObject({
+        created: true,
+        request: { status: 'approved' },
+        transaction: { kind: 'top_up' },
+      });
+
+      const other = await cash('cash-int-0002');
+      const rejected = await finance(STAFF_A, () =>
+        useCases.rejectManualCredit.execute({
+          requestId: other.pendingRequest!.id,
+          reason: 'Saisie en double',
+        }),
+      );
+      expect(rejected.request).toMatchObject({ status: 'rejected', rejectedBy: STAFF_A });
+      expect((await prepaid()).balance).toBe(before + 1500 + 2000);
+      const cashEvent = (await envelopes('wallet.prepaid.credited')).find(
+        (e) => e.payload.transactionId === approved.transaction.id,
+      );
+      expect(cashEvent?.payload).toMatchObject({ topUpChannel: 'cash', origin: 'finance' });
+    });
+
+    it('retrait : retenu, traité, validé par une autre personne, viré puis soldé ; refus rendu', async () => {
+      const before = (await prepaid()).balance;
+      const request = (key: string, amount: number) =>
+        as(USER.id, ['customer'], () =>
+          useCases.requestWithdrawal.execute({
+            idempotencyKey: key,
+            amount: xof(amount),
+            beneficiary: { phone: '+2290197000045', operator: 'mtn', name: 'Awa Dossou' },
+          }),
+        );
+      const { withdrawal } = await request('withdraw-int-0001', 5000);
+      expect(await prepaid()).toMatchObject({ balance: before - 5000, withdrawalsInProgress: 5000 });
+      expect(await accountBalance('ksp:prepaid_withdrawals_in_transit')).toBe(5000);
+
+      await finance(STAFF_A, () =>
+        useCases.processWithdrawal.execute({ withdrawalId: withdrawal.id, note: 'Numéro vérifié' }),
+      );
+      // La base refuse elle-même une validation par la personne qui a traité.
+      const sameProcessor = await pool
+        .query('UPDATE wallet_withdrawals SET approved_by = processed_by WHERE id = $1', [withdrawal.id])
+        .then(
+          () => null,
+          (caught: Error) => caught.message,
+        );
+      expect(sameProcessor).toMatch(/wallet_withdrawals_approval_check/);
+      const approved = await finance(STAFF_B, () =>
+        useCases.approveWithdrawal.execute({ withdrawalId: withdrawal.id }),
+      );
+      expect(approved.withdrawal).toMatchObject({ status: 'submitted', beneficiaryPhone: null });
+      expect(requests.at(-1)).toMatchObject({
+        reference: `wallet_withdrawal:${withdrawal.id}`,
+        amount: 5000,
+      });
+
+      const settle = (eventId: string) =>
+        useCases.settlePayout.execute({
+          eventId,
+          eventType: 'payment.payout.completed',
+          outcome: 'completed',
+          paymentPayoutId: approved.withdrawal.paymentPayoutId!,
+          issuer: 'wallet',
+          reference: `wallet_withdrawal:${withdrawal.id}`,
+          amount: 5000,
+        });
+      expect(await settle('0192f1c4-0000-7000-b000-00000000d101')).toBe('recorded');
+      expect(await settle('0192f1c4-0000-7000-b000-00000000d101')).toBe('duplicate');
+      expect(await prepaid()).toMatchObject({ balance: before - 5000, withdrawalsInProgress: 0 });
+      expect(await accountBalance('ksp:prepaid_withdrawals_in_transit')).toBe(0);
+
+      const second = await request('withdraw-int-0002', 1000);
+      const refused = await finance(STAFF_A, () =>
+        useCases.rejectWithdrawal.execute({
+          withdrawalId: second.withdrawal.id,
+          reason: 'Numéro au nom d’un tiers',
+        }),
+      );
+      expect(refused).toMatchObject({
+        withdrawal: { status: 'rejected' },
+        wallet: { balance: before - 5000, withdrawalsInProgress: 0 },
+      });
     });
   });
 

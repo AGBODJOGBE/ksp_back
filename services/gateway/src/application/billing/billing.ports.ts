@@ -1,4 +1,4 @@
-import { type Json, type Page } from '../cleaning/cleaning.ports';
+import { type Json, type Page } from '../common/api.ports';
 
 /**
  * Vue de la gateway sur le service billing, indépendante de gRPC : l'adaptateur traduit les

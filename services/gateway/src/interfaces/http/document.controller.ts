@@ -2,7 +2,7 @@ import { AppError } from '@ksp/platform';
 import { Body, Controller, Inject, Param } from '@nestjs/common';
 import { type DocumentApi } from '../../application/document/document.ports';
 import { DOCUMENT_API } from '../../tokens';
-import { idFrom } from './cleaning.controller';
+import { idFrom } from './params';
 import { SIGNING_TOKEN } from './document-schemas';
 import { Route } from './route.decorator';
 import { parseBody, requestBodies } from './schemas';

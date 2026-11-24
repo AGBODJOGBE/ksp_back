@@ -1,182 +1,51 @@
-import { Body, Controller, Headers, Inject, Param, Query } from '@nestjs/common';
-import { type CleaningApi, type Page } from '../../application/cleaning/cleaning.ports';
-import { RequestCleaningQuoteUseCase } from '../../application/cleaning/request-cleaning-quote.use-case';
-import { CLEANING_API } from '../../tokens';
-import { cleaningParams, parseParam } from './cleaning-schemas';
+import { Controller, Req } from '@nestjs/common';
+import { CallCleaningUseCase } from '../../application/cleaning/call-cleaning.use-case';
+import { CLEANING_ROUTES, type CleaningOperationId } from '../../domain/routing/cleaning-routes';
+import { parseCleaningRequest, type RawCleaningRequest } from './cleaning-request';
+import { type GatewayRequest, header } from './http-types';
 import { Route } from './route.decorator';
-import { isEmptyBody, parseBody, requestBodies } from './schemas';
 
-type Query = Record<string, unknown>;
-
-export const pageFrom = (query: Query): Page =>
-  parseParam(cleaningParams.page, { limit: query['limit'], cursor: query['cursor'] }, 'limit/cursor');
-export const idFrom = (id: unknown) => parseParam(cleaningParams.id, id, 'id');
-export const keyFrom = (key: unknown) => parseParam(cleaningParams.idempotencyKey, key, 'Idempotency-Key');
-/** Corps facultatif (motif d'annulation…) : absent, vide, ou conforme au schéma. */
-export const optionalBody = <T>(schema: Parameters<typeof parseBody>[0], body: unknown): T =>
-  (isEmptyBody(body) ? {} : parseBody(schema, body)) as T;
+type CleaningRequest = GatewayRequest & Partial<RawCleaningRequest>;
 
 /**
- * Routes /api/v1/cleaning/* (contrat OpenAPI) : simulateur public et espace client. Validation des
- * paramètres et du corps, puis appel de cleaning ; le service revérifie toujours ses droits.
+ * Routes /api/v1/cleaning/* et /api/v1/admin/cleaning/* (Nettoyage v2, ADR-054) : un point d'entrée
+ * par ligne du manifeste (cleaning-routes.ts, produit depuis le contrat), tous traités de la même
+ * façon : validation des paramètres et du corps contre le schéma de la route, puis appel de cleaning.
+ * Accès, permission, limite et clé d'idempotence sont contrôlés avant, par RouteGuard ; le service
+ * revérifie toujours ses droits.
  */
 @Controller()
 export class CleaningHttpController {
-  constructor(
-    @Inject(CLEANING_API) private readonly cleaning: CleaningApi,
-    private readonly requestQuoteUseCase: RequestCleaningQuoteUseCase,
-  ) {}
+  constructor(private readonly callCleaning: CallCleaningUseCase) {}
 
-  @Route('listCleaningServices')
-  listServices() {
-    return this.cleaning.listServices();
+  /** Traitement commun ; les méthodes de route, posées ci-dessous, y délèguent. */
+  forward(operationId: CleaningOperationId, request: CleaningRequest): Promise<unknown> {
+    const input = parseCleaningRequest(operationId, {
+      params: request.params ?? {},
+      query: request.query ?? {},
+      body: request.body,
+    });
+    const route = CLEANING_ROUTES.find((each) => each.operationId === operationId)!;
+    return this.callCleaning.execute(route, {
+      ...input,
+      idempotencyKey: header(request, 'idempotency-key'),
+      read: route.method === 'GET',
+    });
   }
+}
 
-  @Route('listServedCleaningZones')
-  listServedZones() {
-    return this.cleaning.listServedZones();
-  }
-
-  @Route('simulateCleaning')
-  simulate(@Body() body: unknown) {
-    return this.cleaning.simulate(parseBody(requestBodies.simulateCleaning, body));
-  }
-
-  @Route('previewCleaningSchedule')
-  previewSchedule(@Body() body: unknown) {
-    return this.cleaning.previewSchedule(parseBody(requestBodies.previewCleaningSchedule, body));
-  }
-
-  // --- Parcours par lieu (ADR-034) ---------------------------------------------------------------
-
-  @Route('getCleaningPlaceCatalog')
-  getPlaceCatalog() {
-    return this.cleaning.getPlaceCatalog();
-  }
-
-  @Route('estimateCleaning')
-  estimate(@Body() body: unknown) {
-    return this.cleaning.estimate(parseBody(requestBodies.estimateCleaning, body));
-  }
-
-  @Route('resolveCleaningLocation')
-  resolveLocation(@Body() body: unknown) {
-    return this.cleaning.resolveLocation(parseBody(requestBodies.resolveCleaningLocation, body));
-  }
-
-  @Route('requestCleaningQuoteGroup')
-  requestQuoteGroup(@Body() body: unknown, @Headers('idempotency-key') key: unknown) {
-    const idempotencyKey = keyFrom(key);
-    return this.requestQuoteUseCase.executeGroup(
-      parseBody(requestBodies.requestCleaningQuoteGroup, body),
-      idempotencyKey,
-    );
-  }
-
-  @Route('getMyCleaningQuoteRequestGroup')
-  getMyQuoteRequestGroup(@Param('id') id: unknown) {
-    return this.cleaning.getMyQuoteRequestGroup(idFrom(id));
-  }
-
-  @Route('cancelCleaningRequestGroup')
-  cancelQuoteRequestGroup(
-    @Param('id') id: unknown,
-    @Body() body: unknown,
-    @Headers('idempotency-key') key: unknown,
-  ) {
-    const groupId = idFrom(id);
-    const idempotencyKey = keyFrom(key);
-    const input = optionalBody<{ reason?: string }>(requestBodies.cancelCleaningRequestGroup, body);
-    return this.cleaning.cancelQuoteRequestGroup(groupId, input.reason, idempotencyKey);
-  }
-
-  @Route('acceptCleaningQuoteGroup')
-  acceptQuoteGroup(
-    @Param('id') id: unknown,
-    @Body() body: unknown,
-    @Headers('idempotency-key') key: unknown,
-  ) {
-    const groupId = idFrom(id);
-    const idempotencyKey = keyFrom(key);
-    return this.cleaning.acceptQuoteGroup(
-      groupId,
-      parseBody(requestBodies.acceptCleaningQuoteGroup, body),
-      idempotencyKey,
-    );
-  }
-
-  @Route('requestCleaningQuote')
-  requestQuote(@Body() body: unknown, @Headers('idempotency-key') key: unknown) {
-    const idempotencyKey = keyFrom(key);
-    return this.requestQuoteUseCase.execute(
-      parseBody(requestBodies.requestCleaningQuote, body),
-      idempotencyKey,
-    );
-  }
-
-  @Route('listMyCleaningRequests')
-  listMyRequests(@Query() query: Query) {
-    return this.cleaning.listMyRequests(pageFrom(query));
-  }
-
-  @Route('getMyCleaningRequest')
-  getMyRequest(@Param('id') id: unknown) {
-    return this.cleaning.getMyRequest(idFrom(id));
-  }
-
-  @Route('acceptCleaningQuote')
-  acceptQuote(@Param('id') id: unknown, @Body() body: unknown, @Headers('idempotency-key') key: unknown) {
-    const requestId = idFrom(id);
-    const idempotencyKey = keyFrom(key);
-    return this.cleaning.acceptQuote(
-      requestId,
-      parseBody(requestBodies.acceptCleaningQuote, body),
-      idempotencyKey,
-    );
-  }
-
-  @Route('declineCleaningQuote')
-  declineQuote(@Param('id') id: unknown, @Body() body: unknown) {
-    const requestId = idFrom(id);
-    const input = optionalBody<{ reason?: string }>(requestBodies.declineCleaningQuote, body);
-    return this.cleaning.declineQuote(requestId, input.reason);
-  }
-
-  @Route('cancelCleaningRequest')
-  cancelRequest(@Param('id') id: unknown, @Body() body: unknown) {
-    const requestId = idFrom(id);
-    const input = optionalBody<{ reason?: string }>(requestBodies.cancelCleaningRequest, body);
-    return this.cleaning.cancelRequest(requestId, input.reason);
-  }
-
-  @Route('listMyCleaningMissions')
-  listMyMissions(@Query() query: Query) {
-    return this.cleaning.listMyMissions(pageFrom(query));
-  }
-
-  @Route('getMyCleaningMission')
-  getMyMission(@Param('id') id: unknown) {
-    return this.cleaning.getMyMission(idFrom(id));
-  }
-
-  @Route('cancelMyCleaningMission')
-  cancelMyMission(@Param('id') id: unknown, @Body() body: unknown) {
-    const missionId = idFrom(id);
-    const input = optionalBody<{ reason?: string }>(requestBodies.cancelMyCleaningMission, body);
-    return this.cleaning.cancelMyMission(missionId, input.reason);
-  }
-
-  @Route('payMyCleaningMissionFromWallet')
-  payFromWallet(@Param('id') id: unknown, @Body() body: unknown, @Headers('idempotency-key') key: unknown) {
-    const missionId = idFrom(id);
-    const idempotencyKey = keyFrom(key);
-    const { part } = parseBody(requestBodies.payMyCleaningMissionFromWallet, body) as { part: string };
-    return this.cleaning.payMissionFromWallet(missionId, part, idempotencyKey);
-  }
-
-  /** Photos avant et après d'un passage de sa mission (ADR-053). */
-  @Route('listMyCleaningInterventionPhotos')
-  listMyInterventionPhotos(@Param('id') id: unknown) {
-    return this.cleaning.listMyInterventionPhotos(idFrom(id));
-  }
+// Une méthode par route du manifeste, décorée comme une route écrite à la main (@Route, @Req) :
+// chemin, méthode HTTP et contrôles viennent du manifeste, jamais du contrôleur.
+for (const { operationId } of CLEANING_ROUTES) {
+  const prototype = CleaningHttpController.prototype as unknown as Record<string, unknown>;
+  Object.defineProperty(prototype, operationId, {
+    value(this: CleaningHttpController, request: CleaningRequest) {
+      return this.forward(operationId, request);
+    },
+    writable: true,
+    configurable: true,
+  });
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, operationId)!;
+  Route(operationId)(prototype, operationId, descriptor);
+  Req()(prototype, operationId, 0);
 }

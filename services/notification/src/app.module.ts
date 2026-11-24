@@ -33,6 +33,7 @@ import { createChannelProviders } from './infrastructure/channels/channel-provid
 import { PrismaEventInbox } from './infrastructure/events/prisma-event-inbox';
 import { IdentityOrganizationDirectory } from './infrastructure/identity/identity-organization-directory';
 import { IdentityRecipientDirectory } from './infrastructure/identity/identity-recipient-directory';
+import { IdentityStaffDirectory } from './infrastructure/identity/identity-staff-directory';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { PrismaNotificationRepository } from './infrastructure/notification/prisma-notification.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
@@ -165,7 +166,7 @@ export class AppModule {
             const identity = grpc.getService<identityV1.IdentityServiceClient>(
               identityV1.IDENTITY_SERVICE_NAME,
             );
-            // Un seul appelant (délai, coupe-circuit) pour les deux lectures d'identity.
+            // Un seul appelant (délai, coupe-circuit) pour les lectures d'identity.
             const identityCaller = new GrpcCaller({
               target: 'identity',
               ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
@@ -175,6 +176,7 @@ export class AppModule {
               new MessageDispatcher(notifications, providers, clock),
               new IdentityRecipientDirectory(identity, identityCaller),
               new IdentityOrganizationDirectory(identity, identityCaller),
+              new IdentityStaffDirectory(identity, identityCaller),
               preferences,
               inbox,
               clock,
@@ -184,6 +186,8 @@ export class AppModule {
                 timeZone: config.NOTIFICATION_TIME_ZONE,
                 cleaningTeamUserIds: config.NOTIFICATION_CLEANING_TEAM_USER_IDS,
                 accountsTeamUserIds: config.NOTIFICATION_ACCOUNTS_TEAM_USER_IDS,
+                cleaningStaffFallback: config.NOTIFICATION_CLEANING_STAFF_FALLBACK,
+                backOfficeBaseUrl: config.BACKOFFICE_BASE_URL?.replace(/\/+$/, '') ?? null,
                 recoverySupervisorUserIds: config.NOTIFICATION_RECOVERY_SUPERVISOR_USER_IDS,
                 recoveryLegalUserIds: config.NOTIFICATION_RECOVERY_LEGAL_USER_IDS,
               },

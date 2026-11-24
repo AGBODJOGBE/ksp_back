@@ -3,7 +3,13 @@
  * connexion back-office est tout ou rien : une preuve refusée ne modifie rien.
  */
 import { type StoredMfaChallenge } from '../../domain/mfa/mfa-challenge';
-import { type AssignedRole, INITIAL_BACKOFFICE_ROLES, type RoleDefinition } from '../../domain/role/role';
+import {
+  type AssignedRole,
+  FIELD_ROLES,
+  INITIAL_BACKOFFICE_ROLES,
+  type RoleDefinition,
+  type RoleScopeType,
+} from '../../domain/role/role';
 import {
   MfaChallengeAlreadyConsumedError,
   type MfaChallengeRepository,
@@ -21,6 +27,7 @@ import {
   RoleAssignmentNotFoundError,
   RoleAssignmentRevokedError,
   type RoleGrant,
+  RoleInactiveError,
   type RoleRepository,
   type RoleRevocation,
 } from '../role/role.ports';
@@ -31,7 +38,11 @@ export interface FakeAssignment {
   id: string;
   userId: string;
   role: RoleDefinition;
+  /** Portée de l'attribution ; celle du rôle si absente. */
+  scopeType?: RoleScopeType;
   scopeId: string | null;
+  /** Portée zone : clés de commune ; vide sinon. */
+  zoneKeys?: string[];
   grantedBy: string | null;
   grantedAt: Date;
   grantReason: string | null;
@@ -51,7 +62,10 @@ export interface FakeAuditEntry {
 }
 
 export class InMemoryRoles implements RoleRepository {
-  readonly definitions: RoleDefinition[] = [...INITIAL_BACKOFFICE_ROLES];
+  /** Copies : un test qui modifie un rôle (désactivé, sensible) ne touche pas le catalogue initial. */
+  readonly definitions: RoleDefinition[] = [...INITIAL_BACKOFFICE_ROLES, ...FIELD_ROLES].map((role) => ({
+    ...role,
+  }));
   readonly assignments: FakeAssignment[] = [];
   /** Événements identity.role.granted écrits. */
   readonly granted: RoleGrant[] = [];
@@ -61,6 +75,10 @@ export class InMemoryRoles implements RoleRepository {
   readonly audit: FakeAuditEntry[] = [];
   /** État des comptes, pour la règle du dernier super administrateur actif. */
   statusOf: (userId: string) => string = () => 'active';
+  /** Comptes dont toutes les sessions ont été fermées par le retrait d'un rôle sensible. */
+  readonly sessionsRevokedFor: string[] = [];
+  /** Permissions cochées par rôle (code → permissions), pour les tests du jeton. */
+  readonly permissionsOf = new Map<string, string[]>();
 
   /** Attribution directe, pour préparer un test. */
   assign(userId: string, code: string, id = `a-${code}`): void {
@@ -83,12 +101,14 @@ export class InMemoryRoles implements RoleRepository {
   async activeRoles(userId: string): Promise<AssignedRole[]> {
     return this.assignments
       .filter((assignment) => assignment.userId === userId && !assignment.revokedAt)
-      .map(({ role, scopeId }) => ({
+      .map(({ role, scopeType, scopeId, zoneKeys }) => ({
         code: role.code,
-        scopeType: role.scopeType,
+        scopeType: scopeType ?? role.scopeType,
         scopeId,
         requiresMfa: role.requiresMfa,
         backofficeAccess: role.backofficeAccess,
+        zoneKeys: zoneKeys ?? [],
+        permissions: this.permissionsOf.get(role.code) ?? [],
       }));
   }
 
@@ -102,16 +122,33 @@ export class InMemoryRoles implements RoleRepository {
         assignment.userId === input.userId &&
         assignment.role.code === input.roleCode &&
         assignment.scopeId === input.scopeId &&
+        (assignment.zoneKeys ?? []).join(',') === input.zoneKeys.join(',') &&
         !assignment.revokedAt,
     );
-    const base = { userId: input.userId, roleCode: input.roleCode, scopeType: input.scopeType };
-    if (existing) return { ...base, assignmentId: existing.id, scopeId: existing.scopeId, created: false };
+    const base = {
+      userId: input.userId,
+      roleCode: input.roleCode,
+      scopeType: input.scopeType,
+      zoneKeys: input.zoneKeys,
+    };
+    if (existing) {
+      return {
+        ...base,
+        assignmentId: existing.id,
+        scopeId: existing.scopeId,
+        grantedAt: existing.grantedAt,
+        created: false,
+      };
+    }
     const role = this.definitions.find((definition) => definition.code === input.roleCode)!;
+    if (role.active === false) throw new RoleInactiveError();
     this.assignments.push({
       id: input.assignmentId,
       userId: input.userId,
       role,
+      scopeType: input.scopeType,
       scopeId: input.scopeId,
+      zoneKeys: input.zoneKeys,
       grantedBy: input.grantedBy,
       grantedAt: input.now,
       grantReason: input.audit?.reason ?? null,
@@ -119,22 +156,29 @@ export class InMemoryRoles implements RoleRepository {
       revokedBy: null,
       revokeReason: null,
     });
-    const grant = { ...base, assignmentId: input.assignmentId, scopeId: input.scopeId, created: true };
+    const grant = {
+      ...base,
+      assignmentId: input.assignmentId,
+      scopeId: input.scopeId,
+      grantedAt: input.now,
+      created: true,
+    };
     this.granted.push(grant);
-    if (input.audit && input.grantedBy) {
+    const actorId = input.grantedBy ?? input.audit?.service;
+    if (input.audit && actorId) {
       this.audit.push({
         id: input.audit.id,
-        actorId: input.grantedBy,
+        actorId,
         action: 'user.role_granted',
         entityId: input.userId,
         at: input.now,
-        details: { roleCode: input.roleCode, reason: input.audit.reason },
+        details: { roleCode: input.roleCode, reason: input.audit.reason, zoneKeys: input.zoneKeys },
       });
     }
     return grant;
   }
 
-  async revoke(revocation: RoleRevocation): Promise<{ roleCode: string }> {
+  async revoke(revocation: RoleRevocation): Promise<{ roleCode: string; sessionsRevoked: boolean }> {
     const assignment = this.assignments.find(
       (candidate) => candidate.id === revocation.assignmentId && candidate.userId === revocation.userId,
     );
@@ -149,16 +193,18 @@ export class InMemoryRoles implements RoleRepository {
       revokedBy: revocation.actorId,
       revokeReason: revocation.reason,
     });
+    const sessionsRevoked = assignment.role.sensitive === true || roleCode === 'super_admin';
+    if (sessionsRevoked) this.sessionsRevokedFor.push(revocation.userId);
     this.revoked.push({ ...revocation, roleCode });
     this.audit.push({
       id: revocation.auditId,
-      actorId: revocation.actorId,
+      actorId: revocation.actorId ?? revocation.service ?? 'system',
       action: 'user.role_revoked',
       entityId: revocation.userId,
       at: revocation.now,
       details: { roleCode, reason: revocation.reason },
     });
-    return { roleCode };
+    return { roleCode, sessionsRevoked };
   }
 
   /** Un autre compte actif garde-t-il le rôle super_admin ? */

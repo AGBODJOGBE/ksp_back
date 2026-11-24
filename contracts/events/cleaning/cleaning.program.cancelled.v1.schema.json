@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.program.cancelled.v1.schema.json",
+  "title": "cleaning.program.cancelled",
+  "description": "Programme arrêté par le client (UC-NT-13) ou par KSP (UC-NT-39).",
+  "x-event-type": "cleaning.program.cancelled",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "programId",
+    "customerId",
+    "organizationId",
+    "cancelledBy",
+    "cancelledByUserId",
+    "cancelledSessionIds",
+    "cancelledAt",
+    "releasedAgentIds"
+  ],
+  "properties": {
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "cancelledBy": {
+      "enum": ["customer", "ksp"]
+    },
+    "cancelledByUserId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "cancelledSessionIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "cancelledAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "releasedAgentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "Agents libérés"
+    }
+  }
+}

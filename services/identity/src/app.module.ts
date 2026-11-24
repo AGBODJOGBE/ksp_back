@@ -27,6 +27,10 @@ import {
 } from './application/deletion/account-deletion.use-cases';
 import { GetOrganizationsUseCase } from './application/directory/get-organizations.use-case';
 import { GetUsersUseCase } from './application/directory/get-users.use-case';
+import {
+  EnsureUserByPhoneUseCase,
+  FindUserByPhoneUseCase,
+} from './application/provisioning/phone-accounts.use-cases';
 import { ChangeEmailUseCase } from './application/email/change-email.use-case';
 import { ConfirmEmailUseCase } from './application/email/confirm-email.use-case';
 import { PendingEmails } from './application/email/pending-email';
@@ -83,12 +87,31 @@ import { CryptoMfaTokenGenerator, CryptoRecoveryCodes } from './infrastructure/m
 import { HmacTotpGenerator } from './infrastructure/mfa/hmac-totp-generator';
 import { PrismaMfaRepository } from './infrastructure/mfa/prisma-mfa.repository';
 import { PrismaRoleRepository } from './infrastructure/role/prisma-role.repository';
+import { PrismaRbacRepository } from './infrastructure/rbac/prisma-rbac.repository';
+import {
+  GetCatalogUseCase,
+  ListPermissionsUseCase,
+  RegisterCatalogUseCase,
+} from './application/rbac/catalog.use-cases';
+import {
+  CreateRoleUseCase,
+  DeactivateRoleUseCase,
+  GetRoleUseCase,
+  UpdateRoleUseCase,
+} from './application/rbac/managed-roles.use-cases';
+import {
+  CheckPermissionUseCase,
+  GrantRoleUseCase,
+  ListStaffByPermissionUseCase,
+  RevokeRoleUseCase,
+} from './application/rbac/service-roles.use-cases';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
 import { PrismaOrganizationRepository } from './infrastructure/organization/prisma-organization.repository';
 import { CryptoOtpCodeGenerator } from './infrastructure/otp/crypto-otp-code-generator';
 import { HmacOtpHasher } from './infrastructure/otp/hmac-otp-hasher';
 import { NotificationOtpSender } from './infrastructure/otp/notification-otp-sender';
 import { PrismaOtpChallengeRepository } from './infrastructure/otp/prisma-otp-challenge.repository';
+import { PrismaPendingAccountRepository } from './infrastructure/provisioning/prisma-pending-account.repository';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { ConfigServiceClientRegistry } from './infrastructure/service-token/config-service-client-registry';
 import { AccountAdminGrpcController } from './interfaces/grpc/account-admin.controller';
@@ -175,13 +198,15 @@ export class AppModule {
         },
         {
           provide: AccessTokenIssuer,
-          inject: [TOKEN_SIGNER],
-          useFactory: (signer: KeyRingSigner) =>
+          inject: [TOKEN_SIGNER, PrismaRoleRepository],
+          useFactory: (signer: KeyRingSigner, roles: PrismaRoleRepository) =>
             new AccessTokenIssuer(
               signer,
               new UuidV7Generator(),
               new SystemClock(),
               config.ACCESS_TOKEN_TTL_SECONDS,
+              // Permissions des rôles de terrain dans le jeton des applications (R-RB-07).
+              roles,
             ),
         },
         {
@@ -225,7 +250,21 @@ export class AppModule {
             ),
         },
         PrismaLoginRepository,
+        // Compte d'un numéro lu ou créé pour cleaning (FindUserByPhone, EnsureUserByPhone ; R-AG-02).
+        PrismaPendingAccountRepository,
+        {
+          provide: FindUserByPhoneUseCase,
+          inject: [PrismaLoginRepository],
+          useFactory: (accounts: PrismaLoginRepository) => new FindUserByPhoneUseCase(accounts),
+        },
+        {
+          provide: EnsureUserByPhoneUseCase,
+          inject: [PrismaLoginRepository, PrismaPendingAccountRepository],
+          useFactory: (accounts: PrismaLoginRepository, pending: PrismaPendingAccountRepository) =>
+            new EnsureUserByPhoneUseCase(accounts, pending, new UuidV7Generator(), new SystemClock()),
+        },
         PrismaRoleRepository,
+        PrismaRbacRepository,
         PrismaMfaRepository,
         {
           // Chargée au démarrage : une clé absente en production empêche le service de démarrer ; ailleurs,
@@ -481,6 +520,69 @@ export class AppModule {
               new SystemClock(),
               config.MFA_RESET_ENROLLMENT_SECONDS,
             ),
+        },
+        // RBAC dynamique (ADR-057) : catalogue, rôles gérés, rôles et permissions pour les services.
+        {
+          provide: RegisterCatalogUseCase,
+          inject: [PrismaRbacRepository],
+          useFactory: (rbac: PrismaRbacRepository) =>
+            new RegisterCatalogUseCase(rbac, new UuidV7Generator(), new SystemClock()),
+        },
+        {
+          provide: GetCatalogUseCase,
+          inject: [PrismaRbacRepository],
+          useFactory: (rbac: PrismaRbacRepository) => new GetCatalogUseCase(rbac),
+        },
+        {
+          provide: ListPermissionsUseCase,
+          inject: [PrismaRbacRepository],
+          useFactory: (rbac: PrismaRbacRepository) => new ListPermissionsUseCase(rbac),
+        },
+        {
+          provide: GetRoleUseCase,
+          inject: [PrismaRbacRepository],
+          useFactory: (rbac: PrismaRbacRepository) => new GetRoleUseCase(rbac),
+        },
+        {
+          provide: CreateRoleUseCase,
+          inject: [PrismaRbacRepository],
+          useFactory: (rbac: PrismaRbacRepository) =>
+            new CreateRoleUseCase(rbac, new UuidV7Generator(), new SystemClock()),
+        },
+        {
+          provide: UpdateRoleUseCase,
+          inject: [PrismaRbacRepository],
+          useFactory: (rbac: PrismaRbacRepository) =>
+            new UpdateRoleUseCase(rbac, new UuidV7Generator(), new SystemClock()),
+        },
+        {
+          provide: DeactivateRoleUseCase,
+          inject: [PrismaRbacRepository],
+          useFactory: (rbac: PrismaRbacRepository) =>
+            new DeactivateRoleUseCase(rbac, new UuidV7Generator(), new SystemClock()),
+        },
+        {
+          provide: GrantRoleUseCase,
+          inject: [PrismaRoleRepository, PrismaRbacRepository],
+          useFactory: (roles: PrismaRoleRepository, staff: PrismaRbacRepository) =>
+            new GrantRoleUseCase(roles, staff, new UuidV7Generator(), new SystemClock()),
+        },
+        {
+          provide: RevokeRoleUseCase,
+          inject: [PrismaRoleRepository, PrismaRbacRepository],
+          useFactory: (roles: PrismaRoleRepository, staff: PrismaRbacRepository) =>
+            new RevokeRoleUseCase(roles, staff, new UuidV7Generator(), new SystemClock()),
+        },
+        {
+          provide: ListStaffByPermissionUseCase,
+          inject: [PrismaRbacRepository],
+          useFactory: (staff: PrismaRbacRepository) => new ListStaffByPermissionUseCase(staff),
+        },
+        {
+          provide: CheckPermissionUseCase,
+          inject: [PrismaRoleRepository, PrismaRbacRepository],
+          useFactory: (roles: PrismaRoleRepository, staff: PrismaRbacRepository) =>
+            new CheckPermissionUseCase(roles, staff),
         },
         {
           provide: GetUsersUseCase,

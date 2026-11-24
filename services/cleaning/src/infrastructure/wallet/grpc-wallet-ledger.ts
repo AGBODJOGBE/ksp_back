@@ -3,7 +3,7 @@ import { type GrpcCaller } from '@ksp/platform';
 import { type WalletDebit, type WalletLedger } from '../../application/ports';
 
 /**
- * Portefeuille prépayé chez wallet (WalletService.Debit et Refund, ADR-046), avec le jeton de
+ * Portefeuille prépayé chez wallet (WalletService.Debit, Refund et Credit, ADR-046), avec le jeton de
  * service de cleaning ; l'utilisateur de la requête est transmis dans les métadonnées par le kit.
  * Les deux appels sont idempotents chez wallet (clé du débit, remboursement unique) : ils peuvent
  * être rejoués. Les erreurs de wallet (solde insuffisant…) sont transmises telles quelles.
@@ -40,5 +40,30 @@ export class GrpcWalletLedger implements WalletLedger {
 
   async refund(input: { transactionId: string; reason: string }): Promise<void> {
     await this.caller.call('refund', (metadata) => this.client.refund(input, metadata), { idempotent: true });
+  }
+
+  /** Lot G : crédit d'une réclamation (WalletService.Credit), idempotent par sa clé fixe. */
+  async credit(
+    input: Parameters<WalletLedger['credit']>[0],
+  ): Promise<{ transactionId: string; created: boolean }> {
+    const res = await this.caller.call(
+      'credit',
+      (metadata) =>
+        this.client.credit(
+          {
+            idempotencyKey: input.idempotencyKey,
+            holder: input.holder,
+            amount: { amount: input.amount, currency: 'XOF' },
+            object: { service: '', ...input.object },
+            kind: input.kind,
+            description: input.description,
+            relatedTransactionId: '',
+          },
+          metadata,
+        ),
+      { idempotent: true },
+    );
+    if (!res.transaction?.id) throw new Error('Réponse de wallet sans crédit.');
+    return { transactionId: res.transaction.id, created: res.created };
   }
 }

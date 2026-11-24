@@ -1,7 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { type AddressInfo, createServer } from 'node:net';
-import { cleaningV1, commonV1 } from '@ksp/contracts';
+import { GRPC_PACKAGES, protoPath } from '@ksp/contracts';
 import {
-  AppError,
+  type AppError,
   GrpcCaller,
   grpcClientOptions,
   GrpcContextInterceptor,
@@ -14,22 +15,190 @@ import { NestFactory } from '@nestjs/core';
 import { type ClientGrpc, ClientProxyFactory, type MicroserviceOptions } from '@nestjs/microservices';
 import { type Metadata } from '@grpc/grpc-js';
 import { type Observable } from 'rxjs';
-import { newPaymentState } from '../src/domain/payment';
-import { homeCleaning, testWorld, type TestWorld } from '../src/application/testing/fakes';
-import { CLEANING_USE_CASES, createUseCases } from '../src/application/use-cases';
-import { CleaningAdminGrpcController } from '../src/interfaces/grpc/admin.controller';
+import { CATALOG_USE_CASES, catalogUseCases } from '../src/application/catalog/catalog-use-cases';
+import { TariffsUseCases } from '../src/application/catalog/tariffs.use-cases';
+import { CLEANING_DEPS, type CleaningDeps } from '../src/application/deps';
+import { LOT_C_USE_CASES, lotCUseCases } from '../src/application/requests/lot-c-use-cases';
+import { asStaff, CatalogMemory } from '../src/application/testing/catalog-fakes';
 import {
-  CatalogGrpcController,
-  MissionGrpcController,
-  ObligationGrpcController,
-  QuoteGrpcController,
-} from '../src/interfaces/grpc/customer.controllers';
+  type MaisonCatalog,
+  seedMaison,
+  SOL_TARIFF,
+  VITRES_TARIFF,
+} from '../src/application/testing/catalog-fixtures';
+import { CLEANING_GRPC_CONTROLLERS } from '../src/interfaces/grpc/controllers';
 
 /**
- * Bout en bout sur un vrai serveur gRPC (doublures en mémoire, sans base) : chargement des deux
- * paquets (cleaning et ksp.common.v1), traduction des messages, contexte utilisateur transmis
- * dans les métadonnées comme le fait la gateway, et traduction des erreurs.
+ * Service cleaning sur un vrai serveur gRPC. Chaque RPC des services lus dans les .proto
+ * (ksp.cleaning.v1, plus ksp.common.v1.ObligationService) est exposée (ADR-054).
+ * - Lot A : CatalogService et CatalogAdminService répondent avec leurs cas d'usage (faux en mémoire).
+ * - Lots C, D, E et G : les RPC livrées exigent une connexion ; appelées sans utilisateur, elles
+ *   répondent AUTH_REQUIRED avant tout accès aux données.
+ * - Piste S : ObligationService.HasPendingObligations répond avec son cas d'usage (réservée à identity).
+ * - Toute autre RPC répond UNIMPLEMENTED avec le code CLEANING_NOT_IMPLEMENTED. Une méthode absente du
+ *   serveur répondrait aussi UNIMPLEMENTED, mais sans ce code : le test la repère.
  */
+
+/** RPC branchées par le lot D (UC-NT-19 à 21, 34 à 37). */
+const LOT_D: Readonly<Record<string, readonly string[]>> = {
+  AgentService: [
+    'SubmitAgentApplication',
+    'GetMyAgentProfile',
+    'GetMyAvailability',
+    'SetMyAvailability',
+    'DeclareMyUnavailability',
+    'RemoveMyUnavailability',
+    'ListMyAssignments',
+    'AcceptAssignment',
+    'DeclineAssignment',
+  ],
+  AgentAdminService: [
+    'ListAgents',
+    'GetAgent',
+    'UpdateAgent',
+    'StartAgentReview',
+    'ApproveAgent',
+    'RejectAgent',
+    'SuspendAgent',
+    'ReactivateAgent',
+    'DeactivateAgent',
+    'GetAgentAvailability',
+    'SetAgentAvailability',
+    'DeclareAgentUnavailability',
+    'RemoveAgentUnavailability',
+    'ListTeams',
+    'CreateTeam',
+    'GetTeam',
+    'UpdateTeam',
+  ],
+  PlanningAdminService: [
+    'GetPlanning',
+    'ListUnassigned',
+    'CheckAssignment',
+    'CreateAssignments',
+    'UpdateAssignment',
+    'RemoveAssignment',
+  ],
+};
+/** RPC branchées par le lot C (UC-NT-03 à 10, 22, 30 à 33). */
+const LOT_C: Readonly<Record<string, readonly string[]>> = {
+  PlaceService: ['ListMyPlaces', 'CreatePlace', 'GetMyPlace', 'UpdatePlace', 'ArchivePlace', 'LocatePoint'],
+  RequestService: [
+    'SubmitRequest',
+    'ListMyRequests',
+    'GetMyRequest',
+    'PayVisitFee',
+    'ChangeVisitSlot',
+    'CancelRequest',
+    'RequestReactivation',
+    'GetMyQuote',
+    'AcceptQuote',
+    'DeclineQuote',
+    'ForwardQuote',
+  ],
+  RequestAdminService: [
+    'ListRequests',
+    'GetRequest',
+    'RejectRequest',
+    'CorrectRequestLocation',
+    'DecideReactivation',
+    'ListVisits',
+    'ScheduleVisit',
+    'UpdateVisit',
+    'CancelVisit',
+    'RequestNewVisit',
+    'CompleteVisitOnBehalf',
+    'ReportVisitMissedOnBehalf',
+    'RemoveVisitPhotoAsKsp',
+    'SaveRetainedValues',
+    'EstimateRetainedValues',
+    'CreateQuote',
+    'GetQuote',
+    'UpdateQuoteDraft',
+    'ApproveQuoteAdjustment',
+    'SendQuote',
+  ],
+  AgentService: [
+    'GetAgentVisit',
+    'ArriveAtVisit',
+    'SaveVisitObservations',
+    'AddVisitPhoto',
+    'CompleteVisit',
+    'ReportVisitMissed',
+    'RemoveVisitPhoto',
+  ],
+};
+/**
+ * RPC branchées par le lot E (UC-NT-11 à 14, 16, 23, 24, 46). GetWalletDebitStatus, réservée à
+ * wallet, est testée à part (pas de compte connecté).
+ */
+const LOT_E: Readonly<Record<string, readonly string[]>> = {
+  ProgramService: [
+    'ListMyPrograms',
+    'GetMyProgram',
+    'ListMyProgramSessions',
+    'GetMySession',
+    'RescheduleSession',
+    'CancelSession',
+    'StopProgram',
+    'PaySession',
+    'RateSession',
+  ],
+  AgentService: [
+    'GetMyActivity',
+    'GetAgentSession',
+    'ArriveAtSession',
+    'StartSession',
+    'UpdateSessionChecklist',
+    'AddSessionPhoto',
+    'ReportSessionIncident',
+    'CompleteSession',
+    'ReportSessionMissed',
+    'RemoveSessionPhoto',
+  ],
+  ProgramAdminService: [
+    'ListPrograms',
+    'GetProgram',
+    'ListProgramSessions',
+    'GetSession',
+    'SuspendProgram',
+    'ResumeProgram',
+    'CancelProgram',
+    'ApproveProgramCancellation',
+    'RescheduleSessionAsKsp',
+    'CancelSessionAsKsp',
+    'ResumeSession',
+    'CompleteSessionAsKsp',
+    'ReportSessionMissedAsKsp',
+    'RemoveSessionPhotoAsKsp',
+  ],
+};
+const SERVICE_ONLY = [['WalletDebitCheckService', 'GetWalletDebitStatus']];
+/** RPC branchées par le lot G (UC-NT-17, 18, 38, 40, 43, 45). */
+const LOT_G: Readonly<Record<string, readonly string[]>> = {
+  PlanningAdminService: ['RunAutoPlanning', 'ListProposals', 'ApproveProposals'],
+  SettingsAdminService: ['GetSettings', 'UpdateSettings'],
+  ProgramService: ['OpenClaim', 'ListMyClaims', 'GetMyClaim', 'AddClaimMessage'],
+  ClaimAdminService: ['ListClaims', 'GetClaim', 'UpdateClaim', 'DecideClaim', 'ApproveClaimCredit'],
+};
+/**
+ * RPC branchée par la piste S (suppression d'un compte) : HasPendingObligations, réservée à identity,
+ * est testée à part (pas de compte connecté).
+ */
+const PISTE_S: Readonly<Record<string, readonly string[]>> = {
+  ObligationService: ['HasPendingObligations'],
+};
+
+/** RPC branchées par la piste A (agents : UC-NT-34, UC-NT-35). */
+const PISTE_A: Readonly<Record<string, readonly string[]>> = {
+  AgentAdminService: ['GetAgentIdDocument', 'CreateAgent'],
+};
+const inLot = (lot: Readonly<Record<string, readonly string[]>>, service: string, rpc: string) =>
+  lot[service]?.includes(rpc) ?? false;
+const delivered = (service: string, rpc: string) =>
+  [LOT_D, LOT_C, LOT_E, LOT_G, PISTE_A].some((lot) => inLot(lot, service, rpc));
+const serviceOnly = (service: string, rpc: string) =>
+  SERVICE_ONLY.some(([s, r]) => s === service && r === rpc) || inLot(PISTE_S, service, rpc);
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -42,32 +211,90 @@ function freePort(): Promise<number> {
   });
 }
 
-const CUSTOMER = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11';
-const SLOT = { start: '2026-12-30T08:00:00.000Z', end: '2026-12-30T11:00:00.000Z' };
+type PackageName = 'cleaning' | 'obligation';
+
+/** Services et RPC déclarés dans le fichier .proto d'un paquet, dans l'ordre du fichier. */
+function rpcsOf(pkg: PackageName): Array<[PackageName, string, string]> {
+  const source = readFileSync(protoPath(GRPC_PACKAGES[pkg].file), 'utf8');
+  return [...source.matchAll(/^service (\w+) \{([\s\S]*?)^\}/gm)].flatMap(([, service, body]) =>
+    [...body!.matchAll(/^\s+rpc (\w+)\(/gm)].map(
+      ([, rpc]) => [pkg, service!, rpc!] as [PackageName, string, string],
+    ),
+  );
+}
+
+/** Services branchés par le lot A (UC-NT-01, 02, 25 à 29). */
+const LOT_A_SERVICES = ['CatalogService', 'CatalogAdminService'];
+const RPCS = [...rpcsOf('cleaning'), ...rpcsOf('obligation')];
+const LOT_A = RPCS.filter(([, service]) => LOT_A_SERVICES.includes(service));
+const DELIVERED = RPCS.filter(([, service, rpc]) => delivered(service, rpc));
+const NOT_IMPLEMENTED = RPCS.filter(
+  ([, service, rpc]) =>
+    !LOT_A_SERVICES.includes(service) && !delivered(service, rpc) && !serviceOnly(service, rpc),
+);
+const camel = (name: string) => name[0]!.toLowerCase() + name.slice(1);
+
+const VILLA = {
+  superficie: { number: 120 },
+  chambres: { number: 5 },
+  cour: { flag: true },
+  arriere_cour: { flag: false },
+  fenetres: { number: 12 },
+};
+const WEEKLY_12 = {
+  kind: 'weekly',
+  startTime: '08:00',
+  dates: [],
+  weekdays: ['mon'],
+  monthDays: [],
+  monthWeekdays: [],
+  startDate: '2027-01-04',
+  durationWeeks: 12,
+  excludedDates: [],
+  addedDates: [],
+};
 
 describe('cleaning en gRPC', () => {
   let app: INestMicroservice;
-  let world: TestWorld;
-  let catalog: cleaningV1.CatalogServiceClient;
-  let quotes: cleaningV1.QuoteServiceClient;
-  let admin: cleaningV1.CleaningAdminServiceClient;
-  let obligations: commonV1.ObligationServiceClient;
+  let catalog: MaisonCatalog;
+  const memory = new CatalogMemory();
+  const clients = new Map<PackageName, ClientGrpc>();
   const caller = new GrpcCaller({ target: 'cleaning' });
 
+  /** Appel gRPC réel ; erreur rendue telle que le client la reçoit. */
+  const call = <T>(pkg: PackageName, service: string, rpc: string, request: object): Promise<T> => {
+    const client = clients
+      .get(pkg)!
+      .getService<Record<string, (request: object, metadata: Metadata) => Observable<unknown>>>(service);
+    return caller.call(rpc, (metadata) => client[camel(rpc)]!(request, metadata)) as Promise<T>;
+  };
+  const anonymous = <T>(fn: () => Promise<T>) =>
+    runWithContext({ correlationId: '0192f1c4-0000-7000-8000-00000000c0de' }, fn).catch(
+      (error: AppError) => error,
+    );
+  const staff = <T>(fn: () => Promise<T>) => asStaff(fn).catch((error: AppError) => error);
+
   beforeAll(async () => {
-    world = testWorld();
-    world.clock.current = new Date('2026-12-01T08:00:00Z');
-    world.catalog.services.set('home_cleaning', homeCleaning());
+    catalog = seedMaison(memory);
+    const tariffs = new TariffsUseCases(memory.deps());
+    for (const [offerId, tariff, key] of [
+      [catalog.solOfferId, SOL_TARIFF, 'cle-sol-0001'],
+      [catalog.vitresOfferId, VITRES_TARIFF, 'cle-vitres-01'],
+    ] as const) {
+      await asStaff(() => tariffs.createDraft({ ...tariff, offerId, idempotencyKey: key }));
+      await asStaff(() => tariffs.publish({ offerId, version: 1, idempotencyKey: `${key}-p` }));
+    }
 
     @Module({
-      controllers: [
-        CatalogGrpcController,
-        QuoteGrpcController,
-        MissionGrpcController,
-        CleaningAdminGrpcController,
-        ObligationGrpcController,
+      controllers: CLEANING_GRPC_CONTROLLERS,
+      providers: [
+        GrpcContextInterceptor,
+        { provide: CATALOG_USE_CASES, useValue: catalogUseCases(memory.deps()) },
+        // Dépendances vides : une RPC du lot D appelée sans utilisateur s'arrête au contrôle d'accès.
+        { provide: CLEANING_DEPS, useValue: {} },
+        // Lot C : cas d'usage sur des dépendances vides, arrêtés eux aussi au contrôle d'accès.
+        { provide: LOT_C_USE_CASES, useValue: lotCUseCases({} as CleaningDeps) },
       ],
-      providers: [{ provide: CLEANING_USE_CASES, useValue: createUseCases(world) }, GrpcContextInterceptor],
     })
     class TestModule {}
 
@@ -79,791 +306,299 @@ describe('cleaning en gRPC', () => {
     app.useGlobalFilters(new GrpcExceptionFilter());
     app.useGlobalInterceptors(app.get(GrpcContextInterceptor));
     await app.listen();
-
-    const url = `127.0.0.1:${port}`;
-    const client = (pkg: 'cleaning' | 'obligation') =>
-      ClientProxyFactory.create(grpcClientOptions('c', pkg, url) as never) as unknown as ClientGrpc;
-    catalog = client('cleaning').getService(cleaningV1.CATALOG_SERVICE_NAME);
-    quotes = client('cleaning').getService(cleaningV1.QUOTE_SERVICE_NAME);
-    admin = client('cleaning').getService(cleaningV1.CLEANING_ADMIN_SERVICE_NAME);
-    obligations = client('obligation').getService(commonV1.OBLIGATION_SERVICE_NAME);
+    for (const pkg of ['cleaning', 'obligation'] as const) {
+      clients.set(
+        pkg,
+        ClientProxyFactory.create(
+          grpcClientOptions(pkg, pkg, `127.0.0.1:${port}`) as never,
+        ) as unknown as ClientGrpc,
+      );
+    }
   });
 
   afterAll(async () => {
     await app?.close();
   });
 
-  /** Appel au nom d'un utilisateur : le contexte part dans les métadonnées (x-user-id, x-user-roles…). */
-  const call = <T>(
-    invoke: (metadata: Metadata) => Observable<T>,
-    user?: { userId: string; roles: string[]; mfa?: boolean },
-  ): Promise<T> =>
-    runWithContext(
-      {
-        correlationId: '0192f1c4-0000-7000-8000-00000000c0de',
-        ...(user
-          ? {
-              user: {
-                userId: user.userId,
-                sessionId: 's',
-                activeContext: 'personal',
-                roles: user.roles.map((role) => ({ role, scopeType: 'global' as const })),
-                mfa: user.mfa ?? false,
-                authTime: Math.floor(Date.now() / 1000),
-              },
-            }
-          : {}),
-      },
-      () => caller.call('test', invoke),
-    );
-  const asCustomer = { userId: CUSTOMER, roles: ['customer'] };
-
-  /** Réponses au formulaire du nettoyage à domicile (ADR-033). */
-  const ANSWERS: cleaningV1.AnswerSet = {
-    values: {
-      housing_type: { choiceValue: 'apartment' },
-      rooms: { numberValue: 6 },
-      bathrooms: { numberValue: 1 },
-      condition: { choiceValue: 'normal' },
-      pets: { booleanValue: false },
-    },
-  };
-  const WINDOWS = [{ code: 'windows', answers: { values: { window_count: { numberValue: 8 } } } }];
-
-  it('catalogue public : formulaire sans prix, anciens champs remplis', async () => {
-    const { services } = await call((m) => catalog.listServices({}, m));
-    expect(services[0]).toMatchObject({
-      code: 'home_cleaning',
-      unit: 'room',
-      priced: true,
-      minimumPrice: { amount: 15000, currency: 'XOF' },
-      options: [
-        { code: 'windows', label: 'Vitres' },
-        { code: 'sofa', label: 'Canapé' },
-        { code: 'appliances', label: 'Électroménager', price: { amount: 5000, currency: 'XOF' } },
-      ],
-    });
-    const form = services[0]!.form!;
-    expect(form.fields.map((field) => [field.code, field.type, field.unitLabel])).toEqual([
-      ['housing_type', 'choice', ''],
-      ['rooms', 'number', 'pièces'],
-      ['bathrooms', 'number', 'salles de bain'],
-      ['condition', 'choice', ''],
-      ['pets', 'boolean', ''],
-    ]);
-    expect(form.fields[1]).toEqual({
-      code: 'rooms',
-      label: 'Nombre de pièces',
-      type: 'number',
-      required: true,
-      helpText: '',
-      unitLabel: 'pièces',
-      min: 1,
-      max: 50,
-      choices: [],
-    });
-    expect(form.options[0]!.fields[0]!.code).toBe('window_count');
-    expect(form.frequencies.map((frequency) => frequency.code)).toEqual(['once', 'weekly', 'monthly']);
-    // Aucun montant dans le formulaire public.
-    expect(JSON.stringify(form)).not.toMatch(/amount|supplement|coefficient|price/i);
+  it('un contrôleur par service des contrats', () => {
+    const services = new Set(RPCS.map(([, service]) => service));
+    expect(services.size).toBe(14);
+    expect(CLEANING_GRPC_CONTROLLERS).toHaveLength(services.size);
+    expect(LOT_A).toHaveLength(41);
   });
 
-  it('simulateur : nouveau format, détail du calcul ; ancien format toléré', async () => {
-    const simulation = await call((m) =>
-      catalog.simulate(
-        {
-          serviceCode: 'home_cleaning',
-          premisesType: '',
-          quantity: 0,
-          options: [],
-          answers: ANSWERS,
-          optionSelections: WINDOWS,
-          commune: 'Abomey-Calavi',
-          frequency: 'once',
-        },
-        m,
-      ),
-    );
-    expect(simulation).toMatchObject({
-      covered: true,
-      priced: true,
-      reason: '',
-      estimate: { low: { amount: 32000, currency: 'XOF' }, high: { amount: 41000, currency: 'XOF' } },
-      computedPrice: { amount: 35700, currency: 'XOF' },
-      communeCoefficientBp: 10500,
-      recommendedTeamSize: 2,
-    });
-    expect(simulation.breakdown).toHaveLength(3);
-    expect(simulation.calculation).toMatchObject({
-      pricingVersion: 3,
-      priced: true,
-      baseAmount: { amount: 34000, currency: 'XOF' },
-      subtotal: { amount: 35700, currency: 'XOF' },
-    });
-    expect(simulation.calculation!.lines[2]).toMatchObject({
-      kind: 'unit_price',
-      optionCode: 'windows',
-      fieldCode: 'window_count',
-      choiceCode: '',
-      quantity: 8,
-    });
-
-    const legacy = await call((m) =>
-      catalog.simulate(
-        {
-          serviceCode: 'home_cleaning',
-          premisesType: 'house',
-          quantity: 6,
-          options: ['windows'],
-          optionSelections: [],
-          commune: 'Abomey-Calavi',
-          frequency: 'once',
-        },
-        m,
-      ),
-    );
-    expect(legacy).toMatchObject({ priced: false, reason: 'answers_incomplete', breakdown: [] });
+  it('les RPC du lot D sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    for (const [service, rpcs] of Object.entries(LOT_D)) {
+      for (const rpc of rpcs) expect(all).toContain(`${service}.${rpc}`);
+    }
+    expect(DELIVERED.filter(([, service, rpc]) => LOT_D[service]?.includes(rpc))).toHaveLength(32);
   });
 
-  it('plan de passages : aperçu des dates, simulation au nombre exact de passages (ADR-052)', async () => {
-    const schedule: cleaningV1.InterventionSchedule = {
-      mode: 'monthly',
-      dates: [],
-      startDate: '2027-01-01',
-      endDate: '2027-03-31',
-      weekdays: ['mon'],
-      everyWeeks: 0,
-      monthDays: [],
-      weeksOfMonth: ['1', '3'],
-      startTime: '08:00',
-      excludedDates: ['2027-02-15'],
-      extraDates: [],
-    };
-    const preview = await call((m) => catalog.previewSchedule({ schedule }, m));
-    expect(preview.preview).toEqual({
-      dates: ['2027-01-04', '2027-01-18', '2027-02-01', '2027-03-01', '2027-03-15'],
-      count: 5,
-      firstDate: '2027-01-04',
-      lastDate: '2027-03-15',
-      warnings: [{ code: 'excluded', date: '2027-02-15', message: expect.any(String) }],
-    });
-    const simulation = await call((m) =>
-      catalog.simulate(
-        {
-          serviceCode: 'home_cleaning',
-          premisesType: '',
-          quantity: 0,
-          options: [],
-          answers: ANSWERS,
-          optionSelections: WINDOWS,
-          commune: 'Abomey-Calavi',
-          frequency: 'once',
-          schedule,
-        },
-        m,
-      ),
-    );
-    expect(simulation).toMatchObject({
-      computedPrice: { amount: 35700, currency: 'XOF' },
-      schedule: { count: 5 },
-      scheduleTotal: { amount: 178500, currency: 'XOF' },
-      scheduleEstimate: { low: { amount: 160000 }, high: { amount: 205000 } },
-    });
-    const refused = await call((m) =>
-      catalog.previewSchedule({ schedule: { ...schedule, weeksOfMonth: ['5'] } }, m),
-    ).catch((error: AppError) => error);
-    expect(refused).toMatchObject({
-      code: 'CLEANING_VALIDATION_FAILED',
-      details: { field: 'schedule.weeksOfMonth' },
-    });
+  it('les RPC du lot C sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    for (const [service, rpcs] of Object.entries(LOT_C)) {
+      for (const rpc of rpcs) expect(all).toContain(`${service}.${rpc}`);
+    }
+    expect(DELIVERED).toHaveLength(32 + 44 + 33 + 14 + Object.values(PISTE_A).flat().length);
   });
 
-  it('zones desservies publiques : actives seulement, code et nom, sans utilisateur', async () => {
-    const calavi = world.catalog.zones.get('abomey-calavi')!;
-    world.catalog.zones.set('abomey-calavi', { ...calavi, active: false });
-    try {
-      const { zones } = await call((m) => catalog.listServedZones({}, m));
-      expect(zones).toEqual([
-        { code: 'cotonou', commune: 'Cotonou' },
-        { code: 'porto-novo', commune: 'Porto-Novo' },
-      ]);
-    } finally {
-      world.catalog.zones.set('abomey-calavi', calavi);
+  it('les RPC du lot E sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    for (const [service, rpcs] of Object.entries(LOT_E)) {
+      for (const rpc of rpcs) expect(all).toContain(`${service}.${rpc}`);
     }
   });
 
-  it('demande de devis au nom du client transmis par la gateway', async () => {
-    const { request } = await call(
-      (m) =>
-        quotes.requestQuote(
+  it('WalletDebitCheckService.GetWalletDebitStatus est branchée (lot E, réservée à wallet)', async () => {
+    expect(
+      await anonymous(() =>
+        call('cleaning', 'WalletDebitCheckService', 'GetWalletDebitStatus', { objectType: 'autre' }),
+      ),
+    ).toMatchObject({ recorded: false, status: 'not_recorded' });
+  });
+
+  it('les RPC du lot G sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    const lotG = Object.entries(LOT_G).flatMap(([service, rpcs]) => rpcs.map((rpc) => `${service}.${rpc}`));
+    for (const rpc of lotG) expect(all).toContain(rpc);
+    expect(RPCS.filter(([, service, rpc]) => inLot(LOT_G, service, rpc))).toHaveLength(lotG.length);
+  });
+
+  it('ObligationService.HasPendingObligations est branchée (piste S, réservée à identity)', async () => {
+    expect(RPCS.filter(([, service, rpc]) => inLot(PISTE_S, service, rpc))).toEqual([
+      ['obligation', 'ObligationService', 'HasPendingObligations'],
+    ]);
+    // Identifiant refusé avant toute lecture : la méthode répond, sans CLEANING_NOT_IMPLEMENTED.
+    expect(
+      await anonymous(() =>
+        call('obligation', 'ObligationService', 'HasPendingObligations', { userId: 'x' }),
+      ),
+    ).toMatchObject({
+      kind: 'INVALID_ARGUMENT',
+      code: 'CLEANING_VALIDATION_FAILED',
+      details: { field: 'userId', reason: 'invalid_type' },
+    });
+  });
+
+  it('les RPC de la piste A sont toutes dans le contrat', () => {
+    const all = new Set(RPCS.map(([, service, rpc]) => `${service}.${rpc}`));
+    const pisteA = Object.entries(PISTE_A).flatMap(([service, rpcs]) =>
+      rpcs.map((rpc) => `${service}.${rpc}`),
+    );
+    for (const rpc of pisteA) expect(all).toContain(rpc);
+    expect(RPCS.filter(([, service, rpc]) => inLot(PISTE_A, service, rpc))).toHaveLength(pisteA.length);
+  });
+
+  it.each(DELIVERED)('%s : %s.%s est branchée et exige une connexion', async (pkg, service, rpc) => {
+    expect(await anonymous(() => call(pkg, service, rpc, {}))).toMatchObject({
+      kind: 'UNAUTHENTICATED',
+      code: 'AUTH_REQUIRED',
+    });
+  });
+
+  it.each(NOT_IMPLEMENTED)('%s : %s.%s répond UNIMPLEMENTED', async (pkg, service, rpc) => {
+    const failure = await anonymous(() => call(pkg, service, rpc, {}));
+    expect(failure).toMatchObject({
+      kind: 'NOT_IMPLEMENTED',
+      code: 'CLEANING_NOT_IMPLEMENTED',
+      message: `La méthode ${rpc} n'est pas encore disponible.`,
+    });
+  });
+
+  it.each(LOT_A)('%s : %s.%s est branchée (lot A)', async (pkg, service, rpc) => {
+    const outcome = await staff(() => call(pkg, service, rpc, {}));
+    expect(outcome).not.toMatchObject({ code: 'CLEANING_NOT_IMPLEMENTED' });
+  });
+
+  describe('CatalogService (public)', () => {
+    it('Simulate : exemple de la partie 5 au franc près', async () => {
+      const response = await anonymous(() =>
+        call<{ simulation: { pricing: Record<string, unknown>; covered: boolean; disclaimer: string } }>(
+          'cleaning',
+          'CatalogService',
+          'Simulate',
           {
-            idempotencyKey: 'grpc-1',
-            serviceCode: 'home_cleaning',
-            premisesType: '',
-            quantity: 0,
-            options: [],
-            answers: ANSWERS,
-            optionSelections: WINDOWS,
-            frequency: 'once',
-            commune: 'Cotonou',
-            address: 'Lot 12',
-            preferredSlots: [SLOT],
-            comment: '',
-            requestedTeamSize: 0,
-            daysPerWeek: 0,
+            placeTypeId: catalog.placeTypeId,
+            cleaningTypeIds: [catalog.solTypeId, catalog.vitresTypeId],
+            values: VILLA,
+            schedule: WEEKLY_12,
+            communeKey: 'cotonou',
           },
-          m,
         ),
-      asCustomer,
-    );
-    expect(request).toMatchObject({
-      status: 'received',
-      customerId: CUSTOMER,
-      organizationId: '',
-      missionId: '',
-    });
-    expect(request?.preferredSlots).toEqual([SLOT]);
-    expect(request).toMatchObject({
-      answers: ANSWERS,
-      optionSelections: WINDOWS,
-      frequency: 'once',
-      pricingVersion: 3,
-      premisesType: 'other',
-      quantity: 6,
-      options: ['windows'],
-      calculation: { priced: true, computedPrice: { amount: 34000, currency: 'XOF' } },
-    });
-    // Suppression du compte (ADR-036) : la demande ouverte la bloque.
-    const pending = await call((m) =>
-      obligations.hasPendingObligations({ userId: CUSTOMER, organizationId: '' }, m),
-    );
-    expect(pending).toEqual({
-      hasPending: true,
-      obligations: [
-        {
-          kind: 'open_cleaning_request',
-          reference: request?.id,
-          description: 'Une demande de devis de nettoyage est en cours.',
+      );
+      expect(response).toMatchObject({
+        simulation: {
+          covered: true,
+          disclaimer: 'Estimation non contractuelle, confirmée après la visite des lieux',
+          pricing: {
+            status: 'priced',
+            sessionPrice: { amount: 32_040, currency: 'XOF' },
+            sessionsCount: 12,
+            programTotal: { amount: 384_480 },
+            range: { low: { amount: 28_500 }, high: { amount: 37_000 } },
+            frequencyDiscount: { amount: 3560 },
+            visitFee: { amount: 5000 },
+            offers: [
+              { cleaningTypeCode: 'sol', price: { amount: 26_640 }, tariffStatus: 'published' },
+              { cleaningTypeCode: 'vitres', price: { amount: 5400 } },
+            ],
+          },
         },
-      ],
+      });
     });
-    const other = await call((m) =>
-      obligations.hasPendingObligations(
-        { userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001', organizationId: '' },
-        m,
-      ),
-    );
-    expect(other).toEqual({ hasPending: false, obligations: [] });
+
+    it('catalogue, détail d’un lieu, zones desservies, aperçu des dates', async () => {
+      await expect(
+        anonymous(() => call('cleaning', 'CatalogService', 'ListCatalog', {})),
+      ).resolves.toMatchObject({
+        categories: [{ code: 'maison', placeTypes: [{ code: 'villa', freeDescription: false }] }],
+      });
+      await expect(
+        anonymous(() =>
+          call('cleaning', 'CatalogService', 'GetCatalogPlaceType', { placeTypeId: catalog.placeTypeId }),
+        ),
+      ).resolves.toMatchObject({
+        publicPlaceTypeDetail: {
+          categoryId: catalog.categoryId,
+          offers: [
+            { cleaningType: { code: 'sol' } },
+            { cleaningType: { code: 'vitres' }, extraParameters: [{ code: 'fenetres' }] },
+          ],
+          visitFee: { amount: 5000 },
+        },
+      });
+      await expect(
+        anonymous(() => call('cleaning', 'CatalogService', 'ListServedZones', {})),
+      ).resolves.toEqual({
+        zones: [{ communeKey: 'cotonou', name: 'Cotonou' }],
+      });
+      await expect(
+        anonymous(() => call('cleaning', 'CatalogService', 'PreviewSchedule', { schedule: WEEKLY_12 })),
+      ).resolves.toMatchObject({ schedulePreview: { count: 12, firstStart: '2027-01-04T07:00:00.000Z' } });
+    });
+
+    it('erreurs du contrat : lieu inconnu, valeur hors bornes', async () => {
+      await expect(
+        anonymous(() => call('cleaning', 'CatalogService', 'GetCatalogPlaceType', { placeTypeId: 'x' })),
+      ).resolves.toMatchObject({ kind: 'NOT_FOUND', code: 'CLEANING_PLACE_TYPE_NOT_FOUND' });
+      await expect(
+        anonymous(() =>
+          call('cleaning', 'CatalogService', 'Simulate', {
+            placeTypeId: catalog.placeTypeId,
+            cleaningTypeIds: [catalog.solTypeId],
+            values: { ...VILLA, superficie: { number: 6000 } },
+          }),
+        ),
+      ).resolves.toMatchObject({
+        kind: 'INVALID_ARGUMENT',
+        code: 'CLEANING_VALIDATION_FAILED',
+        details: { field: 'values.superficie', reason: 'out_of_range' },
+      });
+    });
   });
 
-  it('back-office : super_admin, filtres de zone et de type, noms lus dans l’annuaire', async () => {
-    world.people.users.set(CUSTOMER, 'Koffi Adjovi');
-    const superAdmin = { userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0009', roles: ['super_admin'], mfa: true };
-    const list = (commune: string, customerKind: string) =>
-      call(
-        (m) =>
-          admin.listQuoteRequests(
-            {
-              page: { limit: 10, cursor: '' },
-              status: '',
-              commune,
-              customerKind,
-              groupId: '',
-              placeType: '',
-              serviceCode: '',
-            },
-            m,
-          ),
-        superAdmin,
+  describe('CatalogAdminService (back-office)', () => {
+    it('personnel connecté exigé', async () => {
+      await expect(
+        anonymous(() => call('cleaning', 'CatalogAdminService', 'ListZones', {})),
+      ).resolves.toMatchObject({
+        kind: 'UNAUTHENTICATED',
+        code: 'AUTH_REQUIRED',
+      });
+    });
+
+    it('catégorie créée (idempotente), relue avec le nom de son auteur', async () => {
+      const request = {
+        idempotencyKey: 'cle-grpc-0001',
+        code: 'bureaux',
+        name: 'Bureaux',
+        visitFee: { amount: 7000, currency: 'XOF' },
+      };
+      const created = await staff(() =>
+        call<{ placeCategory: { id: string } }>(
+          'cleaning',
+          'CatalogAdminService',
+          'CreatePlaceCategory',
+          request,
+        ),
       );
-    const { requests } = await list('cotonou', 'individual');
-    expect(requests.map((r) => [r.commune, r.customerName, r.organizationName])).toEqual([
-      ['Cotonou', 'Koffi Adjovi', ''],
-    ]);
-    expect((await list('cotonou', 'business')).requests).toEqual([]);
-    expect((await list('porto-novo', '')).requests).toEqual([]);
-  });
-
-  it('back-office : type de client sur la mission, reste dû dans l’erreur de paiement', async () => {
-    const organizationId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000';
-    world.people.organizations.set(organizationId, 'SARL Bénin Propre');
-    const base = {
-      requestId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d2000',
-      quoteId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d3000',
-      customerId: CUSTOMER,
-      status: 'to_schedule' as const,
-      serviceCode: 'home_cleaning',
-      commune: 'Cotonou',
-      address: 'Lot 12',
-      location: null,
-      landmark: null,
-      groupId: null,
-      placeType: null,
-      chosenSlot: { start: new Date(SLOT.start), end: new Date(SLOT.end) },
-      recurrence: null,
-      plannedInterventions: 1,
-      interventions: [],
-      payment: newPaymentState({ option: 'full', timing: 'after', method: 'cash' }, 30_000, 30),
-      cancellationReason: null,
-      daysPerWeek: null,
-      suspension: null,
-      warningLevel: 0,
-      createdAt: new Date('2026-12-01T08:00:00Z'),
-      updatedAt: new Date('2026-12-01T08:00:00Z'),
-      version: 0,
-    };
-    const businessId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1b00';
-    const individualId = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1a00';
-    world.missions.missions.set(businessId, { ...base, id: businessId, organizationId });
-    world.missions.missions.set(individualId, { ...base, id: individualId, organizationId: null });
-    const supervisor = {
-      userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001',
-      roles: ['cleaning_supervisor'],
-      mfa: true,
-    };
-
-    const { mission } = await call((m) => admin.getMissionDetail({ missionId: businessId }, m), supervisor);
-    expect(mission).toMatchObject({
-      customerKind: 'business',
-      organizationId,
-      customerName: 'Koffi Adjovi',
-      organizationName: 'SARL Bénin Propre',
-    });
-
-    const pay = (amount: number, idempotencyKey: string) =>
-      call(
-        (m) =>
-          admin.recordPayment(
-            {
-              missionId: individualId,
-              amount: { amount, currency: 'XOF' },
-              method: 'cash',
-              reference: '',
-              idempotencyKey,
-            },
-            m,
-          ),
-        supervisor,
+      expect(created).toMatchObject({
+        placeCategory: {
+          code: 'bureaux',
+          active: true,
+          visitFee: { amount: 7000 },
+          updatedByName: 'Nom ad01',
+        },
+      });
+      const again = await staff(() =>
+        call('cleaning', 'CatalogAdminService', 'CreatePlaceCategory', request),
       );
-    const first = await pay(10_000, 'grpc-paiement-1');
-    expect(first.mission?.customerKind).toBe('individual');
-    expect((await pay(10_000, 'grpc-paiement-1')).mission?.payment?.payments).toHaveLength(1);
-    const refused = await pay(25_000, 'grpc-paiement-2').catch((error: AppError) => error);
-    expect(refused).toMatchObject({
-      code: 'CLEANING_PAYMENT_INVALID',
-      details: { reason: 'exceeds_balance', remainingDue: { amount: 20_000, currency: 'XOF' } },
-    });
-  });
-
-  it('traduit les erreurs : non connecté, introuvable, droits du back-office', async () => {
-    const reason = (promise: Promise<unknown>) =>
-      promise.then(
-        () => null,
-        (error: AppError) => [error.kind, error.code],
-      );
-    expect(await reason(call((m) => quotes.listMyRequests({}, m)))).toEqual([
-      'UNAUTHENTICATED',
-      'AUTH_REQUIRED',
-    ]);
-    expect(
-      await reason(
-        call((m) => quotes.getRequest({ requestId: '0192f1c4-0000-7000-8000-000000000999' }, m), asCustomer),
-      ),
-    ).toEqual(['NOT_FOUND', 'CLEANING_REQUEST_NOT_FOUND']);
-    expect(await reason(call((m) => admin.getCatalog({}, m), asCustomer))).toEqual([
-      'PERMISSION_DENIED',
-      'AUTH_FORBIDDEN',
-    ]);
-    expect(
-      await reason(
-        call((m) => admin.getCatalog({}, m), { userId: CUSTOMER, roles: ['cleaning_admin'], mfa: false }),
-      ),
-    ).toEqual(['PERMISSION_DENIED', 'AUTH_MFA_REQUIRED']);
-    const { services } = await call((m) => admin.getCatalog({}, m), {
-      userId: CUSTOMER,
-      roles: ['cleaning_admin'],
-      mfa: true,
-    });
-    expect(services[0]?.pricing?.unitPrice).toEqual({ amount: 4500, currency: 'XOF' });
-  });
-
-  it('back-office : définition complète enregistrée telle quelle, essai d’une grille', async () => {
-    const adminUser = { userId: CUSTOMER, roles: ['cleaning_admin'], mfa: true };
-    const { services } = await call((m) => admin.getCatalog({}, m), adminUser);
-    const current = services.find((service) => service.code === 'home_cleaning')!;
-    expect(current.fields[3]!.choices[1]).toEqual({
-      code: 'dirty',
-      label: 'Sale',
-      // Prix non fixé : message absent (null une fois décodé).
-      supplement: null,
-      coefficientBp: 12000,
-      active: true,
-    });
-    expect(current.pricing!.teamSize).toEqual({
-      fieldCode: 'rooms',
-      unitsPerAgent: 3,
-      minAgents: 1,
-      maxAgents: 6,
+      expect(again).toEqual(created);
+      const id = (created as { placeCategory: { id: string } }).placeCategory.id;
+      await expect(
+        staff(() => call('cleaning', 'CatalogAdminService', 'GetPlaceCategory', { id })),
+      ).resolves.toEqual(created);
     });
 
-    const { service: saved } = await call(
-      (m) => admin.saveService({ service: { ...current, code: 'home_cleaning_copy' } }, m),
-      adminUser,
-    );
-    expect(saved!.fields).toEqual(current.fields);
-    expect(saved!.options).toEqual(current.options);
-    expect(saved!.pricing).toMatchObject({
-      version: 1,
-      frequencies: current.pricing!.frequencies,
-      minimumPrice: { amount: 15000, currency: 'XOF' },
-    });
-
-    const preview = await call(
-      (m) =>
-        admin.previewService(
-          {
-            serviceCode: 'garden_maintenance',
-            definition: { ...current, fields: current.fields.map((field) => ({ ...field })) },
-            answers: ANSWERS,
-            optionSelections: [],
-            commune: 'Cotonou',
-            frequency: 'weekly',
-            requestedTeamSize: 0,
-          },
-          m,
-        ),
-      adminUser,
-    );
-    // (27 000 + 3 000) × 0,9 ; définition essayée : pas de version.
-    expect(preview).toMatchObject({
-      serviceCode: 'garden_maintenance',
-      covered: true,
-      calculation: { pricingVersion: 0, priced: true, computedPrice: { amount: 27000, currency: 'XOF' } },
-    });
-    expect(world.catalog.services.has('garden_maintenance')).toBe(false);
-
-    const refused = await call(
-      (m) => admin.saveService({ service: { ...current, code: 'legacy_body', fields: [], options: [] } }, m),
-      adminUser,
-    ).then(
-      () => null,
-      (error: AppError) => [error.code, error.details],
-    );
-    expect(refused).toEqual(['CLEANING_VALIDATION_FAILED', { field: 'fields', reason: 'required' }]);
-  });
-
-  it('parcours par lieu : catalogue, estimation, position, groupe, demandes sœurs (ADR-034)', async () => {
-    world.catalog.placeTypes.set('house', {
-      code: 'house',
-      label: 'Maison',
-      description: '',
-      icon: 'house',
-      displayOrder: 10,
-      active: true,
-      serviceCodes: ['home_cleaning', 'missing_service'],
-      updatedBy: null,
-      updatedAt: null,
-    });
-    const place = await call((m) => catalog.getPlaceCatalog({}, m));
-    expect(place.placeTypes).toEqual([
-      expect.objectContaining({ code: 'house', serviceCodes: ['home_cleaning'], displayOrder: 10 }),
-    ]);
-    expect(place.services.map((service) => service.code)).toEqual(['home_cleaning']);
-
-    const item = {
-      serviceCode: 'home_cleaning',
-      answers: ANSWERS,
-      optionSelections: WINDOWS,
-      frequency: 'once',
-    };
-    const estimate = await call((m) =>
-      catalog.estimate({ placeType: 'house', commune: '', items: [item] }, m),
-    );
-    expect(estimate).toMatchObject({
-      placeType: 'house',
-      commune: '',
-      communeApplied: false,
-      status: 'priced',
-      total: { amount: 34000, currency: 'XOF' },
-      items: [{ serviceCode: 'home_cleaning', serviceName: 'Nettoyage à domicile', priced: true }],
-    });
-
-    const resolved = await call(
-      (m) => quotes.resolveLocation({ latitude: 6.4489, longitude: 2.3556 }, m),
-      asCustomer,
-    );
-    expect(resolved).toMatchObject({
-      commune: 'Abomey-Calavi',
-      zoneCode: 'abomey-calavi',
-      served: true,
-      provider: 'nominatim',
-    });
-
-    const { group } = await call(
-      (m) =>
-        quotes.requestQuoteGroup(
-          {
-            idempotencyKey: 'grpc-group-1',
-            placeType: 'house',
-            location: { latitude: 6.4489, longitude: 2.3556, accuracyMeters: 0 },
-            landmark: 'Portail bleu',
-            commune: '',
-            items: [{ ...item, requestedTeamSize: 0 }],
-            preferredSlots: [SLOT],
-            comment: '',
-          },
-          m,
-        ),
-      asCustomer,
-    );
-    expect(group).toMatchObject({ placeType: 'house', commune: 'Abomey-Calavi', zoneCode: 'abomey-calavi' });
-    expect(group?.requests[0]).toMatchObject({
-      groupId: group?.id,
-      placeType: 'house',
-      landmark: 'Portail bleu',
-      geocodingProvider: 'nominatim',
-      geocodedAddress: 'Zogbadjè, Abomey-Calavi, Atlantique, Bénin',
-      groupSize: 1,
-      serviceName: 'Nettoyage à domicile',
-      placeTypeLabel: 'Maison',
-      location: { latitude: 6.4489, longitude: 2.3556, accuracyMeters: 0 },
-    });
-    const again = await call((m) => quotes.getRequestGroup({ groupId: group!.id }, m), asCustomer);
-    expect(again.group?.requests.map((r) => r.id)).toEqual(group?.requests.map((r) => r.id));
-
-    const staff = { userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001', roles: ['cleaning_admin'], mfa: true };
-    const detail = await call((m) => admin.getQuoteRequest({ requestId: group!.requests[0]!.id }, m), staff);
-    expect(detail.groupRequests).toEqual([]);
-    const { placeTypes } = await call((m) => admin.listPlaceTypes({}, m), staff);
-    expect(placeTypes[0]).toMatchObject({
-      code: 'house',
-      unknownServiceCodes: ['missing_service'],
-      publiclyVisible: true,
-      visibilityReason: '',
-    });
-    const saved = await call(
-      (m) =>
-        admin.savePlaceType(
-          {
-            placeType: {
-              code: 'office',
-              label: 'Bureau',
-              description: '',
-              icon: 'office',
-              displayOrder: 40,
-              active: false,
-              serviceCodes: ['home_cleaning'],
-              updatedBy: '',
-              updatedAt: '',
-              updatedByName: '',
-              unknownServiceCodes: [],
-              inactiveServiceCodes: [],
-              publiclyVisible: true,
-              visibilityReason: '',
-            },
-          },
-          m,
-        ),
-      staff,
-    );
-    expect(saved.placeType).toMatchObject({
-      code: 'office',
-      publiclyVisible: false,
-      visibilityReason: 'inactive',
-    });
-  });
-
-  it('mesures constatées : compte rendu, recalcul, correction, réponses lisibles (ADR-037)', async () => {
-    const AGENT = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0002';
-    world.agents.agents.set(AGENT, {
-      agentId: AGENT,
-      displayName: 'Awa',
-      active: true,
-      unavailabilities: [],
-    });
-    const staff = {
-      userId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001',
-      roles: ['cleaning_supervisor'],
-      mfa: true,
-    };
-    const agent = { userId: AGENT, roles: ['cleaning_agent'], mfa: true };
-    const { request } = await call(
-      (m) =>
-        quotes.requestQuote(
-          {
-            idempotencyKey: 'grpc-measure',
-            serviceCode: 'home_cleaning',
-            premisesType: '',
-            quantity: 0,
-            options: [],
-            answers: ANSWERS,
-            optionSelections: WINDOWS,
-            frequency: 'once',
-            commune: 'Cotonou',
-            address: 'Lot 12',
-            preferredSlots: [SLOT],
-            comment: '',
-            requestedTeamSize: 0,
-            daysPerWeek: 0,
-          },
-          m,
-        ),
-      asCustomer,
-    );
-    const requestId = request!.id;
-    const scheduled = await call(
-      (m) => admin.scheduleVisit({ requestId, scheduledAt: '2026-12-02T09:00:00Z', agentId: AGENT }, m),
-      staff,
-    );
-    const measured: cleaningV1.AnswerSet = {
-      values: { ...ANSWERS.values, rooms: { numberValue: 8 } },
-    };
-    const before = world.clock.current;
-    world.clock.current = new Date('2026-12-02T10:00:00Z');
-    const done = await call(
-      (m) =>
-        admin.completeVisit(
-          {
-            visitId: scheduled.request!.visit!.id,
-            report: 'Huit pièces.',
-            measurements: { answers: measured, optionSelections: WINDOWS, frequency: 'once' },
-          },
-          m,
-        ),
-      agent,
-    );
-    world.clock.current = before;
-    expect(done.request?.measurement).toMatchObject({
-      answers: measured,
-      frequency: 'once',
-      pricingVersion: 3,
-      measuredBy: AGENT,
-      measuredByName: 'Awa',
-    });
-    // Agent seul : aucun montant dans la réponse du compte rendu (ADR-037), le recalcul reste ouvert.
-    expect(done.request?.measurement?.calculation ?? null).toBeNull();
-    expect(done.request?.calculation ?? null).toBeNull();
-    expect(done.request?.estimate ?? null).toBeNull();
-    expect(world.requests.requests.get(requestId)!.measurement?.calculation).toMatchObject({
-      priced: true,
-      computedPrice: 43000,
-    });
-    expect(done.request?.measuredSummary?.fields[1]).toMatchObject({
-      code: 'rooms',
-      label: 'Nombre de pièces',
-      type: 'number',
-      value: { numberValue: 8 },
-      display: '8 pièces',
-      unitLabel: 'pièces',
-    });
-
-    const estimate = await call(
-      (m) =>
-        admin.estimateRequestPrice(
-          { requestId, answers: ANSWERS, optionSelections: [], frequency: 'once' },
-          m,
-        ),
-      agent,
-    );
-    expect(estimate).toMatchObject({
-      requestId,
-      serviceCode: 'home_cleaning',
-      commune: 'Cotonou',
-      calculation: { priced: true, computedPrice: { amount: 30000, currency: 'XOF' } },
-    });
-    const refused = await call(
-      (m) => admin.saveRequestMeasurements({ requestId, optionSelections: [], frequency: 'once' }, m),
-      staff,
-    ).catch((error: AppError) => error);
-    expect(refused).toMatchObject({ code: 'CLEANING_VALIDATION_FAILED', details: { field: 'answers' } });
-    const corrected = await call(
-      (m) =>
-        admin.saveRequestMeasurements(
-          { requestId, answers: ANSWERS, optionSelections: [], frequency: 'once' },
-          m,
-        ),
-      staff,
-    );
-    expect(corrected.request?.measurement?.calculation?.computedPrice).toEqual({
-      amount: 30000,
-      currency: 'XOF',
-    });
-    // Le chargeur gRPC ajoute le nom du choix de oneof (« value ») : comparaison partielle.
-    expect(corrected.request?.answerSummary?.options).toMatchObject([
-      {
-        optionCode: 'windows',
-        label: 'Vitres',
-        fields: [
-          {
-            code: 'window_count',
-            label: 'Nombre de fenêtres',
-            type: 'number',
-            value: { numberValue: 8 },
-            display: '8 fenêtres',
-            unitLabel: 'fenêtres',
-          },
+    it('tarifs : liste des versions, brouillon, simulateur de test', async () => {
+      await expect(
+        staff(() => call('cleaning', 'CatalogAdminService', 'ListTariffs', { offerId: catalog.solOfferId })),
+      ).resolves.toMatchObject({
+        total: 1,
+        items: [
+          { version: 1, status: 'published', baseParameterCode: 'superficie', minimum: { amount: 10_000 } },
         ],
-      },
-    ]);
-    expect(corrected.request?.answerSummary?.frequency).toEqual({ code: 'once', label: 'Une fois' });
-
-    // Liste des visites : réponses du client et mesures pour préremplir la saisie ; montants à la
-    // supervision seulement.
-    const listVisits = (user: typeof staff) =>
-      call(
-        (m) =>
-          admin.listVisits(
-            { page: { limit: 10, cursor: '' }, agentId: '', from: '', to: '', status: '', groupId: '' },
-            m,
-          ),
-        user,
+      });
+      const draft = await staff(() =>
+        call<{ tariff: { id: string } }>('cleaning', 'CatalogAdminService', 'CreateTariffDraft', {
+          offerId: catalog.solOfferId,
+          idempotencyKey: 'cle-grpc-0002',
+          brackets: [{ from: 0, to: 400, mode: 'flat', amount: { amount: 20_000, currency: 'XOF' } }],
+          supplements: [],
+          minimum: { amount: 10_000, currency: 'XOF' },
+          frequencyCoefficients: [],
+        }),
       );
-    const forAgent = (await listVisits(agent)).visits.flatMap((visit) => visit.requests);
-    expect(forAgent).toHaveLength(1);
-    expect(forAgent[0]).toMatchObject({
-      requestId,
-      serviceCode: 'home_cleaning',
-      serviceName: 'Nettoyage à domicile',
-      answers: ANSWERS,
-      frequency: 'once',
-      pricingVersion: 3,
-      measurement: { answers: ANSWERS, frequency: 'once', measuredBy: staff.userId },
-    });
-    expect(forAgent[0]?.optionSelections.map((option) => option.code)).toEqual(['windows']);
-    expect(forAgent[0]?.answerSummary?.fields[1]?.display).toBe('6 pièces');
-    expect(forAgent[0]?.measuredSummary?.fields[1]?.display).toBe('6 pièces');
-    expect(forAgent[0]?.calculation ?? null).toBeNull();
-    expect(forAgent[0]?.measurement?.calculation ?? null).toBeNull();
-    const forSupervision = (await listVisits(staff)).visits.flatMap((visit) => visit.requests);
-    expect(forSupervision[0]?.calculation).toMatchObject({ priced: true });
-    expect(forSupervision[0]?.measurement?.calculation?.computedPrice).toEqual({
-      amount: 30000,
-      currency: 'XOF',
+      expect(draft).toMatchObject({
+        tariff: { version: 2, status: 'draft', baseParameterCode: 'superficie' },
+      });
+      const simulation = await staff(() =>
+        call('cleaning', 'CatalogAdminService', 'SimulateWithDrafts', {
+          placeTypeId: catalog.placeTypeId,
+          cleaningTypeIds: [catalog.solTypeId],
+          values: { superficie: VILLA.superficie, chambres: VILLA.chambres },
+          draftTariffIds: [(draft as { tariff: { id: string } }).tariff.id],
+        }),
+      );
+      expect(simulation).toMatchObject({
+        simulation: {
+          usesDrafts: true,
+          pricing: { sessionPrice: { amount: 20_000 }, offers: [{ tariffStatus: 'draft' }] },
+        },
+      });
     });
 
-    // Correction des mesures par l'agent : réponse sans montant.
-    const byAgent = await call(
-      (m) =>
-        admin.saveRequestMeasurements(
-          { requestId, answers: ANSWERS, optionSelections: [], frequency: 'once' },
-          m,
-        ),
-      agent,
-    );
-    expect(byAgent.request?.measurement).toMatchObject({ measuredBy: AGENT });
-    expect(byAgent.request?.measurement?.calculation ?? null).toBeNull();
-    expect(byAgent.request?.calculation ?? null).toBeNull();
-
-    // Espace client : réponses lisibles, jamais les mesures.
-    const mine = await call((m) => quotes.getRequest({ requestId }, m), asCustomer);
-    expect(mine.request?.answerSummary?.fields.map((field) => field.display)).toEqual([
-      'Appartement',
-      '6 pièces',
-      '1 salles de bain',
-      'Normal',
-      'Non',
-    ]);
-    expect(mine.request?.measurement ?? null).toBeNull();
-    expect(mine.request?.measuredSummary ?? null).toBeNull();
+    it('communes du référentiel et zones', async () => {
+      await expect(
+        staff(() => call('cleaning', 'CatalogAdminService', 'ListCommunes', {})),
+      ).resolves.toMatchObject({
+        communes: expect.arrayContaining([
+          expect.objectContaining({
+            communeKey: 'cotonou',
+            name: 'Cotonou',
+            zoneId: 'zone-cotonou',
+            zoneActive: true,
+          }),
+        ]),
+      });
+      await expect(
+        staff(() => call('cleaning', 'CatalogAdminService', 'ListZones', {})),
+      ).resolves.toMatchObject({
+        items: [{ communeKey: 'cotonou', coefficientBps: 10_000, openRequests: 0 }],
+        nextCursor: '',
+        total: 1,
+      });
+    });
   });
 });

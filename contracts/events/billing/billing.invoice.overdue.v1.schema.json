@@ -42,6 +42,15 @@
       "type": "integer",
       "minimum": 1,
       "description": "Factures impayées du contrat, celle-ci comprise (information ; cleaning tient son propre compte)"
+    },
+    "kind": {
+      "enum": ["session", "visit_fee", "monthly"],
+      "description": "v2 : facture de séance, reçu des frais de visite ou facture mensuelle d'organisation ; absent pour une facture v1"
+    },
+    "holderOverdueCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "v2 : factures impayées du titulaire (organisation, sinon client), celle-ci comprise ; information seulement ; cleaning tient son propre compte (R-PE-06). Absent des événements v1"
     }
   }
 }

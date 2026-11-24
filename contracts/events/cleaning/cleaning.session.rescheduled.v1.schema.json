@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.rescheduled.v1.schema.json",
+  "title": "cleaning.session.rescheduled",
+  "description": "Séance reportée (un report n’est pas un statut, partie 8).",
+  "x-event-type": "cleaning.session.rescheduled",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "rank",
+    "previousStart",
+    "scheduledStart",
+    "scheduledEnd",
+    "rescheduledBy",
+    "rescheduledAt",
+    "programNumber",
+    "sessionsCount",
+    "agentIds",
+    "releasedAgentIds",
+    "durationMinutes"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "previousStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scheduledStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scheduledEnd": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rescheduledBy": {
+      "enum": ["customer", "ksp"]
+    },
+    "rescheduledAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "agentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "Agents gardés"
+    },
+    "releasedAgentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "Agents retirés (aussi dans cleaning.session.unassigned, cause rescheduled)"
+    },
+    "durationMinutes": {
+      "type": "integer",
+      "minimum": 15
+    }
+  }
+}

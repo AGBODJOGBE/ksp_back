@@ -66,6 +66,19 @@
       "maxLength": 100,
       "description": "Référence de la transaction chez le prestataire (aucune donnée personnelle)"
     },
-    "succeededAt": { "type": "string", "format": "date-time" }
+    "succeededAt": { "type": "string", "format": "date-time" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "objectType", "objectId", "part", "reference"],
+      "description": "Paiement direct (v2, R-WL-05) : recharge (subjectType wallet_top_up) qui doit régler aussitôt cet objet ; wallet la crédite, puis le service débite l'objet. Absent sinon",
+      "properties": {
+        "service": { "type": "string", "pattern": "^[a-z]+$" },
+        "objectType": { "type": "string", "pattern": "^[a-z0-9_]{3,50}$" },
+        "objectId": { "type": "string", "format": "uuid" },
+        "part": { "type": ["string", "null"] },
+        "reference": { "type": "string", "minLength": 1, "maxLength": 60 }
+      }
+    }
   }
 }

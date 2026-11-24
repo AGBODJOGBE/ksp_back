@@ -30,6 +30,13 @@ export enum ScopeType {
   SCOPE_TYPE_ORG = "SCOPE_TYPE_ORG",
   /** SCOPE_TYPE_PERSONAL - Le compte de l'utilisateur lui-même. */
   SCOPE_TYPE_PERSONAL = "SCOPE_TYPE_PERSONAL",
+  /**
+   * SCOPE_TYPE_ZONE - Une ou plusieurs zones desservies (R-RB-03, CDC Nettoyage v2) : les permissions du rôle ne valent
+   * que pour ces communes (par exemple un superviseur de Porto-Novo). Zones dans le champ zones
+   * (ZoneList : clés de commune du référentiel de geo, ksp.geo.v1.Commune.key) ; scope_id vide. Un
+   * contrôle sur une seule zone (CheckPermission) passe sa clé dans scope_id.
+   */
+  SCOPE_TYPE_ZONE = "SCOPE_TYPE_ZONE",
   UNRECOGNIZED = "UNRECOGNIZED",
 }
 
@@ -106,13 +113,16 @@ export enum OrganizationStatus {
 }
 
 /**
- * Rôle d'un membre dans son organisation (portée org). Seul ORG_ROLE_ADMIN est attribué
- * aujourd'hui : au créateur de l'organisation.
+ * Rôle d'un membre dans son organisation (portée org, R-CP-03). Le créateur de l'organisation en
+ * est administrateur ; les autres rôles sont donnés à l'invitation.
  */
 export enum OrgRole {
   ORG_ROLE_UNSPECIFIED = "ORG_ROLE_UNSPECIFIED",
+  /** ORG_ROLE_ADMIN - org_admin : tout (membres, acceptation des devis, paiements, wallet de l'organisation). */
   ORG_ROLE_ADMIN = "ORG_ROLE_ADMIN",
+  /** ORG_ROLE_MEMBER - org_member : demandes et suivi. */
   ORG_ROLE_MEMBER = "ORG_ROLE_MEMBER",
+  /** ORG_ROLE_VIEWER - org_viewer : consultation et factures. */
   ORG_ROLE_VIEWER = "ORG_ROLE_VIEWER",
   UNRECOGNIZED = "UNRECOGNIZED",
 }
@@ -201,9 +211,27 @@ export interface GetOrganizationsByIdsResponse {
   organizations: OrganizationProfile[];
 }
 
+export interface ListStaffByPermissionRequest {
+  /** Format <service>.<ressource>.<action>, par exemple "cleaning.request.process". */
+  permission: string;
+  /**
+   * Clé de commune du référentiel de geo (ksp.geo.v1.Commune.key) ; vide : attributions globales
+   * seulement.
+   */
+  zoneKey: string;
+}
+
+export interface ListStaffByPermissionResponse {
+  /** Comptes actifs dont une attribution globale, ou limitée à zone_key, porte la permission. */
+  userIds: string[];
+}
+
 export interface CheckPermissionRequest {
   userId: string;
-  /** Format <service>:<ressource>:<action>, par exemple "wallet:payout:approve". */
+  /**
+   * Format <service>.<ressource>.<action> (CDC Nettoyage v2, partie 2), par exemple
+   * "cleaning.quote.adjust_price" ou "wallet.withdrawal.approve".
+   */
   permission: string;
   scopeType: ScopeType;
   scopeId: string;
@@ -222,6 +250,8 @@ export interface RoleAssignment {
   scopeId: string;
   grantedBy: string;
   grantedAt: string;
+  /** Portée SCOPE_TYPE_ZONE : zones de l'attribution ; absent sinon. */
+  zones?: ZoneList | undefined;
 }
 
 export interface GrantRoleRequest {
@@ -229,6 +259,12 @@ export interface GrantRoleRequest {
   roleCode: string;
   scopeType: ScopeType;
   scopeId: string;
+  /** Portée SCOPE_TYPE_ZONE : 1 à 77 clés de commune (geo), sans doublon ; absent sinon. */
+  zones?:
+    | ZoneList
+    | undefined;
+  /** Motif tracé dans le journal d'audit (500 caractères au plus), par exemple « Agent validé ». */
+  reason: string;
 }
 
 export interface GrantRoleResponse {
@@ -244,8 +280,22 @@ export interface RevokeRoleResponse {
 }
 
 export interface Permission {
+  /**
+   * <service>.<ressource>.<action> : minuscules, chiffres et "_" entre les points ; le premier
+   * segment est le service qui déclare la permission.
+   */
   code: string;
+  /** Ce qu'elle permet, affiché à côté de la case à cocher (« Lire / gérer les programmes »). */
   description: string;
+  /** Service qui la déclare ; renseigné par identity dans les réponses, ignoré dans RegisterCatalog. */
+  service: string;
+  /**
+   * Module affiché au back-office pour grouper les cases (par exemple "catalog", "planning") :
+   * deuxième segment du code ; renseigné par identity.
+   */
+  module: string;
+  /** Permission qui n'est plus déclarée par son service (voir RegisterCatalog) ; renseigné par identity. */
+  retired: boolean;
 }
 
 export interface RoleDefinition {
@@ -254,17 +304,34 @@ export interface RoleDefinition {
   requiresMfa: boolean;
   description: string;
   permissions: string[];
+  /** Nom affiché (« Superviseur Nettoyage ») ; vide : le code. */
+  name: string;
+  /**
+   * Rôle sensible (R-RB-05, par exemple finance_officer, super_admin) : son retrait révoque
+   * immédiatement toutes les sessions de la personne.
+   */
+  sensitive: boolean;
+  /** Donne accès au back-office. */
+  backofficeAccess: boolean;
 }
 
 export interface RegisterCatalogRequest {
   service: string;
   catalogVersion: number;
   permissions: Permission[];
+  /** Rôles livrés par défaut (créés s'ils n'existent pas, jamais écrasés). */
   roles: RoleDefinition[];
 }
 
 export interface RegisterCatalogResponse {
   accepted: boolean;
+  /**
+   * Bilan de l'enregistrement : permissions ajoutées et retirées, rôles par défaut créés. Tous à 0
+   * pour une version déjà enregistrée.
+   */
+  permissionsAdded: number;
+  permissionsRetired: number;
+  rolesCreated: number;
 }
 
 export interface GetCatalogRequest {
@@ -275,6 +342,40 @@ export interface GetCatalogRequest {
 export interface GetCatalogResponse {
   permissions: Permission[];
   roles: RoleDefinition[];
+}
+
+export interface FindUserByPhoneRequest {
+  /** Numéro au format E.164 ; espaces, points, tirets et préfixe 00 tolérés. */
+  phoneE164: string;
+}
+
+export interface FindUserByPhoneResponse {
+  /** false : aucun compte pour ce numéro, ou compte supprimé ; les autres champs sont alors vides. */
+  found: boolean;
+  userId: string;
+  status: UserStatus;
+}
+
+export interface EnsureUserByPhoneRequest {
+  /** Numéro au format E.164 ; espaces, points, tirets et préfixe 00 tolérés. */
+  phoneE164: string;
+  /**
+   * Prénom et nom du compte à créer : lettres, espaces, trait d'union, apostrophe et point, 100
+   * caractères au plus (règles du profil). Contrôlés à chaque appel, ignorés si le compte existe.
+   */
+  firstName: string;
+  lastName: string;
+}
+
+export interface EnsureUserByPhoneResponse {
+  userId: string;
+  /**
+   * USER_STATUS_ACTIVE, ou USER_STATUS_PENDING_VERIFICATION tant que le titulaire ne s'est pas
+   * connecté par code.
+   */
+  status: UserStatus;
+  /** true : le compte vient d'être créé par cet appel. */
+  created: boolean;
 }
 
 export interface RequestOtpRequest {
@@ -599,6 +700,21 @@ export interface Organization {
   /** Suspension en cours ; vide sinon. */
   suspendedAt: string;
   suspensionReason: string;
+  /**
+   * v2 (absents d'une organisation créée avant) : commune du siège (clé du référentiel de geo, par
+   * exemple "cotonou"), téléphone E.164, nom du représentant légal.
+   */
+  commune?: string | undefined;
+  phoneE164?: string | undefined;
+  representativeName?:
+    | string
+    | undefined;
+  /**
+   * Facultatifs : secteur d'activité (texte libre, 100 caractères au plus) et logo (fichier du
+   * service file).
+   */
+  sector?: string | undefined;
+  logoFileId?: string | undefined;
 }
 
 /** Une organisation vue par l'un de ses membres. */
@@ -621,11 +737,25 @@ export interface OrganizationMember {
 
 export interface CreateOrganizationRequest {
   legalName: string;
+  /** Adresse du siège. */
   address: string;
-  /** 13 chiffres ; espaces ignorés. */
+  /** 13 chiffres ; espaces ignorés. Unique : un IFU ne porte qu'une organisation (R-CP-01). */
   ifu: string;
   /** Facultatif. */
   rccm: string;
+  /**
+   * Obligatoires en v2 (IDENTITY_ORGANIZATION_INVALID si absents, details.field) ; déclarés optional
+   * pour la transition : commune du siège (clé du référentiel de geo), téléphone E.164, nom du
+   * représentant (1 à 120 caractères).
+   */
+  commune?: string | undefined;
+  phoneE164?: string | undefined;
+  representativeName?:
+    | string
+    | undefined;
+  /** Facultatifs : secteur (100 caractères au plus), logo (fichier du service file). */
+  sector?: string | undefined;
+  logoFileId?: string | undefined;
 }
 
 export interface CreateOrganizationResponse {
@@ -801,6 +931,8 @@ export interface AccountRoleAssignment {
   revokeReason: string;
   /** L'appelant peut retirer ce rôle (rôle actif de son périmètre). */
   revocable: boolean;
+  /** Portée SCOPE_TYPE_ZONE : zones de l'attribution ; absent sinon. */
+  zones?: ZoneList | undefined;
 }
 
 /** Une action tracée dans le journal d'audit d'identity pour ce compte. */
@@ -847,6 +979,17 @@ export interface AssignableRole {
   backofficeAccess: boolean;
   /** L'appelant peut l'attribuer. */
   grantable: boolean;
+  /** Nom affiché ; le code s'il n'en a pas. */
+  name?:
+    | string
+    | undefined;
+  /** false : désactivé, ne s'attribue plus (R-RB-02). Absent : actif (réponse d'avant la v2). */
+  active?: boolean | undefined;
+  sensitive?:
+    | boolean
+    | undefined;
+  /** "default" (livré par un service, RegisterCatalog) ou "custom" (créé par le super administrateur). */
+  origin?: string | undefined;
 }
 
 export interface SearchAccountsRequest {
@@ -884,6 +1027,11 @@ export interface GrantAccountRoleRequest {
   roleCode: string;
   /** Motif tracé (500 caractères au plus). */
   reason: string;
+  /**
+   * Facultatif : limite l'attribution à ces zones (1 à 77 clés de commune de geo, sans doublon ;
+   * portée SCOPE_TYPE_ZONE, R-RB-03). Absent : portée du rôle.
+   */
+  zones?: ZoneList | undefined;
 }
 
 export interface GrantAccountRoleResponse {
@@ -931,6 +1079,202 @@ export interface ResetAccountMfaResponse {
   detail?: AccountDetail | undefined;
 }
 
+/** Un rôle géré au back-office (R-RB-02). */
+export interface ManagedRole {
+  /** Code immuable : minuscules, chiffres et "_", 3 à 64 caractères, commence par une lettre. */
+  code: string;
+  name: string;
+  description: string;
+  /** Service qui l'a livré par défaut ; "identity" pour un rôle créé au back-office. */
+  service: string;
+  /** "default" ou "custom". */
+  origin: string;
+  scopeType: ScopeType;
+  /** Permissions cochées, triées par code. */
+  permissions: string[];
+  sensitive: boolean;
+  backofficeAccess: boolean;
+  requiresMfa: boolean;
+  active: boolean;
+  /** false pour super_admin (R-RB-04). */
+  editable: boolean;
+  /** Attributions actives (une désactivation exige 0). */
+  activeAssignments: number;
+  createdAt: string;
+  /** Vide pour un rôle livré par défaut. */
+  createdBy: string;
+  updatedAt: string;
+  updatedBy: string;
+  /** Vides tant qu'il est actif. */
+  deactivatedAt: string;
+  deactivatedBy: string;
+}
+
+/** Zones d'une attribution de portée SCOPE_TYPE_ZONE (R-RB-03). */
+export interface ZoneList {
+  /** Clés de commune du référentiel de geo (ksp.geo.v1.Commune.key), sans doublon. */
+  keys: string[];
+}
+
+/** Liste de permissions, pour distinguer « inchangée » (message absent) de « vide ». */
+export interface PermissionSet {
+  codes: string[];
+}
+
+export interface ListPermissionsRequest {
+  /** Filtre facultatif sur le service déclarant ("cleaning"). */
+  service: string;
+  /** Inclure les permissions retirées. */
+  includeRetired: boolean;
+}
+
+export interface ListPermissionsResponse {
+  /** Triées par service, module puis code. */
+  permissions: Permission[];
+}
+
+export interface GetRoleRequest {
+  roleCode: string;
+}
+
+export interface GetRoleResponse {
+  role?: ManagedRole | undefined;
+}
+
+export interface CreateRoleRequest {
+  code: string;
+  /** 1 à 80 caractères. */
+  name: string;
+  /** 500 caractères au plus. */
+  description: string;
+  /** Codes de permissions déclarées et non retirées, sans doublon (0 à 500). */
+  permissions: string[];
+  sensitive: boolean;
+  /** Motif tracé (500 caractères au plus), obligatoire. */
+  reason: string;
+}
+
+export interface CreateRoleResponse {
+  role?: ManagedRole | undefined;
+}
+
+export interface UpdateRoleRequest {
+  roleCode: string;
+  name?: string | undefined;
+  description?: string | undefined;
+  sensitive?:
+    | boolean
+    | undefined;
+  /** Absent : permissions inchangées ; présent : liste complète qui remplace la précédente. */
+  permissions?:
+    | PermissionSet
+    | undefined;
+  /** Motif tracé (500 caractères au plus), obligatoire. */
+  reason: string;
+}
+
+export interface UpdateRoleResponse {
+  role?: ManagedRole | undefined;
+}
+
+export interface DeactivateRoleRequest {
+  roleCode: string;
+  /** Motif tracé (500 caractères au plus), obligatoire. */
+  reason: string;
+}
+
+export interface DeactivateRoleResponse {
+  role?: ManagedRole | undefined;
+}
+
+/** Un membre vu par les membres de son organisation. */
+export interface OrganizationMemberView {
+  userId: string;
+  role: OrgRole;
+  /** Vides tant que le profil n'est pas complété. */
+  firstName: string;
+  lastName: string;
+  /** Indicatif et deux derniers chiffres. */
+  phoneMasked: string;
+  joinedAt: string;
+}
+
+/** Invitation à rejoindre une organisation. */
+export interface OrganizationInvitation {
+  id: string;
+  organizationId: string;
+  /** Raison sociale, pour l'invité. */
+  organizationName: string;
+  role: OrgRole;
+  /** Numéro invité, masqué (indicatif et deux derniers chiffres). */
+  phoneMasked: string;
+  /** "pending", "accepted", "declined" ou "expired". */
+  status: string;
+  invitedBy: string;
+  invitedAt: string;
+  expiresAt: string;
+}
+
+export interface ListOrganizationMembersRequest {
+  organizationId: string;
+}
+
+export interface ListOrganizationMembersResponse {
+  members: OrganizationMemberView[];
+  /** Invitations en attente ; vides pour un membre qui n'est pas administrateur. */
+  pendingInvitations: OrganizationInvitation[];
+}
+
+export interface InviteOrganizationMemberRequest {
+  organizationId: string;
+  /** Numéro E.164 de la personne invitée (espaces tolérés). */
+  phoneE164: string;
+  role: OrgRole;
+}
+
+export interface InviteOrganizationMemberResponse {
+  invitation?: OrganizationInvitation | undefined;
+}
+
+export interface ListMyOrganizationInvitationsRequest {
+}
+
+export interface ListMyOrganizationInvitationsResponse {
+  invitations: OrganizationInvitation[];
+}
+
+export interface RespondToOrganizationInvitationRequest {
+  invitationId: string;
+  /** true : accepter ; false : refuser. */
+  accept: boolean;
+}
+
+export interface RespondToOrganizationInvitationResponse {
+  invitation?:
+    | OrganizationInvitation
+    | undefined;
+  /** Acceptée : l'appartenance créée ; absente sinon. */
+  membership?: OrganizationMembership | undefined;
+}
+
+export interface ChangeOrganizationMemberRoleRequest {
+  organizationId: string;
+  userId: string;
+  role: OrgRole;
+}
+
+export interface ChangeOrganizationMemberRoleResponse {
+  member?: OrganizationMemberView | undefined;
+}
+
+export interface RemoveOrganizationMemberRequest {
+  organizationId: string;
+  userId: string;
+}
+
+export interface RemoveOrganizationMemberResponse {
+}
+
 /** Appelé par tous les services autorisés par la carte des services. */
 
 export interface IdentityServiceClient {
@@ -972,19 +1316,93 @@ export interface IdentityServiceClient {
     metadata?: Metadata,
   ): Observable<GetOrganizationsByIdsResponse>;
 
-  /** Réservé aux actions sensibles : les permissions courantes voyagent dans le jeton. */
+  /**
+   * Personnel à prévenir (CDC Nettoyage v2, partie 16.2) — appelant autorisé : notification seul,
+   * qui joint le superviseur de la zone d'un événement (clé de commune) sans liste tenue à la main.
+   * Rend les comptes actifs dont une attribution globale, ou limitée à la zone demandée, porte la
+   * permission. zone_key vide : attributions globales seulement. Identifiants seulement : les
+   * coordonnées se lisent ensuite par GetUsersByIds.
+   * Erreurs :
+   *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
+   */
+
+  listStaffByPermission(
+    request: ListStaffByPermissionRequest,
+    metadata?: Metadata,
+  ): Observable<ListStaffByPermissionResponse>;
+
+  /**
+   * Réservé aux actions sensibles : les permissions courantes voyagent dans le jeton (claims perms et
+   * zone_perms, contracts/tokens/access-token.v1.schema.json ; CDC Nettoyage v2, partie 16.3).
+   */
 
   checkPermission(request: CheckPermissionRequest, metadata?: Metadata): Observable<CheckPermissionResponse>;
+
+  /**
+   * Attribution d'un rôle par un service. Appelants autorisés (IDENTITY_ROLE_GRANT_CALLERS) et rôles
+   * qu'ils peuvent attribuer : cleaning → cleaning_agent seulement, à la validation d'un agent
+   * (R-AG-01). Autre rôle : IDENTITY_ROLE_FORBIDDEN. Idempotent : une attribution active identique
+   * (même compte, même rôle, même portée) est rendue telle quelle. Tracé dans le journal d'audit
+   * (auteur : le service appelant) ; événement identity.role.granted (version 2).
+   * Erreurs : IDENTITY_CALLER_FORBIDDEN, IDENTITY_ROLE_FORBIDDEN (PERMISSION_DENIED),
+   * IDENTITY_USER_NOT_FOUND, IDENTITY_ROLE_NOT_FOUND (NOT_FOUND), IDENTITY_ROLE_INACTIVE,
+   * IDENTITY_ACCOUNT_NOT_ACTIVE (FAILED_PRECONDITION).
+   */
 
   grantRole(request: GrantRoleRequest, metadata?: Metadata): Observable<GrantRoleResponse>;
 
   revokeRole(request: RevokeRoleRequest, metadata?: Metadata): Observable<RevokeRoleResponse>;
 
-  /** Chaque service enregistre son catalogue de permissions et de rôles à chaque déploiement. */
+  /**
+   * R-RB-01. Chaque service déclare son catalogue de permissions à chaque déploiement (jeton de
+   * service : le service déclaré est toujours celui du jeton). Une permission ne se crée jamais à la
+   * main : elle correspond à un contrôle réel dans le code du service.
+   * - Permissions : le catalogue reçu remplace celui du service. Une permission qui n'y figure plus
+   *   est « retirée » : elle n'entre plus dans les jetons et reste affichée comme retirée dans les
+   *   rôles qui la cochaient (à valider).
+   * - Rôles (roles) : rôles livrés par défaut. Un rôle absent est créé ; un rôle existant n'est
+   *   jamais écrasé (le super administrateur a pu le modifier, R-RB-02).
+   *   Seule exception : un rôle livré par défaut qu'aucun administrateur n'a modifié reçoit celles
+   *   des permissions du service déclarant, déclarées pour lui, qui lui manquent (ajout seulement,
+   *   jamais de retrait, tracé au journal d'audit avec le service pour auteur) : les rôles par
+   *   défaut portent ainsi leurs permissions dès la première déclaration de chaque service.
+   * - Rejouable : une version de catalogue déjà enregistrée (catalog_version inférieure ou égale)
+   *   est acceptée sans effet.
+   * Erreurs : IDENTITY_CATALOG_INVALID (INVALID_ARGUMENT, details.field : code mal formé, permission
+   * d'un autre service, rôle qui coche une permission inconnue).
+   */
 
   registerCatalog(request: RegisterCatalogRequest, metadata?: Metadata): Observable<RegisterCatalogResponse>;
 
   getCatalog(request: GetCatalogRequest, metadata?: Metadata): Observable<GetCatalogResponse>;
+
+  /**
+   * Compte d'un numéro de téléphone, pour un service (R-AG-02 du CDC Nettoyage v2 : agent créé ou
+   * invité par l'admin du Nettoyage). Appelants autorisés (IDENTITY_PHONE_ACCOUNT_CALLERS) : cleaning
+   * seulement. Le numéro est contrôlé et normalisé par identity (E.164 ; numéro béninois à 8 chiffres
+   * ramené à 10, ADR-063). La réponse ne rend ni le numéro ni le nom : l'identifiant et l'état du
+   * compte seulement.
+   * - FindUserByPhone : lecture seule. Aucun compte pour ce numéro, ou compte supprimé : found = false.
+   * - EnsureUserByPhone : rend le compte du numéro, ou le crée « en attente de vérification »
+   *   (USER_STATUS_PENDING_VERIFICATION) avec le prénom et le nom reçus ; le compte devient actif à sa
+   *   première connexion par code (VerifyOtp), qui vérifie son téléphone. Un compte existant n'est
+   *   jamais modifié : son nom et son état restent les siens. Deux appels simultanés pour le même
+   *   numéro ne créent qu'un compte. Compte créé : événement identity.user.registered et trace
+   *   d'audit (auteur : le service appelant ; le membre du personnel à l'origine de la demande est lu
+   *   dans les métadonnées de l'appel, x-user-id).
+   * Erreurs :
+   *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED    service appelant non autorisé
+   *   IDENTITY_PHONE_INVALID       INVALID_ARGUMENT     numéro mal formé
+   *   IDENTITY_NAME_INVALID        INVALID_ARGUMENT     EnsureUserByPhone : prénom ou nom absent ou mal
+   *                                                     formé (details.field : firstName, lastName)
+   *   IDENTITY_ACCOUNT_NOT_USABLE  FAILED_PRECONDITION  EnsureUserByPhone : compte suspendu, verrouillé,
+   *                                                     en cours de suppression ou supprimé
+   *                                                     (details.status) ; rien n'est créé
+   */
+
+  findUserByPhone(request: FindUserByPhoneRequest, metadata?: Metadata): Observable<FindUserByPhoneResponse>;
+
+  ensureUserByPhone(request: EnsureUserByPhoneRequest, metadata?: Metadata): Observable<EnsureUserByPhoneResponse>;
 }
 
 /** Appelé par tous les services autorisés par la carte des services. */
@@ -1034,12 +1452,41 @@ export interface IdentityServiceController {
     metadata?: Metadata,
   ): Promise<GetOrganizationsByIdsResponse> | Observable<GetOrganizationsByIdsResponse> | GetOrganizationsByIdsResponse;
 
-  /** Réservé aux actions sensibles : les permissions courantes voyagent dans le jeton. */
+  /**
+   * Personnel à prévenir (CDC Nettoyage v2, partie 16.2) — appelant autorisé : notification seul,
+   * qui joint le superviseur de la zone d'un événement (clé de commune) sans liste tenue à la main.
+   * Rend les comptes actifs dont une attribution globale, ou limitée à la zone demandée, porte la
+   * permission. zone_key vide : attributions globales seulement. Identifiants seulement : les
+   * coordonnées se lisent ensuite par GetUsersByIds.
+   * Erreurs :
+   *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
+   */
+
+  listStaffByPermission(
+    request: ListStaffByPermissionRequest,
+    metadata?: Metadata,
+  ): Promise<ListStaffByPermissionResponse> | Observable<ListStaffByPermissionResponse> | ListStaffByPermissionResponse;
+
+  /**
+   * Réservé aux actions sensibles : les permissions courantes voyagent dans le jeton (claims perms et
+   * zone_perms, contracts/tokens/access-token.v1.schema.json ; CDC Nettoyage v2, partie 16.3).
+   */
 
   checkPermission(
     request: CheckPermissionRequest,
     metadata?: Metadata,
   ): Promise<CheckPermissionResponse> | Observable<CheckPermissionResponse> | CheckPermissionResponse;
+
+  /**
+   * Attribution d'un rôle par un service. Appelants autorisés (IDENTITY_ROLE_GRANT_CALLERS) et rôles
+   * qu'ils peuvent attribuer : cleaning → cleaning_agent seulement, à la validation d'un agent
+   * (R-AG-01). Autre rôle : IDENTITY_ROLE_FORBIDDEN. Idempotent : une attribution active identique
+   * (même compte, même rôle, même portée) est rendue telle quelle. Tracé dans le journal d'audit
+   * (auteur : le service appelant) ; événement identity.role.granted (version 2).
+   * Erreurs : IDENTITY_CALLER_FORBIDDEN, IDENTITY_ROLE_FORBIDDEN (PERMISSION_DENIED),
+   * IDENTITY_USER_NOT_FOUND, IDENTITY_ROLE_NOT_FOUND (NOT_FOUND), IDENTITY_ROLE_INACTIVE,
+   * IDENTITY_ACCOUNT_NOT_ACTIVE (FAILED_PRECONDITION).
+   */
 
   grantRole(
     request: GrantRoleRequest,
@@ -1051,7 +1498,24 @@ export interface IdentityServiceController {
     metadata?: Metadata,
   ): Promise<RevokeRoleResponse> | Observable<RevokeRoleResponse> | RevokeRoleResponse;
 
-  /** Chaque service enregistre son catalogue de permissions et de rôles à chaque déploiement. */
+  /**
+   * R-RB-01. Chaque service déclare son catalogue de permissions à chaque déploiement (jeton de
+   * service : le service déclaré est toujours celui du jeton). Une permission ne se crée jamais à la
+   * main : elle correspond à un contrôle réel dans le code du service.
+   * - Permissions : le catalogue reçu remplace celui du service. Une permission qui n'y figure plus
+   *   est « retirée » : elle n'entre plus dans les jetons et reste affichée comme retirée dans les
+   *   rôles qui la cochaient (à valider).
+   * - Rôles (roles) : rôles livrés par défaut. Un rôle absent est créé ; un rôle existant n'est
+   *   jamais écrasé (le super administrateur a pu le modifier, R-RB-02).
+   *   Seule exception : un rôle livré par défaut qu'aucun administrateur n'a modifié reçoit celles
+   *   des permissions du service déclarant, déclarées pour lui, qui lui manquent (ajout seulement,
+   *   jamais de retrait, tracé au journal d'audit avec le service pour auteur) : les rôles par
+   *   défaut portent ainsi leurs permissions dès la première déclaration de chaque service.
+   * - Rejouable : une version de catalogue déjà enregistrée (catalog_version inférieure ou égale)
+   *   est acceptée sans effet.
+   * Erreurs : IDENTITY_CATALOG_INVALID (INVALID_ARGUMENT, details.field : code mal formé, permission
+   * d'un autre service, rôle qui coche une permission inconnue).
+   */
 
   registerCatalog(
     request: RegisterCatalogRequest,
@@ -1062,6 +1526,40 @@ export interface IdentityServiceController {
     request: GetCatalogRequest,
     metadata?: Metadata,
   ): Promise<GetCatalogResponse> | Observable<GetCatalogResponse> | GetCatalogResponse;
+
+  /**
+   * Compte d'un numéro de téléphone, pour un service (R-AG-02 du CDC Nettoyage v2 : agent créé ou
+   * invité par l'admin du Nettoyage). Appelants autorisés (IDENTITY_PHONE_ACCOUNT_CALLERS) : cleaning
+   * seulement. Le numéro est contrôlé et normalisé par identity (E.164 ; numéro béninois à 8 chiffres
+   * ramené à 10, ADR-063). La réponse ne rend ni le numéro ni le nom : l'identifiant et l'état du
+   * compte seulement.
+   * - FindUserByPhone : lecture seule. Aucun compte pour ce numéro, ou compte supprimé : found = false.
+   * - EnsureUserByPhone : rend le compte du numéro, ou le crée « en attente de vérification »
+   *   (USER_STATUS_PENDING_VERIFICATION) avec le prénom et le nom reçus ; le compte devient actif à sa
+   *   première connexion par code (VerifyOtp), qui vérifie son téléphone. Un compte existant n'est
+   *   jamais modifié : son nom et son état restent les siens. Deux appels simultanés pour le même
+   *   numéro ne créent qu'un compte. Compte créé : événement identity.user.registered et trace
+   *   d'audit (auteur : le service appelant ; le membre du personnel à l'origine de la demande est lu
+   *   dans les métadonnées de l'appel, x-user-id).
+   * Erreurs :
+   *   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED    service appelant non autorisé
+   *   IDENTITY_PHONE_INVALID       INVALID_ARGUMENT     numéro mal formé
+   *   IDENTITY_NAME_INVALID        INVALID_ARGUMENT     EnsureUserByPhone : prénom ou nom absent ou mal
+   *                                                     formé (details.field : firstName, lastName)
+   *   IDENTITY_ACCOUNT_NOT_USABLE  FAILED_PRECONDITION  EnsureUserByPhone : compte suspendu, verrouillé,
+   *                                                     en cours de suppression ou supprimé
+   *                                                     (details.status) ; rien n'est créé
+   */
+
+  findUserByPhone(
+    request: FindUserByPhoneRequest,
+    metadata?: Metadata,
+  ): Promise<FindUserByPhoneResponse> | Observable<FindUserByPhoneResponse> | FindUserByPhoneResponse;
+
+  ensureUserByPhone(
+    request: EnsureUserByPhoneRequest,
+    metadata?: Metadata,
+  ): Promise<EnsureUserByPhoneResponse> | Observable<EnsureUserByPhoneResponse> | EnsureUserByPhoneResponse;
 }
 
 export function IdentityServiceControllerMethods() {
@@ -1070,11 +1568,14 @@ export function IdentityServiceControllerMethods() {
       "getUser",
       "getUsersByIds",
       "getOrganizationsByIds",
+      "listStaffByPermission",
       "checkPermission",
       "grantRole",
       "revokeRole",
       "registerCatalog",
       "getCatalog",
+      "findUserByPhone",
+      "ensureUserByPhone",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
@@ -1627,6 +2128,19 @@ export const ACCOUNT_SERVICE_NAME = "AccountService";
  * E-mail de facturation : mêmes erreurs que ChangeEmail et ConfirmEmail (IDENTITY_EMAIL_INVALID,
  * IDENTITY_EMAIL_ALREADY_VERIFIED, IDENTITY_OTP_*), sauf IDENTITY_EMAIL_ALREADY_USED : une même
  * adresse peut servir à plusieurs organisations.
+ *
+ * CDC Nettoyage v2, partie 3 (R-CP-01 à 04) : informations obligatoires d'une organisation (raison
+ * sociale, IFU de 13 chiffres unique, adresse du siège, commune, téléphone, e-mail de facturation
+ * vérifié, nom du représentant), facultatives (RCCM, secteur, logo). Membres invités par un
+ * administrateur avec un rôle d'organisation : administrateur (tout), membre (demandes et suivi),
+ * lecteur (consultation et factures) ; il reste toujours au moins un administrateur.
+ * Erreurs des membres et invitations :
+ *   IDENTITY_MEMBER_INVALID                INVALID_ARGUMENT    details.field : phone, role
+ *   IDENTITY_MEMBER_NOT_FOUND              NOT_FOUND           membre inconnu de cette organisation
+ *   IDENTITY_INVITATION_NOT_FOUND          NOT_FOUND           invitation inconnue, ou adressée à un autre compte
+ *   IDENTITY_INVITATION_NOT_PENDING        FAILED_PRECONDITION invitation déjà acceptée, refusée ou expirée
+ *   IDENTITY_MEMBER_ALREADY_EXISTS         ALREADY_EXISTS      le compte est déjà membre
+ *   IDENTITY_ORGANIZATION_LAST_ADMIN       FAILED_PRECONDITION l'action laisserait l'organisation sans administrateur
  * ---------------------------------------------------------------------------
  */
 
@@ -1665,6 +2179,60 @@ export interface OrganizationServiceClient {
     request: ConfirmOrganizationBillingEmailRequest,
     metadata?: Metadata,
   ): Observable<ConfirmOrganizationBillingEmailResponse>;
+
+  /** Membres et invitations en attente (tout membre de l'organisation, R-CP-03) ; numéros masqués. */
+
+  listOrganizationMembers(
+    request: ListOrganizationMembersRequest,
+    metadata?: Metadata,
+  ): Observable<ListOrganizationMembersResponse>;
+
+  /**
+   * Administrateur de l'organisation (validée) : invite un compte par son numéro, avec un rôle
+   * d'organisation. Réponse identique que le numéro ait un compte ou non (anti-énumération) ;
+   * l'invitation attend l'acceptation de la personne et expire après 7 jours (à valider). Le compte
+   * invité est prévenu (identity.member.invited) ; un numéro sans compte retrouve l'invitation à sa
+   * première connexion si elle n'a pas expiré.
+   */
+
+  inviteOrganizationMember(
+    request: InviteOrganizationMemberRequest,
+    metadata?: Metadata,
+  ): Observable<InviteOrganizationMemberResponse>;
+
+  /** Invitations en attente adressées au compte connecté. */
+
+  listMyOrganizationInvitations(
+    request: ListMyOrganizationInvitationsRequest,
+    metadata?: Metadata,
+  ): Observable<ListMyOrganizationInvitationsResponse>;
+
+  /** Accepter (identity.member.added) ou refuser une invitation adressée au compte connecté. */
+
+  respondToOrganizationInvitation(
+    request: RespondToOrganizationInvitationRequest,
+    metadata?: Metadata,
+  ): Observable<RespondToOrganizationInvitationResponse>;
+
+  /**
+   * Administrateur : change le rôle d'un membre (identity.member.role_changed). Jamais le dernier
+   * administrateur.
+   */
+
+  changeOrganizationMemberRole(
+    request: ChangeOrganizationMemberRoleRequest,
+    metadata?: Metadata,
+  ): Observable<ChangeOrganizationMemberRoleResponse>;
+
+  /**
+   * Administrateur : retire un membre ; un membre peut aussi se retirer lui-même
+   * (identity.member.removed). Jamais le dernier administrateur.
+   */
+
+  removeOrganizationMember(
+    request: RemoveOrganizationMemberRequest,
+    metadata?: Metadata,
+  ): Observable<RemoveOrganizationMemberResponse>;
 }
 
 /**
@@ -1691,6 +2259,19 @@ export interface OrganizationServiceClient {
  * E-mail de facturation : mêmes erreurs que ChangeEmail et ConfirmEmail (IDENTITY_EMAIL_INVALID,
  * IDENTITY_EMAIL_ALREADY_VERIFIED, IDENTITY_OTP_*), sauf IDENTITY_EMAIL_ALREADY_USED : une même
  * adresse peut servir à plusieurs organisations.
+ *
+ * CDC Nettoyage v2, partie 3 (R-CP-01 à 04) : informations obligatoires d'une organisation (raison
+ * sociale, IFU de 13 chiffres unique, adresse du siège, commune, téléphone, e-mail de facturation
+ * vérifié, nom du représentant), facultatives (RCCM, secteur, logo). Membres invités par un
+ * administrateur avec un rôle d'organisation : administrateur (tout), membre (demandes et suivi),
+ * lecteur (consultation et factures) ; il reste toujours au moins un administrateur.
+ * Erreurs des membres et invitations :
+ *   IDENTITY_MEMBER_INVALID                INVALID_ARGUMENT    details.field : phone, role
+ *   IDENTITY_MEMBER_NOT_FOUND              NOT_FOUND           membre inconnu de cette organisation
+ *   IDENTITY_INVITATION_NOT_FOUND          NOT_FOUND           invitation inconnue, ou adressée à un autre compte
+ *   IDENTITY_INVITATION_NOT_PENDING        FAILED_PRECONDITION invitation déjà acceptée, refusée ou expirée
+ *   IDENTITY_MEMBER_ALREADY_EXISTS         ALREADY_EXISTS      le compte est déjà membre
+ *   IDENTITY_ORGANIZATION_LAST_ADMIN       FAILED_PRECONDITION l'action laisserait l'organisation sans administrateur
  * ---------------------------------------------------------------------------
  */
 
@@ -1741,6 +2322,78 @@ export interface OrganizationServiceController {
     | Promise<ConfirmOrganizationBillingEmailResponse>
     | Observable<ConfirmOrganizationBillingEmailResponse>
     | ConfirmOrganizationBillingEmailResponse;
+
+  /** Membres et invitations en attente (tout membre de l'organisation, R-CP-03) ; numéros masqués. */
+
+  listOrganizationMembers(
+    request: ListOrganizationMembersRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ListOrganizationMembersResponse>
+    | Observable<ListOrganizationMembersResponse>
+    | ListOrganizationMembersResponse;
+
+  /**
+   * Administrateur de l'organisation (validée) : invite un compte par son numéro, avec un rôle
+   * d'organisation. Réponse identique que le numéro ait un compte ou non (anti-énumération) ;
+   * l'invitation attend l'acceptation de la personne et expire après 7 jours (à valider). Le compte
+   * invité est prévenu (identity.member.invited) ; un numéro sans compte retrouve l'invitation à sa
+   * première connexion si elle n'a pas expiré.
+   */
+
+  inviteOrganizationMember(
+    request: InviteOrganizationMemberRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<InviteOrganizationMemberResponse>
+    | Observable<InviteOrganizationMemberResponse>
+    | InviteOrganizationMemberResponse;
+
+  /** Invitations en attente adressées au compte connecté. */
+
+  listMyOrganizationInvitations(
+    request: ListMyOrganizationInvitationsRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ListMyOrganizationInvitationsResponse>
+    | Observable<ListMyOrganizationInvitationsResponse>
+    | ListMyOrganizationInvitationsResponse;
+
+  /** Accepter (identity.member.added) ou refuser une invitation adressée au compte connecté. */
+
+  respondToOrganizationInvitation(
+    request: RespondToOrganizationInvitationRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<RespondToOrganizationInvitationResponse>
+    | Observable<RespondToOrganizationInvitationResponse>
+    | RespondToOrganizationInvitationResponse;
+
+  /**
+   * Administrateur : change le rôle d'un membre (identity.member.role_changed). Jamais le dernier
+   * administrateur.
+   */
+
+  changeOrganizationMemberRole(
+    request: ChangeOrganizationMemberRoleRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ChangeOrganizationMemberRoleResponse>
+    | Observable<ChangeOrganizationMemberRoleResponse>
+    | ChangeOrganizationMemberRoleResponse;
+
+  /**
+   * Administrateur : retire un membre ; un membre peut aussi se retirer lui-même
+   * (identity.member.removed). Jamais le dernier administrateur.
+   */
+
+  removeOrganizationMember(
+    request: RemoveOrganizationMemberRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<RemoveOrganizationMemberResponse>
+    | Observable<RemoveOrganizationMemberResponse>
+    | RemoveOrganizationMemberResponse;
 }
 
 export function OrganizationServiceControllerMethods() {
@@ -1751,6 +2404,12 @@ export function OrganizationServiceControllerMethods() {
       "getMyOrganization",
       "changeOrganizationBillingEmail",
       "confirmOrganizationBillingEmail",
+      "listOrganizationMembers",
+      "inviteOrganizationMember",
+      "listMyOrganizationInvitations",
+      "respondToOrganizationInvitation",
+      "changeOrganizationMemberRole",
+      "removeOrganizationMember",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
@@ -1936,10 +2595,23 @@ export const ORGANIZATION_ADMIN_SERVICE_NAME = "OrganizationAdminService";
  * du catalogue, suspendre ou réactiver le compte, réinitialiser sa double authentification. Chaque
  * écriture exige un motif, est tracée dans le journal d'audit d'identity et renvoie la fiche à jour.
  * Rôles :
- *   - super_admin : tout, sur tous les comptes ;
- *   - administrateur d'un métier (cleaning_admin, recovery_admin) : rôles de son métier seulement,
- *     sauf le sien ; recherche limitée à son équipe ou à un numéro complet ; numéro affiché masqué.
+ *   - super_admin : tout, sur tous les comptes ; lui seul attribue et retire les rôles
+ *     (GrantAccountRole, RevokeAccountRole ; CDC Nettoyage v2, partie 2, R-RB-02 et 13.3) ;
+ *   - administrateur d'un métier (cleaning_admin, recovery_admin) : lecture seulement (SearchAccounts,
+ *     GetAccount, ListAssignableRoles) ; recherche limitée à son équipe ou à un numéro complet ; numéro
+ *     affiché masqué. Un agent validé reçoit son rôle par le service cleaning (GrantRole, R-AG-01).
  * Double authentification exigée. Les rôles de portée org ou personal ne s'attribuent pas ici.
+ *
+ * Rôles dynamiques (CDC Nettoyage v2, R-RB-01 à 06) — super_admin seulement : liste des permissions
+ * déclarées par les services (cases à cocher par module), création d'un rôle (code, nom,
+ * description, permissions), modification, désactivation. Garde-fous (R-RB-04) : super_admin n'est ni
+ * modifiable ni désactivable ; il reste toujours au moins un super administrateur actif ; personne ne
+ * s'attribue un rôle à soi-même. Un rôle encore attribué ne se désactive pas : réaffecter d'abord ses
+ * titulaires (R-RB-02) ; aucun rôle ne se supprime. Prise d'effet (R-RB-05) : au renouvellement du jeton
+ * (15 minutes au plus) ; le retrait d'un rôle sensible révoque immédiatement toutes les sessions de la
+ * personne. Chaque écriture est tracée dans le journal d'audit d'identity (auteur, date, avant, après ;
+ * R-RB-06) et publiée (identity.role.created, identity.role.updated, identity.role.deactivated).
+ * Une attribution peut être limitée à des zones (portée SCOPE_TYPE_ZONE, R-RB-03).
  *
  * Erreurs supplémentaires (code AppError → statut gRPC) :
  *   IDENTITY_ACCOUNT_ADMIN_INVALID       INVALID_ARGUMENT    details.field : query ou reason
@@ -1959,6 +2631,15 @@ export const ORGANIZATION_ADMIN_SERVICE_NAME = "OrganizationAdminService";
  *                                                            propre compte
  *   IDENTITY_MFA_NOT_ENROLLED            FAILED_PRECONDITION aucune double authentification à
  *                                                            réinitialiser
+ *   IDENTITY_SELF_ACTION_FORBIDDEN       FAILED_PRECONDITION aussi : attribution d'un rôle à soi-même (R-RB-04)
+ *   IDENTITY_ROLE_INVALID                INVALID_ARGUMENT    details.field : code, name, description,
+ *                                                            permissions, zoneKeys
+ *   IDENTITY_ROLE_ALREADY_EXISTS         ALREADY_EXISTS      code de rôle déjà pris (rôle actif ou désactivé)
+ *   IDENTITY_PERMISSION_NOT_FOUND        NOT_FOUND           permission inconnue ou retirée (details.codes)
+ *   IDENTITY_ROLE_NOT_EDITABLE           FAILED_PRECONDITION super_admin : ni modifiable ni désactivable
+ *   IDENTITY_ROLE_IN_USE                 FAILED_PRECONDITION rôle encore attribué (details.activeAssignments)
+ *   IDENTITY_ROLE_INACTIVE               FAILED_PRECONDITION rôle désactivé : ne s'attribue plus, ne se
+ *                                                            modifie plus
  * ---------------------------------------------------------------------------
  */
 
@@ -1975,7 +2656,10 @@ export interface AccountAdminServiceClient {
 
   getAccount(request: GetAccountRequest, metadata?: Metadata): Observable<GetAccountResponse>;
 
-  /** Catalogue des rôles, avec ceux que l'appelant peut attribuer. */
+  /**
+   * Catalogue des rôles, avec ceux que l'appelant peut attribuer (aucun pour un administrateur de
+   * métier : R-RB-02). Les rôles désactivés y figurent (active = false), jamais attribuables.
+   */
 
   listAssignableRoles(
     request: ListAssignableRolesRequest,
@@ -1983,8 +2667,11 @@ export interface AccountAdminServiceClient {
   ): Observable<ListAssignableRolesResponse>;
 
   /**
-   * Compte actif seulement. Portée du rôle : globale, ou le métier qui le déclare. Une attribution
-   * active identique est rendue telle quelle (rien n'est écrit). Événement identity.role.granted ;
+   * super_admin seulement (R-RB-02 ; tout autre appelant : AUTH_FORBIDDEN dès la gateway, puis
+   * IDENTITY_ROLE_FORBIDDEN chez identity). Compte actif seulement, jamais le sien (R-RB-04).
+   * Portée du rôle : globale, ou le métier qui le déclare ; avec zones, limitée à ces zones
+   * (SCOPE_TYPE_ZONE, R-RB-03). Une attribution active identique est rendue telle quelle (rien
+   * n'est écrit). Événement identity.role.granted (version 2 : portée zone et zoneKeys) ;
    * le rôle entre dans les jetons au renouvellement suivant (15 minutes au plus). Un compte qui
    * reçoit son premier rôle du back-office configure sa double authentification à sa prochaine
    * connexion au back-office (ADR-023).
@@ -1993,8 +2680,9 @@ export interface AccountAdminServiceClient {
   grantAccountRole(request: GrantAccountRoleRequest, metadata?: Metadata): Observable<GrantAccountRoleResponse>;
 
   /**
-   * Événement identity.role.revoked ; une session du back-office sans rôle restant est fermée à
-   * son renouvellement suivant (ADR-023).
+   * super_admin seulement (R-RB-02). Événement identity.role.revoked ; une session du back-office sans rôle restant est fermée à
+   * son renouvellement suivant (ADR-023). Rôle sensible (R-RB-05) : toutes les sessions de la
+   * personne sont révoquées immédiatement (sessionsRevoked dans l'événement).
    */
 
   revokeAccountRole(request: RevokeAccountRoleRequest, metadata?: Metadata): Observable<RevokeAccountRoleResponse>;
@@ -2017,6 +2705,40 @@ export interface AccountAdminServiceClient {
    */
 
   resetAccountMfa(request: ResetAccountMfaRequest, metadata?: Metadata): Observable<ResetAccountMfaResponse>;
+
+  /**
+   * super_admin. Permissions déclarées par les services (R-RB-01), groupées par service et module ;
+   * les permissions retirées n'y figurent que sur demande.
+   */
+
+  listPermissions(request: ListPermissionsRequest, metadata?: Metadata): Observable<ListPermissionsResponse>;
+
+  /** super_admin. Fiche d'un rôle : permissions cochées, nombre de titulaires, auteur des changements. */
+
+  getRole(request: GetRoleRequest, metadata?: Metadata): Observable<GetRoleResponse>;
+
+  /**
+   * super_admin. Nouveau rôle (R-RB-02), actif, portée globale ; ses titulaires peuvent être limités à
+   * des zones à l'attribution. Accès au back-office et double authentification toujours exigés.
+   * Événement identity.role.created.
+   */
+
+  createRole(request: CreateRoleRequest, metadata?: Metadata): Observable<CreateRoleResponse>;
+
+  /**
+   * super_admin. Nom, description, sensibilité et permissions (liste complète qui remplace la
+   * précédente). Rôle livré par défaut compris, sauf super_admin. Effet au renouvellement des jetons.
+   * Événement identity.role.updated (permissions ajoutées et retirées).
+   */
+
+  updateRole(request: UpdateRoleRequest, metadata?: Metadata): Observable<UpdateRoleResponse>;
+
+  /**
+   * super_admin. Rôle actif sans attribution active → désactivé (identity.role.deactivated). Encore
+   * attribué : IDENTITY_ROLE_IN_USE.
+   */
+
+  deactivateRole(request: DeactivateRoleRequest, metadata?: Metadata): Observable<DeactivateRoleResponse>;
 }
 
 /**
@@ -2039,10 +2761,23 @@ export interface AccountAdminServiceClient {
  * du catalogue, suspendre ou réactiver le compte, réinitialiser sa double authentification. Chaque
  * écriture exige un motif, est tracée dans le journal d'audit d'identity et renvoie la fiche à jour.
  * Rôles :
- *   - super_admin : tout, sur tous les comptes ;
- *   - administrateur d'un métier (cleaning_admin, recovery_admin) : rôles de son métier seulement,
- *     sauf le sien ; recherche limitée à son équipe ou à un numéro complet ; numéro affiché masqué.
+ *   - super_admin : tout, sur tous les comptes ; lui seul attribue et retire les rôles
+ *     (GrantAccountRole, RevokeAccountRole ; CDC Nettoyage v2, partie 2, R-RB-02 et 13.3) ;
+ *   - administrateur d'un métier (cleaning_admin, recovery_admin) : lecture seulement (SearchAccounts,
+ *     GetAccount, ListAssignableRoles) ; recherche limitée à son équipe ou à un numéro complet ; numéro
+ *     affiché masqué. Un agent validé reçoit son rôle par le service cleaning (GrantRole, R-AG-01).
  * Double authentification exigée. Les rôles de portée org ou personal ne s'attribuent pas ici.
+ *
+ * Rôles dynamiques (CDC Nettoyage v2, R-RB-01 à 06) — super_admin seulement : liste des permissions
+ * déclarées par les services (cases à cocher par module), création d'un rôle (code, nom,
+ * description, permissions), modification, désactivation. Garde-fous (R-RB-04) : super_admin n'est ni
+ * modifiable ni désactivable ; il reste toujours au moins un super administrateur actif ; personne ne
+ * s'attribue un rôle à soi-même. Un rôle encore attribué ne se désactive pas : réaffecter d'abord ses
+ * titulaires (R-RB-02) ; aucun rôle ne se supprime. Prise d'effet (R-RB-05) : au renouvellement du jeton
+ * (15 minutes au plus) ; le retrait d'un rôle sensible révoque immédiatement toutes les sessions de la
+ * personne. Chaque écriture est tracée dans le journal d'audit d'identity (auteur, date, avant, après ;
+ * R-RB-06) et publiée (identity.role.created, identity.role.updated, identity.role.deactivated).
+ * Une attribution peut être limitée à des zones (portée SCOPE_TYPE_ZONE, R-RB-03).
  *
  * Erreurs supplémentaires (code AppError → statut gRPC) :
  *   IDENTITY_ACCOUNT_ADMIN_INVALID       INVALID_ARGUMENT    details.field : query ou reason
@@ -2062,6 +2797,15 @@ export interface AccountAdminServiceClient {
  *                                                            propre compte
  *   IDENTITY_MFA_NOT_ENROLLED            FAILED_PRECONDITION aucune double authentification à
  *                                                            réinitialiser
+ *   IDENTITY_SELF_ACTION_FORBIDDEN       FAILED_PRECONDITION aussi : attribution d'un rôle à soi-même (R-RB-04)
+ *   IDENTITY_ROLE_INVALID                INVALID_ARGUMENT    details.field : code, name, description,
+ *                                                            permissions, zoneKeys
+ *   IDENTITY_ROLE_ALREADY_EXISTS         ALREADY_EXISTS      code de rôle déjà pris (rôle actif ou désactivé)
+ *   IDENTITY_PERMISSION_NOT_FOUND        NOT_FOUND           permission inconnue ou retirée (details.codes)
+ *   IDENTITY_ROLE_NOT_EDITABLE           FAILED_PRECONDITION super_admin : ni modifiable ni désactivable
+ *   IDENTITY_ROLE_IN_USE                 FAILED_PRECONDITION rôle encore attribué (details.activeAssignments)
+ *   IDENTITY_ROLE_INACTIVE               FAILED_PRECONDITION rôle désactivé : ne s'attribue plus, ne se
+ *                                                            modifie plus
  * ---------------------------------------------------------------------------
  */
 
@@ -2087,7 +2831,10 @@ export interface AccountAdminServiceController {
     metadata?: Metadata,
   ): Promise<GetAccountResponse> | Observable<GetAccountResponse> | GetAccountResponse;
 
-  /** Catalogue des rôles, avec ceux que l'appelant peut attribuer. */
+  /**
+   * Catalogue des rôles, avec ceux que l'appelant peut attribuer (aucun pour un administrateur de
+   * métier : R-RB-02). Les rôles désactivés y figurent (active = false), jamais attribuables.
+   */
 
   listAssignableRoles(
     request: ListAssignableRolesRequest,
@@ -2095,8 +2842,11 @@ export interface AccountAdminServiceController {
   ): Promise<ListAssignableRolesResponse> | Observable<ListAssignableRolesResponse> | ListAssignableRolesResponse;
 
   /**
-   * Compte actif seulement. Portée du rôle : globale, ou le métier qui le déclare. Une attribution
-   * active identique est rendue telle quelle (rien n'est écrit). Événement identity.role.granted ;
+   * super_admin seulement (R-RB-02 ; tout autre appelant : AUTH_FORBIDDEN dès la gateway, puis
+   * IDENTITY_ROLE_FORBIDDEN chez identity). Compte actif seulement, jamais le sien (R-RB-04).
+   * Portée du rôle : globale, ou le métier qui le déclare ; avec zones, limitée à ces zones
+   * (SCOPE_TYPE_ZONE, R-RB-03). Une attribution active identique est rendue telle quelle (rien
+   * n'est écrit). Événement identity.role.granted (version 2 : portée zone et zoneKeys) ;
    * le rôle entre dans les jetons au renouvellement suivant (15 minutes au plus). Un compte qui
    * reçoit son premier rôle du back-office configure sa double authentification à sa prochaine
    * connexion au back-office (ADR-023).
@@ -2108,8 +2858,9 @@ export interface AccountAdminServiceController {
   ): Promise<GrantAccountRoleResponse> | Observable<GrantAccountRoleResponse> | GrantAccountRoleResponse;
 
   /**
-   * Événement identity.role.revoked ; une session du back-office sans rôle restant est fermée à
-   * son renouvellement suivant (ADR-023).
+   * super_admin seulement (R-RB-02). Événement identity.role.revoked ; une session du back-office sans rôle restant est fermée à
+   * son renouvellement suivant (ADR-023). Rôle sensible (R-RB-05) : toutes les sessions de la
+   * personne sont révoquées immédiatement (sessionsRevoked dans l'événement).
    */
 
   revokeAccountRole(
@@ -2144,6 +2895,55 @@ export interface AccountAdminServiceController {
     request: ResetAccountMfaRequest,
     metadata?: Metadata,
   ): Promise<ResetAccountMfaResponse> | Observable<ResetAccountMfaResponse> | ResetAccountMfaResponse;
+
+  /**
+   * super_admin. Permissions déclarées par les services (R-RB-01), groupées par service et module ;
+   * les permissions retirées n'y figurent que sur demande.
+   */
+
+  listPermissions(
+    request: ListPermissionsRequest,
+    metadata?: Metadata,
+  ): Promise<ListPermissionsResponse> | Observable<ListPermissionsResponse> | ListPermissionsResponse;
+
+  /** super_admin. Fiche d'un rôle : permissions cochées, nombre de titulaires, auteur des changements. */
+
+  getRole(
+    request: GetRoleRequest,
+    metadata?: Metadata,
+  ): Promise<GetRoleResponse> | Observable<GetRoleResponse> | GetRoleResponse;
+
+  /**
+   * super_admin. Nouveau rôle (R-RB-02), actif, portée globale ; ses titulaires peuvent être limités à
+   * des zones à l'attribution. Accès au back-office et double authentification toujours exigés.
+   * Événement identity.role.created.
+   */
+
+  createRole(
+    request: CreateRoleRequest,
+    metadata?: Metadata,
+  ): Promise<CreateRoleResponse> | Observable<CreateRoleResponse> | CreateRoleResponse;
+
+  /**
+   * super_admin. Nom, description, sensibilité et permissions (liste complète qui remplace la
+   * précédente). Rôle livré par défaut compris, sauf super_admin. Effet au renouvellement des jetons.
+   * Événement identity.role.updated (permissions ajoutées et retirées).
+   */
+
+  updateRole(
+    request: UpdateRoleRequest,
+    metadata?: Metadata,
+  ): Promise<UpdateRoleResponse> | Observable<UpdateRoleResponse> | UpdateRoleResponse;
+
+  /**
+   * super_admin. Rôle actif sans attribution active → désactivé (identity.role.deactivated). Encore
+   * attribué : IDENTITY_ROLE_IN_USE.
+   */
+
+  deactivateRole(
+    request: DeactivateRoleRequest,
+    metadata?: Metadata,
+  ): Promise<DeactivateRoleResponse> | Observable<DeactivateRoleResponse> | DeactivateRoleResponse;
 }
 
 export function AccountAdminServiceControllerMethods() {
@@ -2158,6 +2958,11 @@ export function AccountAdminServiceControllerMethods() {
       "suspendAccount",
       "reactivateAccount",
       "resetAccountMfa",
+      "listPermissions",
+      "getRole",
+      "createRole",
+      "updateRole",
+      "deactivateRole",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);

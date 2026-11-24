@@ -2,10 +2,12 @@ import { appendToOutbox, createEnvelope, type SqlExecutor } from '@ksp/platform'
 import {
   type BillingContract as ContractRow,
   type Invoice as InvoiceRow,
+  type InvoiceIssuance as IssuanceRow,
   type InvoicePayment as PaymentRow,
   type Prisma,
 } from '../../../prisma/generated';
 import { type OutboxMessage } from '../../application/ports';
+import { invoiceV2Fields } from './monthly-mappers';
 import { type BillingContract, type SuspensionInterval } from '../../domain/contract';
 import {
   type Invoice,
@@ -14,6 +16,7 @@ import {
   type InvoiceStatus,
   type PaymentMethod,
 } from '../../domain/invoice';
+import { issuedInvoiceFields } from './issuance-mappers';
 
 export type Tx = Prisma.TransactionClient;
 export const json = (value: unknown) => value as Prisma.InputJsonValue;
@@ -23,7 +26,11 @@ export async function writeEvents(tx: Tx, events: OutboxMessage[]): Promise<void
   for (const event of events) {
     await appendToOutbox(
       tx as unknown as SqlExecutor,
-      createEnvelope(event.type, event.payload as never, { producer: 'billing' }),
+      // Lot F : version de l'événement (2 pour une facture v2, RV-98).
+      createEnvelope(event.type, event.payload as never, {
+        producer: 'billing',
+        ...(event.version ? { version: event.version } : {}),
+      }),
     );
   }
 }
@@ -74,9 +81,12 @@ export function contractColumns(contract: BillingContract) {
   };
 }
 
-export const INVOICE_INCLUDE = { payments: { orderBy: { recordedAt: 'asc' as const } } };
+// Lot E : émission au paiement chargée avec la facture.
+export const INVOICE_INCLUDE = { payments: { orderBy: { recordedAt: 'asc' as const } }, issuance: true };
 
-export function toInvoice(row: InvoiceRow & { payments: PaymentRow[] }): Invoice {
+export function toInvoice(
+  row: InvoiceRow & { payments: PaymentRow[]; issuance?: IssuanceRow | null },
+): Invoice {
   return {
     id: row.id,
     number: row.number,
@@ -93,6 +103,8 @@ export function toInvoice(row: InvoiceRow & { payments: PaymentRow[] }): Invoice
     issuedAt: row.issuedAt,
     dueAt: row.dueAt,
     paidAt: row.paidAt,
+    // Lot E : nature et émission au paiement.
+    ...issuedInvoiceFields(row),
     payments: row.payments.map((payment) => ({
       id: payment.id,
       amount: payment.amount,
@@ -104,6 +116,8 @@ export function toInvoice(row: InvoiceRow & { payments: PaymentRow[] }): Invoice
     })),
     organization: toInvoiceOrganization(row),
     version: row.version,
+    // Lot F : nature, règlement et avoirs d'une facture v2.
+    ...invoiceV2Fields(row),
   };
 }
 

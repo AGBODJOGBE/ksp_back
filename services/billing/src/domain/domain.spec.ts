@@ -1,8 +1,6 @@
 import {
   addMonths,
-  applyResumption,
   naturalEnd,
-  applySuspension,
   beninDay,
   beninMidnight,
   type BillingContract,
@@ -131,15 +129,6 @@ describe('mois civils et prorata', () => {
     expect(duePeriods(c, new Set(), at('2026-11-30T22:59:59Z'))).toEqual([]);
     expect(duePeriods(c, new Set(), at('2026-11-30T23:00:00Z')).map((p) => p.index)).toEqual([1]);
     expect(duePeriods(c, new Set([1]), at('2027-02-10T00:00:00Z')).map((p) => p.index)).toEqual([2, 3]);
-  });
-
-  it('événements dans le désordre : une suspension reçue après la reprise est replacée dans l’historique', () => {
-    const resumedFirst = applyResumption(contract(), at('2026-12-10T00:00:00Z'));
-    const late = applySuspension(resumedFirst, at('2026-12-01T00:00:00Z'));
-    expect(late.suspendedSince).toBeNull();
-    expect(late.suspensions).toEqual([{ from: at('2026-12-01T00:00:00Z'), to: at('2026-12-10T00:00:00Z') }]);
-    const suspended = applySuspension(contract(), at('2026-12-01T00:00:00Z'));
-    expect(applyResumption(suspended, at('2026-12-10T00:00:00Z')).suspensions).toHaveLength(1);
   });
 });
 

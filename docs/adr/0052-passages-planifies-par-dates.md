@@ -2,6 +2,8 @@
 
 **Statut** : Proposé (décision du responsable, 2026-11-10)
 
+**Remplacé en partie par ADR-054 et ADR-058** (décisions 2 à 8 ; le moteur de dates de la décision 1 est repris).
+
 ## Contexte
 
 Le responsable a demandé : « Pour la planification des passages, je propose que ce soient des dates. La

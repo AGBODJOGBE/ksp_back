@@ -14,13 +14,22 @@ import { NestFactory } from '@nestjs/core';
 import { type ClientGrpc, ClientProxyFactory, type MicroserviceOptions } from '@nestjs/microservices';
 import { type Metadata } from '@grpc/grpc-js';
 import { type Observable } from 'rxjs';
-import { CUSTOMER_ID, ORGANIZATION_ID, testWorld, type TestWorld } from '../src/application/testing/fakes';
+import {
+  CUSTOMER_ID,
+  MISSION_ID,
+  ORGANIZATION_ID,
+  organizationContract,
+  testWorld,
+  type TestWorld,
+} from '../src/application/testing/fakes';
 import { BILLING_USE_CASES, createUseCases } from '../src/application/use-cases';
 import {
   BillingAdminGrpcController,
   BillingGrpcController,
   ObligationGrpcController,
 } from '../src/interfaces/grpc/billing.controller';
+import { createMonthlyUseCases, MONTHLY_USE_CASES } from '../src/application/monthly/use-cases';
+import { FakeWalletCredits, InMemoryMonthly } from '../src/application/testing/monthly-fakes';
 
 /**
  * Bout en bout sur un vrai serveur gRPC (doublures en mémoire, sans base) : chargement du
@@ -38,8 +47,6 @@ function freePort(): Promise<number> {
   });
 }
 
-const MISSION_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000';
-
 describe('billing en gRPC', () => {
   let app: INestMicroservice;
   let world: TestWorld;
@@ -51,30 +58,25 @@ describe('billing en gRPC', () => {
   beforeAll(async () => {
     world = testWorld();
     const useCases = createUseCases(world);
-    await useCases.registerContract.execute({
-      eventId: '0192f1c4-7a2b-7c3d-8e4f-000000009001',
-      type: 'cleaning.booking.confirmed',
-      occurredAt: '2026-10-23T08:00:00Z',
-      payload: {
-        requestId: '0192f1c4-7a2b-7c3d-8e4f-000000009050',
-        quoteId: '0192f1c4-7a2b-7c3d-8e4f-000000009051',
-        missionId: MISSION_ID,
-        customerId: CUSTOMER_ID,
-        organizationId: ORGANIZATION_ID,
-        total: { amount: 150_000, currency: 'XOF' },
-        plannedInterventions: 4,
-        recurrence: { period: 'week', visitsPerPeriod: 1, durationMonths: 1 },
-        paymentPlan: { option: 'full', timing: 'after', method: 'cash' },
-        depositAmount: { amount: 150_000, currency: 'XOF' },
-        startsAt: '2026-10-31T23:00:00.000Z',
-      },
-    });
+    world.contracts.add(organizationContract({ total: 150_000, durationMonths: 1 }));
     world.clock.current = new Date('2026-12-05T09:00:00Z');
     await useCases.issueDueInvoices.execute();
 
     @Module({
       controllers: [BillingGrpcController, BillingAdminGrpcController, ObligationGrpcController],
-      providers: [{ provide: BILLING_USE_CASES, useValue: useCases }, GrpcContextInterceptor],
+      providers: [
+        { provide: BILLING_USE_CASES, useValue: useCases },
+        // Lot F : avoirs du back-office (BillingAdminService).
+        {
+          provide: MONTHLY_USE_CASES,
+          useValue: createMonthlyUseCases({
+            ...world,
+            monthly: new InMemoryMonthly(world.invoices, world.recorder),
+            walletCredits: new FakeWalletCredits(),
+          }),
+        },
+        GrpcContextInterceptor,
+      ],
     })
     class TestModule {}
 

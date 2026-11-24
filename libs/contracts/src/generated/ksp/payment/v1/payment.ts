@@ -54,12 +54,15 @@ export interface Payment {
     | undefined;
   /**
    * Payeur : le compte connecté qui a créé le paiement ; vide pour un paiement par lien (payeur sans
-   * compte, ADR-040).
+   * compte, ADR-040) ; paiement direct (v2) : le compte désigné par le service demandeur.
    */
   customerId: string;
   /** Organisation payeuse (facture d'entreprise), vide sinon. */
   organizationId: string;
-  /** "mobile_money_online". */
+  /**
+   * "mobile_money_online" ; v2 : "card_online" si le payeur a choisi la carte sur la page du
+   * prestataire (R-WL-02, à valider : activation de la carte chez FedaPay).
+   */
   method: string;
   /** "fedapay" ou "simulated" (développement). */
   provider: string;
@@ -95,6 +98,31 @@ export interface Payment {
   mismatchResolutionNote: string;
   /** Paiement par lien (ADR-040) : lien payé, payeur sans compte (customer_id vide). Vide sinon. */
   paymentLinkId: string;
+  /** Paiement direct (v2, R-WL-05) : objet que la recharge doit régler aussitôt ; absent sinon. */
+  target?: PaymentTarget | undefined;
+}
+
+/**
+ * Objet visé par un paiement direct (v2) : il appartient au service demandeur, qui le débite du
+ * portefeuille dès le crédit de la recharge.
+ */
+export interface PaymentTarget {
+  /** Service demandeur ("cleaning", "billing") ; renseigné par payment d'après le jeton de service. */
+  service: string;
+  /**
+   * Type d'objet chez le service : minuscules, chiffres et "_", 3 à 50 caractères
+   * ("cleaning_request" pour des frais de visite, "cleaning_session", "billing_invoice").
+   */
+  objectType: string;
+  /** UUID de l'objet. */
+  objectId: string;
+  /** Part payée, vide sinon (mêmes valeurs que ksp.wallet.v1.ObjectReference.part). */
+  part: string;
+  /**
+   * Référence lisible affichée au payeur et transmise au prestataire (« DN-000124 », « séance 3/15 »,
+   * « FAC-2026-000012 »), 1 à 60 caractères.
+   */
+  reference: string;
 }
 
 export interface CreatePaymentRequest {
@@ -488,6 +516,44 @@ export interface CreateTopUpPaymentRequest {
 }
 
 export interface CreateTopUpPaymentResponse {
+  payment?:
+    | Payment
+    | undefined;
+  /** false : paiement déjà créé avec cette clé, ou page encore ouverte réutilisée. */
+  created: boolean;
+}
+
+export interface CreatePaymentRequestRequest {
+  /**
+   * Obligatoire (8 à 100 caractères : lettres, chiffres, ":", "_" et "-"), propre au service
+   * demandeur ; par exemple "cleaning_session:<id>:<tentative>".
+   */
+  idempotencyKey: string;
+  /**
+   * Compte payeur (UUID) : celui qui reçoit le lien ; pour une organisation, le membre qui paie ou,
+   * pour un envoi automatique, un administrateur de l'organisation.
+   */
+  customerId: string;
+  /** Organisation titulaire du portefeuille crédité ; vide pour le contexte personnel. */
+  organizationId: string;
+  /** Montant exact à payer, entier en XOF (1 à 1 000 000 000), fixé par le service demandeur. */
+  amount?:
+    | Money
+    | undefined;
+  /** Objet visé (service renseigné par payment). */
+  target?:
+    | PaymentTarget
+    | undefined;
+  /** Libellé affiché au payeur, 1 à 140 caractères (« Nettoyage — séance 3/15 »). */
+  description: string;
+  /**
+   * Facultatif : au-delà, la page n'est plus payable (entre 15 minutes et 7 jours après la création ;
+   * vide : durée par défaut de payment).
+   */
+  expiresAt: string;
+}
+
+export interface CreatePaymentRequestResponse {
   payment?:
     | Payment
     | undefined;
@@ -929,6 +995,23 @@ export interface TopUpPaymentServiceClient {
   createTopUpPayment(request: CreateTopUpPaymentRequest, metadata?: Metadata): Observable<CreateTopUpPaymentResponse>;
 
   /**
+   * Paiement direct du montant exact d'un objet (v2, R-WL-05, R-PP-03, R-PE-04), réservé aux services
+   * de PAYMENT_DIRECT_CALLERS (cleaning et billing au lancement ; jeton de service). Le montant vient
+   * toujours du service demandeur, jamais du client. Le paiement est une recharge "wallet_top_up" du
+   * titulaire (organisation si organization_id est renseigné, sinon le compte) qui porte l'objet visé
+   * (target) ; sa page de paiement (checkout_url) sert aussi de lien envoyé par WhatsApp, SMS ou dans
+   * l'espace client. Une page encore ouverte pour le même objet et le même montant est réutilisée ;
+   * pour un autre montant elle est remplacée. La réussite publie payment.intent.succeeded (avec
+   * target) : wallet crédite le portefeuille, puis le service demandeur débite l'objet. Idempotent par
+   * (service, clé).
+   */
+
+  createPaymentRequest(
+    request: CreatePaymentRequestRequest,
+    metadata?: Metadata,
+  ): Observable<CreatePaymentRequestResponse>;
+
+  /**
    * Paiement de recharge relu par wallet avant tout crédit (ADR-048) : crédit automatique sur
    * payment.intent.succeeded, ou crédit manuel d'une recharge par la finance. Paiement inconnu, ou
    * d'un autre objet que "wallet_top_up" : PAYMENT_NOT_FOUND.
@@ -955,6 +1038,23 @@ export interface TopUpPaymentServiceController {
   ): Promise<CreateTopUpPaymentResponse> | Observable<CreateTopUpPaymentResponse> | CreateTopUpPaymentResponse;
 
   /**
+   * Paiement direct du montant exact d'un objet (v2, R-WL-05, R-PP-03, R-PE-04), réservé aux services
+   * de PAYMENT_DIRECT_CALLERS (cleaning et billing au lancement ; jeton de service). Le montant vient
+   * toujours du service demandeur, jamais du client. Le paiement est une recharge "wallet_top_up" du
+   * titulaire (organisation si organization_id est renseigné, sinon le compte) qui porte l'objet visé
+   * (target) ; sa page de paiement (checkout_url) sert aussi de lien envoyé par WhatsApp, SMS ou dans
+   * l'espace client. Une page encore ouverte pour le même objet et le même montant est réutilisée ;
+   * pour un autre montant elle est remplacée. La réussite publie payment.intent.succeeded (avec
+   * target) : wallet crédite le portefeuille, puis le service demandeur débite l'objet. Idempotent par
+   * (service, clé).
+   */
+
+  createPaymentRequest(
+    request: CreatePaymentRequestRequest,
+    metadata?: Metadata,
+  ): Promise<CreatePaymentRequestResponse> | Observable<CreatePaymentRequestResponse> | CreatePaymentRequestResponse;
+
+  /**
    * Paiement de recharge relu par wallet avant tout crédit (ADR-048) : crédit automatique sur
    * payment.intent.succeeded, ou crédit manuel d'une recharge par la finance. Paiement inconnu, ou
    * d'un autre objet que "wallet_top_up" : PAYMENT_NOT_FOUND.
@@ -968,7 +1068,7 @@ export interface TopUpPaymentServiceController {
 
 export function TopUpPaymentServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["createTopUpPayment", "getTopUpPayment"];
+    const grpcMethods: string[] = ["createTopUpPayment", "createPaymentRequest", "getTopUpPayment"];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("TopUpPaymentService", method)(constructor.prototype[method], method, descriptor);

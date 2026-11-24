@@ -13,11 +13,22 @@ export const DEFAULT_CHANNEL_PREFERENCES: ChannelPreferences = Object.freeze({ w
 
 /**
  * Messages au client qui partent quelles que soient ses préférences : la suppression du compte
- * (« si vous n'êtes pas à l'origine de cette demande… ») est un message de sécurité.
+ * (« si vous n'êtes pas à l'origine de cette demande… ») est un message de sécurité ; les messages
+ * de paiement et de suspension du Nettoyage partent toujours (CDC Nettoyage v2, 16.2), les plus
+ * graves étant de nature `important`.
  */
 const ALWAYS_SENT: ReadonlySet<string> = new Set([
   'identity.account_deletion_requested.customer',
   'identity.account_deletion_cancelled.customer',
+  'cleaning.visit_fee_paid.customer',
+  'cleaning.session_payment_due.customer',
+  'cleaning.session_paid.customer',
+  'cleaning.balance_insufficient.customer',
+  'cleaning.program_resumed.customer',
+  'cleaning.request_rejected.customer',
+  'cleaning.quote_withdrawn.customer',
+  'cleaning.payment_left_in_wallet.customer',
+  'cleaning.visit_missed.customer',
 ]);
 
 /**

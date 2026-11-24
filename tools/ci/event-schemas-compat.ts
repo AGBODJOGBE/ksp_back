@@ -69,33 +69,60 @@ function git(args: string[]): string {
   return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 
-function main(): void {
-  const base = process.argv[2] ?? 'origin/main';
+/** Rupture d'un schéma publié dans `base`, avec le type et la version de l'événement visé. */
+export interface EventSchemaBreak {
+  file: string;
+  eventType: string;
+  version: number;
+  message: string;
+}
+
+/**
+ * Ruptures des schémas d'événements de `currentRoot` (par défaut ce dépôt) par rapport à la
+ * référence git `base`. Utilisé aussi par le contrôle des ruptures acceptées (accepted-breaks.ts).
+ */
+export function eventSchemaBreaks(
+  base: string,
+  currentRoot = ROOT,
+): { files: number; breaks: EventSchemaBreak[] } {
   const files = git(['ls-tree', '-r', '--name-only', base, '--', EVENTS])
     .split('\n')
     .filter((file) => file.endsWith('.json'));
-  const errors: string[] = [];
+  const breaks: EventSchemaBreak[] = [];
   for (const file of files) {
+    const previous = JSON.parse(git(['show', `${base}:${file}`])) as Schema;
+    const eventType = String(previous['x-event-type'] ?? file);
+    const version = Number(previous['x-event-version'] ?? 0);
     let current: string;
     try {
-      current = readFileSync(join(ROOT, file), 'utf8');
+      current = readFileSync(join(currentRoot, file), 'utf8');
     } catch {
-      errors.push(`${file} : schéma retiré (une version publiée reste en place)`);
+      breaks.push({
+        file,
+        eventType,
+        version,
+        message: 'schéma retiré (une version publiée reste en place)',
+      });
       continue;
     }
-    const previous = JSON.parse(git(['show', `${base}:${file}`])) as unknown;
-    for (const error of breakingChanges(previous, JSON.parse(current) as unknown)) {
-      errors.push(`${file} ${error}`);
+    for (const message of breakingChanges(previous, JSON.parse(current) as unknown)) {
+      breaks.push({ file, eventType, version, message });
     }
   }
-  if (errors.length > 0) {
-    for (const error of errors) process.stderr.write(`::error::${error}\n`);
+  return { files: files.length, breaks };
+}
+
+function main(): void {
+  const base = process.argv[2] ?? 'origin/main';
+  const { files, breaks } = eventSchemaBreaks(base);
+  if (breaks.length > 0) {
+    for (const { file, message } of breaks) process.stderr.write(`::error::${file} : ${message}\n`);
     process.stderr.write(
-      `\n${errors.length} rupture(s) de compatibilité des événements : publier une version v2 à côté.\n`,
+      `\n${breaks.length} rupture(s) de compatibilité des événements : publier une version v2 à côté.\n`,
     );
     process.exit(1);
   }
-  process.stdout.write(`${files.length} schémas d'événements compatibles avec ${base}.\n`);
+  process.stdout.write(`${files} schémas d'événements compatibles avec ${base}.\n`);
 }
 
 if (require.main === module) main();

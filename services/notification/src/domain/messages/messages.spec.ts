@@ -2,7 +2,7 @@ import { eventChannelPlan, eventDispatchPlans } from '../channel';
 import { EmailAddress } from '../recipient';
 import { findTemplate, invalidVariables, isEventTemplate } from '../template';
 import { BILLING_TEMPLATES } from './billing.messages';
-import { CLEANING_TEMPLATES, paymentNote, unpaidText } from './cleaning.messages';
+import { CLEANING_TEMPLATES } from './cleaning.messages';
 import { formatDate, formatDateTime, formatDuration, formatXof } from './format';
 import { ACCOUNT_TEMPLATES } from './account.messages';
 import { ORGANIZATION_TEMPLATES } from './organization.messages';
@@ -59,14 +59,6 @@ describe('Envois d’un message d’événement', () => {
   });
 });
 
-describe('Impayés', () => {
-  it('factures d’entreprise ou passages d’un particulier, au singulier ou au pluriel', () => {
-    expect(unpaidText('unpaid_invoices', 1)).toBe('1 facture impayée');
-    expect(unpaidText('unpaid_invoices', 3)).toBe('3 factures impayées');
-    expect(unpaidText('unpaid_interventions', 2)).toBe('2 passages impayés');
-  });
-});
-
 describe('EmailAddress', () => {
   it('normalise et masque l’adresse', () => {
     const address = EmailAddress.parse('  Koffi.Adjovi@Example.COM ');
@@ -101,9 +93,14 @@ describe('Modèles du Nettoyage', () => {
   });
 
   it('un lien qui n’est pas une adresse web est refusé', () => {
-    const template = findTemplate('cleaning.quote_requested.customer')!;
+    const template = findTemplate('cleaning.request_cancelled.customer')!;
     expect(
-      invalidVariables(template, { first_name: '', visit_required: 'false', link: 'javascript:alert(1)' }),
+      invalidVariables(template, {
+        first_name: '',
+        case: 'cancelled_by_customer',
+        scope: 'request',
+        link: 'javascript:alert(1)',
+      }),
     ).toEqual(['link']);
   });
 
@@ -116,12 +113,6 @@ describe('Modèles du Nettoyage', () => {
       'service_name',
     ]);
     expect(isEventTemplate(template) && template.render(base).subject).toBe('Votre devis de nettoyage');
-  });
-
-  it('phrase du paiement choisi', () => {
-    expect(
-      paymentNote({ option: 'full', timing: 'after', method: 'cash', total: 20000, deposit: 6000 }),
-    ).toBe(`Paiement choisi : totalité (20${NBSP}000${NBSP}FCFA), après l'intervention, en espèces.`);
   });
 });
 

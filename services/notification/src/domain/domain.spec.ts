@@ -147,7 +147,7 @@ describe('summarizeFailure', () => {
 });
 
 describe('appelants autorisés', () => {
-  it.each(['identity', 'document', 'recovery'])('%s peut envoyer directement', (service) => {
+  it.each(['identity', 'document', 'recovery', 'cleaning'])('%s peut envoyer directement', (service) => {
     expect(isDirectSendCaller(service)).toBe(true);
   });
 
@@ -163,6 +163,7 @@ describe('appelants autorisés', () => {
     ['document', 'document.signature_requested'],
     ['recovery', 'recovery.debtor_access_code'],
     ['recovery', 'recovery.debtor_reminder'],
+    ['cleaning', 'cleaning.agent_invitation'],
   ])('%s envoie son modèle %s', (service, templateCode) => {
     expect(mayCallerSendTemplate(service, templateCode)).toBe(true);
   });
@@ -174,6 +175,14 @@ describe('appelants autorisés', () => {
     ['document', 'recovery.debtor_access_code'],
     ['recovery', 'recoveryx.debtor_reminder'],
     ['gateway', 'gateway.anything'],
+    // cleaning : liste fermée, l'invitation d'un agent et rien d'autre, même préfixé de son nom.
+    ['cleaning', 'cleaning.agent_applied.agent'],
+    ['cleaning', 'cleaning.session_reminder.customer'],
+    ['cleaning', 'cleaning.agent_invitation.extra'],
+    ['cleaning', 'identity.otp'],
+    ['cleaning', 'recovery.debtor_reminder'],
+    ['identity', 'cleaning.agent_invitation'],
+    ['recovery', 'cleaning.agent_invitation'],
   ])('%s ne peut pas envoyer %s', (service, templateCode) => {
     expect(mayCallerSendTemplate(service, templateCode)).toBe(false);
   });

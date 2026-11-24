@@ -53,8 +53,55 @@ describe('manifeste de routage', () => {
       ],
       'sans double authentification',
     ],
+    [
+      'une permission sur une route publique',
+      [route({ access: { level: 'public', permission: 'cleaning.catalog.read' } })],
+      'non connectée',
+    ],
+    [
+      'une permission avec des rôles',
+      [
+        route({
+          access: { level: 'authenticated', anyRole: ['agent'], permission: 'cleaning.catalog.read' },
+          rateLimit: 'authenticated',
+        }),
+      ],
+      'permission et rôles',
+    ],
+    [
+      'une permission mal formée',
+      [route({ access: { level: 'authenticated', permission: 'Cleaning' }, rateLimit: 'authenticated' })],
+      'permission mal formée',
+    ],
+    [
+      'un profil complet exigé sur une route publique',
+      [route({ requiresCompleteProfile: true })],
+      'profil complet',
+    ],
+    [
+      'un alias sans route principale du même appel gRPC',
+      [
+        route(),
+        route({
+          operationId: 'other',
+          path: '/api/v1/things/other',
+          aliasOf: 'getThing',
+          grpc: 'ksp.things.v1.ThingService/Other',
+        }),
+      ],
+      'alias sans route principale',
+    ],
   ])('signale %s', (_label, routes, problem) => {
     expect(manifestProblems(routes, DEFAULT_RATE_LIMITS).join('\n')).toContain(problem);
+  });
+
+  it('accepte une route alias du même appel gRPC, et des paramètres de chemin en camelCase', () => {
+    const alias = route({
+      operationId: 'other',
+      path: '/api/v1/things/{id}/files/{fileId}',
+      aliasOf: 'getThing',
+    });
+    expect(manifestProblems([route(), alias], DEFAULT_RATE_LIMITS)).toEqual([]);
   });
 
   it('accepte une route du back-office avec rôle et double authentification récente', () => {
@@ -101,6 +148,35 @@ describe('exigences d’accès', () => {
     expect(checkAccess(requirement, caller, now)).toEqual({ allowed: false, reason: 'role_missing' });
     expect(checkAccess(requirement, { ...caller, roles: [{ role: 'super_admin' }] }, now)).toEqual({
       allowed: true,
+    });
+  });
+
+  it('une permission doit figurer au jeton, partout ou dans au moins une commune', () => {
+    const requirement = { level: 'authenticated' as const, permission: 'cleaning.request.read' };
+    expect(checkAccess(requirement, caller, now)).toEqual({ allowed: false, reason: 'permission_missing' });
+    const other = { global: ['cleaning.catalog.read'], byZone: { cotonou: ['cleaning.claim.manage'] } };
+    expect(checkAccess(requirement, { ...caller, permissions: other }, now)).toMatchObject({
+      reason: 'permission_missing',
+    });
+    const global = { global: ['cleaning.request.read'], byZone: {} };
+    expect(checkAccess(requirement, { ...caller, permissions: global }, now)).toEqual({ allowed: true });
+    const zone = { global: [], byZone: { 'abomey-calavi': ['cleaning.request.read'] } };
+    expect(checkAccess(requirement, { ...caller, permissions: zone }, now)).toEqual({ allowed: true });
+    // Les rôles ne remplacent pas la permission (super_admin passe par perms).
+    expect(checkAccess(requirement, { ...caller, roles: [{ role: 'super_admin' }] }, now)).toMatchObject({
+      reason: 'permission_missing',
+    });
+  });
+
+  it('permission détenue mais double authentification ancienne : refusée pour la double authentification', () => {
+    const requirement = {
+      level: 'authenticated' as const,
+      permission: 'cleaning.request.read',
+      recentMfaSeconds: 600,
+    };
+    const permissions = { global: ['cleaning.request.read'], byZone: {} };
+    expect(checkAccess(requirement, { ...caller, permissions }, now)).toMatchObject({
+      reason: 'mfa_required',
     });
   });
 

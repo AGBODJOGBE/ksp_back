@@ -65,6 +65,9 @@ importers:
       typescript-eslint:
         specifier: 8.71.1
         version: 8.71.1(eslint@9.39.5(jiti@2.6.1))(typescript@5.9.3)
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
 
   libs/contracts:
     dependencies:

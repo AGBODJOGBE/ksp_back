@@ -115,7 +115,6 @@ describe('configuration de payment', () => {
         IDENTITY_JWKS_URL: 'https://identity/.well-known/jwks.json',
         IDENTITY_TOKEN_URL: 'https://identity/oauth/token',
         SERVICE_CLIENT_SECRET: 's'.repeat(32),
-        CLEANING_GRPC_URL: 'dns:///cleaning-headless:50053',
         BILLING_GRPC_URL: 'dns:///billing-headless:50054',
         IDENTITY_GRPC_URL: 'dns:///identity-headless:50051',
         PAYMENT_RETURN_URL: 'https://ksp.bj/mon-espace/paiements',
@@ -180,6 +179,11 @@ describe('configuration de payment', () => {
     const config = loadConfig(configSchema, { ...BASE, PAYMENT_LINK_ISSUERS: 'recovery, realestate' });
     expect(config.PAYMENT_LINK_ISSUERS).toEqual(['recovery', 'realestate']);
     expect(config.PAYMENT_PAYOUT_ISSUERS).toEqual(['wallet']);
+    // Paiement direct (v2) : cleaning et billing par défaut.
+    expect(config.PAYMENT_DIRECT_CALLERS).toEqual(['cleaning', 'billing']);
+    expect(
+      loadConfig(configSchema, { ...BASE, PAYMENT_DIRECT_CALLERS: 'billing' }).PAYMENT_DIRECT_CALLERS,
+    ).toEqual(['billing']);
     expect(createPayoutProvider(config).name).toBe('manual');
     expect(() => loadConfig(configSchema, { ...BASE, PAYOUT_PROVIDER: 'fedapay' })).toThrow(
       /FEDAPAY_SECRET_KEY/,

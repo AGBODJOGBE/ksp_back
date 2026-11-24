@@ -1,9 +1,9 @@
 import { AppError } from '@ksp/platform';
 import { type z } from 'zod';
-import { parseParam } from './cleaning-schemas';
+import { parseParam } from './params';
 import { recoveryParams } from './recovery-schemas';
 
-export { idFrom, keyFrom } from './cleaning.controller';
+export { idFrom, keyFrom } from './params';
 
 export type QueryParams = Record<string, unknown>;
 

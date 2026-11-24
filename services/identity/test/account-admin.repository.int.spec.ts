@@ -121,6 +121,7 @@ describeWithDatabase('PrismaAccountAdminRepository (PostgreSQL)', () => {
       roleCode: 'cleaning_supervisor',
       scopeType: 'domain',
       scopeId: 'cleaning',
+      zoneKeys: [],
       grantedBy: DIRECTOR,
       now,
       audit: { id: uuid(), reason: 'Renfort' },

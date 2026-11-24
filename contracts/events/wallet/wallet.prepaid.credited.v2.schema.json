@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/wallet/wallet.prepaid.credited.v2.schema.json",
+  "title": "wallet.prepaid.credited",
+  "description": "Portefeuille prépayé d'un client crédité (ADR-046), version 2 (enveloppe version 2) : recharge confirmée (origin payment), remboursement d'un débit par le service qui l'avait demandé ou geste commercial décidé par un service (origin service), ou crédit manuel de la finance avec motif (origin finance). Ajoute à la v1 le geste commercial (kind commercial_gesture), le moyen de la recharge (topUpChannel) et l'objet à régler aussitôt (forObject : paiement direct R-WL-05, virement d'une organisation R-PE-04), du CDC Nettoyage v2. Le schéma v1 reste en place, inchangé (règle d'or n° 4) ; une fois la v2 déployée, wallet publie chaque écriture en v2 seulement, et chaque consommateur déclare les versions 1 et 2 (option versions de subscribe, ADR-047) avant ce déploiement (messages v1 encore en attente). Tout message v1 est aussi un message v2 valide. Publié une seule fois par écriture. Écouté par notification ; en v2 aussi par les services qui débitent l'objet de forObject (billing, cleaning). Identifiants, montants et libellé seulement.",
+  "x-event-type": "wallet.prepaid.credited",
+  "x-event-version": 2,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "transactionId",
+    "kind",
+    "origin",
+    "holder",
+    "userId",
+    "amount",
+    "balanceAfter",
+    "description",
+    "paymentId",
+    "refundedTransactionId",
+    "creditedAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "balance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "holder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "transactionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "enum": ["top_up", "refund", "commercial_gesture"],
+      "description": "top_up : recharge ; refund : remboursement ; commercial_gesture : geste commercial ou crédit d'une réclamation décidé par un service (Credit)"
+    },
+    "topUpChannel": {
+      "enum": ["mobile_money_online", "card_online", "cash", "bank_transfer"],
+      "description": "Recharge : moyen de la recharge (R-WL-02, R-PE-04) ; absent pour un remboursement ou un geste commercial"
+    },
+    "forObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "objectType", "objectId", "part"],
+      "description": "Paiement direct (R-WL-05, R-PE-04) : objet que ce crédit doit régler aussitôt ; son service le débite à la réception. Absent sinon",
+      "properties": {
+        "service": {
+          "type": "string",
+          "pattern": "^[a-z]+$"
+        },
+        "objectType": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{3,50}$"
+        },
+        "objectId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "part": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "origin": {
+      "enum": ["payment", "service", "finance"]
+    },
+    "holder": {
+      "$ref": "#/$defs/holder"
+    },
+    "userId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Compte à prévenir : le titulaire (user), sinon le membre qui a payé ou rechargé ; null s'il n'y en a pas (crédit de la finance à une organisation)"
+    },
+    "amount": {
+      "$ref": "#/$defs/money"
+    },
+    "balanceAfter": {
+      "$ref": "#/$defs/balance",
+      "description": "Solde prépayé après le crédit"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Libellé du relevé (motif de la finance compris)"
+    },
+    "paymentId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Recharge : paiement Mobile Money crédité ; null sinon"
+    },
+    "refundedTransactionId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Remboursement d'un débit : débit remboursé ; null sinon"
+    },
+    "creditedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

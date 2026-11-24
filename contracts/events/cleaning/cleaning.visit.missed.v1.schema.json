@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.visit.missed.v1.schema.json",
+  "title": "cleaning.visit.missed",
+  "description": "Visite manquée, client absent (R-VI-05) : de nouveaux frais sont créés et la demande attend leur paiement. Une absence de l’agent est une annulation (cleaning.visit.cancelled, R-FV-06).",
+  "x-event-type": "cleaning.visit.missed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "visitId",
+    "requestId",
+    "customerId",
+    "organizationId",
+    "missedAt",
+    "requestNumber",
+    "communeKey",
+    "reportedBy",
+    "newVisitFee",
+    "newVisitFeePayBefore"
+  ],
+  "properties": {
+    "visitId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "missedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    },
+    "reportedBy": {
+      "enum": ["agent", "ksp"],
+      "description": "Agent, ou back-office pour son compte (R-VI-08)"
+    },
+    "newVisitFee": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      },
+      "description": "Nouveaux frais de visite (R-VI-05)"
+    },
+    "newVisitFeePayBefore": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Limite de paiement des nouveaux frais (R-FV-03)"
+    }
+  }
+}

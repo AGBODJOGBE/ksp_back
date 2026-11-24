@@ -13,6 +13,7 @@ import {
   type StatementAccount,
 } from '../../domain/ledger';
 import { type WalletPayout } from '../../domain/wallet-payout';
+import { type Withdrawal, WITHDRAWALS_IN_PROGRESS } from '../../domain/withdrawal';
 import {
   type Clock,
   type IdGenerator,
@@ -36,6 +37,8 @@ import {
   type WalletOutboxMessage,
   type WalletPayoutRepository,
   type WalletSummary,
+  type WithdrawalFilter,
+  type WithdrawalRepository,
 } from '../ports';
 
 export const USER_ID = '0192f1c4-0000-7000-8000-00000000c001';
@@ -78,6 +81,7 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
   readonly entries: Entry[] = [];
   readonly balances = new Map<AccountCode, number>();
   readonly payoutRows = new Map<string, WalletPayout>();
+  readonly withdrawalRows = new Map<string, Withdrawal>();
   readonly inbox = new Set<string>();
   /** Événements écrits avec les écritures (outbox). */
   readonly events: WalletOutboxMessage[] = [];
@@ -100,6 +104,13 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
           (p) =>
             p.caller === input.createPayout!.caller &&
             p.idempotencyKey === input.createPayout!.idempotencyKey,
+        )) ||
+      (input.createWithdrawal !== undefined &&
+        [...this.withdrawalRows.values()].some(
+          (w) =>
+            w.holder.type === input.createWithdrawal!.holder.type &&
+            w.holder.id === input.createWithdrawal!.holder.id &&
+            w.idempotencyKey === input.createWithdrawal!.idempotencyKey,
         ));
     if (duplicate) return { kind: 'duplicate' };
     const holderCode = accountOf(tx);
@@ -112,7 +123,18 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
       if (!current || current.version !== input.updatePayout.version) return { kind: 'conflict' };
       this.payoutRows.set(input.updatePayout.id, { ...input.updatePayout, version: current.version + 1 });
     }
+    if (input.updateWithdrawal) {
+      const current = this.withdrawalRows.get(input.updateWithdrawal.id);
+      if (!current || current.version !== input.updateWithdrawal.version) return { kind: 'conflict' };
+      this.withdrawalRows.set(input.updateWithdrawal.id, {
+        ...input.updateWithdrawal,
+        version: current.version + 1,
+      });
+    }
     if (input.createPayout) this.payoutRows.set(input.createPayout.id, { ...input.createPayout });
+    if (input.createWithdrawal) {
+      this.withdrawalRows.set(input.createWithdrawal.id, { ...input.createWithdrawal });
+    }
     this.transactions.set(tx.id, tx);
     for (const line of tx.entries) {
       const next = (this.balances.get(line.account) ?? 0) + balanceDelta(line);
@@ -189,7 +211,18 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
       holder,
       balance: this.balances.get(code) ?? 0,
       lastEntryAt: last ? this.transactions.get(last.transactionId)!.createdAt : null,
+      withdrawalsInProgress: await this.withdrawalsInProgress(holder),
     };
+  }
+  async withdrawalsInProgress(holder: Holder): Promise<number> {
+    return [...this.withdrawalRows.values()]
+      .filter(
+        (w) =>
+          w.holder.type === holder.type &&
+          w.holder.id === holder.id &&
+          WITHDRAWALS_IN_PROGRESS.includes(w.status),
+      )
+      .reduce((sum, w) => sum + w.amount, 0);
   }
   async statement(
     holder: Holder,
@@ -265,6 +298,41 @@ export class InMemoryWallet implements LedgerStore, WalletPayoutRepository {
   }
   async listPendingSubmission(limit: number) {
     return [...this.payoutRows.values()].filter((p) => p.status === 'pending_submission').slice(0, limit);
+  }
+}
+
+/** Retraits en mémoire, sur les lignes du grand livre simulé (écritures et retraits ensemble). */
+export class InMemoryWithdrawals implements WithdrawalRepository {
+  constructor(private readonly store: InMemoryWallet) {}
+  async findById(id: string) {
+    const row = this.store.withdrawalRows.get(id);
+    return row ? { ...row } : null;
+  }
+  async findByKey(holder: Holder, key: string) {
+    const row = [...this.store.withdrawalRows.values()].find(
+      (w) => w.holder.type === holder.type && w.holder.id === holder.id && w.idempotencyKey === key,
+    );
+    return row ? { ...row } : null;
+  }
+  async save(withdrawal: Withdrawal) {
+    const current = this.store.withdrawalRows.get(withdrawal.id);
+    if (!current || current.version !== withdrawal.version) return false;
+    this.store.withdrawalRows.set(withdrawal.id, { ...withdrawal, version: withdrawal.version + 1 });
+    return true;
+  }
+  async list(filter: WithdrawalFilter, page: PageRequest, order: 'newest' | 'oldest') {
+    const items = [...this.store.withdrawalRows.values()]
+      .filter(
+        (w) =>
+          (!filter.status || w.status === filter.status) &&
+          (!filter.holder || (w.holder.type === filter.holder.type && w.holder.id === filter.holder.id)),
+      )
+      .sort((a, b) => (order === 'newest' ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id)))
+      .filter((w) => !page.cursor || (order === 'newest' ? w.id < page.cursor : w.id > page.cursor));
+    return {
+      items: items.slice(0, page.limit),
+      nextCursor: items.length > page.limit ? items[page.limit - 1]!.id : null,
+    };
   }
 }
 
@@ -353,16 +421,21 @@ export class InMemoryCreditRequests implements ManualCreditRequests {
   }
 }
 
-/** cleaning et billing simulés : débits enregistrés connus, panne simulable (ADR-048). */
+/**
+ * cleaning et billing simulés : débits enregistrés connus, opérations encore en cours chez
+ * l'appelant (RV-80), panne simulable (ADR-048).
+ */
 export class FakeDebitChecks implements DebitRecordChecks {
   readonly recorded = new Set<string>();
-  readonly asked: Parameters<DebitRecordChecks['isRecorded']>[0][] = [];
+  readonly inProgress = new Set<string>();
+  readonly asked: Parameters<DebitRecordChecks['debitStatus']>[0][] = [];
   recordedAll = false;
   down = false;
-  async isRecorded(debit: Parameters<DebitRecordChecks['isRecorded']>[0]) {
+  async debitStatus(debit: Parameters<DebitRecordChecks['debitStatus']>[0]) {
     if (this.down) throw AppError.unavailable('GRPC_UNAVAILABLE', 'service injoignable');
     this.asked.push(debit);
-    return this.recordedAll || this.recorded.has(debit.transactionId);
+    if (this.recordedAll || this.recorded.has(debit.transactionId)) return 'recorded' as const;
+    return this.inProgress.has(debit.transactionId) ? ('in_progress' as const) : ('not_recorded' as const);
   }
 }
 
@@ -377,6 +450,7 @@ export function makeDeps(overrides: Partial<WalletDeps> = {}) {
     deps: {
       ledger: store,
       payouts: store,
+      withdrawals: new InMemoryWithdrawals(store),
       executor: new FakeExecutor(),
       topUps,
       fingerprints: {
@@ -385,6 +459,7 @@ export function makeDeps(overrides: Partial<WalletDeps> = {}) {
       settings: {
         ledgerCallers: ['recovery'] as readonly string[],
         debitCallers: ['cleaning', 'billing'] as readonly string[],
+        creditCallers: ['cleaning'] as readonly string[],
         topUpMin: 500,
         topUpMax: 1_000_000,
         manualRefundMax: 100_000,

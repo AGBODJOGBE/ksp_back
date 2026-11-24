@@ -31,6 +31,11 @@ import {
 } from '../organization/organization.ports';
 import { type OtpChallengeRepository, type OtpRequestedEvent } from '../otp/otp.ports';
 import {
+  type NewPendingAccount,
+  type PendingAccountRepository,
+  type PhoneAccount,
+} from '../provisioning/phone-accounts.ports';
+import {
   type RefreshRotation,
   type SessionStore,
   type StoredRefreshToken,
@@ -130,11 +135,21 @@ export interface FakeLoginEvent {
 }
 
 /** Comptes, sessions et historique en mémoire ; partage la table des demandes pour les consommer. */
-export class InMemoryIdentityStore implements AccountRepository, LoginRepository {
+export class InMemoryIdentityStore implements AccountRepository, LoginRepository, PendingAccountRepository {
   readonly accounts: Account[] = [];
   readonly sessions: StoredSession[] = [];
   readonly loginEvents: FakeLoginEvent[] = [];
   readonly registered: string[] = [];
+  /** Comptes dont le téléphone vient d'être vérifié (identity.user.verified). */
+  readonly verified: string[] = [];
+  /** Traces d'audit des comptes créés à la demande d'un service. */
+  readonly audit: {
+    actorId: string;
+    action: string;
+    entityId: string;
+    at: Date;
+    details: Record<string, unknown>;
+  }[] = [];
 
   constructor(private readonly challenges: InMemoryChallenges) {}
 
@@ -183,6 +198,10 @@ export class InMemoryIdentityStore implements AccountRepository, LoginRepository
       };
       this.accounts.push(account);
       this.registered.push(account.id);
+    } else if (account.status === 'pending_verification') {
+      // Compte créé à la demande d'un service : le code reçu vérifie son téléphone, il devient actif.
+      account.status = 'active';
+      this.verified.push(account.id);
     }
 
     this.applySessionLimit(account.id, plan.session.clientKind, plan.maxSessions, plan.now);
@@ -196,6 +215,34 @@ export class InMemoryIdentityStore implements AccountRepository, LoginRepository
     });
     this.loginEvents.push({ userId: account.id, success: true });
     return { account, isNewUser };
+  }
+
+  /** Comme le dépôt réel : un numéro n'appartient qu'à un compte ; déjà pris, ce compte est rendu. */
+  async createPending(account: NewPendingAccount): Promise<PhoneAccount & { created: boolean }> {
+    const taken = this.accounts.find((candidate) =>
+      phoneLookupForms(account.phoneE164).includes(candidate.phoneE164 ?? ''),
+    );
+    if (taken) return { userId: taken.id, status: taken.status, created: false };
+    this.accounts.push({
+      id: account.userId,
+      status: 'pending_verification',
+      firstName: account.firstName,
+      lastName: account.lastName,
+      phoneE164: account.phoneE164,
+      email: null,
+      emailVerifiedAt: null,
+      preferredLanguage: 'fr',
+      createdAt: account.now,
+    });
+    this.registered.push(account.userId);
+    this.audit.push({
+      actorId: account.audit.service,
+      action: 'user.registered_by_service',
+      entityId: account.userId,
+      at: account.now,
+      details: { requestedBy: account.audit.requestedBy },
+    });
+    return { userId: account.userId, status: 'pending_verification', created: true };
   }
 
   async recordFailedLogin(event: FailedLogin): Promise<void> {

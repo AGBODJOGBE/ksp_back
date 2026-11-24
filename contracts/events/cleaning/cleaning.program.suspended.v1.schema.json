@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.program.suspended.v1.schema.json",
+  "title": "cleaning.program.suspended",
+  "description": "Programme suspendu (partie 11.3) : séances à venir gelées, agents libérés. Publié au passage à « suspendu » seulement.",
+  "x-event-type": "cleaning.program.suspended",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "programId",
+    "customerId",
+    "organizationId",
+    "causes",
+    "suspendedSessionIds",
+    "releasedAgentIds",
+    "suspendedAt",
+    "communeKey",
+    "unpaidCount",
+    "overdueCount",
+    "threshold"
+  ],
+  "properties": {
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "causes": {
+      "type": "array",
+      "items": {
+        "enum": ["overdue_sessions", "unpaid_invoices", "ksp_decision", "organization_suspended"]
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Causes actives (R-SU-01)"
+    },
+    "suspendedSessionIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "releasedAgentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "suspendedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    },
+    "unpaidCount": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Factures impayées de l’organisation"
+    },
+    "overdueCount": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Séances en retard de paiement"
+    },
+    "threshold": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Seuil franchi"
+    }
+  }
+}

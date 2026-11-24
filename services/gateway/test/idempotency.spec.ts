@@ -1,10 +1,11 @@
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
+import { CLEANING_ROUTES } from '../src/domain/routing/cleaning-routes';
 import { type RouteDefinition } from '../src/domain/routing/route-manifest';
+import { CLEANING_BINDINGS } from '../src/infrastructure/grpc/cleaning-bindings';
+import { type CleaningBinding } from '../src/infrastructure/grpc/cleaning-codec';
 import { AccountAdminHttpController } from '../src/interfaces/http/account-admin.controller';
 import { BillingHttpController } from '../src/interfaces/http/billing.controller';
-import { CleaningAdminHttpController } from '../src/interfaces/http/cleaning-admin.controller';
-import { CleaningHttpController } from '../src/interfaces/http/cleaning.controller';
 import { DocumentHttpController } from '../src/interfaces/http/document.controller';
 import { FileHttpController } from '../src/interfaces/http/file.controller';
 import { IdentityHttpController } from '../src/interfaces/http/identity.controller';
@@ -24,8 +25,6 @@ const CONTROLLERS = [
   OrganizationHttpController,
   OrganizationAdminHttpController,
   AccountAdminHttpController,
-  CleaningHttpController,
-  CleaningAdminHttpController,
   BillingHttpController,
   PaymentHttpController,
   NotificationHttpController,
@@ -36,7 +35,10 @@ const CONTROLLERS = [
   RecoveryAdminHttpController,
 ];
 
-/** Routes dont le contrôleur lit l'en-tête Idempotency-Key, et leur ligne du manifeste. */
+/**
+ * Routes écrites à la main dont le contrôleur lit l'en-tête Idempotency-Key, et leur ligne du
+ * manifeste. Le contrôleur du Nettoyage est commun à ses routes : voir le test qui suit.
+ */
 function routes(): { route: RouteDefinition; readsKey: boolean }[] {
   return CONTROLLERS.flatMap((controller) =>
     Object.getOwnPropertyNames(controller.prototype)
@@ -66,6 +68,17 @@ describe('clé d’idempotence : manifeste et contrôleurs d’accord (ADR-051)'
           `${route.operationId} (lue : ${readsKey}, manifeste : ${route.idempotencyKey})`,
       );
     expect(mismatches).toEqual([]);
-    expect(routes().filter(({ readsKey }) => readsKey).length).toBeGreaterThan(10);
+    expect(routes().filter(({ readsKey }) => readsKey).length).toBeGreaterThan(5);
+  });
+});
+
+describe('clé d’idempotence des routes du Nettoyage (produites depuis le contrat)', () => {
+  it('la clé est transmise à cleaning si et seulement si le manifeste la déclare', () => {
+    const mismatches = CLEANING_ROUTES.filter(
+      (route) =>
+        Boolean((CLEANING_BINDINGS[route.operationId] as CleaningBinding).idempotencyKey) !==
+        Boolean((route as RouteDefinition).idempotencyKey),
+    ).map((route) => route.operationId);
+    expect(mismatches).toEqual([]);
   });
 });

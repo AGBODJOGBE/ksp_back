@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/billing/billing.invoice.reminded.v1.schema.json",
+  "title": "billing.invoice.reminded",
+  "description": "Relance automatique d'une facture d'organisation pas encore réglée (R-PE-05 du CDC Nettoyage v2) : 3 jours avant l'échéance, le jour de l'échéance, 3 et 7 jours après (réglable). Écouté par notification (administrateurs de l'organisation, e-mail de facturation). Identifiants et montants seulement.",
+  "x-event-type": "billing.invoice.reminded",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "invoiceId",
+    "invoiceNumber",
+    "customerId",
+    "organizationId",
+    "total",
+    "balance",
+    "dueAt",
+    "offsetDays",
+    "remindedAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    }
+  },
+  "properties": {
+    "invoiceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "invoiceNumber": {
+      "type": "string",
+      "pattern": "^FAC-[0-9]{4}-[0-9]{6}$"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "total": {
+      "$ref": "#/$defs/money"
+    },
+    "balance": {
+      "$ref": "#/$defs/money",
+      "description": "Reste dû au moment de la relance"
+    },
+    "dueAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "offsetDays": {
+      "type": "integer",
+      "minimum": -30,
+      "maximum": 60,
+      "description": "Jours par rapport à l'échéance (négatif : avant)"
+    },
+    "remindedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

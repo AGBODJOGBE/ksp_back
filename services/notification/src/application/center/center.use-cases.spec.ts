@@ -168,7 +168,7 @@ describe('back-office des notifications', () => {
     history.rows.push(
       delivery(1),
       delivery(2, {
-        templateCode: 'cleaning.quote_requested.customer',
+        templateCode: 'cleaning.request_cancelled.customer',
         requestedChannel: 'whatsapp',
         channelUsed: null,
         channelsTried: ['whatsapp', 'email'],
@@ -251,8 +251,8 @@ describe('back-office des notifications', () => {
     expect(invoice.text).toContain('{invoice_number}');
     const verification = catalog.find((template) => template.code === 'identity.email_verification')!;
     expect(verification.text).toContain('{code}');
-    const warning = catalog.find((template) => template.code === 'cleaning.suspension_warning.customer')!;
-    expect(warning).toMatchObject({ kind: 'important', optional: false });
+    const mfaReset = catalog.find((template) => template.code === 'identity.mfa_reset.staff')!;
+    expect(mfaReset).toMatchObject({ kind: 'important', optional: false });
     const deletion = catalog.find(
       (template) => template.code === 'identity.account_deletion_requested.customer',
     )!;

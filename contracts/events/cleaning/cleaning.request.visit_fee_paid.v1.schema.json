@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.request.visit_fee_paid.v1.schema.json",
+  "title": "cleaning.request.visit_fee_paid",
+  "description": "Frais de visite payés après l’envoi (R-FV-02).",
+  "x-event-type": "cleaning.request.visit_fee_paid",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "requestId",
+    "requestNumber",
+    "customerId",
+    "organizationId",
+    "visitFeeId",
+    "rank",
+    "amount",
+    "invoiceId",
+    "paidAt"
+  ],
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "visitFeeId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1 à l’envoi, puis 2, 3… après chaque absence du client"
+    },
+    "amount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "invoiceId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Reçu (billing), si déjà émis"
+    },
+    "paidAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

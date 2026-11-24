@@ -1,8 +1,19 @@
+import { AppError } from '@ksp/platform';
 import { billingV1, commonV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
 import { parsePage } from '../../application/shared/validation';
 import { BILLING_USE_CASES, type BillingUseCases } from '../../application/use-cases';
 import { presentInvoice, presentSettings } from './presenters';
+// Lot F : avoirs.
+import { MONTHLY_USE_CASES, type MonthlyBillingUseCases } from '../../application/monthly/use-cases';
+import { parseLines, presentCreditNoteResult } from './monthly-presenters';
+
+/** Méthodes du contrat v2 (CDC Nettoyage v2) pas encore livrées : réponse NOT_IMPLEMENTED. */
+function notImplemented(method: string): Promise<never> {
+  return Promise.reject(
+    AppError.notImplemented('BILLING_NOT_IMPLEMENTED', `La méthode ${method} n'est pas encore disponible.`),
+  );
+}
 
 /**
  * ksp.common.v1.ObligationService, interrogé par identity avant la suppression d'un compte
@@ -48,13 +59,29 @@ export class BillingGrpcController implements billingV1.BillingServiceController
     });
     return { invoice: presentInvoice(invoice) };
   }
+
+  payMyInvoiceByMobileMoney(): Promise<billingV1.PayMyInvoiceByMobileMoneyResponse> {
+    return notImplemented('PayMyInvoiceByMobileMoney');
+  }
+
+  getMyBillingPreferences(): Promise<billingV1.GetMyBillingPreferencesResponse> {
+    return notImplemented('GetMyBillingPreferences');
+  }
+
+  updateMyBillingPreferences(): Promise<billingV1.UpdateMyBillingPreferencesResponse> {
+    return notImplemented('UpdateMyBillingPreferences');
+  }
 }
 
 /** Adaptateur gRPC du back-office : factures, paiement manuel, réglages. Droits vérifiés par les cas d'usage. */
 @Controller()
 @billingV1.BillingAdminServiceControllerMethods()
 export class BillingAdminGrpcController implements billingV1.BillingAdminServiceController {
-  constructor(@Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases) {}
+  constructor(
+    @Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases,
+    // Lot F : avoirs saisis par la finance.
+    @Inject(MONTHLY_USE_CASES) private readonly monthly: MonthlyBillingUseCases,
+  ) {}
 
   async listInvoices(request: billingV1.ListInvoicesRequest): Promise<billingV1.ListInvoicesResponse> {
     const page = await this.useCases.listInvoices.execute({
@@ -97,6 +124,23 @@ export class BillingAdminGrpcController implements billingV1.BillingAdminService
       paymentTermDays: request.settings?.paymentTermDays ?? 0,
     });
     return { settings: presentSettings(saved) };
+  }
+
+  // Lot F (R-PE-07).
+  async issueAdminCreditNote(
+    request: billingV1.IssueAdminCreditNoteRequest,
+  ): Promise<billingV1.IssueAdminCreditNoteResponse> {
+    const result = await this.monthly.issueAdminCreditNote.execute({
+      idempotencyKey: request.idempotencyKey,
+      invoiceId: request.invoiceId,
+      lines: parseLines(request.lines),
+      reason: request.reason,
+    });
+    return presentCreditNoteResult(result);
+  }
+
+  listCreditNotes(): Promise<billingV1.ListCreditNotesResponse> {
+    return notImplemented('ListCreditNotes');
   }
 }
 
@@ -146,5 +190,41 @@ export class WalletDebitCheckGrpcController implements billingV1.WalletDebitChec
         transactionId: request.transactionId,
       }),
     };
+  }
+}
+
+/**
+ * InvoiceIssuanceService (v2) : émission des factures de séance, des reçus de frais de visite et des
+ * avoirs, réservée à cleaning (appelant contrôlé par le cas d'usage). IssueInvoice : lot E ;
+ * avoirs : lot F.
+ */
+@Controller()
+@billingV1.InvoiceIssuanceServiceControllerMethods()
+export class InvoiceIssuanceGrpcController implements billingV1.InvoiceIssuanceServiceController {
+  constructor(
+    @Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases,
+    // Lot F : avoirs demandés par cleaning.
+    @Inject(MONTHLY_USE_CASES) private readonly monthly: MonthlyBillingUseCases,
+  ) {}
+
+  async issueInvoice(request: billingV1.IssueInvoiceRequest): Promise<billingV1.IssueInvoiceResponse> {
+    const { invoice, created } = await this.useCases.issueInvoice.execute(request);
+    return { invoice: presentInvoice(invoice), created };
+  }
+
+  // Lot F (R-PE-07, R-RC-03).
+  async issueCreditNote(
+    request: billingV1.IssueCreditNoteRequest,
+  ): Promise<billingV1.IssueCreditNoteResponse> {
+    const result = await this.monthly.issueCreditNote.execute({
+      idempotencyKey: request.idempotencyKey,
+      invoiceId: request.invoiceId,
+      lines: parseLines(request.lines),
+      reason: request.reason,
+      source: request.sourceObject?.objectType
+        ? { objectType: request.sourceObject.objectType, objectId: request.sourceObject.objectId }
+        : null,
+    });
+    return presentCreditNoteResult(result);
   }
 }

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/identity/identity.role.updated.v1.schema.json",
+  "title": "identity.role.updated",
+  "description": "Rôle modifié (R-RB-02) : nom, sensibilité ou permissions cochées. Les permissions ajoutées et retirées donnent l'avant et l'après (R-RB-06). Effet au renouvellement des jetons.",
+  "x-event-type": "identity.role.updated",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["roleCode", "permissionsAdded", "permissionsRemoved", "updatedBy"],
+  "properties": {
+    "roleCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,63}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "sensitive": {
+      "type": "boolean"
+    },
+    "permissionsAdded": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+      }
+    },
+    "permissionsRemoved": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+      }
+    },
+    "updatedBy": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

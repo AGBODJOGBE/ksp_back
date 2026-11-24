@@ -1,6 +1,5 @@
 import {
   billingV1,
-  cleaningV1,
   documentV1,
   fileV1,
   identityV1,
@@ -33,7 +32,7 @@ import { type RecoveryApi } from './application/recovery/recovery.ports';
 import { type FileApi } from './application/file/file.ports';
 import { type PaymentApi } from './application/payment/payment.ports';
 import { type WalletApi } from './application/wallet/wallet.ports';
-import { RequestCleaningQuoteUseCase } from './application/cleaning/request-cleaning-quote.use-case';
+import { CallCleaningUseCase } from './application/cleaning/call-cleaning.use-case';
 import { AuthorizeRequestUseCase } from './application/access/authorize-request.use-case';
 import {
   ChangeEmailUseCase,
@@ -60,7 +59,7 @@ import {
 } from './config';
 import { AccountAdminGrpcAdapter } from './infrastructure/grpc/account-admin-grpc.adapter';
 import { BillingGrpcAdapter } from './infrastructure/grpc/billing-grpc.adapter';
-import { CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
+import { type CleaningClients, CleaningGrpcAdapter } from './infrastructure/grpc/cleaning-grpc.adapter';
 import { IdentityGrpcAdapter } from './infrastructure/grpc/identity-grpc.adapter';
 import { OrganizationsGrpcAdapter } from './infrastructure/grpc/organizations-grpc.adapter';
 import { NotificationGrpcAdapter } from './infrastructure/grpc/notification-grpc.adapter';
@@ -70,6 +69,7 @@ import { FileGrpcAdapter } from './infrastructure/grpc/file-grpc.adapter';
 import { PaymentGrpcAdapter } from './infrastructure/grpc/payment-grpc.adapter';
 import { WalletGrpcAdapter } from './infrastructure/grpc/wallet-grpc.adapter';
 import { HttpJwksSource } from './infrastructure/keys/http-jwks.source';
+import { PermissionsTokenVerifier } from './infrastructure/keys/permissions-token-verifier';
 import { KeysReadiness } from './infrastructure/keys/keys-readiness';
 import { type JwksSource, SigningKeysCache } from './infrastructure/keys/signing-keys-cache';
 import { InMemoryRateLimiter } from './infrastructure/rate-limit/in-memory-rate-limiter';
@@ -77,7 +77,6 @@ import { createRedisClient, RedisRateLimiter } from './infrastructure/rate-limit
 import { SystemClock } from './infrastructure/system/system-clock';
 import { AccountAdminHttpController } from './interfaces/http/account-admin.controller';
 import { BillingHttpController } from './interfaces/http/billing.controller';
-import { CleaningAdminHttpController } from './interfaces/http/cleaning-admin.controller';
 import { CleaningHttpController } from './interfaces/http/cleaning.controller';
 import { IdentityHttpController } from './interfaces/http/identity.controller';
 import { JwksHttpController } from './interfaces/http/jwks.controller';
@@ -152,7 +151,6 @@ export class AppModule {
         OrganizationAdminHttpController,
         AccountAdminHttpController,
         CleaningHttpController,
-        CleaningAdminHttpController,
         BillingHttpController,
         PaymentHttpController,
         NotificationHttpController,
@@ -259,14 +257,8 @@ export class AppModule {
           inject: [CLEANING_GRPC_CLIENT, SERVICE_TOKEN_PROVIDER],
           useFactory: (grpc: ClientGrpc, serviceTokens: ServiceTokenProvider | null): CleaningApi =>
             new CleaningGrpcAdapter(
-              {
-                catalog: grpc.getService<cleaningV1.CatalogServiceClient>(cleaningV1.CATALOG_SERVICE_NAME),
-                quotes: grpc.getService<cleaningV1.QuoteServiceClient>(cleaningV1.QUOTE_SERVICE_NAME),
-                missions: grpc.getService<cleaningV1.MissionServiceClient>(cleaningV1.MISSION_SERVICE_NAME),
-                admin: grpc.getService<cleaningV1.CleaningAdminServiceClient>(
-                  cleaningV1.CLEANING_ADMIN_SERVICE_NAME,
-                ),
-              },
+              // Services de ksp.cleaning.v1 nommés par cleaning-bindings.ts (CatalogService…).
+              (service) => grpc.getService<ReturnType<CleaningClients>>(service),
               // Coupe-circuit propre à cleaning : une panne n'affecte pas les autres routes (UC-GW-07).
               new GrpcCaller({
                 target: 'cleaning',
@@ -423,10 +415,13 @@ export class AppModule {
         // Simulation des paiements : jamais en production (ADR-031).
         { provide: PAYMENT_SIMULATION_ROUTE, useValue: config.NODE_ENV !== 'production' },
         {
-          provide: RequestCleaningQuoteUseCase,
-          inject: [IdentityGrpcAdapter, CLEANING_API],
-          useFactory: (identity: IdentityGrpcAdapter, cleaning: CleaningApi) =>
-            new RequestCleaningQuoteUseCase(identity, cleaning),
+          provide: CallCleaningUseCase,
+          inject: [IdentityGrpcAdapter, ORGANIZATIONS_API, CLEANING_API],
+          useFactory: (
+            identity: IdentityGrpcAdapter,
+            organizations: OrganizationsApi,
+            cleaning: CleaningApi,
+          ) => new CallCleaningUseCase(identity, organizations, cleaning),
         },
         {
           provide: RATE_LIMITER,
@@ -442,7 +437,8 @@ export class AppModule {
           inject: [SigningKeysCache, RATE_LIMITER, CLOCK],
           useFactory: (keys: SigningKeysCache, limiter: RateLimiter, clock: Clock) =>
             new AuthorizeRequestUseCase(
-              new AccessTokenVerifier({ keys: keys.resolveKey }),
+              // Permissions du jeton (perms, zone_perms) lues après la vérification par le kit.
+              new PermissionsTokenVerifier(new AccessTokenVerifier({ keys: keys.resolveKey })),
               limiter,
               clientOriginsFrom(config),
               rateLimitsFrom(config),

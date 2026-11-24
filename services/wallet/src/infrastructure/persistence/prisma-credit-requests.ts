@@ -26,11 +26,24 @@ function toDomain(row: Row): ManualCreditRequest {
     approvedBy: row.approvedBy,
     approvedAt: row.approvedAt,
     transactionId: row.transactionId,
+    receiptReference: row.receiptReference,
+    forObject:
+      row.forObjectService && row.forObjectType && row.forObjectId
+        ? {
+            service: row.forObjectService,
+            objectType: row.forObjectType,
+            objectId: row.forObjectId,
+            part: row.forObjectPart,
+          }
+        : null,
+    rejectedBy: row.rejectedBy,
+    rejectedAt: row.rejectedAt,
+    rejectionReason: row.rejectionReason,
     version: row.version,
   };
 }
 
-/** Demandes de crédit manuel soumises à double validation (ADR-048). */
+/** Demandes de crédit manuel soumises à double validation (ADR-048 ; v2 : espèces, virement, rejet). */
 @Injectable()
 export class PrismaCreditRequests implements ManualCreditRequests {
   constructor(private readonly prisma: PrismaService) {}
@@ -50,6 +63,11 @@ export class PrismaCreditRequests implements ManualCreditRequests {
           status: request.status,
           requestedBy: request.requestedBy,
           requestedAt: request.requestedAt,
+          receiptReference: request.receiptReference,
+          forObjectService: request.forObject?.service ?? null,
+          forObjectType: request.forObject?.objectType ?? null,
+          forObjectId: request.forObject?.objectId ?? null,
+          forObjectPart: request.forObject?.part ?? null,
           version: request.version,
         },
       });
@@ -81,6 +99,9 @@ export class PrismaCreditRequests implements ManualCreditRequests {
         approvedBy: request.approvedBy,
         approvedAt: request.approvedAt,
         transactionId: request.transactionId,
+        rejectedBy: request.rejectedBy,
+        rejectedAt: request.rejectedAt,
+        rejectionReason: request.rejectionReason,
         version: { increment: 1 },
       },
     });

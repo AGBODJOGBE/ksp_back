@@ -23,7 +23,18 @@ const ROLE_SELECT = {
   requiresMfa: true,
   backofficeAccess: true,
   description: true,
+  name: true,
+  sensitive: true,
+  origin: true,
+  deactivatedAt: true,
 } as const;
+
+type RoleRow = Prisma.RoleGetPayload<{ select: typeof ROLE_SELECT }>;
+
+/** Rôle du catalogue : actif tant qu'il n'est pas désactivé (ADR-057). */
+function toRoleDefinition({ deactivatedAt, origin, ...role }: RoleRow): RoleDefinition {
+  return { ...role, active: deactivatedAt === null, origin: origin === 'custom' ? 'custom' : 'default' };
+}
 
 const ADMIN_ACCOUNT_SELECT = {
   id: true,
@@ -121,6 +132,7 @@ export class PrismaAccountAdminRepository implements AccountAdminRepository {
         id: true,
         scopeType: true,
         scopeId: true,
+        zoneKeys: true,
         grantedAt: true,
         grantedBy: true,
         grantReason: true,
@@ -133,6 +145,7 @@ export class PrismaAccountAdminRepository implements AccountAdminRepository {
     const names = await this.namesOf(rows.flatMap((row) => [row.grantedBy, row.revokedBy]));
     return rows.map((row) => ({
       ...row,
+      role: toRoleDefinition(row.role),
       grantedByName: row.grantedBy ? (names.get(row.grantedBy) ?? null) : null,
       revokedByName: row.revokedBy ? (names.get(row.revokedBy) ?? null) : null,
     }));
@@ -174,7 +187,8 @@ export class PrismaAccountAdminRepository implements AccountAdminRepository {
   }
 
   async catalog(): Promise<RoleDefinition[]> {
-    return this.prisma.role.findMany({ orderBy: { code: 'asc' }, select: ROLE_SELECT });
+    const rows = await this.prisma.role.findMany({ orderBy: { code: 'asc' }, select: ROLE_SELECT });
+    return rows.map(toRoleDefinition);
   }
 
   async changeStatus(change: AccountStatusChange): Promise<void> {

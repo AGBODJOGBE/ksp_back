@@ -97,8 +97,12 @@ export const configSchema = baseServiceConfigSchema
     PAYOUT_PROVIDER: z.enum(['manual', 'fedapay']).default('manual'),
     /** Services autorisés à demander des reversements (jeton de service). */
     PAYMENT_PAYOUT_ISSUERS: serviceList('wallet'),
-    /** Adresses gRPC de cleaning et billing (montants dus). */
-    CLEANING_GRPC_URL: z.string().min(1).default('localhost:50053'),
+    /**
+     * Services autorisés à demander le paiement direct d'un objet (CreatePaymentRequest, v2 ; jeton
+     * de service) : cleaning et billing au lancement.
+     */
+    PAYMENT_DIRECT_CALLERS: serviceList('cleaning,billing'),
+    /** Adresse gRPC de billing (reste dû des factures). */
     BILLING_GRPC_URL: z.string().min(1).default('localhost:50054'),
     /** Adresse gRPC d'identity (noms affichés au back-office, ADR-029). */
     IDENTITY_GRPC_URL: z.string().min(1).default('localhost:50051'),

@@ -1,5 +1,5 @@
 import { type PaymentEventPayloads, type PaymentEventType } from '@ksp/contracts';
-import { type InvoiceDue, type MissionDue, type SucceededPayment } from '../domain/amount-due';
+import { type InvoiceDue, type SucceededPayment } from '../domain/amount-due';
 import { type PaymentLink } from '../domain/payment-link';
 import {
   type PaymentIntent,
@@ -61,9 +61,9 @@ export type CreatedIntent =
 
 export interface PaymentRepository {
   /**
-   * Enregistre un nouveau paiement. Idempotent par (payeur, clé) : si la clé existe déjà (envoi
-   * concurrent), renvoie le paiement enregistré avec `created: false` et `conflict:
-   * 'idempotency_key'`. Une seule page en attente par objet à montant dû (mission, facture) et par
+   * Enregistre un nouveau paiement. Idempotent par (payeur, clé), et par (service, clé) pour un
+   * paiement direct : si la clé existe déjà (envoi concurrent), renvoie le paiement enregistré avec
+   * `created: false` et `conflict: 'idempotency_key'`. Une seule page en attente par objet à montant dû (mission, facture) et par
    * lien (index uniques, ADR-048) : sinon renvoie celle qui existe, avec `conflict: 'open_checkout'`.
    */
   create(intent: PaymentIntent): Promise<CreatedIntent>;
@@ -79,11 +79,27 @@ export interface PaymentRepository {
   findByLinkKey(paymentLinkId: string, idempotencyKey: string): Promise<PaymentIntent | null>;
   /** Essais de paiement d'un lien, les plus anciens d'abord (peu nombreux : limités par heure). */
   listForLink(paymentLinkId: string): Promise<PaymentIntent[]>;
-  /** Paiement en attente, non expiré, du même payeur pour le même objet (réutilisable). */
+  /**
+   * Paiement en attente, non expiré, du même payeur pour le même objet (réutilisable). Jamais celui
+   * d'un paiement direct (objet visé, v2) : il reste à son objet.
+   */
   findOpen(input: {
     customerId: string;
     subjectType: SubjectType;
     subjectId: string;
+    part: string | null;
+    now: Date;
+  }): Promise<PaymentIntent | null>;
+  /** Paiement direct (v2) enregistré par ce service avec cette clé (directIdempotencyKey), null sinon. */
+  findByServiceKey(service: string, idempotencyKey: string): Promise<PaymentIntent | null>;
+  /**
+   * Paiement direct (v2) en attente, non expiré, pour cet objet visé (service, type, identifiant,
+   * part), quel que soit le payeur ; le plus récent, null s'il n'y en a pas.
+   */
+  findOpenForTarget(input: {
+    service: string;
+    objectType: string;
+    objectId: string;
     part: string | null;
     now: Date;
   }): Promise<PaymentIntent | null>;
@@ -238,7 +254,6 @@ export interface ProviderNotificationLog {
  * inconnu : null. Une panne lève une erreur (le client réessaie avec la même clé).
  */
 export interface AmountDueDirectory {
-  missionDue(missionId: string): Promise<MissionDue | null>;
   invoiceDue(invoiceId: string): Promise<InvoiceDue | null>;
 }
 
@@ -340,6 +355,8 @@ export interface PaymentSettings {
   linkAttemptsPerHour: number;
   /** Services autorisés à demander des reversements (jeton de service). */
   payoutIssuers: readonly string[];
+  /** Services autorisés à demander un paiement direct (CreatePaymentRequest, v2 ; jeton de service). */
+  directCallers: readonly string[];
 }
 
 /**

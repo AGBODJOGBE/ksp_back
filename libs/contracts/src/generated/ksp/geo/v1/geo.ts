@@ -79,6 +79,41 @@ export interface NearestResponse {
   roadName: string;
 }
 
+/** Commune du référentiel de geo. */
+export interface Commune {
+  /**
+   * Clé stable, utilisée par les autres services (zones desservies de cleaning, portée « zone »
+   * d'identity) : nom en minuscules, sans accents, mots séparés par "-" (par exemple "cotonou",
+   * "porto-novo", "abomey-calavi").
+   */
+  key: string;
+  /** Nom officiel affiché, par exemple "Abomey-Calavi". */
+  name: string;
+  /** Département, par exemple "Atlantique". */
+  department: string;
+}
+
+export interface ResolveCommuneRequest {
+  point?: GeoPoint | undefined;
+}
+
+export interface ResolveCommuneResponse {
+  /** Absente : le point n'est dans aucun contour. */
+  commune?:
+    | Commune
+    | undefined;
+  /** Version du référentiel des contours utilisé (source et date de chargement), pour la traçabilité. */
+  boundariesVersion: string;
+}
+
+export interface ListCommunesRequest {
+}
+
+export interface ListCommunesResponse {
+  communes: Commune[];
+  boundariesVersion: string;
+}
+
 /**
  * Contrat du service geo (ADR-045) : tout le géographique de la plateforme au même endroit.
  * Service interne, sans route REST : seuls les services métier l'appellent, avec un jeton de
@@ -88,7 +123,14 @@ export interface NearestResponse {
  *   en secours, ADR-034). Jamais d'erreur de fournisseur : une réponse sans commune signifie
  *   qu'aucun n'a trouvé ou qu'ils sont en panne. Le rapprochement commune → zone desservie reste
  *   au service appelant (ses zones lui appartiennent).
+ * - ResolveCommune, ListCommunes : référentiel des 77 communes du Bénin et de leurs contours
+ *   officiels, stockés dans la base de geo (R-ZN-01 du CDC Nettoyage v2). La commune d'un point est
+ *   celle dont le contour le contient : réponse exacte, sans appel extérieur. ReverseGeocode ne sert
+ *   plus qu'à l'adresse lisible.
  * - Route, DistanceMatrix, Nearest : moteur d'itinéraires OSRM (/route, /table, /nearest).
+ *   DistanceMatrix sert au temps de trajet entre deux affectations d'un agent (R-ZN-02) : l'appelant
+ *   applique sa valeur par défaut (30 min dans cleaning) si la réponse est GEO_ROUTING_UNAVAILABLE ou
+ *   si la cellule n'est pas joignable.
  *
  * Conventions : coordonnées en degrés décimaux WGS 84 (latitude entre -90 et 90, longitude entre
  * -180 et 180 ; le Bénin est attendu mais pas imposé) ; distances en mètres et durées en secondes,
@@ -101,6 +143,7 @@ export interface NearestResponse {
  *   GEO_ROUTE_NOT_FOUND         NOT_FOUND         aucun itinéraire entre les points
  *   GEO_POINT_NOT_ROUTABLE      NOT_FOUND         point trop loin du réseau routier (details.field)
  *   GEO_ROUTING_UNAVAILABLE     UNAVAILABLE       OSRM absent, en panne ou trop lent : réessayable
+ *   GEO_BOUNDARIES_UNAVAILABLE  UNAVAILABLE       référentiel des contours des communes pas encore chargé
  *   AUTH_REQUIRED               UNAUTHENTICATED   jeton de service absent ou invalide
  */
 
@@ -120,6 +163,22 @@ export interface GeoServiceClient {
   /** Point le plus proche sur le réseau routier (accès d'une boutique, d'un client). */
 
   nearest(request: NearestRequest, metadata?: Metadata): Observable<NearestResponse>;
+
+  /**
+   * Commune dont le contour officiel contient le point (R-ZN-01). Un point hors de tout contour
+   * (hors du Bénin, en mer) n'est pas une erreur : la réponse n'a pas de commune, et l'appelant
+   * refuse le lieu (CLEANING_ZONE_NOT_COVERED dans cleaning). Un point exactement sur la limite de
+   * deux communes est attribué à une seule, toujours la même (plus petite clé).
+   */
+
+  resolveCommune(request: ResolveCommuneRequest, metadata?: Metadata): Observable<ResolveCommuneResponse>;
+
+  /**
+   * Les communes du référentiel (77), par ordre alphabétique de clé, sans les contours : choix d'une
+   * zone desservie au back-office, contrôle des clés de zone par les services.
+   */
+
+  listCommunes(request: ListCommunesRequest, metadata?: Metadata): Observable<ListCommunesResponse>;
 }
 
 /**
@@ -131,7 +190,14 @@ export interface GeoServiceClient {
  *   en secours, ADR-034). Jamais d'erreur de fournisseur : une réponse sans commune signifie
  *   qu'aucun n'a trouvé ou qu'ils sont en panne. Le rapprochement commune → zone desservie reste
  *   au service appelant (ses zones lui appartiennent).
+ * - ResolveCommune, ListCommunes : référentiel des 77 communes du Bénin et de leurs contours
+ *   officiels, stockés dans la base de geo (R-ZN-01 du CDC Nettoyage v2). La commune d'un point est
+ *   celle dont le contour le contient : réponse exacte, sans appel extérieur. ReverseGeocode ne sert
+ *   plus qu'à l'adresse lisible.
  * - Route, DistanceMatrix, Nearest : moteur d'itinéraires OSRM (/route, /table, /nearest).
+ *   DistanceMatrix sert au temps de trajet entre deux affectations d'un agent (R-ZN-02) : l'appelant
+ *   applique sa valeur par défaut (30 min dans cleaning) si la réponse est GEO_ROUTING_UNAVAILABLE ou
+ *   si la cellule n'est pas joignable.
  *
  * Conventions : coordonnées en degrés décimaux WGS 84 (latitude entre -90 et 90, longitude entre
  * -180 et 180 ; le Bénin est attendu mais pas imposé) ; distances en mètres et durées en secondes,
@@ -144,6 +210,7 @@ export interface GeoServiceClient {
  *   GEO_ROUTE_NOT_FOUND         NOT_FOUND         aucun itinéraire entre les points
  *   GEO_POINT_NOT_ROUTABLE      NOT_FOUND         point trop loin du réseau routier (details.field)
  *   GEO_ROUTING_UNAVAILABLE     UNAVAILABLE       OSRM absent, en panne ou trop lent : réessayable
+ *   GEO_BOUNDARIES_UNAVAILABLE  UNAVAILABLE       référentiel des contours des communes pas encore chargé
  *   AUTH_REQUIRED               UNAUTHENTICATED   jeton de service absent ou invalide
  */
 
@@ -172,11 +239,40 @@ export interface GeoServiceController {
     request: NearestRequest,
     metadata?: Metadata,
   ): Promise<NearestResponse> | Observable<NearestResponse> | NearestResponse;
+
+  /**
+   * Commune dont le contour officiel contient le point (R-ZN-01). Un point hors de tout contour
+   * (hors du Bénin, en mer) n'est pas une erreur : la réponse n'a pas de commune, et l'appelant
+   * refuse le lieu (CLEANING_ZONE_NOT_COVERED dans cleaning). Un point exactement sur la limite de
+   * deux communes est attribué à une seule, toujours la même (plus petite clé).
+   */
+
+  resolveCommune(
+    request: ResolveCommuneRequest,
+    metadata?: Metadata,
+  ): Promise<ResolveCommuneResponse> | Observable<ResolveCommuneResponse> | ResolveCommuneResponse;
+
+  /**
+   * Les communes du référentiel (77), par ordre alphabétique de clé, sans les contours : choix d'une
+   * zone desservie au back-office, contrôle des clés de zone par les services.
+   */
+
+  listCommunes(
+    request: ListCommunesRequest,
+    metadata?: Metadata,
+  ): Promise<ListCommunesResponse> | Observable<ListCommunesResponse> | ListCommunesResponse;
 }
 
 export function GeoServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["reverseGeocode", "route", "distanceMatrix", "nearest"];
+    const grpcMethods: string[] = [
+      "reverseGeocode",
+      "route",
+      "distanceMatrix",
+      "nearest",
+      "resolveCommune",
+      "listCommunes",
+    ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("GeoService", method)(constructor.prototype[method], method, descriptor);

@@ -2,7 +2,7 @@
   "name": "@ksp/cleaning-service",
   "version": "0.1.0",
   "private": true,
-  "description": "Service Nettoyage de l'écosystème KSP : simulateur, devis, missions.",
+  "description": "Service Nettoyage de l'écosystème KSP : simulateur, devis, programmes et séances.",
   "main": "dist/main.js",
   "files": [
     "dist",

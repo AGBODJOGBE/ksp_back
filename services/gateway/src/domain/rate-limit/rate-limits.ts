@@ -47,9 +47,9 @@ export const DEFAULT_RATE_LIMITS: RateLimitTable = {
   /** identity limite aussi les essais par jeton de double authentification (5). */
   mfa_verify: { limit: 10, windowSeconds: 60, key: 'ip' },
   refresh: { limit: 60, windowSeconds: 60, key: 'ip' },
-  // Simulateur public du Nettoyage (cahier des charges Nettoyage, partie 5).
-  cleaning_simulation: { limit: 20, windowSeconds: 60, key: 'ip' },
-  // Position du lieu (ADR-034) : chaque appel peut interroger un géocodeur payant (Google).
+  // Simulateur public et aperçu des dates du Nettoyage (cahier des charges Nettoyage v2, partie 5).
+  cleaning_simulation: { limit: 30, windowSeconds: 60, key: 'ip' },
+  // Enregistrement d'un lieu du Nettoyage (R-ZN-01) : chaque appel interroge geo (Google en secours).
   cleaning_geocoding: { limit: 10, windowSeconds: 60, key: 'user' },
   // Code de confirmation de l'e-mail du profil : identity limite aussi par adresse et par compte.
   email_code_request: { limit: 3, windowSeconds: 60, key: 'user' },

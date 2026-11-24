@@ -1,5 +1,5 @@
 import { type OperationId } from '../../domain/routing/route-manifest';
-import { type Json } from '../cleaning/cleaning.ports';
+import { type Json } from '../common/api.ports';
 
 /** Routes du recouvrement (ADR-060 à 062), désignées par leur operationId du contrat. */
 export type RecoveryOperationId = Extract<OperationId, `recovery${string}`>;

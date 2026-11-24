@@ -3,13 +3,12 @@ import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs
 import { WALLET_USE_CASES, type WalletUseCases } from '../../application/use-cases';
 
 /**
- * Portefeuille prépayé (ADR-046) :
- * - file wallet.payment.intent.succeeded : une recharge confirmée (objet wallet_top_up) est créditée
- *   au portefeuille, une seule fois (inbox et référence du paiement) ; les autres objets sont ignorés ;
- * - file wallet.cleaning.mission.refunded : chaque débit cité est remboursé, une seule fois ;
- * - file wallet.cleaning.mission.credited : montant des passages payés non faits d'une mission
- *   récurrente arrêtée crédité au portefeuille du client, une seule fois (ADR-049).
- * Un échec repasse par la file de reprise.
+ * Portefeuille prépayé (ADR-046) : file wallet.payment.intent.succeeded, une recharge confirmée (objet
+ * wallet_top_up) est créditée au portefeuille, une seule fois (inbox et référence du paiement) ; les
+ * autres objets sont ignorés. Un échec repasse par la file de reprise.
+ *
+ * Les remboursements et crédits du Nettoyage v1 (cleaning.mission.refunded, cleaning.mission.credited)
+ * sont retirés avec la v1 (ADR-054) : le Nettoyage v2 rembourse par appel (Refund, Credit, RV-81).
  */
 @Injectable()
 export class PrepaidEventsConsumer implements OnApplicationBootstrap {
@@ -32,6 +31,7 @@ export class PrepaidEventsConsumer implements OnApplicationBootstrap {
         customerId: payload.customerId,
         organizationId: payload.organizationId,
         amount: payload.amount.amount,
+        target: payload.target ?? null,
       });
       if (outcome === 'rejected') {
         // Paiement relu chez payment qui ne confirme pas l'événement (ADR-048) : rien n'est crédité.
@@ -50,34 +50,6 @@ export class PrepaidEventsConsumer implements OnApplicationBootstrap {
         return;
       }
       this.logger.log(`Recharge ${payload.paymentId} : ${outcome}`);
-    });
-
-    await this.consumer.subscribe('cleaning.mission.refunded', async (envelope) => {
-      const payload = envelope.payload;
-      const result = await this.useCases.refundFromEvent.execute({
-        producer: envelope.producer,
-        transactionIds: payload.refunds.map((refund) => refund.walletTransactionId),
-        reason: 'mission annulée',
-      });
-      this.logger.log(
-        `Remboursement de la mission ${payload.missionId} : ${
-          result === 'ignored' ? 'ignoré' : `${result.refunded} remboursé(s), ${result.already} déjà fait(s)`
-        }`,
-      );
-    });
-
-    await this.consumer.subscribe('cleaning.mission.credited', async (envelope) => {
-      const payload = envelope.payload;
-      const outcome = await this.useCases.creditFromMission.execute({
-        eventId: envelope.eventId,
-        eventType: envelope.type,
-        producer: envelope.producer,
-        missionId: payload.missionId,
-        customerId: payload.customerId,
-        creditId: payload.creditId,
-        amount: payload.amount.amount,
-      });
-      this.logger.log(`Crédit au prorata de la mission ${payload.missionId} : ${outcome}`);
     });
   }
 }

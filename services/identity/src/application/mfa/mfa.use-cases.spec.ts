@@ -215,7 +215,8 @@ describe('EnrollTotp et ConfirmTotp (UC-ID-09, première connexion)', () => {
   });
 
   it('le premier code active l’application, remet 10 codes de récupération et ouvre la session', async () => {
-    const { store, mfa, issued, clock, enrolledAccount } = setup();
+    const { store, mfa, issued, clock, enrolledAccount, roles } = setup();
+    roles.permissionsOf.set('cleaning_supervisor', ['cleaning.request.read', 'cleaning.catalog.read']);
     const { session, recoveryCodes } = await enrolledAccount();
 
     expect(recoveryCodes).toHaveLength(10);
@@ -241,6 +242,9 @@ describe('EnrollTotp et ConfirmTotp (UC-ID-09, première connexion)', () => {
         { role: 'customer', scopeType: 'personal' },
         { role: 'cleaning_supervisor', scopeType: 'domain', scopeId: 'cleaning' },
       ],
+      // Permissions des rôles dans le jeton (ADR-057, décision 4).
+      perms: ['cleaning.catalog.read', 'cleaning.request.read'],
+      zonePerms: {},
     });
     expect(store.loginEvents.at(-1)).toEqual({ userId: session.account.id, success: true, method: 'totp' });
   });

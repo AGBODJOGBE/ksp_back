@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.ksp.bj/events/billing/billing.invoice.paid.v1.schema.json",
   "title": "billing.invoice.paid",
-  "description": "Facture entièrement réglée (paiement manuel enregistré au back-office, plus tard paiement en ligne). Écouté par cleaning (déblocage) et notification.",
+  "description": "Facture soldée : paiement, avoir qui ramène le reste dû à 0, ou annulation (settledBy). Écouté par cleaning (déblocage, compte des impayés d'une organisation) et notification.",
   "x-event-type": "billing.invoice.paid",
   "x-event-version": 1,
   "type": "object",
@@ -42,6 +42,19 @@
       "type": "integer",
       "minimum": 0,
       "description": "Factures du contrat encore impayées après ce règlement (information)"
+    },
+    "kind": {
+      "enum": ["session", "visit_fee", "monthly"],
+      "description": "v2 : facture de séance, reçu des frais de visite ou facture mensuelle d'organisation ; absent pour une facture v1"
+    },
+    "holderOverdueCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "v2 : factures impayées du titulaire (organisation, sinon client), après ce règlement ; information seulement ; cleaning tient son propre compte (R-PE-06). Absent des événements v1"
+    },
+    "settledBy": {
+      "enum": ["payment", "credit_note", "cancellation"],
+      "description": "v2 : comment la facture a été soldée (paiement, avoir qui ramène le reste dû à 0, annulation) ; absent pour une facture v1"
     }
   }
 }

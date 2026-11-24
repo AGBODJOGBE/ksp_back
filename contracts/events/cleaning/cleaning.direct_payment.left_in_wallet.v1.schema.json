@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.direct_payment.left_in_wallet.v1.schema.json",
+  "title": "cleaning.direct_payment.left_in_wallet",
+  "description": "Paiement direct reçu pour un objet qui n’est plus payable : montant laissé au wallet (R-PP-07). Écouté par notification (client).",
+  "x-event-type": "cleaning.direct_payment.left_in_wallet",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "directPaymentId",
+    "customerId",
+    "organizationId",
+    "objectType",
+    "objectId",
+    "amount",
+    "cause",
+    "leftAt"
+  ],
+  "properties": {
+    "directPaymentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "objectType": {
+      "enum": ["visit_fee", "session"]
+    },
+    "objectId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "amount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "cause": {
+      "enum": ["request_closed", "already_paid", "waived", "cancelled"]
+    },
+    "leftAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

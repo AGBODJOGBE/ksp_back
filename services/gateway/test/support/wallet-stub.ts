@@ -135,7 +135,39 @@ export const protoCreditRequest: walletV1.ManualCreditRequest = {
 };
 
 type Method = keyof walletV1.WalletAccountServiceController | keyof walletV1.WalletAdminServiceController;
-const ACCOUNT_METHODS: readonly Method[] = ['getMyWallet', 'listMyStatement', 'listMyPayouts', 'createTopUp'];
+/** Retrait demandé par le titulaire, montant retenu (R-WL-04). */
+export const protoWithdrawal: walletV1.Withdrawal = {
+  id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7d01',
+  holder: { type: 'user', id: HOLDER_ID },
+  amount: xof(15000),
+  status: 'requested',
+  beneficiaryOperator: 'mtn',
+  beneficiaryPhoneMasked: '+229********45',
+  requestedBy: HOLDER_ID,
+  requestedAt: '2026-11-20T09:00:00.000Z',
+  processedBy: '',
+  processedAt: '',
+  processingNote: '',
+  approvedBy: '',
+  approvedAt: '',
+  rejectedBy: '',
+  rejectedAt: '',
+  rejectionReason: '',
+  paymentPayoutId: '',
+  holdTransactionId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7013',
+  settlementTransactionId: '',
+  completedAt: '',
+  failedAt: '',
+};
+
+const ACCOUNT_METHODS: readonly Method[] = [
+  'getMyWallet',
+  'listMyStatement',
+  'listMyPayouts',
+  'createTopUp',
+  'requestWithdrawal',
+  'listMyWithdrawals',
+];
 
 const DEFAULTS: Record<Method, () => unknown> = {
   getMyWallet: () => ({ wallet: protoWallet, topUpLimits: { min: xof(500), max: xof(1000000) } }),
@@ -219,6 +251,63 @@ const DEFAULTS: Record<Method, () => unknown> = {
     holdersCount: 1,
     owedToCustomers: xof(5000),
     customersCount: 1,
+  }),
+  // Retraits vers Mobile Money (R-WL-04) et refus d'une demande de crédit (v2).
+  requestWithdrawal: () => ({
+    withdrawal: protoWithdrawal,
+    wallet: {
+      holder: { type: 'user', id: HOLDER_ID },
+      balance: xof(5000),
+      lastEntryAt: '2026-11-20T09:00:00.000Z',
+      withdrawalsInProgress: xof(15000),
+    },
+    created: true,
+  }),
+  listMyWithdrawals: () => ({ withdrawals: [protoWithdrawal], nextCursor: '' }),
+  rejectManualCredit: () => ({
+    request: {
+      ...protoCreditRequest,
+      status: 'rejected',
+      rejectedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0d02',
+      rejectedAt: '2026-11-20T10:00:00.000Z',
+      rejectionReason: 'Reçu illisible',
+    },
+  }),
+  listWithdrawals: () => ({ withdrawals: [protoWithdrawal], nextCursor: protoWithdrawal.id }),
+  processWithdrawal: () => ({
+    withdrawal: {
+      ...protoWithdrawal,
+      status: 'awaiting_approval',
+      processedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0d01',
+      processedAt: '2026-11-20T10:00:00.000Z',
+      processingNote: 'Titulaire vérifié par appel',
+    },
+  }),
+  approveWithdrawal: () => ({
+    withdrawal: {
+      ...protoWithdrawal,
+      status: 'submitted',
+      processedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0d01',
+      processedAt: '2026-11-20T10:00:00.000Z',
+      processingNote: 'Titulaire vérifié par appel',
+      approvedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0d02',
+      approvedAt: '2026-11-20T10:05:00.000Z',
+      paymentPayoutId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d6001',
+    },
+  }),
+  rejectWithdrawal: () => ({
+    withdrawal: {
+      ...protoWithdrawal,
+      status: 'rejected',
+      rejectedBy: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0d02',
+      rejectedAt: '2026-11-20T10:00:00.000Z',
+      rejectionReason: 'Numéro au nom d’un tiers',
+    },
+    wallet: {
+      holder: { type: 'user', id: HOLDER_ID },
+      balance: xof(20000),
+      lastEntryAt: '2026-11-20T10:00:00.000Z',
+    },
   }),
 };
 

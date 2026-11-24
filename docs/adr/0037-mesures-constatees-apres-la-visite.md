@@ -2,6 +2,8 @@
 
 **Statut** : Accepté (en service sur `main` depuis le 2026-11-06, constat du 2026-11-10 ; les points « À valider » ci-dessous restent ouverts ; historique : lot 2 ; besoin validé par le responsable le 2026-11-05 ; complète l'ADR-033 et l'ADR-035 sans les modifier)
 
+**Remplacé par ADR-054** (constat déclaré, constaté et retenu, écart montré au client).
+
 ## Contexte
 
 La visite des lieux est obligatoire avant tout devis (décision du 2026-10-23). Sur place, l'agent constate souvent des dimensions différentes de celles déclarées par le client (huit pièces au lieu de six, logement très sale). Aujourd'hui, le compte rendu n'est qu'un texte : le devis est prérempli depuis le calcul fait avec les réponses du client (ADR-033 point 6) et le superviseur doit recalculer à la main. Le back-office affiche en outre les réponses de façon peu lisible (« Type de locaux : Autre, Quantité 2 ») : les codes des champs et des choix ne sont pas traduits en libellés.

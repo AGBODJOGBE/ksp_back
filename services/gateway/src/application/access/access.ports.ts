@@ -1,8 +1,14 @@
 import { type VerifiedAccessToken } from '@ksp/platform';
+import { type CallerPermissions } from '../../domain/access/access-policy';
+
+/** Jeton d'accès vérifié, avec ses permissions (RBAC dynamique, revendications perms et zone_perms). */
+export interface AuthenticatedCaller extends VerifiedAccessToken {
+  permissions: CallerPermissions;
+}
 
 /** Vérifie un jeton d'accès localement, avec les clés publiques d'identity en cache (UC-GW-02). */
 export interface AccessTokenVerifierPort {
-  verify(token: string): Promise<VerifiedAccessToken>;
+  verify(token: string): Promise<AuthenticatedCaller>;
 }
 
 export interface RateLimitResult {

@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.program.confirmed.v1.schema.json",
+  "title": "cleaning.program.confirmed",
+  "description": "Programme confirmé : séances créées avec leur prix (R-AC-01, R-PG-05).",
+  "x-event-type": "cleaning.program.confirmed",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "programId",
+    "programNumber",
+    "quoteId",
+    "requestId",
+    "customerId",
+    "organizationId",
+    "payerKind",
+    "sessionsCount",
+    "sessionPrice",
+    "total",
+    "visitFeeDeduction",
+    "firstSessionAt",
+    "lastSessionAt",
+    "confirmedAt",
+    "placeTypeName",
+    "cleaningTypeNames"
+  ],
+  "properties": {
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "quoteId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "payerKind": {
+      "enum": ["individual", "organization"]
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sessionPrice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "total": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "visitFeeDeduction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      },
+      "description": "Frais de visite à déduire du premier paiement (R-FV-05)"
+    },
+    "firstSessionAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "lastSessionAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "confirmedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "placeTypeName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Nom du lieu en vigueur"
+    },
+    "cleaningTypeNames": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Noms des types en vigueur, dans l’ordre de la demande"
+    }
+  }
+}

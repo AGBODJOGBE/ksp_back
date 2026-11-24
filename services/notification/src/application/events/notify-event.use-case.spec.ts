@@ -4,6 +4,7 @@ import {
   FakeDirectory,
   FakeOrganizations,
   FakeProvider,
+  FakeStaff,
   FixedClock,
   InMemoryInbox,
   InMemoryNotifications,
@@ -52,6 +53,7 @@ function setup(
     new MessageDispatcher(notifications, providers, clock),
     directory,
     organizations,
+    new FakeStaff(),
     preferences,
     inbox,
     clock,
@@ -75,81 +77,163 @@ const event = <T extends keyof KspEventPayloads>(type: T, payload: KspEventPaylo
   payload,
 });
 
-const quoteRequested = event('cleaning.quote.requested', {
+const REQUEST_NUMBER = 'DN-000124';
+const VISIT = '0192f1c4-0000-7000-8000-00000000v001';
+
+/** Événements du Nettoyage v2 : demande, nom du lieu et des types, jamais d'adresse. */
+const requestCancelled = event('cleaning.request.cancelled', {
   requestId: REQUEST,
+  requestNumber: REQUEST_NUMBER,
   customerId: CUSTOMER,
   organizationId: null,
-  customerKind: 'individual',
-  serviceCode: 'home_standard',
-  visitRequired: true,
+  cause: 'customer',
+  visitFeeRefund: null,
+  cancelledAt: '2026-10-23T09:00:00Z',
 });
 
 const quoteSent = event('cleaning.quote.sent', {
-  requestId: REQUEST,
   quoteId: '0192f1c4-0000-7000-8000-00000000q001',
+  requestId: REQUEST,
+  requestNumber: REQUEST_NUMBER,
   customerId: CUSTOMER,
+  organizationId: null,
+  kind: 'initial',
+  version: 1,
+  sessionPrice: { amount: 150000, currency: 'XOF' },
+  sessionsCount: 1,
   total: { amount: 150000, currency: 'XOF' },
+  visitFeeDeduction: { amount: 0, currency: 'XOF' },
   validUntil: '2026-11-15T22:59:59Z',
+  sentAt: '2026-10-23T09:00:00Z',
+  placeTypeName: 'Maison',
+  cleaningTypeNames: ['Sol'],
 });
 
-const missionScheduled = event('cleaning.mission.scheduled', {
-  missionId: MISSION,
-  interventionId: '0192f1c4-0000-7000-8000-00000000i001',
+const visitScheduled = event('cleaning.visit.scheduled', {
+  visitId: VISIT,
+  requestId: REQUEST,
+  requestNumber: REQUEST_NUMBER,
   customerId: CUSTOMER,
-  scheduledStart: '2026-10-29T08:30:00Z',
-  durationMinutes: 150,
+  organizationId: null,
   agentIds: [AGENT_1, AGENT_2],
+  scheduledAt: '2026-10-29T08:30:00Z',
+  durationMinutes: 60,
+  previousScheduledAt: null,
+  releasedAgentIds: [],
+  placeTypeName: 'Maison',
+  cleaningTypeNames: ['Sol'],
 });
 
-describe('NotifyEventUseCase — messages des 7 premiers événements du Nettoyage', () => {
-  it('cleaning.quote.requested : accusé de réception au client, visite annoncée', async () => {
+describe('NotifyEventUseCase — messages des événements du Nettoyage gardés par la refonte v2 (ADR-054)', () => {
+  it('cleaning.request.cancelled par le client : confirmation au client, lien vers la demande', async () => {
     const { useCase, whatsapp, inbox } = setup();
-    await expect(useCase.execute(quoteRequested)).resolves.toMatchObject({
+    await expect(useCase.execute(requestCancelled)).resolves.toMatchObject({
       status: 'processed',
       accepted: 1,
     });
     expect(whatsapp.sent).toHaveLength(1);
     expect(whatsapp.sent[0]).toMatchObject({
-      templateCode: 'cleaning.quote_requested.customer',
+      templateCode: 'cleaning.request_cancelled.customer',
       phoneE164: '+2290197000045',
       locale: 'fr',
       variables: {
         first_name: 'Koffi',
-        visit_required: 'true',
+        case: 'cancelled_by_customer',
+        scope: 'request',
         link: `https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST}`,
       },
     });
     expect(whatsapp.sent[0]!.content!.text).toContain('Bonjour Koffi,');
-    expect(whatsapp.sent[0]!.content!.text).toContain('visite des lieux');
+    expect(whatsapp.sent[0]!.content!.text).toContain(
+      'Votre annulation est bien enregistrée : votre demande de nettoyage est annulée.',
+    );
     expect(inbox.inApp).toEqual([
       expect.objectContaining({
         userId: CUSTOMER,
-        templateCode: 'cleaning.quote_requested.customer',
-        title: 'Demande de devis reçue',
+        templateCode: 'cleaning.request_cancelled.customer',
+        title: 'Annulation enregistrée',
         link: `https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST}`,
         sourceEventId: EVENT_ID,
       }),
     ]);
   });
 
-  it('cleaning.visit.scheduled : le client et l’agent, date à l’heure du Bénin', async () => {
-    const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(AGENT_1, { firstName: 'Awa' })]);
+  it('cleaning.request.cancelled faute de frais de visite payés : message d’une annulation par KSP', async () => {
+    const { useCase, whatsapp } = setup();
     await useCase.execute(
-      event('cleaning.visit.scheduled', {
-        requestId: REQUEST,
-        visitId: '0192f1c4-0000-7000-8000-00000000v001',
-        customerId: CUSTOMER,
-        agentId: AGENT_1,
-        scheduledAt: '2026-10-29T08:30:00Z',
+      event('cleaning.request.cancelled', {
+        ...(requestCancelled.payload as KspEventPayloads['cleaning.request.cancelled']),
+        cause: 'visit_fee_unpaid',
       }),
     );
+    expect(whatsapp.sent[0]!.variables['case']).toBe('cancelled_by_supervisor');
+    expect(whatsapp.sent[0]!.content!.text).toContain('KSP a dû annuler votre demande de nettoyage.');
+  });
+
+  it('cleaning.visit.scheduled : le client et chaque agent de la visite, date à l’heure du Bénin', async () => {
+    const { useCase, whatsapp, inbox } = setup([
+      contact(CUSTOMER),
+      contact(AGENT_1, { firstName: 'Awa' }),
+      contact(AGENT_2),
+    ]);
+    await expect(
+      useCase.execute(
+        event('cleaning.visit.scheduled', {
+          ...(visitScheduled.payload as KspEventPayloads['cleaning.visit.scheduled']),
+          agentIds: [AGENT_1, AGENT_2, AGENT_1],
+        }),
+      ),
+    ).resolves.toMatchObject({ accepted: 3, inApp: 3 });
     expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
       'cleaning.visit_scheduled.customer',
+      'cleaning.visit_scheduled.agent',
       'cleaning.visit_scheduled.agent',
     ]);
     expect(whatsapp.sent[0]!.variables['date']).toBe('jeudi 29 octobre 2026 à 09:30');
     expect(whatsapp.sent[1]!.content!.text).toContain('Bonjour Awa,');
+    expect(inbox.inApp.map((notification) => notification.link)).toEqual([
+      `https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST}`,
+      null,
+      null,
+    ]);
   });
+
+  it.each([
+    ['request_cancelled', 'cleaning.visit_cancelled.agent', 0],
+    ['request_rejected', 'cleaning.visit_cancelled.agent', 0],
+    ['slot_changed', 'cleaning.visit_released.agent', 1],
+    ['ksp', 'cleaning.visit_released.agent', 1],
+    ['agent_no_show', 'cleaning.visit_released.agent', 1],
+  ] as const)(
+    'cleaning.visit.cancelled (%s) : les agents libérés ; le client, sauf quand sa demande est close',
+    async (cause, agentTemplate, customerMessages) => {
+      const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(AGENT_1), contact(AGENT_2)]);
+      await useCase.execute(
+        event('cleaning.visit.cancelled', {
+          visitId: VISIT,
+          requestId: REQUEST,
+          requestNumber: REQUEST_NUMBER,
+          customerId: CUSTOMER,
+          organizationId: null,
+          communeKey: 'cotonou',
+          releasedAgentIds: [AGENT_1, AGENT_2, AGENT_2],
+          scheduledAt: '2026-11-12T08:00:00Z',
+          cause,
+          visitFeeRefund: null,
+          cancelledAt: '2026-11-10T08:00:00Z',
+        }),
+      );
+      const toAgents = whatsapp.sent.filter((message) => message.templateCode.endsWith('.agent'));
+      expect(toAgents.map((message) => message.templateCode)).toEqual([agentTemplate, agentTemplate]);
+      for (const message of toAgents) {
+        expect(message.content!.text).toContain('jeudi 12 novembre 2026 à 09:00');
+        expect(message.content!.text).toContain(REQUEST_NUMBER);
+      }
+      expect(
+        whatsapp.sent.filter((message) => message.templateCode === 'cleaning.visit_cancelled.customer'),
+      ).toHaveLength(customerMessages);
+    },
+  );
 
   it('cleaning.quote.sent : document, par e-mail quand l’adresse existe', async () => {
     const { useCase, whatsapp, email } = setup([contact(CUSTOMER, { email: 'Koffi@Example.com' })]);
@@ -170,397 +254,79 @@ describe('NotifyEventUseCase — messages des 7 premiers événements du Nettoya
     expect(whatsapp.sent.map((message) => message.templateCode)).toEqual(['cleaning.quote_sent.customer']);
   });
 
-  it('cleaning.booking.confirmed : montant, passages et paiement choisi', async () => {
+  it('cleaning.quote.expiry_reminded : le devis du dossier, son montant et sa validité', async () => {
     const { useCase, whatsapp } = setup();
     await useCase.execute(
-      event('cleaning.booking.confirmed', {
-        requestId: REQUEST,
+      event('cleaning.quote.expiry_reminded', {
         quoteId: '0192f1c4-0000-7000-8000-00000000q001',
-        missionId: MISSION,
+        requestId: REQUEST,
+        requestNumber: REQUEST_NUMBER,
         customerId: CUSTOMER,
         organizationId: null,
-        total: { amount: 150000, currency: 'XOF' },
-        plannedInterventions: 4,
-        recurrence: { period: 'week', visitsPerPeriod: 1, durationMonths: 1 },
-        paymentPlan: { option: 'deposit', timing: 'before', method: 'mobile_money_online' },
-        depositAmount: { amount: 45000, currency: 'XOF' },
+        total: { amount: 25000, currency: 'XOF' },
+        validUntil: '2026-11-12T08:00:00Z',
+        reminderDays: 2,
+        remindedAt: '2026-11-10T08:00:00Z',
       }),
     );
-    const text = whatsapp.sent[0]!.content!.text;
-    expect(text).toContain(`4 passages pour 150${NBSP}000${NBSP}FCFA`);
-    expect(text).toContain(
-      `Paiement choisi : acompte de 45${NBSP}000${NBSP}FCFA, avant l'intervention, par Mobile Money en ligne.`,
-    );
-    expect(whatsapp.sent[0]!.variables['link']).toBe(
-      `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION}`,
+    expect(whatsapp.sent[0]).toMatchObject({
+      templateCode: 'cleaning.quote_expiry_reminder.customer',
+      variables: { link: `https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST}` },
+    });
+    expect(whatsapp.sent[0]!.content!.subject).toBe('Votre devis expire bientôt');
+    expect(whatsapp.sent[0]!.content!.text).toContain(
+      `Votre devis du dossier ${REQUEST_NUMBER} (25${NBSP}000${NBSP}FCFA) reste valable jusqu'au 12 novembre 2026.`,
     );
   });
 
-  it('cleaning.mission.scheduled : le client et chaque agent affecté', async () => {
-    const { useCase, whatsapp, inbox } = setup([contact(CUSTOMER), contact(AGENT_1), contact(AGENT_2)]);
-    await expect(useCase.execute(missionScheduled)).resolves.toMatchObject({ accepted: 3, inApp: 3 });
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.mission_scheduled.customer',
-      'cleaning.mission_scheduled.agent',
-      'cleaning.mission_scheduled.agent',
-    ]);
-    expect(whatsapp.sent[0]!.content!.text).toContain(`(durée prévue : 2${NBSP}h${NBSP}30)`);
-    expect(inbox.inApp.map((notification) => notification.link)).toEqual([
-      `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION}`,
-      null,
-      null,
-    ]);
+  it('cleaning.quote.expired : le devis du dossier et son montant', async () => {
+    const { useCase, whatsapp } = setup();
+    await useCase.execute(
+      event('cleaning.quote.expired', {
+        quoteId: '0192f1c4-0000-7000-8000-00000000q001',
+        requestId: REQUEST,
+        customerId: CUSTOMER,
+        organizationId: null,
+        validUntil: '2026-11-12T08:00:00Z',
+        expiredAt: '2026-11-12T08:05:00Z',
+        requestNumber: REQUEST_NUMBER,
+        communeKey: 'cotonou',
+        total: { amount: 25000, currency: 'XOF' },
+        placeTypeName: 'Maison',
+        cleaningTypeNames: ['Sol'],
+      }),
+    );
+    expect(whatsapp.sent[0]!.content!.subject).toBe('Votre devis a expiré');
+    expect(whatsapp.sent[0]!.content!.text).toContain(
+      `Votre devis du dossier ${REQUEST_NUMBER} (25${NBSP}000${NBSP}FCFA) a expiré sans réponse.`,
+    );
   });
 
-  it('cleaning.interventions.batch_scheduled : un seul message résumé au client et à chaque agent', async () => {
-    const { useCase, whatsapp, inbox } = setup([contact(CUSTOMER), contact(AGENT_1), contact(AGENT_2)]);
+  it('événement inconnu : pas écouté', async () => {
+    const { useCase, directory } = setup();
     await expect(
-      useCase.execute(
-        event('cleaning.interventions.batch_scheduled', {
-          missionId: MISSION,
-          customerId: CUSTOMER,
-          interventionIds: ['0192f1c4-0000-7000-8000-00000000i001', '0192f1c4-0000-7000-8000-00000000i002'],
-          count: 157,
-          firstStart: '2026-11-11T07:00:00Z',
-          lastStart: '2027-11-10T07:00:00Z',
-          durationMinutes: 120,
-          agentIds: [AGENT_1, AGENT_2, AGENT_1],
-          skippedDates: [],
-          serviceName: 'Nettoyage de maison',
-        }),
-      ),
-    ).resolves.toMatchObject({ accepted: 3, inApp: 3 });
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.interventions_batch_scheduled.customer',
-      'cleaning.interventions_batch_scheduled.agent',
-      'cleaning.interventions_batch_scheduled.agent',
-    ]);
-    const text = whatsapp.sent[0]!.content!.text;
-    expect(text).toContain('157 passages pour « Nettoyage de maison » sont planifiés du ');
-    expect(text).toContain('2027');
-    expect(whatsapp.sent[1]!.content!.text).toContain('vous sont confiés');
-    expect(inbox.inApp.map((notification) => notification.link)).toEqual([
-      `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION}`,
-      null,
-      null,
-    ]);
-  });
-
-  it('cleaning.mission.completed : compte rendu, document', async () => {
-    const { useCase, email } = setup([contact(CUSTOMER, { email: 'koffi@example.com' })]);
-    await useCase.execute(
-      event('cleaning.mission.completed', {
-        missionId: MISSION,
-        customerId: CUSTOMER,
-        completedInterventions: 1,
-        completedAt: '2026-10-29T11:00:00Z',
-      }),
-    );
-    expect(email.sent[0]!.content!.subject).toBe('Prestation de nettoyage terminée');
-    expect(email.sent[0]!.content!.text).toContain('1 passage réalisé, le dernier le 29 octobre 2026');
-    expect(email.sent[0]!.content!.text).toContain('compte rendu');
-  });
-
-  it.each([
-    ['customer', 'cancelled', null, 'Votre annulation est bien enregistrée : votre demande'],
-    ['supervisor', 'cancelled', MISSION, 'KSP a dû annuler votre prestation'],
-    ['supervisor', 'rejected', null, 'pas en mesure de donner suite'],
-    ['customer', 'declined', null, 'votre refus du devis'],
-  ] as const)('cleaning.request.cancelled par %s (%s)', async (cancelledBy, outcome, missionId, expected) => {
-    const { useCase, whatsapp } = setup();
-    await useCase.execute(
-      event('cleaning.request.cancelled', {
-        requestId: REQUEST,
-        missionId,
-        customerId: CUSTOMER,
-        cancelledBy,
-        outcome,
-      }),
-    );
-    expect(whatsapp.sent[0]!.content!.text).toContain(expected);
-  });
-});
-
-describe('NotifyEventUseCase — messages regroupés et prestation citée (ADR-035 point 14)', () => {
-  const GROUP = '0192f1c4-0000-7000-8000-00000000g001';
-  const REQUEST_2 = '0192f1c4-0000-7000-8000-00000000r002';
-  const REQUEST_3 = '0192f1c4-0000-7000-8000-00000000r003';
-  const groupLink = `https://ksp.bj/mon-espace/nettoyage/demandes/groupes/${GROUP}`;
-  const requests = [
-    { requestId: REQUEST, serviceCode: 'office', serviceName: 'Nettoyage de bureaux' },
-    { requestId: REQUEST_2, serviceCode: 'windows', serviceName: 'Vitres' },
-    { requestId: REQUEST_3, serviceCode: 'old_service' },
-  ];
-
-  it('envoi groupé : un seul message qui liste les prestations ; les demandes résumées n’envoient rien', async () => {
-    const { useCase, whatsapp, inbox } = setup();
-    await useCase.execute(
-      event('cleaning.quote_group.requested', {
-        groupId: GROUP,
-        customerId: CUSTOMER,
-        organizationId: null,
-        customerKind: 'individual',
-        visitRequired: true,
-        requests,
-      }),
-    );
-    expect(whatsapp.sent).toHaveLength(1);
-    expect(whatsapp.sent[0]).toMatchObject({
-      templateCode: 'cleaning.quote_group_requested.customer',
-      variables: {
-        visit_required: 'true',
-        request_count: '3',
-        services: '« Nettoyage de bureaux », « Vitres » et une prestation de nettoyage',
-        link: groupLink,
-      },
-    });
-    expect(whatsapp.sent[0]!.content!.text).toContain(
-      'vos 3 demandes de devis pour un même lieu : « Nettoyage de bureaux », « Vitres » et une prestation',
-    );
-    expect(inbox.inApp).toEqual([
-      expect.objectContaining({ title: 'Demandes de devis reçues', link: groupLink }),
-    ]);
-
-    for (const [index, request] of requests.entries()) {
-      const summarized = await setup().useCase.execute({
-        ...event('cleaning.quote.requested', {
-          requestId: request.requestId,
-          customerId: CUSTOMER,
-          organizationId: null,
-          customerKind: 'individual',
-          serviceCode: request.serviceCode,
-          visitRequired: true,
-          groupId: GROUP,
-          summarizedByGroup: true,
-        }),
-        eventId: `0192f1c4-aaaa-7000-8000-00000000000${index + 2}`,
-      });
-      expect(summarized).toMatchObject({ status: 'processed', accepted: 0, inApp: 0 });
-    }
-  });
-
-  it('demande groupée publiée avant les messages regroupés (sans marqueur) : message de la demande', async () => {
-    const { useCase, whatsapp } = setup();
-    await useCase.execute(
-      event('cleaning.quote.requested', {
-        ...(quoteRequested.payload as KspEventPayloads['cleaning.quote.requested']),
-        groupId: GROUP,
-      } as KspEventPayloads['cleaning.quote.requested']),
-    );
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.quote_requested.customer',
-    ]);
-    expect(whatsapp.sent[0]!.content!.subject).toBe('Demande de devis reçue');
-  });
-
-  it('demande seule avec sa prestation : le nom dans l’objet et le texte', async () => {
-    const { useCase, whatsapp, inbox } = setup();
-    await useCase.execute(
-      event('cleaning.quote.requested', {
-        ...(quoteRequested.payload as KspEventPayloads['cleaning.quote.requested']),
-        serviceName: 'Vitres',
-      } as KspEventPayloads['cleaning.quote.requested']),
-    );
-    expect(whatsapp.sent[0]).toMatchObject({
-      templateCode: 'cleaning.quote_requested.customer',
-      variables: { service_name: 'Vitres', link: `https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST}` },
-    });
-    expect(whatsapp.sent[0]!.content!.text).toContain('votre demande de devis pour « Vitres »');
-    expect(inbox.inApp[0]!.title).toBe('Demande de devis reçue — Vitres');
-  });
-
-  it('groupe d’une seule prestation : le message d’une demande, avec sa prestation', async () => {
-    const { useCase, whatsapp } = setup();
-    await useCase.execute(
-      event('cleaning.quote_group.requested', {
-        groupId: GROUP,
-        customerId: CUSTOMER,
-        organizationId: null,
-        customerKind: 'individual',
-        visitRequired: false,
-        requests: [requests[1]!],
-      }),
-    );
-    expect(whatsapp.sent[0]).toMatchObject({
-      templateCode: 'cleaning.quote_requested.customer',
-      variables: {
-        visit_required: 'false',
-        service_name: 'Vitres',
-        link: `https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST_2}`,
-      },
-    });
-  });
-
-  it('visite commune : un message au client et un à l’agent, qui listent les prestations', async () => {
-    const { useCase, whatsapp, inbox } = setup([contact(CUSTOMER), contact(AGENT_1, { firstName: 'Awa' })]);
-    await useCase.execute(
-      event('cleaning.visit.scheduled', {
-        requestId: REQUEST,
-        visitId: '0192f1c4-0000-7000-8000-00000000v001',
-        customerId: CUSTOMER,
-        agentId: AGENT_1,
-        scheduledAt: '2026-10-29T08:30:00Z',
-        serviceCode: 'office',
-        serviceName: 'Nettoyage de bureaux',
-        groupId: GROUP,
-        groupVisitId: '0192f1c4-0000-7000-8000-00000000v100',
-        requestIds: [REQUEST, REQUEST_2],
-        requests: requests.slice(0, 2),
-      }),
-    );
-    expect(whatsapp.sent).toHaveLength(2);
-    expect(whatsapp.sent[0]).toMatchObject({
-      templateCode: 'cleaning.group_visit_scheduled.customer',
-      variables: { services: '« Nettoyage de bureaux » et « Vitres »', link: groupLink },
-    });
-    expect(whatsapp.sent[0]!.content!.text).toContain(
-      'La visite des lieux commune à vos demandes « Nettoyage de bureaux » et « Vitres » est prévue le',
-    );
-    expect(whatsapp.sent[1]).toMatchObject({
-      templateCode: 'cleaning.group_visit_scheduled.agent',
-      variables: { request_count: '2', services: '« Nettoyage de bureaux » et « Vitres »' },
-    });
-    expect(inbox.inApp.map((notification) => notification.link)).toEqual([groupLink, null]);
-  });
-
-  it('visite commune publiée avant l’ajout des prestations : messages d’avant, prestation de la première', async () => {
-    const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(AGENT_1)]);
-    await useCase.execute(
-      event('cleaning.visit.scheduled', {
-        requestId: REQUEST,
-        visitId: '0192f1c4-0000-7000-8000-00000000v001',
-        customerId: CUSTOMER,
-        agentId: AGENT_1,
-        scheduledAt: '2026-10-29T08:30:00Z',
-        serviceName: 'Nettoyage de bureaux',
-        groupId: GROUP,
-        groupVisitId: '0192f1c4-0000-7000-8000-00000000v100',
-        requestIds: [REQUEST, REQUEST_2],
-      }),
-    );
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.visit_scheduled.customer',
-      'cleaning.visit_scheduled.agent',
-    ]);
-    expect(whatsapp.sent[1]!.content!.text).toContain('Une visite technique pour « Nettoyage de bureaux »');
-  });
-
-  it('devis envoyés ensemble : un seul message, devis, total et validité ; les devis résumés n’envoient rien', async () => {
-    const { useCase, whatsapp, email, inbox } = setup([contact(CUSTOMER, { email: 'koffi@example.bj' })]);
-    await useCase.execute(
-      event('cleaning.quote_group.sent', {
-        groupId: GROUP,
-        customerId: CUSTOMER,
-        total: { amount: 195000, currency: 'XOF' },
-        validUntil: '2026-11-15T22:59:59Z',
-        quotes: [
-          {
-            requestId: REQUEST,
-            quoteId: '0192f1c4-0000-7000-8000-00000000q001',
-            serviceCode: 'office',
-            serviceName: 'Nettoyage de bureaux',
-            total: { amount: 150000, currency: 'XOF' },
-          },
-          {
-            requestId: REQUEST_2,
-            quoteId: '0192f1c4-0000-7000-8000-00000000q002',
-            serviceCode: 'windows',
-            serviceName: 'Vitres',
-            total: { amount: 45000, currency: 'XOF' },
-          },
-        ],
-      }),
-    );
-    expect(whatsapp.sent).toHaveLength(0);
-    expect(email.sent).toHaveLength(1);
-    expect(email.sent[0]).toMatchObject({
-      templateCode: 'cleaning.quote_group_sent.customer',
-      variables: {
-        quote_count: '2',
-        quotes: `« Nettoyage de bureaux » (150${NBSP}000${NBSP}FCFA) et « Vitres » (45${NBSP}000${NBSP}FCFA)`,
-        total: `195${NBSP}000${NBSP}FCFA`,
-        valid_until: '15 novembre 2026',
-        link: groupLink,
-      },
-    });
-    expect(email.sent[0]!.content!.text).toContain(`Total : 195${NBSP}000${NBSP}FCFA`);
-    expect(inbox.inApp).toEqual([
-      expect.objectContaining({ title: 'Vos devis de nettoyage', link: groupLink }),
-    ]);
-
-    const summarized = await setup().useCase.execute(
-      event('cleaning.quote.sent', {
-        ...(quoteSent.payload as KspEventPayloads['cleaning.quote.sent']),
-        groupId: GROUP,
-        summarizedByGroup: true,
-      } as KspEventPayloads['cleaning.quote.sent']),
-    );
-    expect(summarized).toMatchObject({ status: 'processed', accepted: 0, inApp: 0 });
-  });
-
-  it('devis d’une demande groupée envoyé seul : message de la demande, avec sa prestation', async () => {
-    const { useCase, whatsapp } = setup();
-    await useCase.execute(
-      event('cleaning.quote.sent', {
-        ...(quoteSent.payload as KspEventPayloads['cleaning.quote.sent']),
-        serviceCode: 'windows',
-        serviceName: 'Vitres',
-        groupId: GROUP,
-      } as KspEventPayloads['cleaning.quote.sent']),
-    );
-    expect(whatsapp.sent[0]).toMatchObject({
-      templateCode: 'cleaning.quote_sent.customer',
-      variables: { service_name: 'Vitres', link: `https://ksp.bj/mon-espace/nettoyage/demandes/${REQUEST}` },
-    });
-    expect(whatsapp.sent[0]!.content!.text).toContain(`Votre devis pour « Vitres » est prêt : 150${NBSP}000`);
-  });
-
-  it('ensuite, un message par demande avec sa prestation : réservation, planification, annulation', async () => {
-    const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(AGENT_1), contact(AGENT_2)]);
-    await useCase.execute({
-      ...missionScheduled,
-      payload: {
-        ...(missionScheduled.payload as KspEventPayloads['cleaning.mission.scheduled']),
-        serviceName: 'Vitres',
-        groupId: GROUP,
-      },
-    });
-    await useCase.execute({
-      ...event('cleaning.request.cancelled', {
-        requestId: REQUEST,
-        missionId: null,
-        customerId: CUSTOMER,
-        cancelledBy: 'customer',
-        outcome: 'cancelled',
-        serviceName: 'Vitres',
-      }),
-      eventId: '0192f1c4-aaaa-7000-8000-000000000009',
-    });
-    expect(whatsapp.sent.map((message) => message.content!.text.split('\n')[1])).toEqual([
-      expect.stringContaining('Votre intervention pour « Vitres » est planifiée le'),
-      expect.stringContaining('Une intervention pour « Vitres » vous est confiée le'),
-      expect.stringContaining('Une intervention pour « Vitres » vous est confiée le'),
-      'Votre annulation est bien enregistrée : votre demande « Vitres » est annulée.',
-    ]);
+      useCase.execute({ eventId: EVENT_ID, type: 'cleaning.unknown.event', payload: {} }),
+    ).resolves.toMatchObject({ status: 'ignored' });
+    expect(directory.lookups).toHaveLength(0);
   });
 });
 
 describe('NotifyEventUseCase — fiabilité', () => {
   it('un événement déjà traité n’envoie rien et ne relit pas identity', async () => {
     const { useCase, whatsapp, directory } = setup();
-    await useCase.execute(quoteRequested);
-    await expect(useCase.execute(quoteRequested)).resolves.toMatchObject({ status: 'duplicate' });
+    await useCase.execute(requestCancelled);
+    await expect(useCase.execute(requestCancelled)).resolves.toMatchObject({ status: 'duplicate' });
     expect(whatsapp.sent).toHaveLength(1);
     expect(directory.lookups).toHaveLength(1);
   });
 
   it('reprise après une interruption avant la fin : les messages déjà partis ne repartent pas', async () => {
     const { useCase, whatsapp, inbox, notifications } = setup();
-    await useCase.execute(quoteRequested);
+    await useCase.execute(requestCancelled);
     // Simule une coupure entre l'envoi et le marquage de l'événement : il est livré à nouveau.
     inbox.processed.clear();
     inbox.inApp.length = 0;
-    await expect(useCase.execute(quoteRequested)).resolves.toMatchObject({
+    await expect(useCase.execute(requestCancelled)).resolves.toMatchObject({
       status: 'processed',
       accepted: 0,
       replayed: 1,
@@ -569,13 +335,13 @@ describe('NotifyEventUseCase — fiabilité', () => {
     expect(whatsapp.sent).toHaveLength(1);
     expect(notifications.rows).toHaveLength(1);
     expect(notifications.rows[0]!.idempotencyKey).toBe(
-      `${EVENT_ID}:cleaning.quote_requested.customer:${CUSTOMER}`,
+      `${EVENT_ID}:cleaning.request_cancelled.customer:${CUSTOMER}`,
     );
   });
 
   it('destinataire introuvable : les autres sont prévenus, l’événement est traité', async () => {
     const { useCase, whatsapp, inbox } = setup([contact(CUSTOMER), contact(AGENT_2)]);
-    await expect(useCase.execute(missionScheduled)).resolves.toMatchObject({
+    await expect(useCase.execute(visitScheduled)).resolves.toMatchObject({
       status: 'processed',
       accepted: 2,
       recipientsNotFound: 1,
@@ -587,7 +353,7 @@ describe('NotifyEventUseCase — fiabilité', () => {
   it('identity indisponible : erreur (reprise par la file), rien n’est envoyé ni marqué', async () => {
     const { useCase, whatsapp, directory, inbox } = setup();
     directory.unavailable = true;
-    await expect(useCase.execute(quoteRequested)).rejects.toThrow('identity indisponible');
+    await expect(useCase.execute(requestCancelled)).rejects.toThrow('identity indisponible');
     expect(whatsapp.sent).toHaveLength(0);
     expect(inbox.processed.size).toBe(0);
   });
@@ -601,7 +367,7 @@ describe('NotifyEventUseCase — fiabilité', () => {
       [contact(CUSTOMER, { email: 'k@example.com' })],
       providers,
     );
-    await expect(useCase.execute(quoteRequested)).resolves.toMatchObject({ accepted: 1 });
+    await expect(useCase.execute(requestCancelled)).resolves.toMatchObject({ accepted: 1 });
     expect(email.sent).toHaveLength(1);
     expect(notifications.rows[0]).toMatchObject({
       status: 'accepted',
@@ -617,10 +383,10 @@ describe('NotifyEventUseCase — fiabilité', () => {
       new FakeProvider('email'),
     ];
     const { useCase, notifications, inbox } = setup(undefined, providers);
-    await expect(useCase.execute(quoteRequested)).resolves.toMatchObject({ failed: 1, inApp: 1 });
+    await expect(useCase.execute(requestCancelled)).resolves.toMatchObject({ failed: 1, inApp: 1 });
     expect(notifications.events).toEqual([
       expect.objectContaining({
-        templateCode: 'cleaning.quote_requested.customer',
+        templateCode: 'cleaning.request_cancelled.customer',
         channelsTried: ['whatsapp'],
         reason: 'provider_unavailable',
         recipientUserId: CUSTOMER,
@@ -631,7 +397,7 @@ describe('NotifyEventUseCase — fiabilité', () => {
 
   it('destinataire sans téléphone ni e-mail : notification dans l’espace seulement', async () => {
     const { useCase, whatsapp, inbox } = setup([contact(CUSTOMER, { phoneE164: null, firstName: null })]);
-    await expect(useCase.execute(quoteRequested)).resolves.toMatchObject({ unreachable: 1, inApp: 1 });
+    await expect(useCase.execute(requestCancelled)).resolves.toMatchObject({ unreachable: 1, inApp: 1 });
     expect(whatsapp.sent).toHaveLength(0);
     expect(inbox.inApp[0]!.body.startsWith('Bonjour,\n')).toBe(true);
   });
@@ -640,8 +406,8 @@ describe('NotifyEventUseCase — fiabilité', () => {
     const { useCase, inbox } = setup();
     await expect(
       useCase.execute({
-        ...missionScheduled,
-        payload: { ...(missionScheduled.payload as object), scheduledStart: 'demain' },
+        ...visitScheduled,
+        payload: { ...(visitScheduled.payload as object), scheduledAt: 'demain' },
       }),
     ).rejects.toThrow('date illisible');
     expect(inbox.processed.size).toBe(0);
@@ -656,289 +422,38 @@ describe('NotifyEventUseCase — fiabilité', () => {
   });
 });
 
-describe('NotifyEventUseCase — impayés, suspension et reprise', () => {
-  const MISSION_ID = '0192f1c4-0000-7000-8000-0000000d0001';
-  const ORG = '0192f1c4-0000-7000-8000-0000000b0001';
-  const TEAM_1 = '0192f1c4-0000-7000-8000-0000000e0001';
-  const TEAM_2 = '0192f1c4-0000-7000-8000-0000000e0002';
+describe('NotifyEventUseCase — messages importants', () => {
   const withEmail = contact(CUSTOMER, { email: 'koffi@example.com' });
-
-  const warning = event('cleaning.contract.suspension_warning', {
-    missionId: MISSION_ID,
-    customerId: CUSTOMER,
-    organizationId: ORG,
-    unpaidCount: 1,
-    suspensionThreshold: 2,
+  const mfaReset = event('identity.user.mfa_reset', {
+    userId: CUSTOMER,
+    enrollBefore: '2026-10-23T11:00:00.000Z',
   });
 
-  const suspended = event('cleaning.contract.suspended', {
-    missionId: MISSION_ID,
-    customerId: CUSTOMER,
-    organizationId: ORG,
-    cause: 'unpaid_invoices',
-    unpaidCount: 2,
-    threshold: 2,
-    cancelledInterventionIds: ['0192f1c4-0000-7000-8000-0000000f0001'],
-    releasedAgentIds: [AGENT_1, AGENT_1, AGENT_2],
-    suspendedAt: '2026-11-11T08:00:00Z',
-  });
-
-  const resumed = event('cleaning.contract.resumed', {
-    missionId: MISSION_ID,
-    customerId: CUSTOMER,
-    organizationId: ORG,
-    cause: 'unpaid_invoices',
-    unpaidCount: 0,
-    resumedAt: '2026-11-12T08:00:00Z',
-    rescheduledCount: 3,
-    failedCount: 1,
-  });
-
-  const reschedulingFailed = event('cleaning.rescheduling.failed', {
-    missionId: MISSION_ID,
-    customerId: CUSTOMER,
-    organizationId: ORG,
-    interventionIds: ['0192f1c4-0000-7000-8000-0000000f0002'],
-    failedCount: 1,
-  });
-
-  it('avertissement : message important, par WhatsApp ET par e-mail, seuil annoncé', async () => {
+  it('par WhatsApp ET par e-mail, une clé par canal', async () => {
     const { useCase, whatsapp, email, notifications } = setup([withEmail]);
-    await expect(useCase.execute(warning)).resolves.toMatchObject({ accepted: 2, inApp: 1 });
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.suspension_warning.customer',
-    ]);
-    expect(email.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.suspension_warning.customer',
-    ]);
-    expect(email.sent[0]!.content!.text).toContain(
-      'Votre contrat de nettoyage compte 1 facture impayée. Au seuil de 2 impayés, le service sera suspendu',
-    );
-    expect(email.sent[0]!.variables['link']).toBe('https://ksp.bj/mon-espace/factures');
+    await expect(useCase.execute(mfaReset)).resolves.toMatchObject({ accepted: 2, inApp: 1 });
+    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual(['identity.mfa_reset.staff']);
+    expect(email.sent.map((message) => message.templateCode)).toEqual(['identity.mfa_reset.staff']);
     expect(notifications.rows.map((row) => [row.idempotencyKey, row.targetMasked])).toEqual([
-      [`${EVENT_ID}:cleaning.suspension_warning.customer:${CUSTOMER}:whatsapp`, '+229********45'],
-      [`${EVENT_ID}:cleaning.suspension_warning.customer:${CUSTOMER}:email`, 'k***@example.com'],
+      [`${EVENT_ID}:identity.mfa_reset.staff:${CUSTOMER}:whatsapp`, '+229********45'],
+      [`${EVENT_ID}:identity.mfa_reset.staff:${CUSTOMER}:email`, 'k***@example.com'],
     ]);
   });
 
-  it('avertissement sans adresse e-mail : WhatsApp seul', async () => {
+  it('sans adresse e-mail : WhatsApp seul', async () => {
     const { useCase, whatsapp, email } = setup();
-    await expect(useCase.execute(warning)).resolves.toMatchObject({ accepted: 1 });
+    await expect(useCase.execute(mfaReset)).resolves.toMatchObject({ accepted: 1 });
     expect(whatsapp.sent).toHaveLength(1);
     expect(email.sent).toHaveLength(0);
   });
 
-  it('message important rejoué : aucun des deux canaux ne repart', async () => {
+  it('rejoué : aucun des deux canaux ne repart', async () => {
     const { useCase, whatsapp, email, inbox } = setup([withEmail]);
-    await useCase.execute(warning);
+    await useCase.execute(mfaReset);
     inbox.processed.clear();
-    await expect(useCase.execute(warning)).resolves.toMatchObject({ accepted: 0, replayed: 2 });
+    await expect(useCase.execute(mfaReset)).resolves.toMatchObject({ accepted: 0, replayed: 2 });
     expect(whatsapp.sent).toHaveLength(1);
     expect(email.sent).toHaveLength(1);
-  });
-
-  it('suspension : le client (WhatsApp et e-mail) et chaque agent libéré, une seule fois', async () => {
-    const { useCase, whatsapp, email } = setup([withEmail, contact(AGENT_1), contact(AGENT_2)]);
-    await expect(useCase.execute(suspended)).resolves.toMatchObject({ accepted: 4, inApp: 3 });
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.contract_suspended.customer',
-      'cleaning.contract_suspended.agent',
-      'cleaning.contract_suspended.agent',
-    ]);
-    expect(email.sent[0]!.content!.text).toContain(
-      'Votre prestation de nettoyage est suspendue : 2 factures impayées, le seuil de suspension est atteint.',
-    );
-    expect(whatsapp.sent[1]!.content!.text).toContain('le contrat du client est suspendu');
-  });
-
-  it('suspension d’un particulier : passages impayés, lien vers la mission', async () => {
-    const { useCase, whatsapp } = setup();
-    await useCase.execute({
-      ...suspended,
-      payload: {
-        ...(suspended.payload as object),
-        cause: 'unpaid_interventions',
-        unpaidCount: 1,
-        releasedAgentIds: [],
-      },
-    });
-    expect(whatsapp.sent[0]!.content!.text).toContain('suspendue : 1 passage impayé');
-    expect(whatsapp.sent[0]!.variables['link']).toBe(
-      `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION_ID}`,
-    );
-  });
-
-  it('suspension de l’organisation par KSP : message sans impayés, lien vers la mission (ADR-030)', async () => {
-    const { useCase, whatsapp, email } = setup([withEmail, contact(AGENT_1), contact(AGENT_2)]);
-    await expect(
-      useCase.execute({
-        ...suspended,
-        payload: { ...(suspended.payload as object), cause: 'organization_suspended', unpaidCount: 0 },
-      }),
-    ).resolves.toMatchObject({ accepted: 4, inApp: 3 });
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.contract_suspended_organization.customer',
-      'cleaning.contract_suspended.agent',
-      'cleaning.contract_suspended.agent',
-    ]);
-    const text = email.sent[0]!.content!.text;
-    expect(text).toContain(
-      'Votre prestation de nettoyage est suspendue : KSP a suspendu votre compte entreprise.',
-    );
-    expect(text).not.toContain('impayé');
-    expect(whatsapp.sent[0]!.variables['link']).toBe(
-      `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION_ID}`,
-    );
-  });
-
-  type SuspensionUpdate = KspEventPayloads['cleaning.contract.suspension_updated'];
-  const suspensionUpdated = (
-    payload: Pick<SuspensionUpdate, 'change' | 'cause' | 'causes'> & Partial<SuspensionUpdate>,
-  ) =>
-    event('cleaning.contract.suspension_updated', {
-      missionId: MISSION_ID,
-      customerId: CUSTOMER,
-      organizationId: ORG,
-      unpaidCount: 2,
-      updatedAt: '2026-11-20T08:00:00Z',
-      ...payload,
-    });
-
-  it('réactivation alors que des factures restent impayées : suspension maintenue, lien vers les factures (ADR-030)', async () => {
-    const { useCase, whatsapp, email } = setup([withEmail]);
-    await expect(
-      useCase.execute(
-        suspensionUpdated({
-          change: 'cause_lifted',
-          cause: 'organization_suspended',
-          causes: ['unpaid_invoices'],
-        }),
-      ),
-    ).resolves.toMatchObject({ accepted: 2, inApp: 1 });
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.suspension_updated.customer',
-    ]);
-    expect(email.sent[0]!.content!.text).toContain(
-      'Votre compte entreprise est réactivé, mais la suspension de votre prestation de nettoyage est maintenue : 2 factures impayées.',
-    );
-    expect(whatsapp.sent[0]!.variables['link']).toBe('https://ksp.bj/mon-espace/factures');
-  });
-
-  it('règlement alors que l’organisation reste suspendue : pas de reprise annoncée (ADR-030)', async () => {
-    const { useCase, whatsapp } = setup();
-    await useCase.execute(
-      suspensionUpdated({
-        change: 'cause_lifted',
-        cause: 'unpaid_invoices',
-        causes: ['organization_suspended'],
-        unpaidCount: 1,
-      }),
-    );
-    const text = whatsapp.sent[0]!.content!.text;
-    expect(text).toContain(
-      'Merci pour votre règlement. Votre prestation de nettoyage reste toutefois suspendue',
-    );
-    expect(whatsapp.sent[0]!.variables['link']).toBe(
-      `https://ksp.bj/mon-espace/nettoyage/missions/${MISSION_ID}`,
-    );
-  });
-
-  it('cause ajoutée à une suspension en cours : le client sait ce qui la maintient (ADR-030)', async () => {
-    const { useCase, whatsapp } = setup();
-    await useCase.execute(
-      suspensionUpdated({
-        change: 'cause_added',
-        cause: 'unpaid_invoices',
-        causes: ['organization_suspended', 'unpaid_invoices'],
-      }),
-    );
-    await useCase.execute({
-      ...suspensionUpdated({
-        change: 'cause_added',
-        cause: 'organization_suspended',
-        causes: ['unpaid_invoices', 'organization_suspended'],
-      }),
-      eventId: '0192f1c4-0000-7000-8000-0000000a0999',
-    });
-    expect(whatsapp.sent.map((message) => message.variables['case'])).toEqual([
-      'unpaid_added',
-      'organization_added',
-    ]);
-    expect(whatsapp.sent[0]!.content!.text).toContain(
-      'compte 2 factures impayées, le seuil de suspension est atteint',
-    );
-    expect(whatsapp.sent[1]!.content!.text).toContain(
-      'KSP a suspendu votre compte entreprise : même après le règlement de vos factures',
-    );
-  });
-
-  it('reprise à la réactivation de l’organisation : ni remerciement ni règlement (ADR-030)', async () => {
-    const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(TEAM_1)], undefined, [TEAM_1]);
-    await useCase.execute({
-      ...resumed,
-      payload: { ...(resumed.payload as object), cause: 'organization_suspended' },
-    });
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.contract_resumed_organization.customer',
-      'cleaning.contract_resumed_organization.team',
-    ]);
-    const customerText = whatsapp.sent[0]!.content!.text;
-    expect(customerText).toContain(
-      'Votre compte entreprise est réactivé : votre prestation de nettoyage reprend.',
-    );
-    expect(customerText).toContain('3 passages reprogrammés.');
-    expect(customerText).not.toContain('règlement');
-    expect(whatsapp.sent[1]!.content!.text).toContain(
-      `La mission ${MISSION_ID} a repris après la réactivation du compte entreprise par KSP : 3 passages reprogrammés, 1 passage à replanifier à la main au back-office.`,
-    );
-  });
-
-  it('reprise : le client et chaque membre de l’équipe Nettoyage configurée', async () => {
-    const { useCase, whatsapp } = setup(
-      [contact(CUSTOMER), contact(TEAM_1, { firstName: 'Awa' }), contact(TEAM_2)],
-      undefined,
-      [TEAM_1, TEAM_2],
-    );
-    await expect(useCase.execute(resumed)).resolves.toMatchObject({ accepted: 3 });
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.contract_resumed.customer',
-      'cleaning.contract_resumed.team',
-      'cleaning.contract_resumed.team',
-    ]);
-    const customerText = whatsapp.sent[0]!.content!.text;
-    expect(customerText).toContain('votre prestation de nettoyage reprend');
-    expect(customerText).toContain('3 passages reprogrammés.');
-    expect(customerText).toContain('replanifier le passage restant');
-    expect(whatsapp.sent[1]!.content!.text).toContain(
-      `La mission ${MISSION_ID} a repris après règlement des impayés : 3 passages reprogrammés, 1 passage à replanifier à la main au back-office.`,
-    );
-  });
-
-  it('reprise sans équipe configurée : le client seul', async () => {
-    const { useCase, whatsapp, directory } = setup();
-    await useCase.execute(resumed);
-    expect(whatsapp.sent).toHaveLength(1);
-    expect(directory.lookups).toEqual([[CUSTOMER]]);
-  });
-
-  it('reprogrammation incomplète : l’équipe Nettoyage seulement', async () => {
-    const { useCase, whatsapp } = setup([contact(CUSTOMER), contact(TEAM_1)], undefined, [TEAM_1]);
-    await expect(useCase.execute(reschedulingFailed)).resolves.toMatchObject({ accepted: 1 });
-    expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.rescheduling_failed.team',
-    ]);
-    expect(whatsapp.sent[0]!.content!.text).toContain('1 passage à replanifier à la main au back-office');
-  });
-
-  it('reprogrammation incomplète sans équipe configurée : rien à envoyer, événement traité', async () => {
-    const { useCase, whatsapp, inbox, directory } = setup();
-    await expect(useCase.execute(reschedulingFailed)).resolves.toMatchObject({
-      status: 'processed',
-      inApp: 0,
-    });
-    expect(whatsapp.sent).toHaveLength(0);
-    expect(directory.lookups).toHaveLength(0);
-    expect(inbox.processed.has(EVENT_ID)).toBe(true);
   });
 });
 
@@ -1405,9 +920,11 @@ describe('NotifyEventUseCase — préférences de canaux (ADR-039)', () => {
   it('WhatsApp écarté : le message court part par e-mail, l’espace garde la notification', async () => {
     const { useCase, whatsapp, email, inbox, preferences } = setup([withEmail]);
     await preferences.save(CUSTOMER, { whatsapp: false, email: true }, at);
-    await expect(useCase.execute(quoteRequested)).resolves.toMatchObject({ accepted: 1, inApp: 1 });
+    await expect(useCase.execute(requestCancelled)).resolves.toMatchObject({ accepted: 1, inApp: 1 });
     expect(whatsapp.sent).toHaveLength(0);
-    expect(email.sent.map((message) => message.templateCode)).toEqual(['cleaning.quote_requested.customer']);
+    expect(email.sent.map((message) => message.templateCode)).toEqual([
+      'cleaning.request_cancelled.customer',
+    ]);
     expect(inbox.inApp).toHaveLength(1);
   });
 
@@ -1424,18 +941,12 @@ describe('NotifyEventUseCase — préférences de canaux (ADR-039)', () => {
     expect(inbox.inApp[0]!.templateCode).toBe('cleaning.quote_sent.customer');
   });
 
-  it('message important (impayés) : WhatsApp et e-mail malgré les préférences', async () => {
+  it('message important (sécurité) : WhatsApp et e-mail malgré les préférences', async () => {
     const { useCase, whatsapp, email, preferences } = setup([withEmail]);
     await preferences.save(CUSTOMER, { whatsapp: false, email: false }, at);
     await expect(
       useCase.execute(
-        event('cleaning.contract.suspension_warning', {
-          missionId: MISSION,
-          customerId: CUSTOMER,
-          organizationId: null,
-          unpaidCount: 1,
-          suspensionThreshold: 2,
-        }),
+        event('identity.user.mfa_reset', { userId: CUSTOMER, enrollBefore: '2026-10-23T11:00:00.000Z' }),
       ),
     ).resolves.toMatchObject({ accepted: 2, optedOut: 0 });
     expect(whatsapp.sent).toHaveLength(1);
@@ -1450,10 +961,10 @@ describe('NotifyEventUseCase — préférences de canaux (ADR-039)', () => {
     ]);
     await preferences.save(CUSTOMER, { whatsapp: false, email: false }, at);
     await preferences.save(AGENT_1, { whatsapp: false, email: false }, at);
-    await expect(useCase.execute(missionScheduled)).resolves.toMatchObject({ accepted: 2, optedOut: 1 });
+    await expect(useCase.execute(visitScheduled)).resolves.toMatchObject({ accepted: 2, optedOut: 1 });
     expect(whatsapp.sent.map((message) => message.templateCode)).toEqual([
-      'cleaning.mission_scheduled.agent',
-      'cleaning.mission_scheduled.agent',
+      'cleaning.visit_scheduled.agent',
+      'cleaning.visit_scheduled.agent',
     ]);
   });
 });

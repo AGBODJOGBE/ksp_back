@@ -1,4 +1,4 @@
-import { type Json, type Page } from '../cleaning/cleaning.ports';
+import { type Json, type Page } from '../common/api.ports';
 
 /**
  * Vue de la gateway sur les comptes entreprise d'identity (ADR-027), indépendante de gRPC :

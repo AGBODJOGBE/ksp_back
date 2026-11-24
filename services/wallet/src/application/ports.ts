@@ -1,4 +1,4 @@
-import { type WalletEventPayloads, type WalletEventType } from '@ksp/contracts';
+import { type WalletEventPayloads, type WalletEventType, type WalletObjectRef } from '@ksp/contracts';
 import {
   type Holder,
   type InternalAccount,
@@ -6,6 +6,7 @@ import {
   type StatementAccount,
 } from '../domain/ledger';
 import { type Operator, type WalletPayout, type WalletPayoutStatus } from '../domain/wallet-payout';
+import { type Withdrawal, type WithdrawalStatus } from '../domain/withdrawal';
 
 export interface Clock {
   now(): Date;
@@ -29,8 +30,11 @@ export interface PageResult<T> {
 /** Portefeuille prépayé d'un titulaire (ADR-046). */
 export interface PrepaidSummary {
   holder: Holder;
+  /** Solde disponible : les retraits demandés en sont déjà retenus. */
   balance: number;
   lastEntryAt: Date | null;
+  /** Retraits vers Mobile Money pas encore terminés (R-WL-04), déjà déduits du solde. */
+  withdrawalsInProgress: number;
 }
 
 /** Vue d'un titulaire : solde et cumuls, calculés depuis les écritures, et son portefeuille prépayé. */
@@ -66,9 +70,12 @@ export interface LedgerOverview {
   customersCount: number;
 }
 
-/** Événement écrit dans l'outbox avec l'écriture (ADR-046). */
+/**
+ * Événement écrit dans l'outbox avec l'écriture (ADR-046). `version` : version de l'enveloppe, 1 par
+ * défaut ; wallet.prepaid.credited est publié en version 2 (CDC Nettoyage v2, RV-101).
+ */
 export type WalletOutboxMessage = {
-  [K in WalletEventType]: { type: K; payload: WalletEventPayloads[K] };
+  [K in WalletEventType]: { type: K; version?: number; payload: WalletEventPayloads[K] };
 }[WalletEventType];
 
 /** Marque de l'inbox, écrite dans la même transaction que l'écriture (événement reçu une fois). */
@@ -105,6 +112,10 @@ export interface LedgerStore {
     createPayout?: WalletPayout;
     /** Reversement mis à jour avec l'écriture qui le solde (contrôle de version). */
     updatePayout?: WalletPayout;
+    /** Retrait créé avec sa retenue (R-WL-04). */
+    createWithdrawal?: Withdrawal;
+    /** Retrait mis à jour avec l'écriture qui le solde ou le rend (contrôle de version). */
+    updateWithdrawal?: Withdrawal;
     inbox?: InboxMark;
     /** Événements de l'écriture, d'après le solde du compte touché après elle (outbox). */
     events?: (holderBalance: number) => WalletOutboxMessage[];
@@ -115,6 +126,8 @@ export interface LedgerStore {
   findReversalOf(transactionId: string): Promise<LedgerTransaction | null>;
   summary(holder: Holder): Promise<WalletSummary>;
   prepaidSummary(holder: Holder): Promise<PrepaidSummary>;
+  /** Montant des retraits du titulaire pas encore terminés (R-WL-04). */
+  withdrawalsInProgress(holder: Holder): Promise<number>;
   /** Écritures des comptes demandés du titulaire, les plus récentes d'abord. */
   statement(
     holder: Holder,
@@ -144,6 +157,30 @@ export interface WalletPayoutRepository {
   list(filter: PayoutFilter, page: PageRequest): Promise<PageResult<WalletPayout>>;
   /** Reversements pas encore transmis à payment, les plus anciens d'abord. */
   listPendingSubmission(limit: number): Promise<WalletPayout[]>;
+}
+
+export interface WithdrawalFilter {
+  status?: WithdrawalStatus;
+  holder?: Holder;
+}
+
+/**
+ * Retraits du portefeuille prépayé (R-WL-04). La création et les changements qui écrivent dans le
+ * grand livre passent par `LedgerStore.record` (même transaction) ; `save` sert aux changements sans
+ * écriture (traitement, validation, transmission).
+ */
+export interface WithdrawalRepository {
+  findById(id: string): Promise<Withdrawal | null>;
+  /** Clé d'idempotence du titulaire. */
+  findByKey(holder: Holder, idempotencyKey: string): Promise<Withdrawal | null>;
+  /** Enregistre si la version n'a pas changé ; sinon false. */
+  save(withdrawal: Withdrawal): Promise<boolean>;
+  /** `newest` : les plus récents d'abord (titulaire) ; `oldest` : les plus anciens d'abord (finance). */
+  list(
+    filter: WithdrawalFilter,
+    page: PageRequest,
+    order: 'newest' | 'oldest',
+  ): Promise<PageResult<Withdrawal>>;
 }
 
 /**
@@ -196,21 +233,32 @@ export interface TopUpPayments {
 }
 
 /**
+ * Issue d'un débit chez le service qui l'a fait (RV-80) : `recorded`, l'objet cite le débit ;
+ * `not_recorded`, aucun objet ne le cite ; `in_progress`, opération encore en cours chez l'appelant
+ * (ne jamais rembourser, redemander au passage suivant).
+ */
+export type DebitRecordStatus = 'recorded' | 'not_recorded' | 'in_progress';
+
+/**
  * « Débit enregistré ? » chez le service qui l'a fait (WalletDebitCheckService de cleaning et de
- * billing, ADR-048) : true si un paiement de l'objet cite le débit. null : service ou objet que ce
- * contrôle ne couvre pas (le débit est laissé tel quel). Une panne lève l'erreur.
+ * billing, ADR-048). null : service ou objet que ce contrôle ne couvre pas (le débit est laissé tel
+ * quel). Une panne, ou une réponse illisible, lève l'erreur.
  */
 export interface DebitRecordChecks {
-  isRecorded(debit: {
+  debitStatus(debit: {
     caller: string;
     objectType: string;
     objectId: string;
     transactionId: string;
-  }): Promise<boolean | null>;
+  }): Promise<DebitRecordStatus | null>;
 }
 
-export type CreditKind = 'refund' | 'top_up';
-export type ManualCreditStatus = 'pending_approval' | 'approved';
+/**
+ * Crédit manuel : remboursement, recharge Mobile Money non créditée ; v2 : recharge en espèces au
+ * guichet (R-WL-02) et virement d'une organisation (R-PE-04), toujours soumis à double validation.
+ */
+export type CreditKind = 'refund' | 'top_up' | 'cash_top_up' | 'bank_transfer_top_up';
+export type ManualCreditStatus = 'pending_approval' | 'approved' | 'rejected';
 
 /** Demande de crédit manuel au-delà du seuil de double validation (ADR-048). */
 export interface ManualCreditRequest {
@@ -228,6 +276,14 @@ export interface ManualCreditRequest {
   approvedBy: string | null;
   approvedAt: Date | null;
   transactionId: string | null;
+  /** Espèces : numéro du reçu de caisse ; virement : référence bancaire ; null sinon. */
+  receiptReference: string | null;
+  /** Objet que ce versement doit régler aussitôt (facture, séance) ; null sinon. */
+  forObject: WalletObjectRef | null;
+  /** Rejet : auteur, date, motif ; null sinon. */
+  rejectedBy: string | null;
+  rejectedAt: Date | null;
+  rejectionReason: string | null;
   version: number;
 }
 
@@ -254,6 +310,8 @@ export interface WalletSettings {
   ledgerCallers: readonly string[];
   /** Services autorisés à débiter et rembourser les portefeuilles prépayés (ADR-046). */
   debitCallers: readonly string[];
+  /** Services autorisés à créditer un portefeuille sans débit à rembourser (Credit, CDC Nettoyage v2). */
+  creditCallers: readonly string[];
   /** Montants de recharge acceptés, en XOF (ADR-046). */
   topUpMin: number;
   topUpMax: number;
@@ -268,6 +326,7 @@ export interface WalletSettings {
 export interface WalletDeps {
   ledger: LedgerStore;
   payouts: WalletPayoutRepository;
+  withdrawals: WithdrawalRepository;
   executor: PayoutExecutor;
   topUps: TopUpPayments;
   fingerprints: PhoneFingerprints;

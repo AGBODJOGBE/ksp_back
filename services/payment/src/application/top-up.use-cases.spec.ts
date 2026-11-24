@@ -63,6 +63,8 @@ describe('recharge du portefeuille prépayé (ADR-046)', () => {
       organizationId: null,
       status: 'pending',
       checkoutUrl: expect.stringContaining('https://'),
+      target: null,
+      description: null,
     });
     expect(provider().checkouts.at(-1)?.description).toBe('KSP - Recharge du portefeuille');
     const again = await topUp();
@@ -100,6 +102,8 @@ describe('recharge du portefeuille prépayé (ADR-046)', () => {
       type: 'payment.intent.succeeded',
       payload: { subjectType: 'wallet_top_up', subjectId: CUSTOMER_ID, part: null, amount: { amount: 5000 } },
     });
+    // Recharge ordinaire : aucun objet visé (réservé au paiement direct, v2).
+    expect(payments().outbox.at(-1)?.payload).not.toHaveProperty('target');
   });
 
   describe('relecture par wallet avant tout crédit (ADR-048)', () => {
@@ -147,12 +151,17 @@ describe('recharge du portefeuille prépayé (ADR-046)', () => {
       const { payment } = await topUp();
       expect((await rejection(read(payment.id, 'cleaning'))).code).toBe('PAYMENT_CALLER_FORBIDDEN');
       expect((await rejection(read('0192f1c4-0000-7000-8000-0000000fffff'))).code).toBe('PAYMENT_NOT_FOUND');
-      const mission = { ...payment, id: '0192f1c4-0000-7000-8000-0000000ffffe' };
-      payments().rows.set(mission.id, {
-        ...mission,
-        subject: { type: 'cleaning_mission', id: mission.subject.id, part: 'deposit', reference: null },
+      const invoice = { ...payment, id: '0192f1c4-0000-7000-8000-0000000ffffe' };
+      payments().rows.set(invoice.id, {
+        ...invoice,
+        subject: {
+          type: 'billing_invoice',
+          id: invoice.subject.id,
+          part: null,
+          reference: 'FAC-2026-000001',
+        },
       });
-      expect((await rejection(read(mission.id))).code).toBe('PAYMENT_NOT_FOUND');
+      expect((await rejection(read(invoice.id))).code).toBe('PAYMENT_NOT_FOUND');
     });
   });
 

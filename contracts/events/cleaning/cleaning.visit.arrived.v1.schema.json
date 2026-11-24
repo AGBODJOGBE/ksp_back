@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.visit.arrived.v1.schema.json",
+  "title": "cleaning.visit.arrived",
+  "description": "Agent arrivé sur le lieu de la visite (R-VI-04).",
+  "x-event-type": "cleaning.visit.arrived",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "visitId",
+    "requestId",
+    "requestNumber",
+    "customerId",
+    "organizationId",
+    "communeKey",
+    "distanceMeters",
+    "alert",
+    "arrivedAt"
+  ],
+  "properties": {
+    "visitId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "communeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commune du lieu, pour joindre le superviseur de la zone"
+    },
+    "distanceMeters": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Distance à la position du lieu ; null : arrivée sans position"
+    },
+    "alert": {
+      "type": "boolean",
+      "description": "Au-delà de arrivalAlertMeters : superviseur alerté"
+    },
+    "arrivedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

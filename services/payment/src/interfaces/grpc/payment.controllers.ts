@@ -48,7 +48,10 @@ export class PaymentGrpcController implements paymentV1.PaymentServiceController
   }
 }
 
-/** Recharge du portefeuille prépayé, réservée à wallet (ADR-046). */
+/**
+ * Recharge du portefeuille prépayé, réservée à wallet (ADR-046) ; paiement direct d'un objet (v2),
+ * réservé à cleaning et billing. Appelants contrôlés par les cas d'usage.
+ */
 @Controller()
 @paymentV1.TopUpPaymentServiceControllerMethods()
 export class TopUpPaymentGrpcController implements paymentV1.TopUpPaymentServiceController {
@@ -72,6 +75,22 @@ export class TopUpPaymentGrpcController implements paymentV1.TopUpPaymentService
       payment: presentPayment(payment),
       receivedAmount: receivedAmount === null ? undefined : { amount: receivedAmount, currency: 'XOF' },
     };
+  }
+
+  /** Paiement direct d'un objet (v2), réservé aux services de PAYMENT_DIRECT_CALLERS. */
+  async createPaymentRequest(
+    request: paymentV1.CreatePaymentRequestRequest,
+  ): Promise<paymentV1.CreatePaymentRequestResponse> {
+    const result = await this.useCases.createPaymentRequest.execute({
+      idempotencyKey: request.idempotencyKey,
+      customerId: request.customerId,
+      organizationId: request.organizationId,
+      amount: request.amount,
+      target: request.target,
+      description: request.description,
+      expiresAt: request.expiresAt,
+    });
+    return { payment: presentPayment(result.payment), created: result.created };
   }
 }
 

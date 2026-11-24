@@ -3,6 +3,7 @@ import {
   backofficeRoles,
   catalogProblems,
   defaultAssignmentScope,
+  FIELD_ROLES,
   INITIAL_BACKOFFICE_ROLES,
   RECOVERY_ROLES,
   ROLE_CATALOG,
@@ -42,10 +43,9 @@ describe('rôles du Recouvrement (ADR-060, migration 0011)', () => {
 });
 
 describe('catalogue initial des rôles du back-office', () => {
-  it('contient les huit rôles du lot 2', () => {
+  it('contient les sept rôles du back-office du lot 2', () => {
     expect(INITIAL_BACKOFFICE_ROLES.map((r) => r.code).sort()).toEqual([
       'cleaning_admin',
-      'cleaning_agent',
       'cleaning_supervisor',
       'finance_officer',
       'recovery_admin',
@@ -58,6 +58,21 @@ describe('catalogue initial des rôles du back-office', () => {
   it('respecte les règles : tous exigent la double authentification', () => {
     expect(catalogProblems(INITIAL_BACKOFFICE_ROLES)).toEqual([]);
     expect(INITIAL_BACKOFFICE_ROLES.every((r) => r.requiresMfa && r.backofficeAccess)).toBe(true);
+  });
+
+  it('cleaning_agent est un rôle de terrain : ni back-office ni double authentification (R-RB-07)', () => {
+    expect(FIELD_ROLES).toEqual([
+      {
+        service: 'cleaning',
+        code: 'cleaning_agent',
+        scopeType: 'domain',
+        requiresMfa: false,
+        backofficeAccess: false,
+        description: 'Agent de terrain du nettoyage',
+      },
+    ]);
+    expect(defaultAssignmentScope(FIELD_ROLES[0]!)).toEqual({ scopeType: 'domain', scopeId: 'cleaning' });
+    expect(INITIAL_BACKOFFICE_ROLES.some((r) => r.code === 'cleaning_agent')).toBe(false);
   });
 
   it('super_admin est global ; un rôle de métier a la portée de son service', () => {
@@ -105,6 +120,8 @@ describe('accès au back-office', () => {
     scopeId: 'cleaning',
     requiresMfa: backofficeAccess,
     backofficeAccess,
+    zoneKeys: [],
+    permissions: [],
   });
 
   it('seuls les rôles du back-office l’ouvrent', () => {

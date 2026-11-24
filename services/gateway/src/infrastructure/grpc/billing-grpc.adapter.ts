@@ -8,7 +8,7 @@ import {
   type InvoiceFilters,
   type InvoicePaymentInput,
 } from '../../application/billing/billing.ports';
-import { type Json, type Page } from '../../application/cleaning/cleaning.ports';
+import { type Json, type Page } from '../../application/common/api.ports';
 import { toUpstreamError } from './upstream-error';
 
 export interface BillingClients {

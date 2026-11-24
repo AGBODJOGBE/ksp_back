@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.quote.withdrawn.v1.schema.json",
+  "title": "cleaning.quote.withdrawn",
+  "description": "Devis envoyé retiré : nouvelle visite demandée par KSP (R-VI-07). Écouté par notification (client).",
+  "x-event-type": "cleaning.quote.withdrawn",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "quoteId",
+    "requestId",
+    "requestNumber",
+    "customerId",
+    "organizationId",
+    "version",
+    "withdrawnAt"
+  ],
+  "properties": {
+    "quoteId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "requestNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "withdrawnAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,6 +1,16 @@
-// Base de données du service cleaning. Aucun autre service n'y accède (règle d'or n° 1).
-// Montants en entiers de FCFA (XOF). Les coordonnées du client restent dans identity ;
-// seule l'adresse d'intervention, propre au dossier, est gardée ici.
+// Base de données du service cleaning, v2 (cahier des charges Nettoyage v2, partie 15.1).
+// Aucun autre service n'y accède (règle d'or n° 1). Montants en entiers de FCFA (XOF), dates en UTC
+// (timestamptz(3)), identifiants UUID v7 fournis par l'application.
+//
+// Ce que Prisma ne sait pas écrire est ajouté à la main dans la migration 0001_init_v2 :
+// index partiels (outbox, unicités conditionnelles), contraintes d'exclusion (double emploi d'un
+// agent, tranches qui se chevauchent, plages de disponibilité), contraintes CHECK (montants >= 0,
+// bornes des réglages, cohérence des statuts), séquences et fonction des numéros DN- / PN-.
+//
+// Données personnelles chiffrées (partie 16.3) : colonnes `*_encrypted`, texte au format
+// `v1.<iv>.<chiffré>.<étiquette>` (base64url), AES-256-GCM, identifiant de la ligne en données
+// associées (même mécanisme que les secrets de double authentification d'identity). Jamais dans
+// les journaux, traces ni événements ; mises à null à l'expiration de la durée de conservation.
 
 generator client {
   provider = "prisma-client-js"
@@ -12,6 +22,10 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+// ---------------------------------------------------------------------------------------------
+// Socle commun (règle d'or n° 4) et journal d'audit : inchangés depuis la v1.
+// ---------------------------------------------------------------------------------------------
 
 /// Événements à publier (pattern outbox, règle d'or n° 4). Écrits dans la même transaction que la donnée métier.
 model OutboxEvent {
@@ -42,394 +56,6 @@ model ProcessedEvent {
   @@map("processed_events")
 }
 
-/// Prestation du catalogue (UC-CL-11).
-model CleaningService {
-  code        String        @id
-  name        String
-  description String        @default("")
-  /// Déprécié (ADR-033) : unité de l'ancien formulaire, déduite du champ de la taille d'équipe
-  /// (square_meter, room, septic_tank, cubic_meter).
-  unit        String
-  active      Boolean       @default(true)
-  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-  pricing     PricingRule[]
-
-  @@map("cleaning_services")
-}
-
-/// Grille tarifaire versionnée : chaque modification crée une ligne, avec son auteur et sa date.
-model PricingRule {
-  id                   String          @id @db.Uuid
-  serviceCode          String          @map("service_code")
-  version              Int
-  /// Déprécié (ADR-033) : prix par unité du champ de la taille d'équipe, déduit.
-  unitPrice            Int?            @map("unit_price")
-  minimumPrice         Int?            @map("minimum_price")
-  options              Json            @default("[]")
-  communeCoefficients  Json            @default("{}") @map("commune_coefficients")
-  defaultCoefficientBp Int             @default(10000) @map("default_coefficient_bp")
-  teamSize             Json            @map("team_size")
-  checklist            Json            @default("[]")
-  /// Champs du formulaire, dans l'ordre d'affichage (ADR-033).
-  fields               Json            @default("[]")
-  /// Options et leurs champs (ADR-033). L'ancienne colonne options garde les forfaits, déduits.
-  optionDefinitions    Json            @default("[]") @map("option_definitions")
-  /// Fréquences propres à la prestation (ADR-033).
-  frequencies          Json            @default("[]")
-  createdBy            String          @map("created_by")
-  createdAt            DateTime        @map("created_at") @db.Timestamptz(3)
-  service              CleaningService @relation(fields: [serviceCode], references: [code])
-
-  @@unique([serviceCode, version])
-  @@map("pricing_rules")
-}
-
-/// Réglages de la partie 4 du cahier des charges (une seule ligne, id = 1).
-model CleaningSettings {
-  id                                      Int       @id @default(1)
-  quoteValidityDays                       Int       @default(15) @map("quote_validity_days")
-  minimumLeadHours                        Int       @default(48) @map("minimum_lead_hours")
-  freeCancellationHours                   Int       @default(24) @map("free_cancellation_hours")
-  visitThresholdSquareMeters              Int       @default(300) @map("visit_threshold_square_meters")
-  maxOpenRequests                         Int       @default(5) @map("max_open_requests")
-  depositPercent                          Int       @default(30) @map("deposit_percent")
-  /// Règles d'impayés (partie 10 du cahier des charges).
-  businessWarningUnpaidInvoices           Int       @default(1) @map("business_warning_unpaid_invoices")
-  businessSuspensionUnpaidInvoices        Int       @default(2) @map("business_suspension_unpaid_invoices")
-  individualSuspensionUnpaidInterventions Int       @default(1) @map("individual_suspension_unpaid_interventions")
-  individualPaymentGraceHours             Int       @default(24) @map("individual_payment_grace_hours")
-  /// Mois de conservation de la position des demandes et missions clôturées (ADR-035).
-  locationRetentionMonths                 Int       @default(12) @map("location_retention_months")
-  /// Compléments (ADR-053) : rappel avant l'expiration d'un devis (0 : aucun), photos par type et
-  /// par passage, durée d'une visite dans l'agenda de l'agent.
-  quoteExpiryReminderDays                 Int       @default(2) @map("quote_expiry_reminder_days")
-  maxInterventionPhotos                   Int       @default(10) @map("max_intervention_photos")
-  visitDurationMinutes                    Int       @default(60) @map("visit_duration_minutes")
-  updatedBy                               String?   @map("updated_by")
-  updatedAt                               DateTime? @map("updated_at") @db.Timestamptz(3)
-
-  @@map("cleaning_settings")
-}
-
-/// Demande de devis (UC-CL-02 à 08).
-model QuoteRequest {
-  id                  String             @id @db.Uuid
-  customerId          String             @map("customer_id") @db.Uuid
-  idempotencyKey      String             @map("idempotency_key")
-  status              String
-  customerKind        String             @map("customer_kind")
-  organizationId      String?            @map("organization_id") @db.Uuid
-  serviceCode         String             @map("service_code")
-  premisesType        String             @map("premises_type")
-  quantity            Int
-  options             String[]
-  commune             String
-  /// Code de zone de la commune saisie (minuscules, sans accents, tirets) : filtre du back-office.
-  communeCode         String             @map("commune_code")
-  /// Adresse d'intervention : jamais dans les journaux ni dans les événements.
-  address             String
-  preferredSlots      Json               @map("preferred_slots")
-  comment             String?
-  recurrence          Json?
-  /// Plan de passages (ADR-052) et dates exactes qu'il donne (AAAA-MM-JJ) ; null et vide sans plan.
-  schedule            Json?
-  scheduledDates      String[]           @default([]) @map("scheduled_dates")
-  requestedTeamSize   Int                @default(0) @map("requested_team_size")
-  /// Entreprise : jours d'intervention par semaine, null si non précisés.
-  daysPerWeek         Int?               @map("days_per_week")
-  recommendedTeamSize Int                @map("recommended_team_size")
-  estimateLow         Int?               @map("estimate_low")
-  estimateHigh        Int?               @map("estimate_high")
-  currentQuoteId      String?            @map("current_quote_id") @db.Uuid
-  missionId           String?            @map("mission_id") @db.Uuid
-  closingReason       String?            @map("closing_reason")
-  /// Réponses au formulaire (ADR-033), null pour une demande antérieure.
-  answers             Json?
-  /// Options choisies avec leurs réponses.
-  optionSelections    Json               @default("[]") @map("option_selections")
-  frequency           String?
-  /// Version de la grille du calcul, null pour une demande antérieure.
-  pricingVersion      Int?               @map("pricing_version")
-  /// Détail du calcul au moment de la demande, null pour une demande antérieure.
-  calculation         Json?
-  /// Groupe des demandes créées ensemble pour un même lieu (ADR-034), null pour une demande seule.
-  groupId             String?            @map("group_id") @db.Uuid
-  /// Type de lieu choisi par le client (ADR-034).
-  placeType           String?            @map("place_type")
-  /// Position GPS du lieu (ADR-034) : jamais dans les journaux ni dans les événements.
-  latitude            Float?
-  longitude           Float?
-  locationAccuracyM   Float?             @map("location_accuracy_m")
-  /// Point de repère donné par le client (ADR-034).
-  landmark            String?
-  /// Fournisseur qui a trouvé la commune (nominatim, google), null si choisie par le client.
-  geocodingProvider   String?            @map("geocoding_provider")
-  /// Adresse lisible rendue par le géocodeur pour la position (ADR-034).
-  geocodedAddress     String?            @map("geocoded_address")
-  /// Mesures constatées après la visite (ADR-037), null sans mesure ; les réponses du client restent.
-  measuredAnswers     Json?              @map("measured_answers")
-  measuredOptions     Json?              @map("measured_option_selections")
-  measuredFrequency   String?            @map("measured_frequency")
-  /// Calcul des mesures : grille en vigueur et commune de la demande au moment de la saisie.
-  measuredCalculation Json?              @map("measured_calculation")
-  measuredVersion     Int?               @map("measured_pricing_version")
-  measuredAt          DateTime?          @map("measured_at") @db.Timestamptz(3)
-  measuredBy          String?            @map("measured_by") @db.Uuid
-  /// Devis dont le rappel avant l'expiration est fait (ADR-053), null sinon : un rappel par devis.
-  remindedQuoteId     String?            @map("expiry_reminded_quote_id") @db.Uuid
-  createdAt           DateTime           @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime           @map("updated_at") @db.Timestamptz(3)
-  /// Contrôle de concurrence optimiste.
-  version             Int                @default(0)
-  visit               SiteVisit?
-  quotes              Quote[]
-  group               QuoteRequestGroup? @relation(fields: [groupId], references: [id])
-
-  @@unique([customerId, idempotencyKey])
-  @@index([customerId, id])
-  @@index([status, id])
-  @@index([communeCode, id])
-  @@index([groupId])
-  @@index([status, updatedAt])
-  @@map("quote_requests")
-}
-
-/// Groupe de demandes créées ensemble pour un même lieu, une par prestation (ADR-034).
-/// Idempotent par (client, clé) : le rejeu d'une même clé rend le même groupe.
-model QuoteRequestGroup {
-  id             String         @id @db.Uuid
-  customerId     String         @map("customer_id") @db.Uuid
-  idempotencyKey String         @map("idempotency_key")
-  placeType      String         @map("place_type")
-  /// Commune retenue : trouvée par géocodage, ou choisie par le client en repli.
-  commune        String
-  createdAt      DateTime       @map("created_at") @db.Timestamptz(3)
-  requests       QuoteRequest[]
-
-  @@unique([customerId, idempotencyKey])
-  @@map("quote_request_groups")
-}
-
-/// Type de lieu du parcours client (ADR-034), géré au back-office ; jamais supprimé (active = false).
-model PlaceType {
-  code         String    @id
-  label        String
-  description  String    @default("")
-  /// Nom d'icône libre, interprété par le front.
-  icon         String
-  displayOrder Int       @default(0) @map("display_order")
-  active       Boolean   @default(true)
-  /// Codes des prestations proposées, dans l'ordre d'affichage.
-  serviceCodes String[]  @default([]) @map("service_codes")
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedBy    String?   @map("updated_by")
-  updatedAt    DateTime? @map("updated_at") @db.Timestamptz(3)
-
-  @@map("place_types")
-}
-
-/// Visite technique (UC-CL-07) ; une replanification garde la même ligne.
-model SiteVisit {
-  id           String       @id @db.Uuid
-  requestId    String       @unique @map("request_id") @db.Uuid
-  status       String
-  scheduledAt  DateTime     @map("scheduled_at") @db.Timestamptz(3)
-  agentId      String       @map("agent_id") @db.Uuid
-  report       String?
-  completedAt  DateTime?    @map("completed_at") @db.Timestamptz(3)
-  /// Visite commune à plusieurs demandes d'un groupe (ADR-035), null pour une visite seule.
-  groupVisitId String?      @map("group_visit_id") @db.Uuid
-  request      QuoteRequest @relation(fields: [requestId], references: [id])
-
-  @@index([groupVisitId])
-  @@index([agentId, scheduledAt])
-  @@index([status])
-  @@map("site_visits")
-}
-
-/// Devis envoyé : prix figé, un devis révisé s'ajoute sans effacer le précédent.
-model Quote {
-  id                String       @id @db.Uuid
-  requestId         String       @map("request_id") @db.Uuid
-  lines             Json
-  subtotal          Int
-  interventionCount Int          @map("intervention_count")
-  total             Int
-  proposedSlots     Json         @map("proposed_slots")
-  validUntil        DateTime     @map("valid_until") @db.Timestamptz(3)
-  depositPercent    Int          @map("deposit_percent")
-  depositAmount     Int          @map("deposit_amount")
-  recurrence        Json?
-  /// Plan de passages (ADR-052) et dates exactes, figés à l'envoi ; null et vide sans plan.
-  schedule          Json?
-  scheduledDates    String[]     @default([]) @map("scheduled_dates")
-  teamSize          Int          @map("team_size")
-  durationMinutes   Int          @map("duration_minutes")
-  sentAt            DateTime     @map("sent_at") @db.Timestamptz(3)
-  request           QuoteRequest @relation(fields: [requestId], references: [id])
-
-  @@index([requestId])
-  @@map("quotes")
-}
-
-/// Mission créée par l'acceptation d'un devis (UC-CL-04, 09, 10).
-model Mission {
-  id                   String           @id @db.Uuid
-  requestId            String           @unique @map("request_id") @db.Uuid
-  quoteId              String           @map("quote_id") @db.Uuid
-  /// Clé d'idempotence de l'acceptation.
-  acceptanceKey        String           @map("acceptance_key")
-  customerId           String           @map("customer_id") @db.Uuid
-  organizationId       String?          @map("organization_id") @db.Uuid
-  status               String
-  serviceCode          String           @map("service_code")
-  commune              String
-  address              String
-  /// Position GPS et repère copiés de la demande (ADR-034), pour aller sur place.
-  latitude             Float?
-  longitude            Float?
-  locationAccuracyM    Float?           @map("location_accuracy_m")
-  landmark             String?
-  /// Groupe et type de lieu de la demande d'origine (ADR-034).
-  groupId              String?          @map("group_id") @db.Uuid
-  placeType            String?          @map("place_type")
-  chosenSlotStart      DateTime         @map("chosen_slot_start") @db.Timestamptz(3)
-  chosenSlotEnd        DateTime         @map("chosen_slot_end") @db.Timestamptz(3)
-  recurrence           Json?
-  /// Plan de passages du devis accepté (ADR-052) et ses dates ; null et vide sans plan.
-  schedule             Json?
-  scheduledDates       String[]         @default([]) @map("scheduled_dates")
-  plannedInterventions Int              @map("planned_interventions")
-  /// Option de paiement choisie par le client : option, timing, method.
-  paymentPlan          Json             @map("payment_plan")
-  paymentTotal         Int              @map("payment_total")
-  depositPercent       Int              @map("deposit_percent")
-  depositAmount        Int              @map("deposit_amount")
-  /// Arrêt d'une mission récurrente (ADR-049) : montant payé pour des passages non faits, crédité
-  /// dans le portefeuille du client (cleaning.mission.credited) ; null sans crédit.
-  creditId             String?          @map("credit_id") @db.Uuid
-  creditedAmount       Int?             @map("credited_amount")
-  creditedAt           DateTime?        @map("credited_at") @db.Timestamptz(3)
-  cancellationReason   String?          @map("cancellation_reason")
-  daysPerWeek          Int?             @map("days_per_week")
-  /// Suspension en cours : plus ancienne cause active (unpaid_invoices, unpaid_interventions ou
-  /// organization_suspended), null sinon.
-  suspensionCause      String?          @map("suspension_cause")
-  /// Toutes les causes actives, la plus ancienne d'abord (ADR-030) ; vide sans suspension.
-  suspensionCauses     String[]         @default([]) @map("suspension_causes")
-  suspendedSince       DateTime?        @map("suspended_since") @db.Timestamptz(3)
-  suspensionUnpaid     Int?             @map("suspension_unpaid_count")
-  /// Impayés au dernier avertissement envoyé (0 : aucun).
-  warningLevel         Int              @default(0) @map("warning_level")
-  createdAt            DateTime         @map("created_at") @db.Timestamptz(3)
-  updatedAt            DateTime         @map("updated_at") @db.Timestamptz(3)
-  version              Int              @default(0)
-  interventions        Intervention[]
-  payments             MissionPayment[]
-  batches              InterventionBatch[]
-
-  @@index([customerId, id])
-  @@index([status, id])
-  @@index([organizationId])
-  @@index([groupId])
-  @@index([status, updatedAt])
-  @@map("missions")
-}
-
-/// Passage d'une mission, avec ses propres agents.
-model Intervention {
-  id                 String    @id @db.Uuid
-  missionId          String    @map("mission_id") @db.Uuid
-  status             String
-  scheduledStart     DateTime  @map("scheduled_start") @db.Timestamptz(3)
-  scheduledEnd       DateTime  @map("scheduled_end") @db.Timestamptz(3)
-  durationMinutes    Int       @map("duration_minutes")
-  agentIds           String[]  @map("agent_ids") @db.Uuid
-  checklist          Json      @default("[]")
-  incidentNote       String?   @map("incident_note")
-  /// Références du service file, sans stockage ici.
-  beforePhotoFileIds String[]  @default([]) @map("before_photo_file_ids") @db.Uuid
-  afterPhotoFileIds  String[]  @default([]) @map("after_photo_file_ids") @db.Uuid
-  startedAt          DateTime? @map("started_at") @db.Timestamptz(3)
-  completedAt        DateTime? @map("completed_at") @db.Timestamptz(3)
-  /// suspension (reprogrammable au déblocage) ou manual ; null si le passage n'est pas annulé.
-  cancellationCause  String?   @map("cancellation_cause")
-  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(3)
-  /// Motif du dernier report ou de l'annulation pour replanifier (ADR-053).
-  changeReason       String?   @map("change_reason")
-  mission            Mission   @relation(fields: [missionId], references: [id])
-
-  @@index([missionId])
-  @@index([scheduledStart, scheduledEnd])
-  @@map("interventions")
-}
-
-/// Paiement enregistré : coché par le superviseur (espèces, Mobile Money hors ligne) ou, plus tard, en ligne.
-model MissionPayment {
-  id             String   @id @db.Uuid
-  missionId      String   @map("mission_id") @db.Uuid
-  amount         Int
-  method         String
-  reference      String?
-  recordedBy     String   @map("recorded_by")
-  recordedAt     DateTime @map("recorded_at") @db.Timestamptz(3)
-  /// Clé d'idempotence du paiement manuel (en-tête Idempotency-Key), null sans clé.
-  idempotencyKey String?  @map("idempotency_key")
-  /// Paiement par portefeuille remboursé dans le portefeuille (ADR-046), null sinon.
-  refundedAt     DateTime? @map("refunded_at") @db.Timestamptz(3)
-  mission        Mission  @relation(fields: [missionId], references: [id])
-
-  @@unique([missionId, idempotencyKey])
-  @@index([missionId])
-  @@map("mission_payments")
-}
-
-/// Agent Nettoyage : compte KSP existant rattaché par l'admin (UC-CL-12).
-model Agent {
-  userId           String                @id @map("user_id") @db.Uuid
-  displayName      String                @map("display_name")
-  active           Boolean               @default(true)
-  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
-  unavailabilities AgentUnavailability[]
-  teams            TeamMember[]
-
-  @@map("agents")
-}
-
-model AgentUnavailability {
-  id       String   @id @db.Uuid
-  agentId  String   @map("agent_id") @db.Uuid
-  startsAt DateTime @map("starts_at") @db.Timestamptz(3)
-  endsAt   DateTime @map("ends_at") @db.Timestamptz(3)
-  reason   String?
-  agent    Agent    @relation(fields: [agentId], references: [userId])
-
-  @@index([agentId, startsAt])
-  @@map("agent_unavailabilities")
-}
-
-model Team {
-  id        String       @id @db.Uuid
-  name      String
-  /// Équipe désactivée (ADR-053) : gardée, plus proposée à la planification.
-  active    Boolean      @default(true)
-  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  members   TeamMember[]
-
-  @@map("teams")
-}
-
-model TeamMember {
-  teamId  String @map("team_id") @db.Uuid
-  agentId String @map("agent_id") @db.Uuid
-  team    Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  agent   Agent  @relation(fields: [agentId], references: [userId])
-
-  @@id([teamId, agentId])
-  @@map("team_members")
-}
-
 /// Traces locales (prix, devis, affectations, paiements) en attendant le service audit.
 model AuditEntry {
   id         String   @id @db.Uuid
@@ -444,69 +70,1843 @@ model AuditEntry {
   @@map("audit_log")
 }
 
-/// Factures d'entreprise connues par les événements de billing (overdue, paid) : compte des
-/// impayés d'un contrat, indépendant de l'ordre d'arrivée des événements.
-model ContractInvoice {
-  invoiceId String   @id @map("invoice_id") @db.Uuid
-  missionId String   @map("mission_id") @db.Uuid
-  /// overdue ou paid ; une facture payée ne redevient jamais impayée.
-  status    String
-  updatedAt DateTime @map("updated_at") @db.Timestamptz(3)
+// ---------------------------------------------------------------------------------------------
+// Idempotence (règle d'or n° 3, R-DM-06, partie 15.3 : toute création et tout paiement exigent
+// Idempotency-Key).
+// ---------------------------------------------------------------------------------------------
 
-  @@index([missionId, status])
-  @@map("contract_invoices")
+/// Action déjà exécutée pour une clé d'idempotence : le rejeu de la même clé rend la même réponse,
+/// sans refaire l'action. Écrite dans la même transaction que l'action.
+/// Conservé 7 jours (D24 : 72 h de hors connexion et une marge), puis supprimé par la tâche de
+/// conservation (UC-NT-48, index `createdAt`).
+model IdempotencyRecord {
+  /// Compte (utilisateur ou personnel) qui a envoyé la requête.
+  actorId        String   @map("actor_id") @db.Uuid
+  /// Nom stable de l'action (ex. request.create, session.pay, assignment.create).
+  operation      String
+  /// Valeur de l'en-tête Idempotency-Key.
+  idempotencyKey String   @map("idempotency_key")
+  /// Empreinte du corps de la requête : une même clé rejouée avec un autre corps est refusée.
+  requestHash    String   @map("request_hash")
+  /// Réponse rendue au premier appel, rejouée à l'identique.
+  response       Json
+  createdAt      DateTime @map("created_at") @db.Timestamptz(3)
+
+  @@id([actorId, operation, idempotencyKey])
+  @@index([createdAt])
+  @@map("idempotency_records")
 }
 
-/// Organisations dont KSP a changé l'état, apprises par les événements d'identity (ADR-030) :
-/// une organisation suspendue suspend ses missions. Absente : jamais suspendue.
+// ---------------------------------------------------------------------------------------------
+// Catalogue (partie 4) : lieux, types de nettoyage, paramètres, offres, tarifs, zones.
+// Rien ne se supprime : tout se désactive (R-CA-06).
+// ---------------------------------------------------------------------------------------------
+
+/// Nature d'un paramètre (partie 4).
+enum ParameterKind {
+  number
+  choice
+  boolean
+
+  @@map("parameter_kind")
+}
+
+/// Statut d'une version de tarif (R-CA-07, R-CA-08).
+enum TariffStatus {
+  draft
+  published
+  archived
+
+  @@map("tariff_status")
+}
+
+/// Mode de calcul d'une tranche (R-PX-01) : forfait de la tranche ou prix par unité du paramètre de base.
+enum BracketMode {
+  flat
+  per_unit
+
+  @@map("bracket_mode")
+}
+
+/// Mode d'un supplément (partie 4, « Tarif d'une offre »).
+enum SupplementMode {
+  fixed
+  per_unit
+  coefficient
+
+  @@map("supplement_mode")
+}
+
+/// Mode de planification (R-PL-05) : réglage général, remplacé au besoin par celui d'une zone.
+enum PlanningMode {
+  manual
+  proposal
+  automatic
+
+  @@map("planning_mode")
+}
+
+/// Catégorie de lieu (Maison, Salle de fête, Chantier, Bureaux et locaux professionnels, Autre).
+model PlaceCategory {
+  id           String      @id @db.Uuid
+  code         String      @unique
+  name         String
+  description  String      @default("")
+  /// Nom d'icône libre, interprété par le front.
+  icon         String
+  /// Photo déposée dans le service file.
+  photoFileId  String?     @map("photo_file_id") @db.Uuid
+  displayOrder Int         @default(0) @map("display_order")
+  /// Frais de visite de la catégorie (R-FV-01, décision du 18/11/2026) ; null : valeur par défaut des réglages.
+  visitFee     Int?        @map("visit_fee")
+  active       Boolean     @default(true)
+  createdAt    DateTime    @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime    @map("updated_at") @db.Timestamptz(3)
+  updatedBy    String?     @map("updated_by") @db.Uuid
+  placeTypes   PlaceType[]
+
+  @@map("place_categories")
+}
+
+/// Sous-type de lieu (villa, appartement, studio…) : c'est le « lieu » choisi par le client.
+model PlaceType {
+  id              String               @id @db.Uuid
+  categoryId      String               @map("category_id") @db.Uuid
+  code            String               @unique
+  name            String
+  description     String               @default("")
+  icon            String
+  photoFileId     String?              @map("photo_file_id") @db.Uuid
+  displayOrder    Int                  @default(0) @map("display_order")
+  /// Lieu « Autre » (R-CA-05) : pas de simulateur, besoin décrit en texte, prix fixé à la visite ;
+  /// la superficie n'y est pas exigée (R-CA-01).
+  isOther         Boolean              @default(false) @map("is_other")
+  /// Paramètre « superficie » du lieu (R-CA-14) : paramètre nombre actif parmi ceux du lieu, lu par
+  /// la règle d'équipe et pris par défaut comme paramètre de base des tarifs ; null seulement pour
+  /// un lieu « Autre ».
+  areaParameterId String?              @map("area_parameter_id") @db.Uuid
+  /// Créé inactif, activé une fois prêt (R-CA-12).
+  active          Boolean              @default(false)
+  createdAt       DateTime             @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime             @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?              @map("updated_by") @db.Uuid
+  category        PlaceCategory        @relation(fields: [categoryId], references: [id])
+  areaParameter   Parameter?           @relation(fields: [areaParameterId], references: [id], onDelete: Restrict)
+  parameters      PlaceTypeParameter[]
+  offers          Offer[]
+  places          Place[]
+
+  @@index([categoryId, displayOrder])
+  @@index([areaParameterId])
+  @@map("place_types")
+}
+
+/// Compétence d'agent (R-CA-09) : nettoyage intérieur, vidange, jardinage, piscine, travaux en hauteur.
+model Skill {
+  /// Identifiant exposé par l'API (/admin/cleaning/skills/{id}).
+  id            String         @id @db.Uuid
+  /// Clé naturelle, citée par les types de nettoyage et les compétences des agents.
+  code          String         @unique
+  name          String
+  active        Boolean        @default(true)
+  createdAt     DateTime       @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime       @map("updated_at") @db.Timestamptz(3)
+  cleaningTypes CleaningType[]
+  agentSkills   AgentSkill[]
+
+  @@map("skills")
+}
+
+/// Type de nettoyage (sol, vitres, vidange, jardin, piscine, nettoyage complet…).
+model CleaningType {
+  id                       String     @id @db.Uuid
+  code                     String     @unique
+  name                     String
+  description              String     @default("")
+  icon                     String
+  /// Compétence exigée de l'agent (R-CA-09) ; null seulement pour un pack (union des compétences de ses types).
+  requiredSkillCode        String?    @map("required_skill_code")
+  /// Durée de référence d'une séance pour ce type, en minutes (partie 4).
+  referenceDurationMinutes Int        @map("reference_duration_minutes")
+  /// Liste de contrôle : points cochés par l'agent pendant la séance (partie 10), dans l'ordre.
+  checklistTemplate        Json       @default("[]") @map("checklist_template")
+  /// Pack « Nettoyage complet » (R-CA-04) : composé d'autres types, qu'il masque une fois choisi.
+  /// Sa remise éventuelle est portée par la version de tarif de son offre (TariffVersion.packDiscountBp).
+  isPack                   Boolean    @default(false) @map("is_pack")
+  active                   Boolean    @default(true)
+  createdAt                DateTime   @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime   @map("updated_at") @db.Timestamptz(3)
+  updatedBy                String?    @map("updated_by") @db.Uuid
+  requiredSkill            Skill?     @relation(fields: [requiredSkillCode], references: [code])
+  packItems                PackItem[] @relation("PackItemPack")
+  includedInPacks          PackItem[] @relation("PackItemItem")
+  offers                   Offer[]
+
+  @@map("cleaning_types")
+}
+
+/// Type contenu dans un pack (R-CA-04).
+model PackItem {
+  packId String       @map("pack_id") @db.Uuid
+  itemId String       @map("item_id") @db.Uuid
+  pack   CleaningType @relation("PackItemPack", fields: [packId], references: [id])
+  item   CleaningType @relation("PackItemItem", fields: [itemId], references: [id])
+
+  @@id([packId, itemId])
+  @@index([itemId])
+  @@map("pack_items")
+}
+
+/// Paramètre demandé au client (superficie, nombre de pièces, cour, niveau de saleté…).
+model Parameter {
+  id                String               @id @db.Uuid
+  code              String               @unique
+  label             String
+  kind              ParameterKind
+  /// Unité affichée (m², m³, pièces) : obligatoire pour un nombre (R-CA-11) ; null pour un choix
+  /// ou un oui/non. La nature d'un paramètre ne se modifie pas.
+  unit              String?
+  /// Bornes d'une valeur numérique, entières de 0 à 1 000 000 (R-PX-03 : une valeur hors bornes est
+  /// refusée).
+  minValue          Int?                 @map("min_value")
+  maxValue          Int?                 @map("max_value")
+  /// Choix possibles d'un paramètre « choice » : [{ code, label, active }], dans l'ordre
+  /// d'affichage. Une valeur ne se supprime pas, elle se désactive (R-CA-06) ; un paramètre
+  /// « choice » garde au moins une valeur active.
+  choices           Json                 @default("[]")
+  required          Boolean              @default(false)
+  /// Aide à la saisie affichée sous le champ.
+  help              String               @default("")
+  active            Boolean              @default(true)
+  createdAt         DateTime             @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime             @map("updated_at") @db.Timestamptz(3)
+  updatedBy         String?              @map("updated_by") @db.Uuid
+  placeTypes        PlaceTypeParameter[]
+  /// Lieux dont ce paramètre donne la superficie (R-CA-14).
+  areaOfPlaceTypes  PlaceType[]
+  offers            OfferParameter[]
+  baseOfTariffs     TariffVersion[]
+  tariffSupplements TariffSupplement[]
+
+  @@map("parameters")
+}
+
+/// Paramètres demandés une fois pour tout le lieu, dans l'ordre (R-CA-01).
+model PlaceTypeParameter {
+  placeTypeId String    @map("place_type_id") @db.Uuid
+  parameterId String    @map("parameter_id") @db.Uuid
+  position    Int
+  placeType   PlaceType @relation(fields: [placeTypeId], references: [id])
+  parameter   Parameter @relation(fields: [parameterId], references: [id])
+
+  @@id([placeTypeId, parameterId])
+  @@index([parameterId])
+  @@map("place_type_parameters")
+}
+
+/// Offre : un type de nettoyage proposé pour un lieu, avec son tarif (R-CA-03). La version de tarif
+/// en vigueur est l'unique version « published » de l'offre (index partiel, voir la migration).
+model Offer {
+  id              String           @id @db.Uuid
+  placeTypeId     String           @map("place_type_id") @db.Uuid
+  cleaningTypeId  String           @map("cleaning_type_id") @db.Uuid
+  /// Calcul du nombre d'agents et de la durée d'une séance par tranche de superficie (R-CA-10),
+  /// ex. [{ fromArea: 0, toArea: 100, agents: 2, durationMinutes: 180 }] (noms du contrat TeamRuleBracket).
+  teamRule        Json             @map("team_rule")
+  displayOrder    Int              @default(0) @map("display_order")
+  /// Créée inactive, activée une fois prête (R-CA-12).
+  active          Boolean          @default(false)
+  createdAt       DateTime         @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?          @map("updated_by") @db.Uuid
+  placeType       PlaceType        @relation(fields: [placeTypeId], references: [id])
+  cleaningType    CleaningType     @relation(fields: [cleaningTypeId], references: [id])
+  extraParameters OfferParameter[]
+  tariffVersions  TariffVersion[]
+  requestItems    RequestItem[]
+
+  @@unique([placeTypeId, cleaningTypeId])
+  @@index([cleaningTypeId])
+  @@map("offers")
+}
+
+/// Paramètres propres à une offre, demandés seulement quand ce type est choisi (R-CA-02).
+model OfferParameter {
+  offerId     String    @map("offer_id") @db.Uuid
+  parameterId String    @map("parameter_id") @db.Uuid
+  position    Int
+  offer       Offer     @relation(fields: [offerId], references: [id])
+  parameter   Parameter @relation(fields: [parameterId], references: [id])
+
+  @@id([offerId, parameterId])
+  @@index([parameterId])
+  @@map("offer_parameters")
+}
+
+/// Version de tarif d'une offre (R-CA-07, R-CA-08) : brouillon, publiée (une seule par offre) ou
+/// archivée. Une version publiée ne change plus : toute modification crée une nouvelle version.
+model TariffVersion {
+  id                    String             @id @db.Uuid
+  offerId               String             @map("offer_id") @db.Uuid
+  version               Int
+  status                TariffStatus       @default(draft)
+  /// Paramètre de base découpé en tranches (superficie du lieu par défaut, R-CA-14) ; null pour un
+  /// pack à remise (packDiscountBp), qui n'a pas de tranches.
+  baseParameterId       String?            @map("base_parameter_id") @db.Uuid
+  /// Pack seulement (R-CA-04) : remise en points de base sur la somme des prix de ses types
+  /// (1000 = 10 %), plafond 9000 ; exclusive des tranches. null : prix par tranches.
+  packDiscountBp        Int?               @map("pack_discount_bp")
+  /// Prix minimum d'une séance pour cette offre, appliqué après ses coefficients, la fréquence et
+  /// la commune ; un pack ne descend jamais sous le minimum de son tarif (R-CA-04).
+  minimumPrice          Int                @map("minimum_price")
+  /// Remise récurrente par clé de fréquence, en points de base (R-PX-06), ex.
+  /// { "weekly": 9000, "every_2_weeks": 9500, "monthly": 9800 } ; clés weekly, every_N_weeks
+  /// (N de 2 à 12) et monthly, valeurs de 1 à 100 000.
+  frequencyCoefficients Json               @default("{}") @map("frequency_coefficients")
+  createdAt             DateTime           @map("created_at") @db.Timestamptz(3)
+  createdBy             String             @map("created_by") @db.Uuid
+  publishedAt           DateTime?          @map("published_at") @db.Timestamptz(3)
+  publishedBy           String?            @map("published_by") @db.Uuid
+  archivedAt            DateTime?          @map("archived_at") @db.Timestamptz(3)
+  offer                 Offer              @relation(fields: [offerId], references: [id])
+  baseParameter         Parameter?         @relation(fields: [baseParameterId], references: [id], onDelete: Restrict)
+  brackets              TariffBracket[]
+  supplements           TariffSupplement[]
+  requestItems          RequestItem[]
+
+  @@unique([offerId, version])
+  /// Cible des clés étrangères composées (version, offre) : une ligne de demande ne peut pas citer
+  /// la version de tarif d'une autre offre.
+  @@unique([id, offerId])
+  @@map("tariff_versions")
+}
+
+/// Tranche d'un tarif (partie 4) : bornes entières incluses, sans chevauchement (contrainte
+/// d'exclusion) ; l'absence de trou est contrôlée à la publication (R-CA-08).
+model TariffBracket {
+  id              String        @id @db.Uuid
+  tariffVersionId String        @map("tariff_version_id") @db.Uuid
+  fromValue       Int           @map("from_value")
+  toValue         Int           @map("to_value")
+  mode            BracketMode
+  /// Forfait de la tranche, ou prix par unité du paramètre de base.
+  amount          Int
+  tariffVersion   TariffVersion @relation(fields: [tariffVersionId], references: [id], onDelete: Cascade)
+
+  @@index([tariffVersionId, fromValue])
+  @@map("tariff_brackets")
+}
+
+/// Supplément d'un tarif pour un autre paramètre (partie 4) : montant fixe, montant par unité ou
+/// coefficient. Un « oui » ajoute son supplément, un « non » n'a jamais d'effet.
+model TariffSupplement {
+  id              String         @id @db.Uuid
+  tariffVersionId String         @map("tariff_version_id") @db.Uuid
+  parameterId     String         @map("parameter_id") @db.Uuid
+  /// Pour un paramètre « choice » : le choix concerné (ex. after_works) ; null sinon.
+  choiceCode      String?        @map("choice_code")
+  mode            SupplementMode
+  /// Montant d'un supplément fixed ou per_unit ; null pour un coefficient.
+  amount          Int?
+  /// Coefficient en points de base (13 000 = × 1,3) ; null pour un montant.
+  coefficientBp   Int?           @map("coefficient_bp")
+  /// Unités incluses avant le supplément par unité (« chaque chambre au-delà de 3 » : 3), de 0 à
+  /// 1 000 000 ; 0 : toutes comptent (D16).
+  includedUnits   Int            @default(0) @map("included_units")
+  position        Int            @default(0)
+  tariffVersion   TariffVersion  @relation(fields: [tariffVersionId], references: [id], onDelete: Cascade)
+  parameter       Parameter      @relation(fields: [parameterId], references: [id])
+
+  /// Un seul supplément par paramètre (et par choix) dans une version ; NULLS NOT DISTINCT ajouté
+  /// à la main dans la migration (un choix null compte comme une valeur).
+  @@unique([tariffVersionId, parameterId, choiceCode], map: "tariff_supplements_parameter_choice_key")
+  @@index([parameterId])
+  @@map("tariff_supplements")
+}
+
+/// Zone desservie : une commune (partie 4, R-ZN-01). Jamais supprimée, désactivée après confirmation.
+model Zone {
+  /// Identifiant exposé par l'API (/admin/cleaning/zones/{id}).
+  id                String            @id @db.Uuid
+  /// Clé normalisée de la commune, celle rendue par geo (ResolveCommune) ; clé naturelle citée par
+  /// les lieux, demandes, programmes, séances et zones des agents.
+  communeKey        String            @unique @map("commune_key")
+  name              String
+  /// Coefficient de prix de la commune, en points de base (10 000 = × 1).
+  coefficientBp     Int               @default(10000) @map("coefficient_bp")
+  /// Majoration fixe des frais de visite dans cette commune (R-FV-01), montant en FCFA ajouté aux
+  /// frais de la catégorie (ou par défaut) ; null : aucune.
+  visitFeeSurcharge Int?              @map("visit_fee_surcharge")
+  /// Mode de planification de la zone (R-PL-05) ; null : mode général des réglages
+  /// (CleaningSettings.defaultPlanningMode, « proposition » par défaut).
+  planningMode      PlanningMode?     @map("planning_mode")
+  active            Boolean           @default(true)
+  createdAt         DateTime          @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime          @map("updated_at") @db.Timestamptz(3)
+  updatedBy         String?           @map("updated_by") @db.Uuid
+  requests          CleaningRequest[]
+  programs          Program[]
+  sessions          Session[]
+  agentZones        AgentZone[]
+
+  @@map("zones")
+}
+
+/// Jour férié national (R-PG-02), proposé à l'exclusion dans les programmes.
+model PublicHoliday {
+  /// Identifiant exposé par l'API (/admin/cleaning/holidays/{id}).
+  id        String   @id @db.Uuid
+  /// Date locale (Africa/Porto-Novo), un seul jour férié par date.
+  date      DateTime @unique @db.Date
+  name      String
+  active    Boolean  @default(true)
+  updatedAt DateTime @map("updated_at") @db.Timestamptz(3)
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  @@map("public_holidays")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Lieux du client et dossiers (parties 3, 7).
+// ---------------------------------------------------------------------------------------------
+
+/// Propriétaire d'un lieu, d'une demande, d'un programme ou d'un wallet : compte personnel ou
+/// organisation (R-CP-04). Mêmes valeurs que le titulaire d'un wallet (wallet.Holder.type) ; l'API
+/// cleaning les présente en « individual » / « organization » (customer_kind).
+enum OwnerKind {
+  user
+  organization
+
+  @@map("owner_kind")
+}
+
+/// Statut d'une demande (partie 15.2).
+enum RequestStatus {
+  awaiting_visit_fee
+  visit_to_schedule
+  visit_scheduled
+  visit_missed
+  visit_done
+  quote_sent
+  accepted
+  declined
+  expired
+  cancelled
+  rejected
+
+  @@map("request_status")
+}
+
+/// État des frais de visite (partie 7.2, valeurs du contrat VisitFee.status) : à payer, payés,
+/// remboursés au wallet (R-FV-06), conservés (R-FV-06 : annulation tardive, client absent, devis
+/// refusé ou expiré), déduits du premier paiement (R-FV-05).
+enum VisitFeeStatus {
+  awaiting_payment
+  paid
+  refunded
+  retained
+  deducted
+
+  @@map("visit_fee_status")
+}
+
+/// Statut d'une demande de réactivation d'un devis expiré (R-AC-04).
+enum ReactivationStatus {
+  pending
+  accepted
+  refused
+
+  @@map("reactivation_status")
+}
+
+/// Lieu enregistré dans « Mes lieux » (partie 3), réutilisable pour une nouvelle demande.
+model Place {
+  id                       String            @id @db.Uuid
+  ownerKind                OwnerKind         @map("owner_kind")
+  /// Compte personnel ou organisation (identity).
+  ownerId                  String            @map("owner_id") @db.Uuid
+  placeTypeId              String            @map("place_type_id") @db.Uuid
+  name                     String
+  /// Position GPS chiffrée : { latitude, longitude, accuracyM } (partie 16.3).
+  gpsEncrypted             String?           @map("gps_encrypted")
+  /// Point de repère chiffré.
+  landmarkEncrypted        String?           @map("landmark_encrypted")
+  /// Adresse saisie par le client, chiffrée.
+  addressEncrypted         String?           @map("address_encrypted")
+  /// Adresse lisible rendue par geo (ReverseGeocode), chiffrée.
+  readableAddressEncrypted String?           @map("readable_address_encrypted")
+  /// Commune retrouvée par son contour (R-ZN-01) ; pas forcément une zone desservie. Gardée après
+  /// l'effacement de la position (R-DP-01).
+  communeKey               String            @map("commune_key")
+  /// Version des contours geo qui a donné la commune.
+  communeBoundariesVersion String?           @map("commune_boundaries_version")
+  /// Paramètres déclarés du lieu : { codeDuParamètre: valeur }.
+  declaredValues           Json              @default("{}") @map("declared_values")
+  /// Effacement de la position, du repère et des adresses (conservation R-DP-01, suppression du
+  /// compte R-DP-02) ; une nouvelle position le remet à null.
+  locationErasedAt         DateTime?         @map("location_erased_at") @db.Timestamptz(3)
+  /// Position corrigée par KSP ou par l'agent sur place (R-DM-07) ; null : jamais corrigée.
+  locationCorrectedAt      DateTime?         @map("location_corrected_at") @db.Timestamptz(3)
+  /// Personnel ou agent qui a corrigé la position.
+  locationCorrectedBy      String?           @map("location_corrected_by") @db.Uuid
+  archivedAt               DateTime?         @map("archived_at") @db.Timestamptz(3)
+  createdBy                String            @map("created_by") @db.Uuid
+  createdAt                DateTime          @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime          @map("updated_at") @db.Timestamptz(3)
+  /// Contrôle de concurrence optimiste.
+  version                  Int               @default(0)
+  placeType                PlaceType         @relation(fields: [placeTypeId], references: [id])
+  requests                 CleaningRequest[]
+  programs                 Program[]
+
+  @@index([ownerKind, ownerId])
+  @@map("places")
+}
+
+/// Demande de devis (partie 7.1) : un dossier = un lieu, tous les types choisis (R-DM-02).
+model CleaningRequest {
+  id                       String                @id @db.Uuid
+  /// Numéro lisible DN-000124, attribué par la base (séquence, voir la migration).
+  number                   String                @unique @default(dbgenerated("cleaning_format_number('DN-'::text, nextval('cleaning_request_number_seq'::regclass))"))
+  ownerKind                OwnerKind             @map("owner_kind")
+  ownerId                  String                @map("owner_id") @db.Uuid
+  /// Compte qui a envoyé la demande (membre de l'organisation pour une entreprise).
+  submittedBy              String                @map("submitted_by") @db.Uuid
+  placeId                  String                @map("place_id") @db.Uuid
+  /// Lieu (sous-type) au moment de la demande.
+  placeTypeId              String                @map("place_type_id") @db.Uuid
+  /// Commune desservie au moment de la demande (R-DM-01, R-DM-03).
+  communeKey               String                @map("commune_key")
+  /// Copie chiffrée de la position du lieu à l'envoi (R-DM-08) : tout le dossier (visite, devis,
+  /// programme, séances) lit cette copie ; seule la correction R-DM-07 la modifie.
+  /// { latitude, longitude, accuracyM } chiffré.
+  gpsEncrypted             String?               @map("gps_encrypted")
+  landmarkEncrypted        String?               @map("landmark_encrypted")
+  /// Adresse saisie.
+  addressEncrypted         String?               @map("address_encrypted")
+  readableAddressEncrypted String?               @map("readable_address_encrypted")
+  /// Version des contours geo qui a donné la commune.
+  communeBoundariesVersion String?               @map("commune_boundaries_version")
+  /// Effacement de la copie de la position (conservation R-DP-01, suppression du compte R-DP-02).
+  locationErasedAt         DateTime?             @map("location_erased_at") @db.Timestamptz(3)
+  status                   RequestStatus
+  /// Paramètres déclarés du lieu et des offres : jamais modifiés après l'envoi (partie 7.4).
+  declaredValues           Json                  @map("declared_values")
+  /// Lignes déclarées figées à l'envoi (libellé, unité, valeur, texte affiché), dans l'ordre du
+  /// formulaire : instantané des libellés du catalogue.
+  declaredRows             Json                  @default("[]") @map("declared_rows")
+  /// Programme souhaité (partie 8) : ponctuel, hebdomadaire ou mensuel, jours exclus et ajoutés.
+  schedulePlan             Json                  @map("schedule_plan")
+  /// 1 à 3 créneaux de disponibilité pour la visite : [{ start, end }].
+  visitSlots               Json                  @map("visit_slots")
+  /// Détail du calcul (R-PX-04) avec les versions de tarif ; null pour un lieu « Autre ».
+  pricingSnapshot          Json?                 @map("pricing_snapshot")
+  /// Prix estimé d'une séance ; null si complete = false (R-PX-08) ou lieu « Autre ».
+  estimatedSessionPrice    Int?                  @map("estimated_session_price")
+  /// Besoin décrit en texte (lieu « Autre », R-CA-05) ou commentaire du client.
+  description              String?
+  comment                  String?
+  /// Photos du lieu (service file), 5 au plus.
+  photoFileIds             String[]              @default([]) @map("photo_file_ids") @db.Uuid
+  /// Motif d'un refus par KSP, d'une annulation ou d'un devis refusé.
+  closingReason            String?               @map("closing_reason")
+  /// Motif codé d'une annulation par le client (no_longer_needed, found_other_provider, visit_fee,
+  /// other) ou d'un refus par KSP (place_inaccessible, service_impossible) ; gardé dans le dossier,
+  /// jamais publié.
+  closingReasonCode        String?               @map("closing_reason_code")
+  closedAt                 DateTime?             @map("closed_at") @db.Timestamptz(3)
+  createdAt                DateTime              @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime              @map("updated_at") @db.Timestamptz(3)
+  /// Contrôle de concurrence optimiste.
+  version                  Int                   @default(0)
+  place                    Place                 @relation(fields: [placeId], references: [id])
+  zone                     Zone                  @relation(fields: [communeKey], references: [communeKey])
+  items                    RequestItem[]
+  /// Frais de visite : un par tentative de visite payante (R-VI-05), le premier créé à l'envoi.
+  visitFees                VisitFee[]
+  visits                   Visit[]
+  /// Révisions de la version retenue (R-CS-03).
+  retainedValues           RetainedValues[]
+  quotes                   Quote[]
+  programs                 Program[]
+  reactivations            RequestReactivation[]
+  walletOperations         WalletOperation[]
+  directPayments           DirectPayment[]
+
+  @@index([ownerKind, ownerId, status])
+  @@index([status, createdAt])
+  @@index([communeKey, status])
+  @@index([placeId])
+  @@map("cleaning_requests")
+}
+
+/// Frais de visite d'une demande (partie 7.2). Une ligne par visite payante : la première à l'envoi,
+/// puis une nouvelle après chaque absence du client (R-VI-05, D9), créée dans la transaction du
+/// signalement. Une visite annulée par KSP ou agent absent : frais remboursés, la visite suivante est
+/// gratuite et rattachée aux mêmes frais (D11). Clé du débit au wallet (R-WL-03) :
+/// « cleaning_visit_fee:<id de la demande>:<rang> ».
+model VisitFee {
+  id               String            @id @db.Uuid
+  requestId        String            @map("request_id") @db.Uuid
+  /// Rang dans la demande : 1 à l'envoi, puis 2, 3… après chaque absence du client.
+  rank             Int
+  /// Frais de la catégorie (ou par défaut) plus la majoration de la commune, figés à la création
+  /// (R-FV-01).
+  amount           Int
+  status           VisitFeeStatus    @default(awaiting_payment)
+  /// Échéance de paiement (R-FV-03 : 72 h par défaut) ; null une fois payés.
+  dueAt            DateTime?         @map("due_at") @db.Timestamptz(3)
+  paidAt           DateTime?         @map("paid_at") @db.Timestamptz(3)
+  /// Reçu émis par billing (R-FV-04).
+  invoiceId        String?           @map("invoice_id") @db.Uuid
+  refundedAt       DateTime?         @map("refunded_at") @db.Timestamptz(3)
+  createdAt        DateTime          @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime          @map("updated_at") @db.Timestamptz(3)
+  /// Contrôle de concurrence optimiste.
+  version          Int               @default(0)
+  request          CleaningRequest   @relation(fields: [requestId], references: [id])
+  visits           Visit[]
+  walletOperations WalletOperation[]
+  directPayments   DirectPayment[]
+
+  @@unique([requestId, rank])
+  /// Cible des clés étrangères composées (frais, demande) des visites et des opérations d'argent.
+  @@unique([id, requestId])
+  @@index([status, dueAt])
+  @@map("visit_fees")
+}
+
+/// Demande de réactivation d'un devis expiré (R-AC-04), acceptée ou refusée par le superviseur.
+/// L'historique est gardé ; une seule demande en attente par dossier (index partiel).
+model RequestReactivation {
+  id          String             @id @db.Uuid
+  requestId   String             @map("request_id") @db.Uuid
+  requestedBy String             @map("requested_by") @db.Uuid
+  requestedAt DateTime           @map("requested_at") @db.Timestamptz(3)
+  status      ReactivationStatus @default(pending)
+  decidedBy   String?            @map("decided_by") @db.Uuid
+  decidedAt   DateTime?          @map("decided_at") @db.Timestamptz(3)
+  /// Motif facultatif de la décision (DecideReactivationRequest.reason).
+  reason      String?
+  request     CleaningRequest    @relation(fields: [requestId], references: [id])
+
+  @@index([requestId, requestedAt])
+  @@index([status, requestedAt])
+  @@map("request_reactivations")
+}
+
+/// Type de nettoyage choisi dans une demande, avec la version de tarif utilisée (R-DM-03).
+model RequestItem {
+  requestId       String          @map("request_id") @db.Uuid
+  offerId         String          @map("offer_id") @db.Uuid
+  /// Version de tarif de cette offre utilisée au calcul (clé étrangère composée avec l'offre) ;
+  /// null : aucun tarif publié, prix fixé au devis par OnQuotePrice (R-PX-08). Une clé composée
+  /// dont une valeur est nulle n'est pas contrôlée.
+  tariffVersionId String?         @map("tariff_version_id") @db.Uuid
+  request         CleaningRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  offer           Offer           @relation(fields: [offerId], references: [id])
+  tariffVersion   TariffVersion?  @relation(fields: [tariffVersionId, offerId], references: [id, offerId])
+
+  @@id([requestId, offerId])
+  @@index([offerId])
+  @@index([tariffVersionId, offerId])
+  @@map("request_items")
+}
+
+/// Statut d'une visite des lieux (valeurs du contrat Visit.status, partie 15.2). in_progress : agent
+/// arrivé, constat en cours ; missed : toujours une absence du client (R-VI-05).
+enum VisitStatus {
+  scheduled
+  in_progress
+  completed
+  missed
+  cancelled
+
+  @@map("visit_status")
+}
+
+/// Cause de l'annulation d'une visite prévue ou en cours (R-VI-06) : demande annulée par le client,
+/// refusée par KSP, créneau changé par le client, annulation par KSP, agent absent (R-FV-06 : frais
+/// remboursés, visite suivante gratuite).
+enum VisitCancelCause {
+  request_cancelled
+  request_rejected
+  slot_changed
+  ksp
+  agent_no_show
+
+  @@map("visit_cancel_cause")
+}
+
+/// Visite des lieux (partie 7.3). Une visite manquée garde sa ligne ; la suivante en crée une autre.
+model Visit {
+  id                  String            @id @db.Uuid
+  requestId           String            @map("request_id") @db.Uuid
+  /// Rang de la visite dans la demande (1, puis 2 après une visite manquée ou annulée…).
+  attempt             Int
+  /// Frais de visite qui couvrent cette visite (R-VI-05 : nouveaux frais après une absence du
+  /// client). Une visite annulée par KSP ou agent absent : frais remboursés, la visite suivante est
+  /// gratuite et rattachée aux mêmes frais (D11).
+  visitFeeId          String            @map("visit_fee_id") @db.Uuid
+  status              VisitStatus       @default(scheduled)
+  scheduledStart      DateTime          @map("scheduled_start") @db.Timestamptz(3)
+  scheduledEnd        DateTime          @map("scheduled_end") @db.Timestamptz(3)
+  /// Durée prévue (R-VI-02 : 60 min par défaut).
+  durationMinutes     Int               @map("duration_minutes")
+  arrivedAt           DateTime?         @map("arrived_at") @db.Timestamptz(3)
+  /// Position de l'agent à l'arrivée, chiffrée.
+  arrivalGpsEncrypted String?           @map("arrival_gps_encrypted")
+  /// Distance entre l'agent et le lieu à l'arrivée, en mètres (alerte au-delà de 300 m).
+  arrivalDistanceM    Int?              @map("arrival_distance_m")
+  /// Valeurs constatées par l'agent (partie 7.4), préremplies avec le déclaré.
+  observedValues      Json?             @map("observed_values")
+  /// Lignes constatées figées à la clôture du constat, dans l'ordre du formulaire.
+  observedRows        Json?             @map("observed_rows")
+  /// Remarque de l'agent pour le superviseur (1 000 caractères au plus) ; jamais montrée au client.
+  observationNote     String?           @map("observation_note")
+  /// Calcul des valeurs constatées (jamais montré à l'agent).
+  observedPricing     Json?             @map("observed_pricing")
+  observedBy          String?           @map("observed_by") @db.Uuid
+  observedAt          DateTime?         @map("observed_at") @db.Timestamptz(3)
+  /// Photos de la visite, 10 au plus (R-VI-04).
+  photoFileIds        String[]          @default([]) @map("photo_file_ids") @db.Uuid
+  /// Photo du lieu quand le client est absent (R-VI-05) ; facultative pour une absence signalée par
+  /// le back-office (R-VI-08).
+  missedPhotoFileId   String?           @map("missed_photo_file_id") @db.Uuid
+  /// Photos supprimées chez file après la durée de conservation (R-EX-07, R-DP-01), puis leurs
+  /// références retirées : la visite n'en porte plus aucune.
+  photosErasedAt      DateTime?         @map("photos_erased_at") @db.Timestamptz(3)
+  missedAt            DateTime?         @map("missed_at") @db.Timestamptz(3)
+  completedAt         DateTime?         @map("completed_at") @db.Timestamptz(3)
+  cancelledAt         DateTime?         @map("cancelled_at") @db.Timestamptz(3)
+  /// Cause d'une visite annulée (R-VI-06) ; null sinon.
+  cancelCause         VisitCancelCause? @map("cancel_cause")
+  /// Motif d'une annulation ou d'un déplacement.
+  changeReason        String?           @map("change_reason")
+  /// Clôture ou absence du client enregistrée par le back-office pour l'agent (R-VI-08) : auteur et
+  /// motif obligatoires.
+  closedByStaff       Boolean           @default(false) @map("closed_by_staff")
+  closedBy            String?           @map("closed_by") @db.Uuid
+  closedReason        String?           @map("closed_reason")
+  createdBy           String            @map("created_by") @db.Uuid
+  createdAt           DateTime          @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime          @map("updated_at") @db.Timestamptz(3)
+  version             Int               @default(0)
+  request             CleaningRequest   @relation(fields: [requestId], references: [id])
+  /// Clé étrangère composée : les frais cités sont ceux de la même demande.
+  visitFee            VisitFee          @relation(fields: [visitFeeId, requestId], references: [id, requestId])
+  retainedFrom        RetainedValues[]
+  assignments         Assignment[]
+
+  @@unique([requestId, attempt])
+  @@index([status, scheduledStart])
+  @@index([visitFeeId, requestId])
+  @@map("visits")
+}
+
+/// Version retenue par la supervision (partie 7.4), versionnée : une ligne par révision (R-CS-03).
+/// Une seule révision ouverte (non figée) par demande (index partiel) ; l'envoi d'un devis fige la
+/// révision qu'il cite. Une révision après l'envoi (motif obligatoire) ou une nouvelle visite
+/// (R-VI-07) en ouvre une nouvelle. Chaque changement est tracé dans le journal d'audit.
+model RetainedValues {
+  id              String          @id @db.Uuid
+  requestId       String          @map("request_id") @db.Uuid
+  /// Numéro de révision dans la demande : 1, puis 2, 3…
+  revision        Int
+  /// Motif de la révision, obligatoire à partir de la deuxième.
+  reason          String?
+  /// Visite dont le constat a servi de point de départ.
+  visitId         String?         @map("visit_id") @db.Uuid
+  /// Valeurs finales et offres retenues (types ajoutés ou retirés).
+  values          Json
+  /// Calcul des valeurs retenues, avec les versions de tarif.
+  pricingSnapshot Json            @map("pricing_snapshot")
+  /// Lignes retenues figées à l'enregistrement, dans l'ordre du formulaire.
+  rows            Json            @default("[]")
+  /// Écart par paramètre : valeur déclarée, valeur retenue, effet sur le prix (R-CS-02).
+  diff            Json            @default("[]")
+  /// Motif obligatoire de chaque écart avec le constat.
+  reasons         Json            @default("[]")
+  authorId        String          @map("author_id") @db.Uuid
+  /// Révision figée par l'envoi d'un devis (R-CS-03) ; null tant qu'elle est ouverte.
+  lockedAt        DateTime?       @map("locked_at") @db.Timestamptz(3)
+  createdAt       DateTime        @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime        @map("updated_at") @db.Timestamptz(3)
+  version         Int             @default(0)
+  request         CleaningRequest @relation(fields: [requestId], references: [id])
+  visit           Visit?          @relation(fields: [visitId], references: [id])
+  quotes          Quote[]
+
+  @@unique([requestId, revision])
+  @@index([visitId])
+  @@map("retained_values")
+}
+
+/// Statut d'un devis (partie 15.2).
+enum QuoteStatus {
+  draft
+  sent
+  accepted
+  declined
+  expired
+  superseded
+  /// Devis envoyé retiré : nouvelle visite demandée par KSP (R-VI-07).
+  withdrawn
+
+  @@map("quote_status")
+}
+
+/// Nature d'un devis (valeurs du contrat Quote.kind) : initial, avenant (R-PG-06), renouvellement
+/// (R-PG-07), nouvelle commande (R-PG-08). À valider : avenant et renouvellement rattachés à la
+/// demande du programme visé ; une nouvelle commande ouvre une nouvelle demande et ne vise aucun
+/// programme existant, comme un devis initial.
+enum QuoteKind {
+  initial
+  amendment
+  renewal
+  reorder
+
+  @@map("quote_kind")
+}
+
+/// Devis (partie 7.5) : prix figé à l'envoi (R-DV-02). Une révision ajoute une version et passe la
+/// précédente « superseded » (R-DV-05). Un seul devis envoyé à la fois par demande (index partiel).
+model Quote {
+  id                     String          @id @db.Uuid
+  requestId              String          @map("request_id") @db.Uuid
+  version                Int
+  kind                   QuoteKind       @default(initial)
+  /// Programme modifié par un avenant ou renouvelé ; null pour un devis initial.
+  programId              String?         @map("program_id") @db.Uuid
+  /// Révision retenue figée à l'envoi.
+  retainedValuesId       String?         @map("retained_values_id") @db.Uuid
+  status                 QuoteStatus     @default(draft)
+  /// Lignes par type (quantité, prix unitaire, montant) et ligne de remise ou majoration manuelle.
+  lines                  Json
+  /// Prix d'une séance, strictement positif (R-DV-03).
+  sessionPrice           Int             @map("session_price")
+  sessionsCount          Int             @map("sessions_count")
+  /// Prix du programme = prix d'une séance × nombre de séances (partie 5).
+  total                  Int
+  /// Frais de visite déduits (R-FV-05).
+  visitFeeDeduction      Int             @default(0) @map("visit_fee_deduction")
+  teamSize               Int             @map("team_size")
+  durationMinutes        Int             @map("duration_minutes")
+  /// Programme figé à l'envoi, avec la liste des dates.
+  schedulePlan           Json            @map("schedule_plan")
+  scheduledDates         String[]        @default([]) @map("scheduled_dates")
+  /// Remise (négatif) ou majoration (positif) manuelle sur une séance (R-DV-03).
+  manualAdjustment       Int?            @map("manual_adjustment")
+  manualAdjustmentReason String?         @map("manual_adjustment_reason")
+  /// Admin qui a validé une remise au-delà du seuil des réglages (20 % par défaut).
+  adjustmentApprovedBy   String?         @map("adjustment_approved_by") @db.Uuid
+  validUntil             DateTime?       @map("valid_until") @db.Timestamptz(3)
+  /// Rappel avant l'expiration envoyé (R-DV-04).
+  expiryRemindedAt       DateTime?       @map("expiry_reminded_at") @db.Timestamptz(3)
+  createdBy              String          @map("created_by") @db.Uuid
+  createdAt              DateTime        @map("created_at") @db.Timestamptz(3)
+  sentAt                 DateTime?       @map("sent_at") @db.Timestamptz(3)
+  sentBy                 String?         @map("sent_by") @db.Uuid
+  respondedAt            DateTime?       @map("responded_at") @db.Timestamptz(3)
+  respondedBy            String?         @map("responded_by") @db.Uuid
+  /// Motif de refus du client (liste + texte, R-AC-03).
+  declineReason          Json?           @map("decline_reason")
+  /// Date de début choisie à l'acceptation (R-AC-01).
+  acceptedStartDate      DateTime?       @map("accepted_start_date") @db.Date
+  /// Retrait d'un devis envoyé (R-VI-07) : date, auteur et motif obligatoire.
+  withdrawnAt            DateTime?       @map("withdrawn_at") @db.Timestamptz(3)
+  withdrawnBy            String?         @map("withdrawn_by") @db.Uuid
+  withdrawalReason       String?         @map("withdrawal_reason")
+  /// Contrôle de concurrence optimiste (version est le numéro de révision du devis).
+  lockVersion            Int             @default(0) @map("lock_version")
+  request                CleaningRequest @relation(fields: [requestId], references: [id])
+  retainedValues         RetainedValues? @relation(fields: [retainedValuesId], references: [id])
+  program                Program?        @relation("QuoteTargetProgram", fields: [programId], references: [id])
+  createdProgram         Program?        @relation("ProgramQuote")
+
+  @@unique([requestId, version])
+  @@index([status, validUntil])
+  @@index([programId])
+  @@map("quotes")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Programmes et séances (parties 8, 10, 11).
+// ---------------------------------------------------------------------------------------------
+
+/// Payeur d'un programme (partie 11).
+enum PayerKind {
+  individual
+  organization
+
+  @@map("payer_kind")
+}
+
+/// Statut d'un programme (partie 15.2).
+enum ProgramStatus {
+  confirmed
+  in_progress
+  suspended
+  completed
+  cancelled
+
+  @@map("program_status")
+}
+
+/// Cause de suspension (R-SU-01) ; organization_suspended vient d'identity (à valider).
+enum SuspensionCause {
+  overdue_sessions
+  unpaid_invoices
+  ksp_decision
+  organization_suspended
+
+  @@map("suspension_cause")
+}
+
+/// Auteur d'une annulation ou d'un report (partie 12, valeurs du contrat : SessionCancellation.by,
+/// Reschedule.by, cleaning.program.cancelled.cancelledBy). Une annulation automatique (fin d'un
+/// programme annulé) reprend l'auteur de l'annulation du programme.
+enum CancelledBy {
+  customer
+  ksp
+
+  @@map("cancelled_by")
+}
+
+/// Proposition de renouvellement d'un programme récurrent (R-PG-07, valeurs du contrat
+/// Renewal.status).
+enum RenewalStatus {
+  proposed
+  accepted
+  declined
+
+  @@map("renewal_status")
+}
+
+/// Programme : séances d'un devis accepté (partie 8).
+model Program {
+  id                     String                   @id @db.Uuid
+  /// Numéro lisible PN-000057, attribué par la base (séquence, voir la migration).
+  number                 String                   @unique @default(dbgenerated("cleaning_format_number('PN-'::text, nextval('cleaning_program_number_seq'::regclass))"))
+  requestId              String                   @map("request_id") @db.Uuid
+  /// Devis accepté qui a créé le programme : un programme par devis.
+  quoteId                String                   @unique @map("quote_id") @db.Uuid
+  ownerKind              OwnerKind                @map("owner_kind")
+  ownerId                String                   @map("owner_id") @db.Uuid
+  payerKind              PayerKind                @map("payer_kind")
+  placeId                String                   @map("place_id") @db.Uuid
+  communeKey             String                   @map("commune_key")
+  status                 ProgramStatus            @default(confirmed)
+  /// Causes actives, cumulables (R-SU-01) : le programme ne reprend que quand toutes sont levées.
+  /// Cache des causes actives de program_suspension_causes, mis à jour dans la même transaction.
+  suspensionCauses       SuspensionCause[]        @default([]) @map("suspension_causes")
+  suspendedAt            DateTime?                @map("suspended_at") @db.Timestamptz(3)
+  sessionPrice           Int                      @map("session_price")
+  teamSize               Int                      @map("team_size")
+  durationMinutes        Int                      @map("duration_minutes")
+  schedulePlan           Json                     @map("schedule_plan")
+  /// Frais de visite restant à déduire des prochains paiements (R-FV-05, R-PP-02).
+  visitFeeToDeduct       Int                      @default(0) @map("visit_fee_to_deduct")
+  /// Programme renouvelé (R-PG-07) ; null pour le premier programme d'une demande.
+  renewalOfProgramId     String?                  @unique @map("renewal_of_program_id") @db.Uuid
+  /// Proposition de renouvellement de ce programme (R-PG-07), 14 jours avant la fin ; null : aucune.
+  renewalStatus          RenewalStatus?           @map("renewal_status")
+  renewalProposedAt      DateTime?                @map("renewal_proposed_at") @db.Timestamptz(3)
+  /// Acceptation ou refus de la proposition.
+  renewalRespondedAt     DateTime?                @map("renewal_responded_at") @db.Timestamptz(3)
+  renewalRespondedBy     String?                  @map("renewal_responded_by") @db.Uuid
+  /// Fin du programme (statut completed) : départ de la durée de conservation des positions de ses
+  /// séances (R-DP-01).
+  completedAt            DateTime?                @map("completed_at") @db.Timestamptz(3)
+  cancelledAt            DateTime?                @map("cancelled_at") @db.Timestamptz(3)
+  cancelledBy            CancelledBy?             @map("cancelled_by")
+  cancellationReason     String?                  @map("cancellation_reason")
+  /// Admin qui a validé l'arrêt par KSP (partie 12).
+  cancellationApprovedBy String?                  @map("cancellation_approved_by") @db.Uuid
+  createdAt              DateTime                 @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                 @map("updated_at") @db.Timestamptz(3)
+  version                Int                      @default(0)
+  request                CleaningRequest          @relation(fields: [requestId], references: [id])
+  quote                  Quote                    @relation("ProgramQuote", fields: [quoteId], references: [id])
+  place                  Place                    @relation(fields: [placeId], references: [id])
+  zone                   Zone                     @relation(fields: [communeKey], references: [communeKey])
+  renewalOf              Program?                 @relation("ProgramRenewal", fields: [renewalOfProgramId], references: [id])
+  renewedBy              Program?                 @relation("ProgramRenewal")
+  amendmentQuotes        Quote[]                  @relation("QuoteTargetProgram")
+  sessions               Session[]
+  /// Historique des causes de suspension (date, motif, auteur).
+  suspensionCauseHistory ProgramSuspensionCause[]
+
+  @@index([ownerKind, ownerId, status])
+  @@index([status, updatedAt])
+  @@index([requestId])
+  @@map("programs")
+}
+
+/// Historique des causes de suspension d'un programme (R-SU-01) : date, motif et auteur de chaque
+/// cause, de son ajout à sa levée. Une seule ligne active (non levée) par programme et par cause
+/// (index partiel) ; Program.suspensionCauses en est le cache.
+model ProgramSuspensionCause {
+  id        String          @id @db.Uuid
+  programId String          @map("program_id") @db.Uuid
+  cause     SuspensionCause
+  /// Ajout de la cause.
+  since     DateTime        @db.Timestamptz(3)
+  /// Levée de la cause ; null tant qu'elle est active.
+  liftedAt  DateTime?       @map("lifted_at") @db.Timestamptz(3)
+  /// Motif, obligatoire pour une décision de KSP.
+  reason    String?
+  /// Personnel qui a décidé la suspension (ksp_decision) ; null pour le système.
+  decidedBy String?         @map("decided_by") @db.Uuid
+  /// Personnel qui a levé la cause ; null pour le système.
+  liftedBy  String?         @map("lifted_by") @db.Uuid
+  program   Program         @relation(fields: [programId], references: [id])
+
+  @@index([programId, since])
+  @@map("program_suspension_causes")
+}
+
+/// Statut d'une séance (partie 15.2). Un report n'est pas un statut (SessionReschedule).
+enum SessionStatus {
+  to_assign
+  assigned
+  in_progress
+  interrupted
+  completed
+  missed
+  suspended
+  cancelled
+
+  @@map("session_status")
+}
+
+/// Statut de paiement d'une séance de particulier (partie 15.2).
+enum SessionPaymentStatus {
+  not_due
+  due
+  paid
+  overdue
+  waived
+
+  @@map("session_payment_status")
+}
+
+/// Cause d'une séance manquée (valeurs du contrat ReportSessionMissedRequest.cause) : client absent
+/// (R-EX-02, facturée à 50 %) ou accès impossible (à valider : facturation d'un accès impossible).
+enum SessionMissedCause {
+  customer_absent
+  access_impossible
+
+  @@map("session_missed_cause")
+}
+
+/// Cause de l'annulation d'une séance (valeurs du contrat SessionCancellation.cause) : client plus de
+/// 24 h avant, client moins de 24 h avant (part du prix due), KSP, aucun agent à l'heure de fin
+/// prévue (R-PL-10, rien à payer), arrêt du programme.
+enum SessionCancelCause {
+  customer
+  customer_late
+  ksp
+  no_agent
+  program_stopped
+
+  @@map("session_cancel_cause")
+}
+
+/// Niveau d'alerte de couverture d'une séance (événement cleaning.session.staffing_alert) : sans
+/// agent 48 h avant (R-PL-06), sans agent à l'heure de début, agent absent 1 h après le début
+/// (R-PL-10).
+enum SessionStaffingAlert {
+  unassigned_48h
+  unassigned_at_start
+  agent_absent
+
+  @@map("session_staffing_alert")
+}
+
+/// Séance d'un programme (partie 8), avec ses agents, son statut et son paiement.
+model Session {
+  id                    String                @id @db.Uuid
+  programId             String                @map("program_id") @db.Uuid
+  /// Rang dans le programme (3 pour « séance 3/15 »).
+  rank                  Int
+  /// Commune du programme, recopiée pour les requêtes de planification par zone.
+  communeKey            String                @map("commune_key")
+  scheduledStart        DateTime              @map("scheduled_start") @db.Timestamptz(3)
+  scheduledEnd          DateTime              @map("scheduled_end") @db.Timestamptz(3)
+  status                SessionStatus         @default(to_assign)
+  /// Prix de la séance (prix du devis ; 0 pour une repasse gratuite, R-RC-03).
+  price                 Int
+  /// Montant dû : prix, ou part du prix pour une séance manquée ou annulée tard (50 % par défaut).
+  amountDue             Int?                  @map("amount_due")
+  /// Frais de visite déduits de ce débit (R-PP-02).
+  visitFeeDeducted      Int                   @default(0) @map("visit_fee_deducted")
+  paymentStatus         SessionPaymentStatus  @default(not_due) @map("payment_status")
+  /// Fin du délai de grâce de paiement (R-PP-03 : 24 h par défaut).
+  paymentDueAt          DateTime?             @map("payment_due_at") @db.Timestamptz(3)
+  paidAt                DateTime?             @map("paid_at") @db.Timestamptz(3)
+  /// Facture de séance émise par billing (R-PP-06).
+  invoiceId             String?               @map("invoice_id") @db.Uuid
+  /// Repasse gratuite décidée sur une réclamation (R-RC-03).
+  freeRedoOfClaimId     String?               @unique @map("free_redo_of_claim_id") @db.Uuid
+  arrivedAt             DateTime?             @map("arrived_at") @db.Timestamptz(3)
+  /// Position du chef d'équipe à l'arrivée, chiffrée.
+  arrivalGpsEncrypted   String?               @map("arrival_gps_encrypted")
+  /// Distance au lieu à l'arrivée, en mètres (alerte au-delà de 300 m, sans blocage).
+  arrivalDistanceM      Int?                  @map("arrival_distance_m")
+  startedAt             DateTime?             @map("started_at") @db.Timestamptz(3)
+  completedAt           DateTime?             @map("completed_at") @db.Timestamptz(3)
+  /// Points de la liste de contrôle, cochés avec leur heure réelle (R-EX-05).
+  checklist             Json                  @default("[]")
+  beforePhotoFileIds    String[]              @default([]) @map("before_photo_file_ids") @db.Uuid
+  afterPhotoFileIds     String[]              @default([]) @map("after_photo_file_ids") @db.Uuid
+  /// Signature du client, facultative (service file).
+  signatureFileId       String?               @map("signature_file_id") @db.Uuid
+  /// Photo du lieu d'une séance manquée (R-EX-02) ; facultative pour une absence signalée par le
+  /// back-office (R-EX-08).
+  missedPhotoFileId     String?               @map("missed_photo_file_id") @db.Uuid
+  /// Photos (avant, après, absence, incidents) supprimées chez file après la durée de conservation
+  /// (R-EX-07, R-DP-01), puis leurs références retirées : la séance n'en porte plus aucune.
+  photosErasedAt        DateTime?             @map("photos_erased_at") @db.Timestamptz(3)
+  /// Cause d'une séance manquée (ReportSessionMissedRequest.cause) ; null sinon.
+  missedCause           SessionMissedCause?   @map("missed_cause")
+  /// Début de l'attente du client sur place (R-EX-02 : attente réglable, customerWaitMinutes, avant
+  /// de marquer « manquée »), heure réelle du terrain.
+  waitStartedAt         DateTime?             @map("wait_started_at") @db.Timestamptz(3)
+  /// Appel du client tracé (R-EX-02), heure réelle du terrain.
+  calledAt              DateTime?             @map("called_at") @db.Timestamptz(3)
+  missedAt              DateTime?             @map("missed_at") @db.Timestamptz(3)
+  cancelledAt           DateTime?             @map("cancelled_at") @db.Timestamptz(3)
+  cancelledBy           CancelledBy?          @map("cancelled_by")
+  /// Cause d'une séance annulée ; null sinon.
+  cancelCause           SessionCancelCause?   @map("cancel_cause")
+  /// Annulation par le client moins de 24 h avant (partie 12) : part du prix due.
+  lateCancellation      Boolean               @default(false) @map("late_cancellation")
+  changeReason          String?               @map("change_reason")
+  /// Dernière alerte de couverture envoyée, pour n'en envoyer qu'une par niveau (R-PL-06, R-PL-10).
+  staffingAlertLevel    SessionStaffingAlert? @map("staffing_alert_level")
+  /// Clôture ou absence du client enregistrée par le back-office pour l'équipe (R-EX-08) : auteur,
+  /// motif et agents présents obligatoires ; photos et liste de contrôle alors facultatives.
+  closedByStaff         Boolean               @default(false) @map("closed_by_staff")
+  closedBy              String?               @map("closed_by") @db.Uuid
+  closedReason          String?               @map("closed_reason")
+  presentAgentIds       String[]              @default([]) @map("present_agent_ids") @db.Uuid
+  /// Date de rattrapage proposée à la reprise du programme (R-SU-03), remise à null au report ou à
+  /// l'annulation.
+  catchUpSuggestedStart DateTime?             @map("catch_up_suggested_start") @db.Timestamptz(3)
+  /// Rappel de la veille envoyé (R-PP-05), une fois par séance.
+  remindedAt            DateTime?             @map("reminded_at") @db.Timestamptz(3)
+  /// Dernière alerte de solde insuffisant (R-WL-06), une fois par séance et par jour.
+  balanceAlertedAt      DateTime?             @map("balance_alerted_at") @db.Timestamptz(3)
+  /// Note du client (1 à 5 étoiles) et commentaire (partie 10).
+  rating                Int?
+  ratingComment         String?               @map("rating_comment")
+  ratedAt               DateTime?             @map("rated_at") @db.Timestamptz(3)
+  createdAt             DateTime              @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime              @map("updated_at") @db.Timestamptz(3)
+  version               Int                   @default(0)
+  program               Program               @relation(fields: [programId], references: [id])
+  zone                  Zone                  @relation(fields: [communeKey], references: [communeKey])
+  freeRedoOfClaim       Claim?                @relation("ClaimFreeRedo", fields: [freeRedoOfClaimId], references: [id])
+  assignments           Assignment[]
+  incidents             SessionIncident[]
+  reschedules           SessionReschedule[]
+  claims                Claim[]               @relation("ClaimSession")
+  walletOperations      WalletOperation[]
+  directPayments        DirectPayment[]
+
+  @@unique([programId, rank])
+  @@index([programId, scheduledStart])
+  @@index([status, communeKey, scheduledStart])
+  @@index([status, scheduledStart])
+  @@index([paymentStatus, paymentDueAt])
+  @@map("sessions")
+}
+
+/// Nature d'un incident (partie 10).
+enum IncidentKind {
+  equipment
+  access
+  safety
+  out_of_scope_request
+  other
+
+  @@map("incident_kind")
+}
+
+/// Décision du superviseur sur un incident (partie 10, valeurs du contrat Incident.decision) :
+/// en attente, reprise, séance reportée, séance annulée.
+enum IncidentDecision {
+  pending
+  resumed
+  rescheduled
+  cancelled
+
+  @@map("incident_decision")
+}
+
+/// Incident signalé pendant une séance (partie 10, R-EX-03).
+model SessionIncident {
+  id           String           @id @db.Uuid
+  sessionId    String           @map("session_id") @db.Uuid
+  kind         IncidentKind
+  note         String
+  photoFileIds String[]         @default([]) @map("photo_file_ids") @db.Uuid
+  reportedBy   String           @map("reported_by") @db.Uuid
+  /// Heure réelle de l'incident, même envoyé plus tard (hors connexion, R-EX-05).
+  occurredAt   DateTime         @map("occurred_at") @db.Timestamptz(3)
+  decision     IncidentDecision @default(pending)
+  decidedBy    String?          @map("decided_by") @db.Uuid
+  decidedAt    DateTime?        @map("decided_at") @db.Timestamptz(3)
+  session      Session          @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId])
+  @@map("session_incidents")
+}
+
+/// Report d'une séance : les dates précédentes restent dans l'historique (partie 8) et servent au
+/// plafond de reports par mois (partie 12).
+model SessionReschedule {
+  id            String      @id @db.Uuid
+  sessionId     String      @map("session_id") @db.Uuid
+  previousStart DateTime    @map("previous_start") @db.Timestamptz(3)
+  previousEnd   DateTime    @map("previous_end") @db.Timestamptz(3)
+  newStart      DateTime    @map("new_start") @db.Timestamptz(3)
+  newEnd        DateTime    @map("new_end") @db.Timestamptz(3)
+  requestedBy   CancelledBy @map("requested_by")
+  actorId       String      @map("actor_id") @db.Uuid
+  reason        String?
+  createdAt     DateTime    @map("created_at") @db.Timestamptz(3)
+  session       Session     @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId, createdAt])
+  @@map("session_reschedules")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Agents et planification (partie 9).
+// ---------------------------------------------------------------------------------------------
+
+/// Statut d'un agent (partie 15.2).
+enum AgentStatus {
+  applicant
+  under_review
+  active
+  suspended
+  deactivated
+  rejected
+
+  @@map("agent_status")
+}
+
+/// Statut d'emploi (partie 9.1, valeurs du contrat Agent.employment_kind) : salarié ou
+/// indépendant partenaire (R-PL-08).
+enum EmploymentKind {
+  employee
+  independent
+
+  @@map("employment_kind")
+}
+
+/// Compétence d'un agent : déclarée, validée ou refusée une par une (R-AG-01).
+enum AgentSkillStatus {
+  declared
+  validated
+  rejected
+
+  @@map("agent_skill_status")
+}
+
+/// Agent de nettoyage (partie 9.1). Jamais supprimé (R-AG-03). Nom, prénom, téléphone et photo
+/// restent dans identity ; seuls un nom d'affichage et la photo sont recopiés pour le planning.
+model Agent {
+  /// Identifiant de l'agent, exposé par l'API (/admin/cleaning/agents/{id}) et porté par les
+  /// événements cleaning.agent.* (agentId) ; distinct du compte.
+  id                        String             @id @db.Uuid
+  /// Compte KSP de l'agent (identity) : un seul agent par compte.
+  userId                    String             @unique @map("user_id") @db.Uuid
+  status                    AgentStatus        @default(applicant)
+  employmentKind            EmploymentKind     @map("employment_kind")
+  displayName               String             @map("display_name")
+  photoFileId               String?            @map("photo_file_id") @db.Uuid
+  /// Commune de résidence (partie 9.1).
+  homeCommuneKey            String             @map("home_commune_key")
+  /// Pièce d'identité chiffrée : { type, number, frontFileId, backFileId } (partie 9.1).
+  idDocumentEncrypted       String?            @map("id_document_encrypted")
+  /// Personne à prévenir en cas d'urgence, chiffrée (à valider : la partie 16.3 ne l'exige pas).
+  emergencyContactEncrypted String?            @map("emergency_contact_encrypted")
+  /// Numéro Mobile Money, chiffré (à valider), pour la rémunération gérée hors du module.
+  mobileMoneyEncrypted      String?            @map("mobile_money_encrypted")
+  /// Charge maximale (R-DS-03), réglable par agent.
+  maxHoursDay               Int                @default(8) @map("max_hours_day")
+  maxHoursWeek              Int                @default(48) @map("max_hours_week")
+  /// Aptitude à être chef d'équipe (R-PL-04).
+  canLead                   Boolean            @default(false) @map("can_lead")
+  /// Note des clients : somme et nombre des notes, la moyenne s'en déduit sans arrondi.
+  ratingSum                 Int                @default(0) @map("rating_sum")
+  ratingCount               Int                @default(0) @map("rating_count")
+  /// Motif d'un refus, d'une suspension ou d'une désactivation.
+  statusReason              String?            @map("status_reason")
+  reviewedBy                String?            @map("reviewed_by") @db.Uuid
+  reviewedAt                DateTime?          @map("reviewed_at") @db.Timestamptz(3)
+  createdBy                 String?            @map("created_by") @db.Uuid
+  createdAt                 DateTime           @map("created_at") @db.Timestamptz(3)
+  updatedAt                 DateTime           @map("updated_at") @db.Timestamptz(3)
+  version                   Int                @default(0)
+  /// Piste A : attribution du rôle cleaning_agent chez identity (GrantRole, R-AG-01), posée quand
+  /// l'agent devient actif, effacée une fois le rôle retiré après la désactivation.
+  roleAssignmentId          String?            @map("role_assignment_id") @db.Uuid
+  skills                    AgentSkill[]
+  zones                     AgentZone[]
+  availabilityRules         AvailabilityRule[]
+  unavailabilities          Unavailability[]
+  ledTeams                  Team[]             @relation("TeamLead")
+  teams                     TeamMember[]
+  assignments               Assignment[]
+
+  @@index([status])
+  @@map("agents")
+}
+
+/// Compétence déclarée par un agent, validée par l'admin (R-AG-01).
+model AgentSkill {
+  agentId    String           @map("agent_id") @db.Uuid
+  skillCode  String           @map("skill_code")
+  status     AgentSkillStatus @default(declared)
+  reviewedBy String?          @map("reviewed_by") @db.Uuid
+  reviewedAt DateTime?        @map("reviewed_at") @db.Timestamptz(3)
+  agent      Agent            @relation(fields: [agentId], references: [id])
+  skill      Skill            @relation(fields: [skillCode], references: [code])
+
+  @@id([agentId, skillCode])
+  @@index([skillCode, status])
+  @@map("agent_skills")
+}
+
+/// Zone de travail d'un agent (partie 9.1, contrôle « Zone » de 9.4).
+model AgentZone {
+  agentId    String @map("agent_id") @db.Uuid
+  communeKey String @map("commune_key")
+  agent      Agent  @relation(fields: [agentId], references: [id])
+  zone       Zone   @relation(fields: [communeKey], references: [communeKey])
+
+  @@id([agentId, communeKey])
+  @@index([communeKey])
+  @@map("agent_zones")
+}
+
+/// Plage du modèle hebdomadaire (R-DS-01), en heure locale Africa/Porto-Novo. Deux plages d'un même
+/// jour ne se chevauchent pas (contrainte d'exclusion).
+model AvailabilityRule {
+  id          String   @id @db.Uuid
+  agentId     String   @map("agent_id") @db.Uuid
+  /// Jour ISO : 1 = lundi … 7 = dimanche.
+  weekday     Int
+  /// Début et fin de la plage, en minutes depuis minuit (fin exclue, 1440 au plus).
+  startMinute Int      @map("start_minute")
+  endMinute   Int      @map("end_minute")
+  updatedBy   String   @map("updated_by") @db.Uuid
+  updatedAt   DateTime @map("updated_at") @db.Timestamptz(3)
+  agent       Agent    @relation(fields: [agentId], references: [id])
+
+  @@index([agentId, weekday])
+  @@map("availability_rules")
+}
+
+/// Exception au modèle hebdomadaire (R-DS-02).
+enum UnavailabilityKind {
+  unavailable
+  extra_availability
+
+  @@map("unavailability_kind")
+}
+
+/// Motif d'une indisponibilité (R-DS-02).
+enum UnavailabilityReason {
+  leave
+  sickness
+  other
+
+  @@map("unavailability_reason")
+}
+
+/// Indisponibilité ou disponibilité exceptionnelle d'un agent, sur une date ou une période (R-DS-02).
+model Unavailability {
+  id        String                @id @db.Uuid
+  agentId   String                @map("agent_id") @db.Uuid
+  kind      UnavailabilityKind    @default(unavailable)
+  startsAt  DateTime              @map("starts_at") @db.Timestamptz(3)
+  endsAt    DateTime              @map("ends_at") @db.Timestamptz(3)
+  reason    UnavailabilityReason?
+  note      String?
+  /// Indisponibilité forcée par le superviseur malgré des affectations (R-DS-04).
+  forced    Boolean               @default(false)
+  createdBy String                @map("created_by") @db.Uuid
+  createdAt DateTime              @map("created_at") @db.Timestamptz(3)
+  agent     Agent                 @relation(fields: [agentId], references: [id])
+
+  @@index([agentId, startsAt])
+  @@map("unavailabilities")
+}
+
+/// Équipe (R-EQ-01) : désactivée, jamais supprimée.
+model Team {
+  id          String       @id @db.Uuid
+  name        String
+  leadAgentId String       @map("lead_agent_id") @db.Uuid
+  active      Boolean      @default(true)
+  createdAt   DateTime     @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime     @map("updated_at") @db.Timestamptz(3)
+  lead        Agent        @relation("TeamLead", fields: [leadAgentId], references: [id])
+  members     TeamMember[]
+
+  @@index([leadAgentId])
+  @@map("teams")
+}
+
+/// Membre d'une équipe.
+model TeamMember {
+  teamId  String @map("team_id") @db.Uuid
+  agentId String @map("agent_id") @db.Uuid
+  team    Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  agent   Agent  @relation(fields: [agentId], references: [id])
+
+  @@id([teamId, agentId])
+  @@index([agentId])
+  @@map("team_members")
+}
+
+/// Cible d'une affectation (partie 9.4).
+enum AssignmentTarget {
+  visit
+  session
+
+  @@map("assignment_target")
+}
+
+/// Origine d'une affectation (partie 9.5).
+enum AssignmentSource {
+  manual
+  auto
+
+  @@map("assignment_source")
+}
+
+/// Statut d'une affectation (valeurs du contrat Assignment.status) :
+/// - proposed : proposée par la planification en mode « proposition » (R-PL-05), en attente de la
+///   validation du superviseur (UC-NT-38) ;
+/// - pending_confirmation : en attente de la réponse de l'indépendant, sous 12 h (R-PL-08) ;
+/// - confirmed : confirmée (salarié d'office, ou indépendant qui a accepté) ;
+/// - declined, expired : refusée par l'indépendant, ou sans réponse dans le délai ;
+/// - removed : retirée par le superviseur (désaffectation, ou proposition écartée).
+/// Une affectation proposed, pending_confirmation ou confirmed est « en vigueur » : elle occupe
+/// l'agenda de l'agent (contrainte assignments_no_overlap). À valider : une proposition bloque
+/// l'agenda tant qu'elle n'est ni validée ni retirée.
+enum AssignmentStatus {
+  proposed
+  pending_confirmation
+  confirmed
+  declined
+  expired
+  removed
+
+  @@map("assignment_status")
+}
+
+/// Contrôle contournable forcé par le superviseur, avec motif (partie 9.4).
+enum AssignmentOverride {
+  zone
+  availability
+  load
+  team_size
+
+  @@map("assignment_override")
+}
+
+/// Affectation d'un agent à une visite ou à une séance (partie 9.4), y compris une proposition de
+/// la planification (R-PL-05). Un retrait garde la ligne (statut removed). La période occupée,
+/// trajet compris (R-VI-02, R-ZN-02), ne chevauche aucune autre affectation en vigueur du même
+/// agent : contrainte d'exclusion assignments_no_overlap.
+model Assignment {
+  id            String               @id @db.Uuid
+  targetKind    AssignmentTarget     @map("target_kind")
+  visitId       String?              @map("visit_id") @db.Uuid
+  sessionId     String?              @map("session_id") @db.Uuid
+  agentId       String               @map("agent_id") @db.Uuid
+  isLead        Boolean              @default(false) @map("is_lead")
+  source        AssignmentSource
+  status        AssignmentStatus
+  /// Échéance de réponse d'un indépendant (12 h par défaut).
+  responseDueAt DateTime?            @map("response_due_at") @db.Timestamptz(3)
+  respondedAt   DateTime?            @map("responded_at") @db.Timestamptz(3)
+  /// Période occupée dans l'agenda de l'agent : début de la cible moins le trajet, fin de la cible.
+  /// Recopiée de la cible ; mise à jour dans la même transaction qu'un report.
+  occupiedFrom  DateTime             @map("occupied_from") @db.Timestamptz(3)
+  occupiedUntil DateTime             @map("occupied_until") @db.Timestamptz(3)
+  /// Temps de trajet compté avant la cible (OSRM, ou la valeur par défaut des réglages).
+  travelMinutes Int                  @default(0) @map("travel_minutes")
+  /// Contrôles contournables forcés ; un motif est alors obligatoire.
+  overrides     AssignmentOverride[] @default([])
+  reason        String?
+  /// Superviseur qui a affecté ; null pour la planification automatique (source auto).
+  createdBy     String?              @map("created_by") @db.Uuid
+  createdAt     DateTime             @map("created_at") @db.Timestamptz(3)
+  /// Validation d'une proposition par le superviseur (ApproveProposals).
+  approvedBy    String?              @map("approved_by") @db.Uuid
+  approvedAt    DateTime?            @map("approved_at") @db.Timestamptz(3)
+  /// Retrait (statut removed) : par qui, quand et pourquoi (motif obligatoire, UC-NT-37).
+  removedAt     DateTime?            @map("removed_at") @db.Timestamptz(3)
+  /// null pour le système.
+  removedBy     String?              @map("removed_by") @db.Uuid
+  /// Motif saisi, ou code système : session_cancelled, program_cancelled, visit_cancelled,
+  /// request_closed, rescheduled, program_suspended, agent_unavailable (R-PL-09).
+  removalReason String?              @map("removal_reason")
+  visit         Visit?               @relation(fields: [visitId], references: [id])
+  session       Session?             @relation(fields: [sessionId], references: [id])
+  agent         Agent                @relation(fields: [agentId], references: [id])
+
+  @@index([agentId, occupiedFrom])
+  @@index([sessionId])
+  @@index([visitId])
+  @@index([status, responseDueAt])
+  @@map("assignments")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Réclamations (partie 12).
+// ---------------------------------------------------------------------------------------------
+
+/// Motif d'une réclamation (R-RC-01, valeurs du contrat Claim.category).
+enum ClaimReason {
+  incomplete_work
+  damage
+  behavior
+  missing_item
+  other
+
+  @@map("claim_reason")
+}
+
+/// Statut d'une réclamation (R-RC-02).
+enum ClaimStatus {
+  open
+  in_progress
+  resolved
+  rejected
+
+  @@map("claim_status")
+}
+
+/// Décision sur une réclamation (R-RC-03, valeurs du contrat ClaimDecision.outcome) : repasse
+/// gratuite, crédit, rejet motivé. Une seule valeur pour le crédit : wallet_credit est un crédit au
+/// wallet pour un particulier et un avoir (billing, IssueCreditNote) pour une entreprise ; le payeur
+/// du programme décide de la forme.
+enum ClaimDecision {
+  free_redo
+  wallet_credit
+  rejected
+
+  @@map("claim_decision")
+}
+
+/// Réclamation sur une séance réalisée (R-RC-01 à 05).
+model Claim {
+  id               String            @id @db.Uuid
+  sessionId        String            @map("session_id") @db.Uuid
+  openedBy         String            @map("opened_by") @db.Uuid
+  reason           ClaimReason
+  text             String
+  photoFileIds     String[]          @default([]) @map("photo_file_ids") @db.Uuid
+  status           ClaimStatus       @default(open)
+  decision         ClaimDecision?
+  decisionReason   String?           @map("decision_reason")
+  /// Crédit au wallet ou avoir ; au-delà de 50 000 FCFA, validé par une deuxième personne.
+  creditAmount     Int?              @map("credit_amount")
+  /// Avoir émis par billing (IssueCreditNote) pour une entreprise ; null pour un particulier,
+  /// crédité par une opération de wallet (WalletOperation, objet claim_credit).
+  creditNoteId     String?           @unique @map("credit_note_id") @db.Uuid
+  decidedBy        String?           @map("decided_by") @db.Uuid
+  decidedAt        DateTime?         @map("decided_at") @db.Timestamptz(3)
+  creditApprovedBy String?           @map("credit_approved_by") @db.Uuid
+  firstResponseAt  DateTime?         @map("first_response_at") @db.Timestamptz(3)
+  /// Clôture (résolue ou rejetée).
+  closedAt         DateTime?         @map("closed_at") @db.Timestamptz(3)
+  createdAt        DateTime          @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime          @map("updated_at") @db.Timestamptz(3)
+  version          Int               @default(0)
+  session          Session           @relation("ClaimSession", fields: [sessionId], references: [id])
+  freeRedoSession  Session?          @relation("ClaimFreeRedo")
+  messages         ClaimMessage[]
+  walletOperations WalletOperation[]
+
+  @@index([sessionId])
+  @@index([status, createdAt])
+  @@map("claims")
+}
+
+/// Échange entre le client et le back-office sur une réclamation (R-RC-02).
+model ClaimMessage {
+  id        String   @id @db.Uuid
+  claimId   String   @map("claim_id") @db.Uuid
+  authorId  String   @map("author_id") @db.Uuid
+  /// Message écrit par le personnel (true) ou par le client (false).
+  fromStaff Boolean  @map("from_staff")
+  body      String
+  createdAt DateTime @map("created_at") @db.Timestamptz(3)
+  claim     Claim    @relation(fields: [claimId], references: [id])
+
+  @@index([claimId, createdAt])
+  @@map("claim_messages")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Argent : opérations demandées au wallet et paiements directs (R-WL-03, R-WL-05, partie 15.4).
+// ---------------------------------------------------------------------------------------------
+
+/// Sens d'une opération de wallet.
+enum WalletOperationKind {
+  debit
+  credit
+
+  @@map("wallet_operation_kind")
+}
+
+/// Objet d'une opération de wallet (R-WL-03) ; commercial_gesture : geste de la finance (partie 12).
+enum WalletOperationPurpose {
+  visit_fee
+  visit_fee_refund
+  session_payment
+  claim_credit
+  commercial_gesture
+
+  @@map("wallet_operation_purpose")
+}
+
+/// État d'une opération envoyée au wallet.
+enum WalletOperationStatus {
+  pending
+  succeeded
+  failed
+
+  @@map("wallet_operation_status")
+}
+
+/// Débit ou crédit demandé au service wallet, avec sa clé d'idempotence (R-WL-03 : un même objet
+/// n'est jamais débité deux fois). Écrit avant l'appel, mis à jour à la réponse.
+model WalletOperation {
+  id                  String                 @id @db.Uuid
+  kind                WalletOperationKind
+  purpose             WalletOperationPurpose
+  /// Clé envoyée à wallet, unique : l'objet débité ou crédité (R-WL-03). Débits :
+  /// « cleaning_session:<sessionId> », « cleaning_visit_fee:<requestId>:<rang> », suivies de
+  /// « :<attempt> » à partir de la deuxième tentative (débit précédent remboursé par le
+  /// rapprochement). Crédits, clé fixe : « cleaning_visit_fee_refund:<visitFeeId> »,
+  /// « cleaning_claim_credit:<claimId> », « cleaning_gesture:<walletOperationId> » (identifiant
+  /// fixé par l'Idempotency-Key de la route). Une opération en cours est rejouée avec la même clé
+  /// jusqu'à connaître son issue.
+  idempotencyKey      String                 @unique @map("idempotency_key")
+  /// Tentative pour le même objet : 1, puis 2, 3… après un débit remboursé.
+  attempt             Int                    @default(1)
+  walletOwnerKind     OwnerKind              @map("wallet_owner_kind")
+  walletOwnerId       String                 @map("wallet_owner_id") @db.Uuid
+  amount              Int
+  /// Objet lisible du mouvement (« Nettoyage — séance 3/15 »).
+  label               String
+  requestId           String?                @map("request_id") @db.Uuid
+  /// Frais de visite débités ou remboursés (objets visit_fee et visit_fee_refund).
+  visitFeeId          String?                @map("visit_fee_id") @db.Uuid
+  sessionId           String?                @map("session_id") @db.Uuid
+  claimId             String?                @map("claim_id") @db.Uuid
+  status              WalletOperationStatus  @default(pending)
+  /// Mouvement créé par wallet.
+  walletTransactionId String?                @map("wallet_transaction_id") @db.Uuid
+  failureCode         String?                @map("failure_code")
+  /// Personnel qui a déclenché un crédit manuel ; null pour le système.
+  createdBy           String?                @map("created_by") @db.Uuid
+  createdAt           DateTime               @map("created_at") @db.Timestamptz(3)
+  completedAt         DateTime?              @map("completed_at") @db.Timestamptz(3)
+  request             CleaningRequest?       @relation(fields: [requestId], references: [id])
+  /// Clé étrangère composée : les frais sont ceux de la demande citée.
+  visitFee            VisitFee?              @relation(fields: [visitFeeId, requestId], references: [id, requestId], onDelete: Restrict)
+  session             Session?               @relation(fields: [sessionId], references: [id])
+  claim               Claim?                 @relation(fields: [claimId], references: [id])
+
+  @@index([requestId])
+  @@index([visitFeeId, requestId])
+  @@index([sessionId])
+  @@index([claimId])
+  @@index([status, createdAt])
+  @@map("wallet_operations")
+}
+
+/// État d'un paiement direct par Mobile Money.
+enum DirectPaymentStatus {
+  pending
+  succeeded
+  failed
+  expired
+  /// Paiement reçu pour un objet qui n'est plus payable : rien n'est débité, le montant reste au
+  /// wallet (R-PP-07).
+  left_in_wallet
+
+  @@map("direct_payment_status")
+}
+
+/// Paiement direct de ce qui manque au solde (R-WL-05, R-PP-03) : le paiement crédite le wallet, puis
+/// le débit est refait (WalletOperation) à la réception de wallet.prepaid.credited dont forObject
+/// désigne l'objet ; payment.intent.succeeded ne sert qu'au suivi. Un seul paiement en cours par
+/// objet (index partiels).
+model DirectPayment {
+  id               String                 @id @db.Uuid
+  /// Demande de paiement créée par le service payment (CreatePaymentRequest).
+  paymentRequestId String?                @unique @map("payment_request_id") @db.Uuid
+  idempotencyKey   String                 @unique @map("idempotency_key")
+  purpose          WalletOperationPurpose
+  payerKind        OwnerKind              @map("payer_kind")
+  payerId          String                 @map("payer_id") @db.Uuid
+  amount           Int
+  requestId        String?                @map("request_id") @db.Uuid
+  /// Frais de visite payés (objet visit_fee).
+  visitFeeId       String?                @map("visit_fee_id") @db.Uuid
+  sessionId        String?                @map("session_id") @db.Uuid
+  status           DirectPaymentStatus    @default(pending)
+  /// Échéance de la page de paiement, au plus tard celle de l'objet (R-PP-07).
+  expiresAt        DateTime?              @map("expires_at") @db.Timestamptz(3)
+  createdAt        DateTime               @map("created_at") @db.Timestamptz(3)
+  completedAt      DateTime?              @map("completed_at") @db.Timestamptz(3)
+  request          CleaningRequest?       @relation(fields: [requestId], references: [id])
+  visitFee         VisitFee?              @relation(fields: [visitFeeId, requestId], references: [id, requestId], onDelete: Restrict)
+  session          Session?               @relation(fields: [sessionId], references: [id])
+
+  @@index([requestId])
+  @@index([visitFeeId, requestId])
+  @@index([sessionId])
+  @@index([status, createdAt])
+  @@map("direct_payments")
+}
+
+// ---------------------------------------------------------------------------------------------
+// État des organisations, appris par les événements (partie 11.2, 15.5).
+// ---------------------------------------------------------------------------------------------
+
+/// État d'une facture d'entreprise connu par les événements de billing.
+enum InvoiceStanding {
+  overdue
+  paid
+
+  @@map("invoice_standing")
+}
+
+/// Factures mensuelles d'entreprise (billing.invoice.overdue / paid) : compte des impayés d'une
+/// organisation (R-PE-06), indépendant de l'ordre d'arrivée des événements. Seules les factures
+/// `source = cleaning`, `kind = monthly` et `organizationId` renseigné sont gardées (filtre à la
+/// réception).
+model OrganizationInvoice {
+  invoiceId      String          @id @map("invoice_id") @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  /// Une facture payée ne redevient jamais impayée.
+  standing       InvoiceStanding
+  updatedAt      DateTime        @map("updated_at") @db.Timestamptz(3)
+
+  @@index([organizationId, standing])
+  @@map("organization_invoices")
+}
+
+/// Organisations dont KSP a changé l'état (identity.organization.suspended / reactivated).
+/// Absente : jamais suspendue.
 model OrganizationStanding {
   organizationId String   @id @map("organization_id") @db.Uuid
   suspended      Boolean
-  /// Date de la dernière décision appliquée (occurredAt) : un événement plus ancien est ignoré.
+  /// Date de la dernière décision appliquée (occurredAt) : un événement plus ancien est ignoré. À
+  /// date égale, la suspension l'emporte ; l'inbox et l'état sont écrits dans la même transaction.
   changedAt      DateTime @map("changed_at") @db.Timestamptz(3)
   updatedAt      DateTime @map("updated_at") @db.Timestamptz(3)
 
   @@map("organization_standings")
 }
 
-/// Zone desservie : une commune (clé normalisée, la même que les coefficients de commune).
-model ServiceZone {
-  code      String    @id
-  commune   String
-  /// Autres noms de la commune, pour rattacher une position géocodée à la zone (ADR-034).
-  aliases   String[]  @default([])
-  active    Boolean   @default(true)
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedBy String?   @map("updated_by")
-  updatedAt DateTime? @map("updated_at") @db.Timestamptz(3)
+/// Situation d'impayés d'une organisation (R-PE-06, R-AC-02) : factures mensuelles en retard et
+/// niveau d'avertissement déjà envoyé, tenus par organisation et non par programme.
+model OrganizationBillingStanding {
+  organizationId String   @id @map("organization_id") @db.Uuid
+  /// Factures en retard de l'organisation (organization_invoices), comparées aux seuils des réglages.
+  overdueCount   Int      @default(0) @map("overdue_count")
+  /// Nombre d'impayés au dernier avertissement envoyé (cleaning.organization.unpaid_warning) ;
+  /// 0 : aucun. Redescend quand le nombre baisse ; réévalué à la reprise.
+  warningLevel   Int      @default(0) @map("warning_level")
+  updatedAt      DateTime @map("updated_at") @db.Timestamptz(3)
+  /// Contrôle de concurrence optimiste.
+  version        Int      @default(0)
 
-  @@map("service_zones")
+  @@map("organization_billing_standings")
 }
 
-/// Opérations de groupe déjà faites (ADR-035) : idempotence par (auteur, opération, clé) ; le
-/// résultat est gardé pour être rejoué à l'identique.
-model RequestGroupOperation {
-  actorId        String   @map("actor_id") @db.Uuid
-  operation      String
-  idempotencyKey String   @map("idempotency_key")
-  groupId        String   @map("group_id") @db.Uuid
-  outcome        Json
-  createdAt      DateTime @map("created_at") @db.Timestamptz(3)
+// ---------------------------------------------------------------------------------------------
+// Réglages (partie 16.1) : une seule ligne (id = 1), bornes en contraintes CHECK.
+// ---------------------------------------------------------------------------------------------
 
-  @@id([actorId, operation, idempotencyKey])
-  @@map("request_group_operations")
-}
+/// Réglages du module (partie 16.1). Le mode de planification général s'applique aux zones qui
+/// n'en fixent pas (Zone.planningMode null).
+model CleaningSettings {
+  id                              Int          @id @default(1)
+  maxOpenRequests                 Int          @default(5) @map("max_open_requests")
+  minVisitLeadHours               Int          @default(24) @map("min_visit_lead_hours")
+  visitFeePaymentHours            Int          @default(72) @map("visit_fee_payment_hours")
+  /// Objectif de délai de visite, en heures ouvrées.
+  visitTargetHours                Int          @default(72) @map("visit_target_hours")
+  visitDurationMinutes            Int          @default(60) @map("visit_duration_minutes")
+  /// Temps de trajet quand OSRM est indisponible (R-ZN-02).
+  defaultTravelMinutes            Int          @default(30) @map("default_travel_minutes")
+  /// Frais de visite par défaut (R-FV-01), quand la catégorie n'en fixe pas ; à saisir.
+  defaultVisitFee                 Int          @default(0) @map("default_visit_fee")
+  deductVisitFee                  Boolean      @default(true) @map("deduct_visit_fee")
+  quoteValidityDays               Int          @default(15) @map("quote_validity_days")
+  /// Rappel avant l'expiration du devis : 0 = aucun rappel ; toujours inférieur à la validité.
+  quoteReminderDays               Int          @default(2) @map("quote_reminder_days")
+  /// Remise maximale sans validation d'un admin, en pourcentage.
+  maxDiscountWithoutApprovalPct   Int          @default(20) @map("max_discount_without_approval_pct")
+  firstSessionLeadHours           Int          @default(48) @map("first_session_lead_hours")
+  programMaxMonths                Int          @default(24) @map("program_max_months")
+  programMaxSessions              Int          @default(400) @map("program_max_sessions")
+  freeCancellationHours           Int          @default(24) @map("free_cancellation_hours")
+  maxReschedulesPerMonth          Int          @default(2) @map("max_reschedules_per_month")
+  /// Frais d'annulation tardive et de client absent, un seul réglage (partie 16.1, décision du
+  /// 18/11/2026 : 50 % du prix d'une séance).
+  lateCancellationFeePct          Int          @default(50) @map("late_cancellation_fee_pct")
+  sessionPaymentGraceHours        Int          @default(24) @map("session_payment_grace_hours")
+  overdueSessionsBeforeSuspension Int          @default(1) @map("overdue_sessions_before_suspension")
+  /// Garantie de solde avant une séance (R-PP-05), désactivée par défaut.
+  balanceGuarantee                Boolean      @default(false) @map("balance_guarantee")
+  unpaidInvoicesWarning           Int          @default(1) @map("unpaid_invoices_warning")
+  unpaidInvoicesSuspension        Int          @default(2) @map("unpaid_invoices_suspension")
+  /// Mode de planification général (R-PL-05), « proposition » par défaut.
+  defaultPlanningMode             PlanningMode @default(proposal) @map("default_planning_mode")
+  planningHorizonDays             Int          @default(14) @map("planning_horizon_days")
+  /// Poids du score des candidats (R-PL-03), total = 100.
+  scoreWeightContinuity           Int          @default(40) @map("score_weight_continuity")
+  scoreWeightProximity            Int          @default(25) @map("score_weight_proximity")
+  scoreWeightBalance              Int          @default(20) @map("score_weight_balance")
+  scoreWeightRating               Int          @default(15) @map("score_weight_rating")
+  assignmentResponseHours         Int          @default(12) @map("assignment_response_hours")
+  /// Charge maximale donnée à un nouvel agent (réglable ensuite par agent).
+  defaultMaxHoursDay              Int          @default(8) @map("default_max_hours_day")
+  defaultMaxHoursWeek             Int          @default(48) @map("default_max_hours_week")
+  maxPhotosPerType                Int          @default(10) @map("max_photos_per_type")
+  claimWindowHours                Int          @default(48) @map("claim_window_hours")
+  /// Distance d'alerte à l'arrivée, en mètres (partie 10), sans blocage.
+  arrivalAlertMeters              Int          @default(300) @map("arrival_alert_meters")
+  /// Avance maximale à l'arrivée sur une séance, en minutes (partie 10) ; 0 = pas de contrôle.
+  arrivalMaxAdvanceMinutes        Int          @default(30) @map("arrival_max_advance_minutes")
+  /// Attente avant de déclarer le client absent, en minutes (R-EX-02).
+  customerWaitMinutes             Int          @default(30) @map("customer_wait_minutes")
+  /// Points communs de la liste de contrôle de toutes les séances (R-EX-09), avant ceux de chaque
+  /// type : [{ code, label, order }], 50 au plus.
+  commonChecklist                 Json         @default("[{\"code\":\"arrival\",\"label\":\"Arrivée sur place et accueil du client\",\"order\":0},{\"code\":\"cleaning_done\",\"label\":\"Prestation réalisée selon le devis\",\"order\":1},{\"code\":\"site_left_clean\",\"label\":\"Matériel rangé, déchets évacués\",\"order\":2},{\"code\":\"customer_review\",\"label\":\"Tour final avec le client\",\"order\":3}]") @map("common_checklist")
+  /// Conservation des positions et des photos, en mois.
+  retentionMonths                 Int          @default(12) @map("retention_months")
+  updatedBy                       String?      @map("updated_by") @db.Uuid
+  updatedAt                       DateTime?    @map("updated_at") @db.Timestamptz(3)
+  version                         Int          @default(0)
 
-/// Planification en lot des dates restantes d'un plan de passages (ADR-052) : trace d'idempotence
-/// par (mission, clé), avec le résultat rendu au rejeu (passages créés, dates sautées).
-model InterventionBatch {
-  missionId      String   @map("mission_id") @db.Uuid
-  idempotencyKey String   @map("idempotency_key")
-  actorId        String   @map("actor_id") @db.Uuid
-  outcome        Json
-  createdAt      DateTime @map("created_at") @db.Timestamptz(3)
-  mission        Mission  @relation(fields: [missionId], references: [id])
-
-  @@id([missionId, idempotencyKey])
-  @@map("intervention_batches")
+  @@map("cleaning_settings")
 }

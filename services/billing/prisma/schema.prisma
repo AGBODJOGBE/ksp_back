@@ -79,37 +79,57 @@ model BillingContract {
   @@map("billing_contracts")
 }
 
-/// Facture mensuelle : une seule par (contrat, mois).
+/// Facture : v1, une seule par (contrat, mois) ; lot F, facture mensuelle v2 d'une organisation
+/// (kind = monthly, sans contrat), une seule par (organisation, mois) : index unique partiel
+/// invoices_monthly_organization_period_key (migration 0008), que Prisma ne décrit pas.
 model Invoice {
-  id                    String           @id @db.Uuid
-  number                String           @unique
+  id                    String            @id @db.Uuid
+  number                String            @unique
   status                String
-  contractId            String           @map("contract_id") @db.Uuid
-  customerId            String           @map("customer_id") @db.Uuid
-  organizationId        String?          @map("organization_id") @db.Uuid
+  /// Contrat v1 ; null pour une facture v2 (CHECK invoices_contract_or_kind_check).
+  contractId            String?           @map("contract_id") @db.Uuid
+  customerId            String            @map("customer_id") @db.Uuid
+  organizationId        String?           @map("organization_id") @db.Uuid
   source                String
-  periodIndex           Int              @map("period_index")
-  periodStart           DateTime         @map("period_start") @db.Timestamptz(3)
-  periodEnd             DateTime         @map("period_end") @db.Timestamptz(3)
+  /// Rang du mois dans le contrat v1 ; null pour une facture v2.
+  periodIndex           Int?              @map("period_index")
+  periodStart           DateTime          @map("period_start") @db.Timestamptz(3)
+  periodEnd             DateTime          @map("period_end") @db.Timestamptz(3)
   lines                 Json
   total                 Int
-  issuedAt              DateTime         @map("issued_at") @db.Timestamptz(3)
-  dueAt                 DateTime         @map("due_at") @db.Timestamptz(3)
-  paidAt                DateTime?        @map("paid_at") @db.Timestamptz(3)
+  issuedAt              DateTime          @map("issued_at") @db.Timestamptz(3)
+  dueAt                 DateTime          @map("due_at") @db.Timestamptz(3)
+  paidAt                DateTime?         @map("paid_at") @db.Timestamptz(3)
   /// En-tête de l'organisation facturée, copié d'identity à l'émission (document comptable : il ne
   /// suit pas les modifications ultérieures de la fiche). Null pour une facture émise avant.
-  organizationLegalName String?          @map("organization_legal_name")
-  organizationAddress   String?          @map("organization_address")
-  organizationIfu       String?          @map("organization_ifu")
-  organizationRccm      String?          @map("organization_rccm")
-  version               Int              @default(0)
-  contract              BillingContract  @relation(fields: [contractId], references: [id])
+  organizationLegalName String?           @map("organization_legal_name")
+  organizationAddress   String?           @map("organization_address")
+  organizationIfu       String?           @map("organization_ifu")
+  organizationRccm      String?           @map("organization_rccm")
+  version               Int               @default(0)
+  // Lot F — facture v2 (CDC Nettoyage v2, partie 11.2).
+  /// session, visit_fee ou monthly ; null pour une facture v1.
+  kind                  String?
+  /// Facture soldée : payment, credit_note ou cancellation (RV-87) ; null sinon.
+  settledBy             String?           @map("settled_by")
+  /// Part des avoirs imputée sur le reste dû (R-PE-07).
+  creditedAmount        Int               @default(0) @map("credited_amount")
+  /// Total des avoirs émis sur la facture, jamais au-delà de son total.
+  creditNotesTotal      Int               @default(0) @map("credit_notes_total")
+  cancelledAt           DateTime?         @map("cancelled_at") @db.Timestamptz(3)
+  contract              BillingContract?  @relation(fields: [contractId], references: [id], onDelete: Restrict)
   payments              InvoicePayment[]
+  billableSessions      BillableSession[]
+  reminders             InvoiceReminder[]
+  creditNotes           CreditNote[]
+  /// Lot E : émission au paiement par cleaning (séance, frais de visite) ; absente sinon.
+  issuance              InvoiceIssuance?
 
   @@unique([contractId, periodIndex])
   @@index([customerId, id])
   @@index([organizationId, id])
   @@index([status, dueAt])
+  @@index([kind, status, dueAt])
   @@map("invoices")
 }
 
@@ -131,10 +151,116 @@ model InvoicePayment {
   @@map("invoice_payments")
 }
 
+/// Lot E — émission d'une facture au paiement par un service métier (InvoiceIssuanceService.IssueInvoice ;
+/// ADR-055, R-PP-06, R-FV-04) : une seule par (émetteur, clé d'idempotence), et une seule par facture.
+/// Porte l'objet facturé et ses références lisibles (jamais d'adresse ni de position).
+model InvoiceIssuance {
+  /// Service appelant (jeton de service) : "cleaning".
+  issuer           String
+  idempotencyKey   String    @map("idempotency_key")
+  invoiceId        String    @unique @map("invoice_id") @db.Uuid
+  /// Empreinte SHA-256 du contenu de la requête : la même clé avec un autre contenu est refusée.
+  fingerprint      String
+  sourceObjectType String    @map("source_object_type")
+  sourceObjectId   String    @map("source_object_id") @db.Uuid
+  requestNumber    String?   @map("request_number")
+  programNumber    String?   @map("program_number")
+  sessionRank      String?   @map("session_rank")
+  placeLabel       String?   @map("place_label")
+  /// Jour de la séance (heure du Bénin) ; null pour des frais de visite.
+  serviceDate      DateTime? @map("service_date") @db.Date
+  createdAt        DateTime  @map("created_at") @db.Timestamptz(3)
+  invoice          Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@id([issuer, idempotencyKey])
+  @@map("invoice_issuances")
+}
+
 /// Compteur des numéros de facture, par année : numérotation continue, sans trou.
 model InvoiceCounter {
   year       Int @id
   lastNumber Int @map("last_number")
 
   @@map("invoice_counters")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Lot F — facture mensuelle des organisations (CDC Nettoyage v2, partie 11.2 ; ADR-055).
+// ---------------------------------------------------------------------------------------------
+
+/// Séance facturable d'une organisation, apprise par cleaning.session.completed ou
+/// cleaning.session.missed (payerKind = organization) : une ligne par séance, rattachée à la facture
+/// mensuelle qui la porte. Identifiants et montants seulement (jamais d'adresse).
+model BillableSession {
+  sessionId         String   @id @map("session_id") @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  customerId        String   @map("customer_id") @db.Uuid
+  programId         String   @map("program_id") @db.Uuid
+  programNumber     String   @map("program_number")
+  placeId           String   @map("place_id") @db.Uuid
+  rank              Int
+  sessionsCount     Int      @map("sessions_count")
+  /// session, missed_session ou late_cancellation.
+  kind              String
+  /// Réalisation, ou absence constatée : fixe le mois facturé (heure du Bénin).
+  occurredAt        DateTime @map("occurred_at") @db.Timestamptz(3)
+  /// Montant dû après déduction (CHECK billable_sessions_amounts_check).
+  amountDue         Int      @map("amount_due")
+  visitFeeDeduction Int      @map("visit_fee_deduction")
+  /// Facture qui porte la séance ; null tant qu'elle n'est pas facturée.
+  invoiceId         String?  @map("invoice_id") @db.Uuid
+  recordedAt        DateTime @map("recorded_at") @db.Timestamptz(3)
+  invoice           Invoice? @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, occurredAt])
+  @@index([invoiceId])
+  @@map("billable_sessions")
+}
+
+/// Relance d'une facture (R-PE-05) : envoyée, ou sautée parce qu'une plus récente était due.
+model InvoiceReminder {
+  invoiceId  String   @map("invoice_id") @db.Uuid
+  /// Jours par rapport à l'échéance (négatif : avant).
+  offsetDays Int      @map("offset_days")
+  sent       Boolean
+  handledAt  DateTime @map("handled_at") @db.Timestamptz(3)
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id])
+
+  @@id([invoiceId, offsetDays])
+  @@map("invoice_reminders")
+}
+
+/// Avoir sur une facture (R-PE-07, R-RC-03) : jamais modifié. Idempotent par (émetteur, clé).
+model CreditNote {
+  id                  String   @id @db.Uuid
+  number              String   @unique
+  invoiceId           String   @map("invoice_id") @db.Uuid
+  customerId          String   @map("customer_id") @db.Uuid
+  organizationId      String?  @map("organization_id") @db.Uuid
+  lines               Json
+  total               Int
+  reason              String
+  /// Compte du back-office, ou « service:cleaning ».
+  issuedBy            String   @map("issued_by")
+  issuedAt            DateTime @map("issued_at") @db.Timestamptz(3)
+  appliedToBalance    Int      @map("applied_to_balance")
+  creditedToWallet    Int      @map("credited_to_wallet")
+  walletTransactionId String?  @map("wallet_transaction_id")
+  sourceObjectType    String?  @map("source_object_type")
+  sourceObjectId      String?  @map("source_object_id")
+  idempotencyKey      String   @map("idempotency_key")
+  invoice             Invoice  @relation(fields: [invoiceId], references: [id])
+
+  @@unique([issuedBy, idempotencyKey])
+  @@index([invoiceId])
+  @@index([organizationId, id])
+  @@map("credit_notes")
+}
+
+/// Compteur des numéros d'avoir, par année : numérotation continue, sans trou.
+model CreditNoteCounter {
+  year       Int @id
+  lastNumber Int @map("last_number")
+
+  @@map("credit_note_counters")
 }

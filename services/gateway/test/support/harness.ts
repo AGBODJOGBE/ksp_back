@@ -164,6 +164,29 @@ const protoMembership: identityV1.OrganizationMembership = {
   pendingBillingEmail: '',
 };
 
+/** Rôle géré au back-office (R-RB-02), tel que le rend identity. */
+export const protoManagedRole: identityV1.ManagedRole = {
+  code: 'cleaning_planner',
+  name: 'Planificateur Nettoyage',
+  description: 'Planifie les visites et les séances.',
+  service: 'identity',
+  origin: 'custom',
+  scopeType: identityV1.ScopeType.SCOPE_TYPE_GLOBAL,
+  permissions: ['cleaning.planning.manage', 'cleaning.request.read'],
+  sensitive: false,
+  backofficeAccess: true,
+  requiresMfa: true,
+  active: true,
+  editable: true,
+  activeAssignments: 0,
+  createdAt: '2026-11-20T09:00:00.000Z',
+  createdBy: ACCOUNT_ID,
+  updatedAt: '',
+  updatedBy: '',
+  deactivatedAt: '',
+  deactivatedBy: '',
+};
+
 export function protoSession(refreshToken = 'rt-new'): identityV1.SessionTokens {
   return {
     accessToken: 'eyJhbGciOiJFUzI1NiJ9.e30.c2ln',
@@ -366,6 +389,35 @@ export class IdentityStub {
       },
     }),
     reactivateOrganization: () => ({ organization: protoOrganization }),
+    // Méthodes du contrat v2 pas encore routées par la gateway : réponse vide.
+    listOrganizationMembers: () => ({}),
+    inviteOrganizationMember: () => ({}),
+    listMyOrganizationInvitations: () => ({}),
+    respondToOrganizationInvitation: () => ({}),
+    changeOrganizationMemberRole: () => ({}),
+    removeOrganizationMember: () => ({}),
+    listPermissions: () => ({
+      permissions: [
+        {
+          code: 'cleaning.planning.manage',
+          description: 'Affecter les agents',
+          service: 'cleaning',
+          module: 'planning',
+          retired: false,
+        },
+      ],
+    }),
+    getRole: () => ({ role: protoManagedRole }),
+    createRole: () => ({ role: protoManagedRole }),
+    updateRole: () => ({ role: protoManagedRole }),
+    deactivateRole: () => ({
+      role: {
+        ...protoManagedRole,
+        active: false,
+        deactivatedAt: '2026-11-20T10:00:00.000Z',
+        deactivatedBy: ACCOUNT_ID,
+      },
+    }),
   };
 
   /** Remplace la réponse d'une méthode (erreur métier, délai…) jusqu'à reset(). */
@@ -443,6 +495,24 @@ class StubOrganizationController implements identityV1.OrganizationServiceContro
   confirmOrganizationBillingEmail(request: identityV1.ConfirmOrganizationBillingEmailRequest) {
     return this.stub.handle('confirmOrganizationBillingEmail', { ...request });
   }
+  listOrganizationMembers(request: identityV1.ListOrganizationMembersRequest) {
+    return this.stub.handle('listOrganizationMembers', { ...request });
+  }
+  inviteOrganizationMember(request: identityV1.InviteOrganizationMemberRequest) {
+    return this.stub.handle('inviteOrganizationMember', { ...request });
+  }
+  listMyOrganizationInvitations(request: identityV1.ListMyOrganizationInvitationsRequest) {
+    return this.stub.handle('listMyOrganizationInvitations', { ...request });
+  }
+  respondToOrganizationInvitation(request: identityV1.RespondToOrganizationInvitationRequest) {
+    return this.stub.handle('respondToOrganizationInvitation', { ...request });
+  }
+  changeOrganizationMemberRole(request: identityV1.ChangeOrganizationMemberRoleRequest) {
+    return this.stub.handle('changeOrganizationMemberRole', { ...request });
+  }
+  removeOrganizationMember(request: identityV1.RemoveOrganizationMemberRequest) {
+    return this.stub.handle('removeOrganizationMember', { ...request });
+  }
 }
 
 @Controller()
@@ -499,6 +569,21 @@ class StubAccountAdminController implements identityV1.AccountAdminServiceContro
   }
   resetAccountMfa(request: identityV1.ResetAccountMfaRequest) {
     return this.stub.handle('resetAccountMfa', { ...request });
+  }
+  listPermissions(request: identityV1.ListPermissionsRequest) {
+    return this.stub.handle('listPermissions', { ...request });
+  }
+  getRole(request: identityV1.GetRoleRequest) {
+    return this.stub.handle('getRole', { ...request });
+  }
+  createRole(request: identityV1.CreateRoleRequest) {
+    return this.stub.handle('createRole', { ...request });
+  }
+  updateRole(request: identityV1.UpdateRoleRequest) {
+    return this.stub.handle('updateRole', { ...request });
+  }
+  deactivateRole(request: identityV1.DeactivateRoleRequest) {
+    return this.stub.handle('deactivateRole', { ...request });
   }
 }
 

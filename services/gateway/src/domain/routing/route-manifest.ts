@@ -20,6 +20,12 @@ export interface AccessRequirement {
   level: AccessLevel;
   /** Au moins un de ces rôles est exigé. */
   anyRole?: readonly string[];
+  /**
+   * Permission exigée (extension x-ksp-permission, RBAC dynamique : cahier des charges Nettoyage v2,
+   * R-RB-01 à R-RB-03 ; ADR-057) : présente dans les permissions du jeton, valables partout ou dans
+   * au moins une commune. Seule condition d'accès de la route, jamais avec anyRole.
+   */
+  permission?: string;
   /** Double authentification datant de moins de ce nombre de secondes. */
   recentMfaSeconds?: number;
   /**
@@ -45,6 +51,15 @@ export interface RouteDefinition {
    * quand la route existait déjà sans lui (ajout sans rupture pour les fronts branchés).
    */
   idempotencyKey?: 'required' | 'optional';
+  /**
+   * Profil complet exigé (extension x-ksp-requires-complete-profile, R-CP-02) : la gateway le vérifie
+   * auprès d'identity avant d'appeler le service.
+   */
+  requiresCompleteProfile?: boolean;
+  /** Création (201, corps : la ressource créée) ou réponse sans corps (204) ; 200 sinon. */
+  successStatus?: 201 | 204;
+  /** Route alias : même appel gRPC que cette autre route, sous un autre chemin et un autre accès. */
+  aliasOf?: string;
 }
 
 const IDENTITY_AUTH = 'ksp.identity.v1.AuthService';

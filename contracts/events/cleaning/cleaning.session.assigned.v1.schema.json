@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/cleaning/cleaning.session.assigned.v1.schema.json",
+  "title": "cleaning.session.assigned",
+  "description": "Agents affectés à une séance (UC-NT-37, UC-NT-38). Écouté par notification (client, agents).",
+  "x-event-type": "cleaning.session.assigned",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "programId",
+    "customerId",
+    "organizationId",
+    "rank",
+    "scheduledStart",
+    "agentIds",
+    "leadAgentId",
+    "source",
+    "assignedAt",
+    "programNumber",
+    "sessionsCount",
+    "batchId",
+    "teamIncomplete"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "programId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customerId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Compte du client (titulaire ou auteur de la demande)"
+    },
+    "organizationId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Organisation cliente ; null pour un particulier"
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "scheduledStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "minItems": 1,
+      "description": "Équipe complète après l’affectation"
+    },
+    "leadAgentId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "source": {
+      "enum": ["manual", "auto"]
+    },
+    "assignedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "programNumber": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionsCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "batchId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Lot (cleaning.sessions.batch_assigned) : aucun message unitaire"
+    },
+    "teamIncomplete": {
+      "type": "boolean",
+      "description": "Moins d’agents que prévu"
+    }
+  }
+}

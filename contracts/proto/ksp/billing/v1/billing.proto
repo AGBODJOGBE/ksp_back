@@ -11,7 +11,40 @@ import "ksp/common/v1/money.proto";
 // - BillingAdminService : back-office (factures, paiement manuel, réglages).
 //
 // Les factures naissent d'une tâche planifiée interne au service, à partir des contrats appris
-// par l'événement cleaning.booking.confirmed : aucune méthode ne crée de facture.
+// par l'événement cleaning.booking.confirmed : aucune méthode ne crée de facture (v1).
+//
+// v2 (CDC Nettoyage v2, partie 11) — remplace la v1, sans reprise des factures :
+// - facture de séance (kind "session", particulier, R-PP-06) et reçu des frais de visite (kind
+//   "visit_fee", particulier ou entreprise, R-FV-04) : émis au paiement par cleaning
+//   (InvoiceIssuanceService.IssueInvoice), déjà payés (débit du portefeuille) ;
+// - facture mensuelle d'organisation (kind "monthly", R-PE-01) : émise le 1er de chaque mois à 00:00
+//   (heure du Bénin) pour le mois civil écoulé, avec toutes les séances réalisées et les séances
+//   manquées facturées, apprises par les événements cleaning.session.completed et
+//   cleaning.session.missed (montant dû porté par l'événement) ; groupées par programme et par lieu,
+//   avec la date de chaque séance ; pas de prorata ; une séance oubliée part sur la facture suivante.
+//   Le mois d'une séance est le mois civil (Africa/Porto-Novo) de sa réalisation, ou de son absence
+//   constatée pour une séance manquée ; l'année du numéro est celle de la période facturée.
+//   Les frais de visite déjà payés sont déduits par une ligne négative sur la première facture
+//   mensuelle (R-FV-05). En-tête figé à l'émission (raison sociale, IFU, RCCM, adresse, R-PE-02) :
+//   jamais de facture sans en-tête ; identity indisponible : émission reportée au passage suivant ;
+//   organisation introuvable : émission reportée, avec une alerte.
+//   TVA : non appliquée ; le régime reste à confirmer par le comptable avant le lancement.
+// - échéance : émission + payment_term_days (10 jours par défaut, R-PE-03) ; relances automatiques
+//   aux décalages de BillingSettings.reminders (−3, 0, +3, +7 par défaut, R-PE-05 ; événement
+//   billing.invoice.reminded) ; « impayée » le lendemain de l'échéance (billing.invoice.overdue,
+//   R-PE-06) ; prélèvement automatique à l'échéance depuis le portefeuille de l'organisation si elle
+//   l'a choisi et si le solde suffit (R-PE-04) ;
+// - règlement d'une facture mensuelle : portefeuille (PayMyInvoiceFromWallet), Mobile Money
+//   (PayMyInvoiceByMobileMoney : le paiement crédite d'abord le portefeuille, puis billing le débite)
+//   ou virement saisi par la finance au portefeuille (WalletAdminService.CreditPrepaidWallet, kind
+//   "bank_transfer_top_up", for_object = la facture, validé par une deuxième personne) : à
+//   wallet.prepaid.credited v2 (forObject service "billing", objet "billing_invoice"), billing débite
+//   aussitôt le portefeuille du reste dû (au plus le montant crédité ; facture déjà payée entre-temps :
+//   rien n'est débité, l'argent reste au portefeuille). Un seul chemin pour l'argent (R-PE-04, R-WL-05) :
+//   RecordInvoicePayment (paiement hors ligne posé directement sur la facture, v1) est retiré et refuse
+//   toute facture v2 ;
+// - corrections : une facture émise ne se modifie jamais ; une erreur se corrige par un avoir
+//   (IssueCreditNote, R-PE-07).
 //
 // L'utilisateur connecté n'est jamais dans les messages : la gateway le transmet dans les
 // métadonnées gRPC (x-user-id, x-active-context, x-user-roles, x-user-mfa…). Le service
@@ -24,12 +57,18 @@ import "ksp/common/v1/money.proto";
 //   BILLING_INVOICE_NOT_FOUND     NOT_FOUND           facture inconnue ou hors du périmètre de l'appelant
 //   BILLING_VALIDATION_FAILED     INVALID_ARGUMENT    details.field
 //   BILLING_PAYMENT_INVALID       INVALID_ARGUMENT    details.reason : amount_invalid, method_not_allowed,
-//                                                     exceeds_balance
+//                                                     exceeds_balance, wallet_path_required (v2 :
+//                                                     RecordInvoicePayment sur une facture v2)
 //   BILLING_INVALID_TRANSITION    FAILED_PRECONDITION facture déjà payée ou annulée
 //   BILLING_CONCURRENT_UPDATE     ALREADY_EXISTS      facture modifiée en même temps par un autre appel
 //   BILLING_CALLER_FORBIDDEN      PERMISSION_DENIED   méthode réservée à un autre service (GetInvoiceAmountDue :
 //                                                     payment ; GetWalletDebitStatus : wallet ;
-//                                                     HasPendingObligations : identity ; les autres : gateway)
+//                                                     HasPendingObligations : identity ; IssueInvoice et
+//                                                     IssueCreditNote : cleaning ; les autres : gateway)
+//   BILLING_IDEMPOTENCY_KEY_REUSED ALREADY_EXISTS     clé déjà utilisée pour une autre facture ou un autre avoir
+//   BILLING_CREDIT_NOTE_EXCEEDS_INVOICE FAILED_PRECONDITION avoirs au-delà du total de la facture ;
+//                                                     details.maximum
+//   BILLING_NOT_ORGANIZATION_ADMIN PERMISSION_DENIED  préférence réservée à un administrateur (org_admin)
 //   WALLET_INSUFFICIENT_FUNDS     FAILED_PRECONDITION portefeuille insuffisant ; details.missing (ADR-046)
 //   AUTH_REQUIRED                 UNAUTHENTICATED
 //   AUTH_FORBIDDEN                PERMISSION_DENIED   rôle du back-office manquant ; membre lecteur (org_viewer)
@@ -44,18 +83,60 @@ service BillingService {
   // (membre org_admin ou org_member), sinon celui du client. Débit du reste dû en entier, puis
   // paiement enregistré (moyen "wallet") ; payée au total : billing.invoice.paid. Idempotent par clé.
   rpc PayMyInvoiceFromWallet(PayMyInvoiceFromWalletRequest) returns (PayMyInvoiceFromWalletResponse);
+  // v2 (R-PE-04) : paiement du reste dû par Mobile Money. billing demande à payment un paiement direct
+  // du montant exact (TopUpPaymentService.CreatePaymentRequest, objet "billing_invoice") : il crédite
+  // d'abord le portefeuille du titulaire, puis billing débite la facture. Membre org_admin ou
+  // org_member de l'organisation active, sinon le client. Idempotent par clé.
+  rpc PayMyInvoiceByMobileMoney(PayMyInvoiceByMobileMoneyRequest) returns (PayMyInvoiceByMobileMoneyResponse);
+  // v2 (R-PE-04) : préférences de facturation de l'organisation active (prélèvement automatique à
+  // l'échéance). Lecture : tout membre ; modification : org_admin.
+  rpc GetMyBillingPreferences(GetMyBillingPreferencesRequest) returns (GetMyBillingPreferencesResponse);
+  rpc UpdateMyBillingPreferences(UpdateMyBillingPreferencesRequest) returns (UpdateMyBillingPreferencesResponse);
 }
 
 // Back-office : finance_officer, cleaning_supervisor, cleaning_admin, super_admin, avec double
-// authentification. Réglages : cleaning_admin, finance_officer, super_admin.
+// authentification (lecture des factures). Réglages : cleaning_admin, finance_officer, super_admin.
+// Écritures d'argent (RecordInvoicePayment, IssueAdminCreditNote) : finance_officer, super_admin.
 service BillingAdminService {
   rpc ListInvoices(ListInvoicesRequest) returns (ListInvoicesResponse);
   rpc GetInvoice(GetInvoiceRequest) returns (GetInvoiceResponse);
-  // Paiement reçu hors ligne (espèces, virement, Mobile Money hors ligne). La facture passe
-  // « payée » quand le total est atteint (billing.invoice.paid).
-  rpc RecordInvoicePayment(RecordInvoicePaymentRequest) returns (RecordInvoicePaymentResponse);
+  // Retiré en v2 (R-PE-04, R-WL-05 : un seul chemin pour l'argent). v1 : paiement reçu hors ligne
+  // (espèces, virement, Mobile Money hors ligne) posé directement sur la facture. v2 : finance_officer,
+  // super_admin ; toute facture v2 (kind renseigné, donc toute facture émise après la bascule, sans
+  // reprise des factures v1) est refusée (BILLING_PAYMENT_INVALID, details.reason
+  // "wallet_path_required") : un virement reçu pour une facture se saisit au portefeuille de
+  // l'organisation (WalletAdminService.CreditPrepaidWallet, kind "bank_transfer_top_up", for_object =
+  // la facture, validé par une deuxième personne), puis billing débite aussitôt la facture. Méthode
+  // gardée pour la compatibilité du contrat ; son retrait se fera dans une version ultérieure (à
+  // valider).
+  rpc RecordInvoicePayment(RecordInvoicePaymentRequest) returns (RecordInvoicePaymentResponse) {
+    option deprecated = true;
+  }
   rpc GetBillingSettings(GetBillingSettingsRequest) returns (GetBillingSettingsResponse);
   rpc UpdateBillingSettings(UpdateBillingSettingsRequest) returns (UpdateBillingSettingsResponse);
+  // v2 (R-PE-07) : avoir saisi par la finance sur une facture émise (finance_officer, super_admin ;
+  // double authentification récente). Mêmes règles que InvoiceIssuanceService.IssueCreditNote.
+  rpc IssueAdminCreditNote(IssueAdminCreditNoteRequest) returns (IssueAdminCreditNoteResponse);
+  // v2 : avoirs, les plus récents d'abord ; filtres facultatifs.
+  rpc ListCreditNotes(ListCreditNotesRequest) returns (ListCreditNotesResponse);
+}
+
+// v2 (CDC Nettoyage v2, partie 15.4) : émission par les services métier, réservée à cleaning
+// (BILLING_ISSUER_CALLERS ; jeton de service). Idempotent par (appelant, clé) : la clé est tirée de
+// l'objet facturé ("cleaning_session:<id>", "cleaning_request:<id>:visit_fee").
+service InvoiceIssuanceService {
+  // Facture de séance (R-PP-06) ou reçu des frais de visite (R-FV-04), émis au paiement, statut
+  // "paid" : numéro, client, lieu, programme et rang de la séance, date, lignes, frais de visite
+  // déduits (ligne négative), total, moyen de paiement. Total = somme des lignes, positif ou nul, égal
+  // au montant payé. Publie billing.invoice.issued (PDF dans l'espace client, e-mail si l'adresse est
+  // vérifiée).
+  rpc IssueInvoice(IssueInvoiceRequest) returns (IssueInvoiceResponse);
+  // Avoir sur une facture émise (R-PE-07 ; crédit d'une réclamation pour une entreprise, R-RC-03).
+  // Le total des avoirs d'une facture ne dépasse jamais son total. L'avoir réduit d'abord le reste dû ;
+  // la part au-delà (facture déjà payée) est créditée au portefeuille du titulaire (wallet.Credit, à
+  // valider par le comptable). Publie billing.credit_note.issued. Un avoir qui ramène le reste dû à 0,
+  // ou une annulation, publie billing.invoice.paid (settledBy).
+  rpc IssueCreditNote(IssueCreditNoteRequest) returns (IssueCreditNoteResponse);
 }
 
 // Reste dû d'une facture — réservé au service payment (ADR-031). payment ne recalcule rien : il lit
@@ -84,8 +165,54 @@ message Page {
 message InvoiceLine {
   string label = 1;
   int32 quantity = 2;
+  // Négatif pour une déduction (frais de visite déduits, R-FV-05).
   ksp.common.v1.Money unit_price = 3;
   ksp.common.v1.Money amount = 4;
+  // v2 : "session" (séance réalisée), "missed_session" (séance manquée facturée), "late_cancellation"
+  // (annulation tardive), "visit_fee" (frais de visite), "visit_fee_deduction" (déduction, montant
+  // négatif) ou "adjustment" ; absent pour une ligne v1.
+  optional string kind = 5;
+  // v2 : date de la séance (AAAA-MM-JJ, heure du Bénin) ; absente sinon.
+  optional string service_date = 6;
+  // v2 : regroupement d'une facture mensuelle par programme et par lieu (R-PE-01).
+  optional string program_number = 7;
+  optional string place_label = 8;
+  // v2 : objet facturé chez le service source (séance) ; absent sinon.
+  optional string source_object_id = 9;
+}
+
+// v2 : objet facturé chez le service source.
+message InvoiceSourceObject {
+  // "cleaning_session", "cleaning_request"…
+  string object_type = 1;
+  string object_id = 2;
+}
+
+// v2 : avoir (R-PE-07). Numéro AV-<année>-<numéro sur 6 chiffres>, unique et sans trou par année
+// (format à valider).
+message CreditNote {
+  string id = 1;
+  string number = 2;
+  string invoice_id = 3;
+  string invoice_number = 4;
+  string customer_id = 5;
+  // Organisation facturée, vide pour un particulier.
+  string organization_id = 6;
+  // Montants positifs.
+  repeated InvoiceLine lines = 7;
+  ksp.common.v1.Money total = 8;
+  // Motif, visible du client.
+  string reason = 9;
+  // Compte du back-office, ou "service:cleaning".
+  string issued_by = 10;
+  string issued_at = 11;
+  // Part imputée sur le reste dû de la facture.
+  ksp.common.v1.Money applied_to_balance = 12;
+  // Part créditée au portefeuille (facture déjà payée) et sa transaction wallet ; 0 et vide sinon.
+  ksp.common.v1.Money credited_to_wallet = 13;
+  string wallet_transaction_id = 14;
+  // Objet à l'origine de l'avoir (réclamation), absent sinon.
+  InvoiceSourceObject source_object = 15;
 }
 
 message InvoicePayment {
@@ -103,7 +230,8 @@ message InvoicePayment {
 
 message Invoice {
   string id = 1;
-  // FAC-<année>-<numéro sur 6 chiffres>, unique et sans trou par année.
+  // FAC-<année>-<numéro sur 6 chiffres>, unique et sans trou par année (facture mensuelle : année
+  // de la période facturée).
   string number = 2;
   // "pending_payment", "overdue", "paid" ou "cancelled".
   string status = 3;
@@ -114,9 +242,6 @@ message Invoice {
   string source = 6;
   // Contrat chez le service source (pour cleaning : la mission).
   string contract_id = 7;
-  // Rang du mois civil facturé dans le contrat (1 pour le premier). Une facture par mois civil
-  // (heure du Bénin), émise le 1er du mois suivant à 00:00 ; mois partiels et jours de
-  // suspension au prorata des jours.
   int32 period_index = 8;
   // Période facturée : period_start est le premier instant facturé (minuit, heure du Bénin) ;
   // period_end est une borne EXCLUSIVE, minuit (heure du Bénin) du lendemain du dernier jour
@@ -134,6 +259,27 @@ message Invoice {
   // En-tête de la facture d'une organisation. Absent pour un particulier, et pour une facture
   // émise avant l'enregistrement de l'en-tête.
   InvoiceOrganization organization = 19;
+  // v2 : "session", "visit_fee" ou "monthly" ; absent pour une facture v1.
+  optional string kind = 20;
+  // v2 : objet facturé (séance, demande) ; absent pour une facture mensuelle.
+  InvoiceSourceObject source_object = 21;
+  // v2 : références lisibles (dossier DN-…, programme PN-…, rang de la séance « 3/15 », nom du lieu
+  // donné par le client — jamais l'adresse ni la position) ; absentes si sans objet.
+  optional string request_number = 22;
+  optional string program_number = 23;
+  optional string session_rank = 24;
+  optional string place_label = 25;
+  // v2 : date de la séance (AAAA-MM-JJ, heure du Bénin) pour une facture de séance ; absente sinon.
+  optional string service_date = 26;
+  // v2 : avoirs émis sur cette facture ; absent s'il n'y en a aucun.
+  InvoiceCredits credits = 27;
+}
+
+// v2 : avoirs d'une facture.
+message InvoiceCredits {
+  repeated CreditNote credit_notes = 1;
+  // Total des avoirs.
+  ksp.common.v1.Money total = 2;
 }
 
 // Fiche de l'organisation facturée, copiée d'identity au moment de l'émission : la facture est
@@ -211,10 +357,18 @@ message RecordInvoicePaymentResponse {
 }
 
 message BillingSettings {
-  // Délai de règlement après l'émission (10 jours par défaut).
+  // Délai de règlement après l'émission (10 jours par défaut, 1 à 60).
   int32 payment_term_days = 1;
   string updated_by = 2;
   string updated_at = 3;
+  // v2 (R-PE-05) : relances automatiques ; absent dans une mise à jour : inchangé.
+  ReminderSchedule reminders = 4;
+}
+
+// v2 (R-PE-05) : décalages des relances, en jours par rapport à l'échéance (négatif : avant), sans
+// doublon, entre -30 et 60 ; par défaut -3, 0, 3 et 7.
+message ReminderSchedule {
+  repeated int32 offset_days = 1;
 }
 
 message GetBillingSettingsRequest {}
@@ -274,4 +428,132 @@ message PayMyInvoiceFromWalletRequest {
 
 message PayMyInvoiceFromWalletResponse {
   Invoice invoice = 1;
+}
+
+message PayMyInvoiceByMobileMoneyRequest {
+  string invoice_id = 1;
+  // En-tête Idempotency-Key (8 à 100 caractères : lettres, chiffres, "_" et "-"), obligatoire.
+  string idempotency_key = 2;
+}
+
+message PayMyInvoiceByMobileMoneyResponse {
+  // Paiement chez payment, suivi par GET /api/v1/payment/payments/{id}.
+  string payment_id = 1;
+  // Reste dû demandé.
+  ksp.common.v1.Money amount = 2;
+  // Page de paiement du prestataire ; vide si elle n'a pas pu être créée (réessayer, même clé).
+  string checkout_url = 3;
+  string expires_at = 4;
+  // false : paiement déjà demandé avec cette clé.
+  bool created = 5;
+}
+
+// v2 : préférences de facturation d'une organisation.
+message BillingPreferences {
+  string organization_id = 1;
+  // Prélèvement automatique de la facture mensuelle à l'échéance depuis le portefeuille de
+  // l'organisation, si le solde suffit (R-PE-04). Désactivé par défaut (à valider).
+  bool auto_debit = 2;
+  // Vides tant qu'elles n'ont jamais été modifiées.
+  string updated_by = 3;
+  string updated_at = 4;
+}
+
+message GetMyBillingPreferencesRequest {}
+
+message GetMyBillingPreferencesResponse {
+  BillingPreferences preferences = 1;
+}
+
+message UpdateMyBillingPreferencesRequest {
+  optional bool auto_debit = 1;
+}
+
+message UpdateMyBillingPreferencesResponse {
+  BillingPreferences preferences = 1;
+}
+
+// v2 : paiement d'une facture émise payée (séance, frais de visite).
+message IssuedInvoicePayment {
+  // "wallet".
+  string method = 1;
+  // Débit du portefeuille (identifiant de la transaction wallet).
+  string reference = 2;
+  ksp.common.v1.Money amount = 3;
+  string paid_at = 4;
+}
+
+message IssueInvoiceRequest {
+  // Obligatoire (8 à 150 caractères : lettres, chiffres, ":", "_" et "-").
+  string idempotency_key = 1;
+  // "session" ou "visit_fee".
+  string kind = 2;
+  string customer_id = 3;
+  // Organisation facturée (frais de visite d'une entreprise) ; vide pour un particulier.
+  string organization_id = 4;
+  InvoiceSourceObject source_object = 5;
+  string request_number = 6;
+  string program_number = 7;
+  // « 3/15 » ; vide pour des frais de visite.
+  string session_rank = 8;
+  string place_label = 9;
+  // AAAA-MM-JJ (heure du Bénin) ; vide pour des frais de visite.
+  string service_date = 10;
+  // 1 à 50 lignes ; déductions en montant négatif.
+  repeated InvoiceLine lines = 11;
+  IssuedInvoicePayment payment = 12;
+}
+
+message IssueInvoiceResponse {
+  Invoice invoice = 1;
+  // false : facture déjà émise avec cette clé.
+  bool created = 2;
+}
+
+message IssueCreditNoteRequest {
+  // Obligatoire (8 à 150 caractères : lettres, chiffres, ":", "_" et "-").
+  string idempotency_key = 1;
+  string invoice_id = 2;
+  // 1 à 50 lignes, montants positifs.
+  repeated InvoiceLine lines = 3;
+  // Motif visible du client, 1 à 500 caractères.
+  string reason = 4;
+  // Objet à l'origine (réclamation), facultatif.
+  InvoiceSourceObject source_object = 5;
+}
+
+message IssueCreditNoteResponse {
+  CreditNote credit_note = 1;
+  Invoice invoice = 2;
+  // false : avoir déjà émis avec cette clé.
+  bool created = 3;
+}
+
+message IssueAdminCreditNoteRequest {
+  string invoice_id = 1;
+  // 1 à 50 lignes, montants positifs.
+  repeated InvoiceLine lines = 2;
+  // Motif visible du client, 1 à 500 caractères.
+  string reason = 3;
+  // En-tête Idempotency-Key, obligatoire.
+  string idempotency_key = 4;
+}
+
+message IssueAdminCreditNoteResponse {
+  CreditNote credit_note = 1;
+  Invoice invoice = 2;
+  bool created = 3;
+}
+
+message ListCreditNotesRequest {
+  Page page = 1;
+  // Filtres facultatifs.
+  string invoice_id = 2;
+  string customer_id = 3;
+  string organization_id = 4;
+}
+
+message ListCreditNotesResponse {
+  repeated CreditNote credit_notes = 1;
+  string next_cursor = 2;
 }

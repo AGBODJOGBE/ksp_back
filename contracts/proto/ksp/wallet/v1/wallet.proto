@@ -37,6 +37,30 @@ import "ksp/common/v1/money.proto";
 // Comptes internes : "ksp:prepaid_funds" (recharges reçues par Mobile Money) et
 // "ksp:service_revenue" (services payés depuis un portefeuille). Un débit n'est jamais partiel.
 //
+// CDC Nettoyage v2 (R-WL-01 à 06) : « un seul chemin pour l'argent ». Chaque compte personnel et
+// chaque organisation a son portefeuille prépayé, en francs CFA entiers, jamais négatif (R-WL-01).
+// - Recharge par Mobile Money ou carte (FedaPay, CreateTopUp), ou en espèces au guichet KSP : saisie
+//   par la finance (CreditPrepaidWallet, kind "cash_top_up") et toujours validée par une deuxième
+//   personne (ApproveManualCredit), quel que soit le montant (R-WL-02). Un virement d'une
+//   organisation suit le même chemin (kind "bank_transfer_top_up", R-PE-04).
+// - Chaque débit porte son objet et une clé d'idempotence tirée de l'objet : un même objet n'est
+//   jamais débité deux fois (Debit, R-WL-03).
+// - Rapprochement des débits des services (ADR-048) : un débit de plus de 30 minutes, ni vérifié ni
+//   remboursé, est soumis au service qui l'a fait (WalletDebitCheckService.GetWalletDebitStatus de
+//   cleaning et de billing). Un débit que l'appelant ne cite pas (status = "not_recorded" ; billing :
+//   recorded = false) est remboursé ; "in_progress" (opération encore en cours chez l'appelant) :
+//   redemandé au passage suivant, jamais remboursé ; service injoignable : relu au passage suivant.
+// - Remboursements et gestes commerciaux : crédits au portefeuille (Refund, Credit), jamais des
+//   sorties d'argent automatiques. Retrait vers Mobile Money sur demande du client
+//   (RequestWithdrawal), traité par la finance (ProcessWithdrawal) puis validé par une deuxième
+//   personne (ApproveWithdrawal) et exécuté par payment (PayoutService, mécanisme des reversements
+//   d'ADR-041) (R-WL-04).
+// - Paiement direct (R-WL-05) : un paiement Mobile Money du montant exact (payment,
+//   TopUpPaymentService.CreatePaymentRequest) crédite d'abord le portefeuille (événement
+//   wallet.prepaid.credited version 2 avec forObject), puis le service débite aussitôt. Les ajouts v2
+//   de cet événement (commercial_gesture, topUpChannel, forObject) n'existent qu'en version 2
+//   (contracts/events/wallet/wallet.prepaid.credited.v2.schema.json) ; la v1 est inchangée.
+//
 // L'utilisateur connecté n'est jamais dans les messages : la gateway le transmet dans les
 // métadonnées gRPC. Dates ISO 8601 en UTC (chaîne vide = absente).
 //
@@ -59,6 +83,12 @@ import "ksp/common/v1/money.proto";
 //   WALLET_APPROVAL_BY_REQUESTER         PERMISSION_DENIED   validation d'un crédit par l'auteur de sa demande
 //   WALLET_CALLER_FORBIDDEN              PERMISSION_DENIED   méthode réservée à un autre service (méthodes du
 //                                                            titulaire et du back-office : gateway seulement)
+//   WALLET_OBJECT_ALREADY_DEBITED        ALREADY_EXISTS      objet déjà débité (débit non remboursé) avec une
+//                                                            autre clé ; details.transactionId (R-WL-03)
+//   WALLET_WITHDRAWAL_NOT_FOUND          NOT_FOUND           retrait inconnu, ou d'un autre titulaire
+//   WALLET_WITHDRAWAL_INVALID_TRANSITION FAILED_PRECONDITION état du retrait incompatible (details.status)
+//   WALLET_APPROVAL_BY_PROCESSOR         PERMISSION_DENIED   validation d'un retrait par la personne qui l'a traité
+//   WALLET_CREDIT_REQUEST_NOT_PENDING    FAILED_PRECONDITION demande de crédit déjà validée ou rejetée
 //   AUTH_REQUIRED                        UNAUTHENTICATED
 //   AUTH_FORBIDDEN                       PERMISSION_DENIED   rôle du back-office manquant ; membre lecteur (org_viewer)
 //   AUTH_MFA_REQUIRED                    PERMISSION_DENIED   double authentification absente
@@ -75,10 +105,21 @@ service WalletService {
   rpc ListStatement(ListStatementRequest) returns (ListStatementResponse);
   // Portefeuille prépayé (ADR-046), services de WALLET_DEBIT_CALLERS : paiement d'un service débité
   // du portefeuille (jamais partiel, jamais au-delà du solde), idempotent par (appelant, clé).
+  // R-WL-03 (v2) : la clé est tirée de l'objet ("<object_type>:<object_id>[:<part>]", par exemple
+  // "cleaning_session:<id>" pour une séance, R-PP-01) et un objet (appelant, type, identifiant, part)
+  // n'a jamais deux débits non remboursés : un second débit avec une autre clé est refusé
+  // (WALLET_OBJECT_ALREADY_DEBITED).
   rpc Debit(DebitRequest) returns (DebitResponse);
   // Remboursement d'un débit de l'appelant : écriture inverse, le montant est recrédité (une fois).
   rpc Refund(RefundRequest) returns (RefundResponse);
+  // Solde prépayé d'un titulaire (le « GetBalance » du CDC Nettoyage v2, partie 15.4).
   rpc GetPrepaidBalance(GetPrepaidBalanceRequest) returns (GetPrepaidBalanceResponse);
+  // Crédit au portefeuille prépayé décidé par un service (WALLET_CREDIT_CALLERS : cleaning au
+  // lancement) sans débit à rembourser : geste commercial, crédit d'une réclamation (R-RC-03),
+  // remboursement partiel (R-WL-04). Le service a déjà fait ses propres contrôles (double validation
+  // au-delà de 50 000 FCFA pour une réclamation). Idempotent par (appelant, clé). Contrepartie
+  // comptable : "ksp:service_revenue" (à valider par le comptable).
+  rpc Credit(CreditRequest) returns (CreditResponse);
 }
 
 // Espace du titulaire connecté : son compte (contexte personnel) ou son organisation active.
@@ -89,6 +130,12 @@ service WalletAccountService {
   // Recharge du portefeuille prépayé par Mobile Money (ADR-046) : page de paiement créée par payment ;
   // le portefeuille est crédité à la confirmation du paiement (payment.intent.succeeded).
   rpc CreateTopUp(CreateTopUpRequest) returns (CreateTopUpResponse);
+  // R-WL-04 : demande de retrait du portefeuille prépayé vers un compte Mobile Money (titulaire
+  // connecté ; pour une organisation, administrateur org_admin). Le montant est retenu aussitôt
+  // (jamais au-delà du solde, à valider), puis la finance traite la demande et une deuxième personne
+  // la valide ; payment exécute le virement. Idempotent par clé.
+  rpc RequestWithdrawal(RequestWithdrawalRequest) returns (RequestWithdrawalResponse);
+  rpc ListMyWithdrawals(ListMyWithdrawalsRequest) returns (ListMyWithdrawalsResponse);
 }
 
 // Back-office : finance_officer, super_admin, avec double authentification.
@@ -111,6 +158,22 @@ service WalletAdminService {
   // Validation par un second membre de la finance (jamais l'auteur de la demande) : le crédit est
   // écrit. Rejouable : une demande déjà validée rend son crédit.
   rpc ApproveManualCredit(ApproveManualCreditRequest) returns (ApproveManualCreditResponse);
+  // Rejet d'une demande de crédit en attente, avec motif (recharge en espèces non retrouvée en
+  // caisse…) ; l'auteur peut rejeter sa propre demande pour l'annuler (à valider). Rien n'est crédité.
+  rpc RejectManualCredit(RejectManualCreditRequest) returns (RejectManualCreditResponse);
+  // Demandes de retrait (R-WL-04), les plus anciennes d'abord ; filtres facultatifs.
+  rpc ListWithdrawals(ListWithdrawalsRequest) returns (ListWithdrawalsResponse);
+  // Premier membre de la finance : vérifications faites (titulaire, numéro), la demande attend la
+  // validation d'une deuxième personne ("requested" → "awaiting_approval").
+  rpc ProcessWithdrawal(ProcessWithdrawalRequest) returns (ProcessWithdrawalResponse);
+  // Deuxième personne de la finance (jamais celle qui a traité la demande) : le virement est
+  // transmis à payment (PayoutService.RequestPayout, référence "wallet_withdrawal:<id>")
+  // ("awaiting_approval" → "submitted"), puis soldé à payment.payout.completed ("completed") ou rendu
+  // au portefeuille à payment.payout.failed ("failed"). Rejouable.
+  rpc ApproveWithdrawal(ApproveWithdrawalRequest) returns (ApproveWithdrawalResponse);
+  // Refus motivé d'une demande "requested" ou "awaiting_approval" : le montant retenu est rendu au
+  // portefeuille ("rejected").
+  rpc RejectWithdrawal(RejectWithdrawalRequest) returns (RejectWithdrawalResponse);
 }
 
 message Page {
@@ -145,9 +208,12 @@ message Wallet {
 // Portefeuille prépayé d'un titulaire (ADR-046) : dépensable sur la plateforme, jamais négatif.
 message PrepaidWallet {
   Holder holder = 1;
+  // Solde disponible (retraits demandés déjà déduits).
   ksp.common.v1.Money balance = 2;
   // Dernière écriture, vide si le portefeuille n'en a aucune.
   string last_entry_at = 3;
+  // Retraits vers Mobile Money demandés, pas encore terminés (R-WL-04) ; déjà déduits du solde.
+  ksp.common.v1.Money withdrawals_in_progress = 4;
 }
 
 // Objet payé par un débit du portefeuille prépayé, chez le service appelant.
@@ -204,7 +270,8 @@ message StatementPage {
 message LedgerEntry {
   // "holder:user:<id>", "holder:organization:<id>", "ksp:collections", "ksp:commission" ou
   // "ksp:payouts_in_transit" ; portefeuille prépayé (ADR-046) : "prepaid:user:<id>",
-  // "prepaid:organization:<id>", "ksp:prepaid_funds" ou "ksp:service_revenue".
+  // "prepaid:organization:<id>", "ksp:prepaid_funds" ou "ksp:service_revenue" ; retraits (R-WL-04) :
+  // "ksp:prepaid_withdrawals_in_transit".
   string account = 1;
   // "debit" ou "credit".
   string direction = 2;
@@ -214,7 +281,8 @@ message LedgerEntry {
 message LedgerTransaction {
   string id = 1;
   // "collection", "payout_hold", "payout_settlement", "payout_release" ou "reversal" ;
-  // portefeuille prépayé (ADR-046) : "top_up", "service_payment" ou "refund".
+  // portefeuille prépayé (ADR-046) : "top_up", "service_payment" ou "refund" ; v2 : "service_credit"
+  // (Credit), "withdrawal_hold", "withdrawal_settlement", "withdrawal_release".
   string kind = 2;
   // Référence d'idempotence de l'appelant.
   string reference = 3;
@@ -501,11 +569,19 @@ message CreditPrepaidWalletRequest {
   // "refund" (remboursement d'un service, geste commercial) ou "top_up" (recharge reçue par Mobile
   // Money mais non créditée : écart de montant traité par la finance ; payment_id obligatoire, un
   // seul crédit par paiement, automatique ou manuel).
+  // v2 : "cash_top_up" (recharge en espèces au guichet, R-WL-02) ou "bank_transfer_top_up" (virement
+  // reçu d'une organisation, R-PE-04) : receipt_reference obligatoire, toujours soumis à la
+  // validation d'une deuxième personne (pending_request), quel que soit le montant.
   string kind = 3;
   ksp.common.v1.Money amount = 4;
   // Motif, 1 à 200 caractères, visible dans le relevé du client.
   string reason = 5;
   string payment_id = 6;
+  // Espèces : numéro du reçu de caisse ; virement : référence bancaire (1 à 100 caractères).
+  optional string receipt_reference = 7;
+  // Facultatif : objet que ce versement doit régler aussitôt (facture, séance) ; repris dans
+  // wallet.prepaid.credited v2 (forObject) pour que son service débite le portefeuille (R-PE-04).
+  ObjectReference for_object = 8;
 }
 
 message CreditPrepaidWalletResponse {
@@ -523,13 +599,13 @@ message CreditPrepaidWalletResponse {
 message ManualCreditRequest {
   string id = 1;
   Holder holder = 2;
-  // "refund" ou "top_up".
+  // "refund", "top_up", "cash_top_up" ou "bank_transfer_top_up".
   string kind = 3;
   ksp.common.v1.Money amount = 4;
   string reason = 5;
   // Recharge : paiement crédité ; vide sinon.
   string payment_id = 6;
-  // "pending_approval" ou "approved".
+  // "pending_approval", "approved" ou "rejected".
   string status = 7;
   string requested_by = 8;
   string requested_at = 9;
@@ -537,11 +613,19 @@ message ManualCreditRequest {
   string approved_by = 10;
   string approved_at = 11;
   string transaction_id = 12;
+  // Espèces ou virement : référence du reçu ; absente sinon.
+  optional string receipt_reference = 13;
+  // Objet à régler aussitôt, absent sinon.
+  ObjectReference for_object = 14;
+  // Rejet : auteur, date, motif ; absents sinon.
+  optional string rejected_by = 15;
+  optional string rejected_at = 16;
+  optional string rejection_reason = 17;
 }
 
 message ListManualCreditRequestsRequest {
   Page page = 1;
-  // "pending_approval" ou "approved" ; vide : toutes.
+  // "pending_approval", "approved" ou "rejected" ; vide : toutes.
   string status = 2;
 }
 
@@ -560,4 +644,141 @@ message ApproveManualCreditResponse {
   ManualCreditRequest request = 3;
   // false : demande déjà validée (le même crédit est rendu).
   bool created = 4;
+}
+
+message CreditRequest {
+  // Obligatoire (8 à 150 caractères : lettres, chiffres, ":", "_" et "-"), propre à l'appelant.
+  string idempotency_key = 1;
+  Holder holder = 2;
+  // Entier en XOF, 1 à 1 000 000 000.
+  ksp.common.v1.Money amount = 3;
+  // Objet à l'origine du crédit chez l'appelant (réclamation, demande annulée…).
+  ObjectReference object = 4;
+  // "commercial_gesture" (geste commercial, réclamation) ou "refund" (remboursement sans débit
+  // remboursable en entier, par exemple une part de séance).
+  string kind = 5;
+  // Libellé du relevé, 1 à 140 caractères (« Nettoyage — geste commercial, séance 3/15 »).
+  string description = 6;
+  // Facultatif : débit d'origine (transaction wallet) ; vide sinon.
+  string related_transaction_id = 7;
+}
+
+message CreditResponse {
+  LedgerTransaction transaction = 1;
+  PrepaidWallet wallet = 2;
+  // false : crédit déjà enregistré avec cette clé.
+  bool created = 3;
+}
+
+message RejectManualCreditRequest {
+  string request_id = 1;
+  // Motif, 1 à 200 caractères.
+  string reason = 2;
+}
+
+message RejectManualCreditResponse {
+  ManualCreditRequest request = 1;
+}
+
+// Retrait du portefeuille prépayé vers Mobile Money (R-WL-04).
+message Withdrawal {
+  string id = 1;
+  Holder holder = 2;
+  ksp.common.v1.Money amount = 3;
+  // "requested" (montant retenu, à traiter), "awaiting_approval" (traité, attend une deuxième
+  // personne), "submitted" (transmis à payment), "completed", "failed" (virement échoué, montant
+  // rendu) ou "rejected" (refusé par la finance, montant rendu).
+  string status = 4;
+  string beneficiary_operator = 5;
+  // Numéro masqué (deux derniers chiffres) : wallet ne garde le numéro complet que jusqu'à sa
+  // transmission à payment.
+  string beneficiary_phone_masked = 6;
+  // Compte qui l'a demandé (titulaire, ou administrateur de l'organisation).
+  string requested_by = 7;
+  string requested_at = 8;
+  // Traitement par la finance (première personne) ; vides avant.
+  string processed_by = 9;
+  string processed_at = 10;
+  string processing_note = 11;
+  // Validation (deuxième personne) ; vides avant.
+  string approved_by = 12;
+  string approved_at = 13;
+  // Refus ; vides sinon.
+  string rejected_by = 14;
+  string rejected_at = 15;
+  string rejection_reason = 16;
+  // Reversement chez payment, vide tant qu'il n'est pas transmis.
+  string payment_payout_id = 17;
+  string hold_transaction_id = 18;
+  // Transaction qui l'a soldé (terminé ou rendu), vide en cours.
+  string settlement_transaction_id = 19;
+  string completed_at = 20;
+  string failed_at = 21;
+}
+
+message RequestWithdrawalRequest {
+  // En-tête Idempotency-Key, obligatoire (8 à 100 caractères).
+  string idempotency_key = 1;
+  // Entier en XOF, 1 à 1 000 000 000, au plus le solde disponible.
+  ksp.common.v1.Money amount = 2;
+  PayoutBeneficiary beneficiary = 3;
+}
+
+message RequestWithdrawalResponse {
+  Withdrawal withdrawal = 1;
+  PrepaidWallet wallet = 2;
+  // false : retrait déjà demandé avec cette clé.
+  bool created = 3;
+}
+
+message ListMyWithdrawalsRequest {
+  Page page = 1;
+  // Filtre facultatif sur le statut.
+  string status = 2;
+}
+
+message ListMyWithdrawalsResponse {
+  repeated Withdrawal withdrawals = 1;
+  string next_cursor = 2;
+}
+
+message ListWithdrawalsRequest {
+  Page page = 1;
+  // Filtres facultatifs.
+  string status = 2;
+  Holder holder = 3;
+}
+
+message ListWithdrawalsResponse {
+  repeated Withdrawal withdrawals = 1;
+  string next_cursor = 2;
+}
+
+message ProcessWithdrawalRequest {
+  string withdrawal_id = 1;
+  // Vérifications faites, 1 à 500 caractères.
+  string note = 2;
+}
+
+message ProcessWithdrawalResponse {
+  Withdrawal withdrawal = 1;
+}
+
+message ApproveWithdrawalRequest {
+  string withdrawal_id = 1;
+}
+
+message ApproveWithdrawalResponse {
+  Withdrawal withdrawal = 1;
+}
+
+message RejectWithdrawalRequest {
+  string withdrawal_id = 1;
+  // Motif communiqué au client, 1 à 500 caractères.
+  string reason = 2;
+}
+
+message RejectWithdrawalResponse {
+  Withdrawal withdrawal = 1;
+  PrepaidWallet wallet = 2;
 }

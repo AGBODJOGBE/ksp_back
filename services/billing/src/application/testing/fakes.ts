@@ -2,6 +2,7 @@ import { AppError, type RoleClaim, runWithContext } from '@ksp/platform';
 import { type BillingContract, contractPeriods } from '../../domain/contract';
 import { formatInvoiceNumber, type Invoice, type InvoicePayment, invoiceYear } from '../../domain/invoice';
 import { type BillingSettings, DEFAULT_BILLING_SETTINGS } from '../../domain/settings';
+import { inOverdueScope } from '../../domain/monthly-invoice';
 import {
   type BillingDeps,
   type Clock,
@@ -18,6 +19,7 @@ import {
   type WalletDebit,
   type WalletLedger,
 } from '../ports';
+import { type InvoiceIssuance } from '../../domain/issued-invoice';
 
 /** Doublures en mémoire des ports de billing, pour les tests de l'application. */
 export class FixedClock implements Clock {
@@ -42,25 +44,14 @@ export class Recorder {
   }
 }
 
+/** Contrats v1 en mémoire : les tests les enregistrent directement (`add`), comme un contrat déjà en base. */
 export class InMemoryContracts implements ContractRepository {
   readonly contracts = new Map<string, BillingContract>();
-  readonly processed = new Set<string>();
 
   constructor(private readonly invoices: InMemoryInvoices) {}
 
-  async apply(
-    eventId: string,
-    consumer: string,
-    contractId: string,
-    change: (current: BillingContract | null) => BillingContract | null,
-  ) {
-    const key = `${eventId}/${consumer}`;
-    if (this.processed.has(key)) return 'duplicate' as const;
-    // Comme la transaction SQL : une erreur levée par `change` n'enregistre pas l'événement (inbox).
-    const next = change(this.contracts.get(contractId) ?? null);
-    this.processed.add(key);
-    if (next) this.contracts.set(contractId, next);
-    return 'processed' as const;
+  add(contract: BillingContract): void {
+    this.contracts.set(contract.id, contract);
   }
   async findById(id: string) {
     return this.contracts.get(id) ?? null;
@@ -71,7 +62,8 @@ export class InMemoryContracts implements ContractRepository {
         contract,
         invoicedIndexes: [...this.invoices.invoices.values()]
           .filter((invoice) => invoice.contractId === contract.id)
-          .map((invoice) => invoice.periodIndex),
+          .map((invoice) => invoice.periodIndex)
+          .filter((index): index is number => index !== null),
       }))
       .filter(({ contract, invoicedIndexes }) => invoicedIndexes.length < contractPeriods(contract).length);
   }
@@ -107,6 +99,28 @@ export class InMemoryInvoices implements InvoiceRepository {
     this.recorder.record(events(invoice));
     return invoice;
   }
+  /** Lot E : facture émise au paiement, idempotente par (émetteur, clé). */
+  async issuePaid(
+    draft: Omit<Invoice, 'number'> & { issuance: InvoiceIssuance },
+    year: number,
+    events: (invoice: Invoice) => OutboxMessage[],
+  ) {
+    const existing = await this.findByIssueKey(draft.issuance.issuer, draft.issuance.idempotencyKey);
+    if (existing) return { invoice: existing, created: false };
+    const next = (this.sequence.get(year) ?? 0) + 1;
+    this.sequence.set(year, next);
+    const invoice = { ...draft, number: formatInvoiceNumber(year, next) };
+    this.invoices.set(invoice.id, invoice);
+    this.recorder.record(events(invoice));
+    return { invoice, created: true };
+  }
+  async findByIssueKey(issuer: string, idempotencyKey: string) {
+    return (
+      [...this.invoices.values()].find(
+        (i) => i.issuance?.issuer === issuer && i.issuance.idempotencyKey === idempotencyKey,
+      ) ?? null
+    );
+  }
   async findById(id: string) {
     return this.invoices.get(id) ?? null;
   }
@@ -140,7 +154,7 @@ export class InMemoryInvoices implements InvoiceRepository {
     const stored = this.invoices.get(invoice.id);
     if (!stored || stored.status !== 'pending_payment' || stored.version !== invoice.version) return false;
     this.invoices.set(invoice.id, { ...stored, status: 'overdue', version: stored.version + 1 });
-    this.recorder.record(events(this.countOverdue(invoice.contractId)));
+    this.recorder.record(events(this.countOverdue(invoice)));
     return true;
   }
   async recordPayment(
@@ -151,7 +165,7 @@ export class InMemoryInvoices implements InvoiceRepository {
     const stored = this.invoices.get(invoice.id);
     if (!stored || stored.version !== invoice.version) return false;
     this.invoices.set(invoice.id, { ...invoice, version: invoice.version + 1 });
-    this.recorder.record(events(this.countOverdue(invoice.contractId)));
+    this.recorder.record(events(this.countOverdue(invoice)));
     return true;
   }
   readonly processed = new Set<string>();
@@ -167,8 +181,9 @@ export class InMemoryInvoices implements InvoiceRepository {
     this.processed.add(key);
     return 'saved' as const;
   }
-  private countOverdue(contractId: string) {
-    return [...this.invoices.values()].filter((i) => i.contractId === contractId && i.status === 'overdue')
+  // Lot F : impayées du contrat (v1) ou du titulaire (v2).
+  countOverdue(invoice: Invoice) {
+    return [...this.invoices.values()].filter((i) => inOverdueScope(invoice, i) && i.status === 'overdue')
       .length;
   }
 }
@@ -260,6 +275,31 @@ export const CUSTOMER_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e11';
 export const OTHER_CUSTOMER_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d9e99';
 export const ORGANIZATION_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000';
 export const STAFF_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0001';
+export const MISSION_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000';
+
+/**
+ * Contrat v1 d'une organisation, déjà enregistré (ADR-025) : 300 000 FCFA sur trois mois civils
+ * entiers, à partir du 1er novembre 2026 à 00:00, heure du Bénin.
+ */
+export function organizationContract(overrides: Partial<BillingContract> = {}): BillingContract {
+  return {
+    id: MISSION_ID,
+    source: 'cleaning',
+    customerId: CUSTOMER_ID,
+    organizationId: ORGANIZATION_ID,
+    total: 300_000,
+    durationMonths: 3,
+    oneOff: false,
+    startsAt: new Date('2026-10-31T23:00:00.000Z'),
+    terminatedAt: null,
+    suspendedSince: null,
+    suspensions: [],
+    lastResumedAt: null,
+    serviceName: null,
+    createdAt: new Date('2026-10-23T08:00:00Z'),
+    ...overrides,
+  };
+}
 
 /** Fiche de l'organisation des tests, telle qu'identity la rend à billing. */
 export const ORGANIZATION_PROFILE: OrganizationProfile = {

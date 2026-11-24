@@ -177,6 +177,7 @@ describeWithDatabase('Rôles et double authentification (PostgreSQL)', () => {
       roleCode: 'recovery_agent',
       scopeType: 'domain' as const,
       scopeId: 'recovery',
+      zoneKeys: [],
       grantedBy: null,
       now: base,
     };
@@ -197,6 +198,8 @@ describeWithDatabase('Rôles et double authentification (PostgreSQL)', () => {
         scopeId: 'recovery',
         requiresMfa: true,
         backofficeAccess: true,
+        zoneKeys: [],
+        permissions: [],
       },
     ]);
     await pool.query('UPDATE role_assignments SET revoked_at = now()');

@@ -1,4 +1,4 @@
-import { type Json } from '../cleaning/cleaning.ports';
+import { type Json } from '../common/api.ports';
 
 /**
  * Vue de la gateway sur le service document (ADR-044), indépendante de gRPC. Le PDF ne passe

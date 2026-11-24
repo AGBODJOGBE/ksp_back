@@ -39,13 +39,68 @@ service IdentityService {
   //   IDENTITY_ORGANIZATION_ID_INVALID     INVALID_ARGUMENT   identifiant mal formé (UUID attendu)
   //   IDENTITY_TOO_MANY_ORGANIZATION_IDS   INVALID_ARGUMENT   plus de 100 identifiants
   rpc GetOrganizationsByIds(GetOrganizationsByIdsRequest) returns (GetOrganizationsByIdsResponse);
-  // Réservé aux actions sensibles : les permissions courantes voyagent dans le jeton.
+  // Personnel à prévenir (CDC Nettoyage v2, partie 16.2) — appelant autorisé : notification seul,
+  // qui joint le superviseur de la zone d'un événement (clé de commune) sans liste tenue à la main.
+  // Rend les comptes actifs dont une attribution globale, ou limitée à la zone demandée, porte la
+  // permission. zone_key vide : attributions globales seulement. Identifiants seulement : les
+  // coordonnées se lisent ensuite par GetUsersByIds.
+  // Erreurs :
+  //   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED  service appelant non autorisé
+  rpc ListStaffByPermission(ListStaffByPermissionRequest) returns (ListStaffByPermissionResponse);
+  // Réservé aux actions sensibles : les permissions courantes voyagent dans le jeton (claims perms et
+  // zone_perms, contracts/tokens/access-token.v1.schema.json ; CDC Nettoyage v2, partie 16.3).
   rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
+  // Attribution d'un rôle par un service. Appelants autorisés (IDENTITY_ROLE_GRANT_CALLERS) et rôles
+  // qu'ils peuvent attribuer : cleaning → cleaning_agent seulement, à la validation d'un agent
+  // (R-AG-01). Autre rôle : IDENTITY_ROLE_FORBIDDEN. Idempotent : une attribution active identique
+  // (même compte, même rôle, même portée) est rendue telle quelle. Tracé dans le journal d'audit
+  // (auteur : le service appelant) ; événement identity.role.granted (version 2).
+  // Erreurs : IDENTITY_CALLER_FORBIDDEN, IDENTITY_ROLE_FORBIDDEN (PERMISSION_DENIED),
+  // IDENTITY_USER_NOT_FOUND, IDENTITY_ROLE_NOT_FOUND (NOT_FOUND), IDENTITY_ROLE_INACTIVE,
+  // IDENTITY_ACCOUNT_NOT_ACTIVE (FAILED_PRECONDITION).
   rpc GrantRole(GrantRoleRequest) returns (GrantRoleResponse);
   rpc RevokeRole(RevokeRoleRequest) returns (RevokeRoleResponse);
-  // Chaque service enregistre son catalogue de permissions et de rôles à chaque déploiement.
+  // R-RB-01. Chaque service déclare son catalogue de permissions à chaque déploiement (jeton de
+  // service : le service déclaré est toujours celui du jeton). Une permission ne se crée jamais à la
+  // main : elle correspond à un contrôle réel dans le code du service.
+  // - Permissions : le catalogue reçu remplace celui du service. Une permission qui n'y figure plus
+  //   est « retirée » : elle n'entre plus dans les jetons et reste affichée comme retirée dans les
+  //   rôles qui la cochaient (à valider).
+  // - Rôles (roles) : rôles livrés par défaut. Un rôle absent est créé ; un rôle existant n'est
+  //   jamais écrasé (le super administrateur a pu le modifier, R-RB-02).
+  //   Seule exception : un rôle livré par défaut qu'aucun administrateur n'a modifié reçoit celles
+  //   des permissions du service déclarant, déclarées pour lui, qui lui manquent (ajout seulement,
+  //   jamais de retrait, tracé au journal d'audit avec le service pour auteur) : les rôles par
+  //   défaut portent ainsi leurs permissions dès la première déclaration de chaque service.
+  // - Rejouable : une version de catalogue déjà enregistrée (catalog_version inférieure ou égale)
+  //   est acceptée sans effet.
+  // Erreurs : IDENTITY_CATALOG_INVALID (INVALID_ARGUMENT, details.field : code mal formé, permission
+  // d'un autre service, rôle qui coche une permission inconnue).
   rpc RegisterCatalog(RegisterCatalogRequest) returns (RegisterCatalogResponse);
   rpc GetCatalog(GetCatalogRequest) returns (GetCatalogResponse);
+  // Compte d'un numéro de téléphone, pour un service (R-AG-02 du CDC Nettoyage v2 : agent créé ou
+  // invité par l'admin du Nettoyage). Appelants autorisés (IDENTITY_PHONE_ACCOUNT_CALLERS) : cleaning
+  // seulement. Le numéro est contrôlé et normalisé par identity (E.164 ; numéro béninois à 8 chiffres
+  // ramené à 10, ADR-063). La réponse ne rend ni le numéro ni le nom : l'identifiant et l'état du
+  // compte seulement.
+  // - FindUserByPhone : lecture seule. Aucun compte pour ce numéro, ou compte supprimé : found = false.
+  // - EnsureUserByPhone : rend le compte du numéro, ou le crée « en attente de vérification »
+  //   (USER_STATUS_PENDING_VERIFICATION) avec le prénom et le nom reçus ; le compte devient actif à sa
+  //   première connexion par code (VerifyOtp), qui vérifie son téléphone. Un compte existant n'est
+  //   jamais modifié : son nom et son état restent les siens. Deux appels simultanés pour le même
+  //   numéro ne créent qu'un compte. Compte créé : événement identity.user.registered et trace
+  //   d'audit (auteur : le service appelant ; le membre du personnel à l'origine de la demande est lu
+  //   dans les métadonnées de l'appel, x-user-id).
+  // Erreurs :
+  //   IDENTITY_CALLER_FORBIDDEN    PERMISSION_DENIED    service appelant non autorisé
+  //   IDENTITY_PHONE_INVALID       INVALID_ARGUMENT     numéro mal formé
+  //   IDENTITY_NAME_INVALID        INVALID_ARGUMENT     EnsureUserByPhone : prénom ou nom absent ou mal
+  //                                                     formé (details.field : firstName, lastName)
+  //   IDENTITY_ACCOUNT_NOT_USABLE  FAILED_PRECONDITION  EnsureUserByPhone : compte suspendu, verrouillé,
+  //                                                     en cours de suppression ou supprimé
+  //                                                     (details.status) ; rien n'est créé
+  rpc FindUserByPhone(FindUserByPhoneRequest) returns (FindUserByPhoneResponse);
+  rpc EnsureUserByPhone(EnsureUserByPhoneRequest) returns (EnsureUserByPhoneResponse);
 }
 
 enum UserStatus {
@@ -68,6 +123,11 @@ enum ScopeType {
   SCOPE_TYPE_ORG = 3;
   // Le compte de l'utilisateur lui-même.
   SCOPE_TYPE_PERSONAL = 4;
+  // Une ou plusieurs zones desservies (R-RB-03, CDC Nettoyage v2) : les permissions du rôle ne valent
+  // que pour ces communes (par exemple un superviseur de Porto-Novo). Zones dans le champ zones
+  // (ZoneList : clés de commune du référentiel de geo, ksp.geo.v1.Commune.key) ; scope_id vide. Un
+  // contrôle sur une seule zone (CheckPermission) passe sa clé dans scope_id.
+  SCOPE_TYPE_ZONE = 5;
 }
 
 message User {
@@ -152,9 +212,23 @@ message GetOrganizationsByIdsResponse {
   repeated OrganizationProfile organizations = 1;
 }
 
+message ListStaffByPermissionRequest {
+  // Format <service>.<ressource>.<action>, par exemple "cleaning.request.process".
+  string permission = 1;
+  // Clé de commune du référentiel de geo (ksp.geo.v1.Commune.key) ; vide : attributions globales
+  // seulement.
+  string zone_key = 2;
+}
+
+message ListStaffByPermissionResponse {
+  // Comptes actifs dont une attribution globale, ou limitée à zone_key, porte la permission.
+  repeated string user_ids = 1;
+}
+
 message CheckPermissionRequest {
   string user_id = 1;
-  // Format <service>:<ressource>:<action>, par exemple "wallet:payout:approve".
+  // Format <service>.<ressource>.<action> (CDC Nettoyage v2, partie 2), par exemple
+  // "cleaning.quote.adjust_price" ou "wallet.withdrawal.approve".
   string permission = 2;
   ScopeType scope_type = 3;
   string scope_id = 4;
@@ -173,6 +247,8 @@ message RoleAssignment {
   string scope_id = 5;
   string granted_by = 6;
   string granted_at = 7;
+  // Portée SCOPE_TYPE_ZONE : zones de l'attribution ; absent sinon.
+  ZoneList zones = 8;
 }
 
 message GrantRoleRequest {
@@ -180,6 +256,10 @@ message GrantRoleRequest {
   string role_code = 2;
   ScopeType scope_type = 3;
   string scope_id = 4;
+  // Portée SCOPE_TYPE_ZONE : 1 à 77 clés de commune (geo), sans doublon ; absent sinon.
+  ZoneList zones = 5;
+  // Motif tracé dans le journal d'audit (500 caractères au plus), par exemple « Agent validé ».
+  string reason = 6;
 }
 
 message GrantRoleResponse {
@@ -194,8 +274,18 @@ message RevokeRoleRequest {
 message RevokeRoleResponse {}
 
 message Permission {
+  // <service>.<ressource>.<action> : minuscules, chiffres et "_" entre les points ; le premier
+  // segment est le service qui déclare la permission.
   string code = 1;
+  // Ce qu'elle permet, affiché à côté de la case à cocher (« Lire / gérer les programmes »).
   string description = 2;
+  // Service qui la déclare ; renseigné par identity dans les réponses, ignoré dans RegisterCatalog.
+  string service = 3;
+  // Module affiché au back-office pour grouper les cases (par exemple "catalog", "planning") :
+  // deuxième segment du code ; renseigné par identity.
+  string module = 4;
+  // Permission qui n'est plus déclarée par son service (voir RegisterCatalog) ; renseigné par identity.
+  bool retired = 5;
 }
 
 message RoleDefinition {
@@ -204,17 +294,30 @@ message RoleDefinition {
   bool requires_mfa = 3;
   string description = 4;
   repeated string permissions = 5;
+  // Nom affiché (« Superviseur Nettoyage ») ; vide : le code.
+  string name = 6;
+  // Rôle sensible (R-RB-05, par exemple finance_officer, super_admin) : son retrait révoque
+  // immédiatement toutes les sessions de la personne.
+  bool sensitive = 7;
+  // Donne accès au back-office.
+  bool backoffice_access = 8;
 }
 
 message RegisterCatalogRequest {
   string service = 1;
   int32 catalog_version = 2;
   repeated Permission permissions = 3;
+  // Rôles livrés par défaut (créés s'ils n'existent pas, jamais écrasés).
   repeated RoleDefinition roles = 4;
 }
 
 message RegisterCatalogResponse {
   bool accepted = 1;
+  // Bilan de l'enregistrement : permissions ajoutées et retirées, rôles par défaut créés. Tous à 0
+  // pour une version déjà enregistrée.
+  int32 permissions_added = 2;
+  int32 permissions_retired = 3;
+  int32 roles_created = 4;
 }
 
 message GetCatalogRequest {
@@ -225,6 +328,36 @@ message GetCatalogRequest {
 message GetCatalogResponse {
   repeated Permission permissions = 1;
   repeated RoleDefinition roles = 2;
+}
+
+message FindUserByPhoneRequest {
+  // Numéro au format E.164 ; espaces, points, tirets et préfixe 00 tolérés.
+  string phone_e164 = 1;
+}
+
+message FindUserByPhoneResponse {
+  // false : aucun compte pour ce numéro, ou compte supprimé ; les autres champs sont alors vides.
+  bool found = 1;
+  string user_id = 2;
+  UserStatus status = 3;
+}
+
+message EnsureUserByPhoneRequest {
+  // Numéro au format E.164 ; espaces, points, tirets et préfixe 00 tolérés.
+  string phone_e164 = 1;
+  // Prénom et nom du compte à créer : lettres, espaces, trait d'union, apostrophe et point, 100
+  // caractères au plus (règles du profil). Contrôlés à chaque appel, ignorés si le compte existe.
+  string first_name = 2;
+  string last_name = 3;
+}
+
+message EnsureUserByPhoneResponse {
+  string user_id = 1;
+  // USER_STATUS_ACTIVE, ou USER_STATUS_PENDING_VERIFICATION tant que le titulaire ne s'est pas
+  // connecté par code.
+  UserStatus status = 2;
+  // true : le compte vient d'être créé par cet appel.
+  bool created = 3;
 }
 
 // ---------------------------------------------------------------------------
@@ -704,6 +837,19 @@ message ConfirmEmailResponse {
 // E-mail de facturation : mêmes erreurs que ChangeEmail et ConfirmEmail (IDENTITY_EMAIL_INVALID,
 // IDENTITY_EMAIL_ALREADY_VERIFIED, IDENTITY_OTP_*), sauf IDENTITY_EMAIL_ALREADY_USED : une même
 // adresse peut servir à plusieurs organisations.
+//
+// CDC Nettoyage v2, partie 3 (R-CP-01 à 04) : informations obligatoires d'une organisation (raison
+// sociale, IFU de 13 chiffres unique, adresse du siège, commune, téléphone, e-mail de facturation
+// vérifié, nom du représentant), facultatives (RCCM, secteur, logo). Membres invités par un
+// administrateur avec un rôle d'organisation : administrateur (tout), membre (demandes et suivi),
+// lecteur (consultation et factures) ; il reste toujours au moins un administrateur.
+// Erreurs des membres et invitations :
+//   IDENTITY_MEMBER_INVALID                INVALID_ARGUMENT    details.field : phone, role
+//   IDENTITY_MEMBER_NOT_FOUND              NOT_FOUND           membre inconnu de cette organisation
+//   IDENTITY_INVITATION_NOT_FOUND          NOT_FOUND           invitation inconnue, ou adressée à un autre compte
+//   IDENTITY_INVITATION_NOT_PENDING        FAILED_PRECONDITION invitation déjà acceptée, refusée ou expirée
+//   IDENTITY_MEMBER_ALREADY_EXISTS         ALREADY_EXISTS      le compte est déjà membre
+//   IDENTITY_ORGANIZATION_LAST_ADMIN       FAILED_PRECONDITION l'action laisserait l'organisation sans administrateur
 // ---------------------------------------------------------------------------
 service OrganizationService {
   // UC-ID-12. Demande de création : l'organisation est en attente de validation et l'appelant
@@ -719,6 +865,24 @@ service OrganizationService {
   rpc ChangeOrganizationBillingEmail(ChangeOrganizationBillingEmailRequest) returns (ChangeOrganizationBillingEmailResponse);
   // Confirmer l'adresse par le dernier code reçu : elle devient l'e-mail de facturation.
   rpc ConfirmOrganizationBillingEmail(ConfirmOrganizationBillingEmailRequest) returns (ConfirmOrganizationBillingEmailResponse);
+  // Membres et invitations en attente (tout membre de l'organisation, R-CP-03) ; numéros masqués.
+  rpc ListOrganizationMembers(ListOrganizationMembersRequest) returns (ListOrganizationMembersResponse);
+  // Administrateur de l'organisation (validée) : invite un compte par son numéro, avec un rôle
+  // d'organisation. Réponse identique que le numéro ait un compte ou non (anti-énumération) ;
+  // l'invitation attend l'acceptation de la personne et expire après 7 jours (à valider). Le compte
+  // invité est prévenu (identity.member.invited) ; un numéro sans compte retrouve l'invitation à sa
+  // première connexion si elle n'a pas expiré.
+  rpc InviteOrganizationMember(InviteOrganizationMemberRequest) returns (InviteOrganizationMemberResponse);
+  // Invitations en attente adressées au compte connecté.
+  rpc ListMyOrganizationInvitations(ListMyOrganizationInvitationsRequest) returns (ListMyOrganizationInvitationsResponse);
+  // Accepter (identity.member.added) ou refuser une invitation adressée au compte connecté.
+  rpc RespondToOrganizationInvitation(RespondToOrganizationInvitationRequest) returns (RespondToOrganizationInvitationResponse);
+  // Administrateur : change le rôle d'un membre (identity.member.role_changed). Jamais le dernier
+  // administrateur.
+  rpc ChangeOrganizationMemberRole(ChangeOrganizationMemberRoleRequest) returns (ChangeOrganizationMemberRoleResponse);
+  // Administrateur : retire un membre ; un membre peut aussi se retirer lui-même
+  // (identity.member.removed). Jamais le dernier administrateur.
+  rpc RemoveOrganizationMember(RemoveOrganizationMemberRequest) returns (RemoveOrganizationMemberResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -763,12 +927,15 @@ enum OrganizationStatus {
   ORGANIZATION_STATUS_SUSPENDED = 4;
 }
 
-// Rôle d'un membre dans son organisation (portée org). Seul ORG_ROLE_ADMIN est attribué
-// aujourd'hui : au créateur de l'organisation.
+// Rôle d'un membre dans son organisation (portée org, R-CP-03). Le créateur de l'organisation en
+// est administrateur ; les autres rôles sont donnés à l'invitation.
 enum OrgRole {
   ORG_ROLE_UNSPECIFIED = 0;
+  // org_admin : tout (membres, acceptation des devis, paiements, wallet de l'organisation).
   ORG_ROLE_ADMIN = 1;
+  // org_member : demandes et suivi.
   ORG_ROLE_MEMBER = 2;
+  // org_viewer : consultation et factures.
   ORG_ROLE_VIEWER = 3;
 }
 
@@ -795,6 +962,15 @@ message Organization {
   // Suspension en cours ; vide sinon.
   string suspended_at = 13;
   string suspension_reason = 14;
+  // v2 (absents d'une organisation créée avant) : commune du siège (clé du référentiel de geo, par
+  // exemple "cotonou"), téléphone E.164, nom du représentant légal.
+  optional string commune = 15;
+  optional string phone_e164 = 16;
+  optional string representative_name = 17;
+  // Facultatifs : secteur d'activité (texte libre, 100 caractères au plus) et logo (fichier du
+  // service file).
+  optional string sector = 18;
+  optional string logo_file_id = 19;
 }
 
 // Une organisation vue par l'un de ses membres.
@@ -817,11 +993,21 @@ message OrganizationMember {
 
 message CreateOrganizationRequest {
   string legal_name = 1;
+  // Adresse du siège.
   string address = 2;
-  // 13 chiffres ; espaces ignorés.
+  // 13 chiffres ; espaces ignorés. Unique : un IFU ne porte qu'une organisation (R-CP-01).
   string ifu = 3;
   // Facultatif.
   string rccm = 4;
+  // Obligatoires en v2 (IDENTITY_ORGANIZATION_INVALID si absents, details.field) ; déclarés optional
+  // pour la transition : commune du siège (clé du référentiel de geo), téléphone E.164, nom du
+  // représentant (1 à 120 caractères).
+  optional string commune = 5;
+  optional string phone_e164 = 6;
+  optional string representative_name = 7;
+  // Facultatifs : secteur (100 caractères au plus), logo (fichier du service file).
+  optional string sector = 8;
+  optional string logo_file_id = 9;
 }
 
 message CreateOrganizationResponse {
@@ -945,10 +1131,23 @@ message ReactivateOrganizationResponse {
 // du catalogue, suspendre ou réactiver le compte, réinitialiser sa double authentification. Chaque
 // écriture exige un motif, est tracée dans le journal d'audit d'identity et renvoie la fiche à jour.
 // Rôles :
-//   - super_admin : tout, sur tous les comptes ;
-//   - administrateur d'un métier (cleaning_admin, recovery_admin) : rôles de son métier seulement,
-//     sauf le sien ; recherche limitée à son équipe ou à un numéro complet ; numéro affiché masqué.
+//   - super_admin : tout, sur tous les comptes ; lui seul attribue et retire les rôles
+//     (GrantAccountRole, RevokeAccountRole ; CDC Nettoyage v2, partie 2, R-RB-02 et 13.3) ;
+//   - administrateur d'un métier (cleaning_admin, recovery_admin) : lecture seulement (SearchAccounts,
+//     GetAccount, ListAssignableRoles) ; recherche limitée à son équipe ou à un numéro complet ; numéro
+//     affiché masqué. Un agent validé reçoit son rôle par le service cleaning (GrantRole, R-AG-01).
 // Double authentification exigée. Les rôles de portée org ou personal ne s'attribuent pas ici.
+//
+// Rôles dynamiques (CDC Nettoyage v2, R-RB-01 à 06) — super_admin seulement : liste des permissions
+// déclarées par les services (cases à cocher par module), création d'un rôle (code, nom,
+// description, permissions), modification, désactivation. Garde-fous (R-RB-04) : super_admin n'est ni
+// modifiable ni désactivable ; il reste toujours au moins un super administrateur actif ; personne ne
+// s'attribue un rôle à soi-même. Un rôle encore attribué ne se désactive pas : réaffecter d'abord ses
+// titulaires (R-RB-02) ; aucun rôle ne se supprime. Prise d'effet (R-RB-05) : au renouvellement du jeton
+// (15 minutes au plus) ; le retrait d'un rôle sensible révoque immédiatement toutes les sessions de la
+// personne. Chaque écriture est tracée dans le journal d'audit d'identity (auteur, date, avant, après ;
+// R-RB-06) et publiée (identity.role.created, identity.role.updated, identity.role.deactivated).
+// Une attribution peut être limitée à des zones (portée SCOPE_TYPE_ZONE, R-RB-03).
 //
 // Erreurs supplémentaires (code AppError → statut gRPC) :
 //   IDENTITY_ACCOUNT_ADMIN_INVALID       INVALID_ARGUMENT    details.field : query ou reason
@@ -968,6 +1167,15 @@ message ReactivateOrganizationResponse {
 //                                                            propre compte
 //   IDENTITY_MFA_NOT_ENROLLED            FAILED_PRECONDITION aucune double authentification à
 //                                                            réinitialiser
+//   IDENTITY_SELF_ACTION_FORBIDDEN       FAILED_PRECONDITION aussi : attribution d'un rôle à soi-même (R-RB-04)
+//   IDENTITY_ROLE_INVALID                INVALID_ARGUMENT    details.field : code, name, description,
+//                                                            permissions, zoneKeys
+//   IDENTITY_ROLE_ALREADY_EXISTS         ALREADY_EXISTS      code de rôle déjà pris (rôle actif ou désactivé)
+//   IDENTITY_PERMISSION_NOT_FOUND        NOT_FOUND           permission inconnue ou retirée (details.codes)
+//   IDENTITY_ROLE_NOT_EDITABLE           FAILED_PRECONDITION super_admin : ni modifiable ni désactivable
+//   IDENTITY_ROLE_IN_USE                 FAILED_PRECONDITION rôle encore attribué (details.activeAssignments)
+//   IDENTITY_ROLE_INACTIVE               FAILED_PRECONDITION rôle désactivé : ne s'attribue plus, ne se
+//                                                            modifie plus
 // ---------------------------------------------------------------------------
 service AccountAdminService {
   rpc FindAccountByPhone(FindAccountByPhoneRequest) returns (FindAccountByPhoneResponse);
@@ -976,16 +1184,21 @@ service AccountAdminService {
   // nom). Les plus récents d'abord ; un compte supprimé n'apparaît jamais.
   rpc SearchAccounts(SearchAccountsRequest) returns (SearchAccountsResponse);
   rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
-  // Catalogue des rôles, avec ceux que l'appelant peut attribuer.
+  // Catalogue des rôles, avec ceux que l'appelant peut attribuer (aucun pour un administrateur de
+  // métier : R-RB-02). Les rôles désactivés y figurent (active = false), jamais attribuables.
   rpc ListAssignableRoles(ListAssignableRolesRequest) returns (ListAssignableRolesResponse);
-  // Compte actif seulement. Portée du rôle : globale, ou le métier qui le déclare. Une attribution
-  // active identique est rendue telle quelle (rien n'est écrit). Événement identity.role.granted ;
+  // super_admin seulement (R-RB-02 ; tout autre appelant : AUTH_FORBIDDEN dès la gateway, puis
+  // IDENTITY_ROLE_FORBIDDEN chez identity). Compte actif seulement, jamais le sien (R-RB-04).
+  // Portée du rôle : globale, ou le métier qui le déclare ; avec zones, limitée à ces zones
+  // (SCOPE_TYPE_ZONE, R-RB-03). Une attribution active identique est rendue telle quelle (rien
+  // n'est écrit). Événement identity.role.granted (version 2 : portée zone et zoneKeys) ;
   // le rôle entre dans les jetons au renouvellement suivant (15 minutes au plus). Un compte qui
   // reçoit son premier rôle du back-office configure sa double authentification à sa prochaine
   // connexion au back-office (ADR-023).
   rpc GrantAccountRole(GrantAccountRoleRequest) returns (GrantAccountRoleResponse);
-  // Événement identity.role.revoked ; une session du back-office sans rôle restant est fermée à
-  // son renouvellement suivant (ADR-023).
+  // super_admin seulement (R-RB-02). Événement identity.role.revoked ; une session du back-office sans rôle restant est fermée à
+  // son renouvellement suivant (ADR-023). Rôle sensible (R-RB-05) : toutes les sessions de la
+  // personne sont révoquées immédiatement (sessionsRevoked dans l'événement).
   rpc RevokeAccountRole(RevokeAccountRoleRequest) returns (RevokeAccountRoleResponse);
   // super_admin. Actif → suspendu (identity.user.suspended) : toutes les sessions sont fermées,
   // la connexion et le renouvellement sont refusés (IDENTITY_ACCOUNT_SUSPENDED).
@@ -996,6 +1209,22 @@ service AccountAdminService {
   // sont effacés, les sessions du back-office fermées ; la prochaine connexion au back-office
   // impose une nouvelle configuration (enrollmentRequired).
   rpc ResetAccountMfa(ResetAccountMfaRequest) returns (ResetAccountMfaResponse);
+  // super_admin. Permissions déclarées par les services (R-RB-01), groupées par service et module ;
+  // les permissions retirées n'y figurent que sur demande.
+  rpc ListPermissions(ListPermissionsRequest) returns (ListPermissionsResponse);
+  // super_admin. Fiche d'un rôle : permissions cochées, nombre de titulaires, auteur des changements.
+  rpc GetRole(GetRoleRequest) returns (GetRoleResponse);
+  // super_admin. Nouveau rôle (R-RB-02), actif, portée globale ; ses titulaires peuvent être limités à
+  // des zones à l'attribution. Accès au back-office et double authentification toujours exigés.
+  // Événement identity.role.created.
+  rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse);
+  // super_admin. Nom, description, sensibilité et permissions (liste complète qui remplace la
+  // précédente). Rôle livré par défaut compris, sauf super_admin. Effet au renouvellement des jetons.
+  // Événement identity.role.updated (permissions ajoutées et retirées).
+  rpc UpdateRole(UpdateRoleRequest) returns (UpdateRoleResponse);
+  // super_admin. Rôle actif sans attribution active → désactivé (identity.role.deactivated). Encore
+  // attribué : IDENTITY_ROLE_IN_USE.
+  rpc DeactivateRole(DeactivateRoleRequest) returns (DeactivateRoleResponse);
 }
 
 message FindAccountByPhoneRequest {
@@ -1068,6 +1297,8 @@ message AccountRoleAssignment {
   string revoke_reason = 14;
   // L'appelant peut retirer ce rôle (rôle actif de son périmètre).
   bool revocable = 15;
+  // Portée SCOPE_TYPE_ZONE : zones de l'attribution ; absent sinon.
+  ZoneList zones = 16;
 }
 
 // Une action tracée dans le journal d'audit d'identity pour ce compte.
@@ -1112,6 +1343,13 @@ message AssignableRole {
   bool backoffice_access = 5;
   // L'appelant peut l'attribuer.
   bool grantable = 6;
+  // Nom affiché ; le code s'il n'en a pas.
+  optional string name = 7;
+  // false : désactivé, ne s'attribue plus (R-RB-02). Absent : actif (réponse d'avant la v2).
+  optional bool active = 8;
+  optional bool sensitive = 9;
+  // "default" (livré par un service, RegisterCatalog) ou "custom" (créé par le super administrateur).
+  optional string origin = 10;
 }
 
 message SearchAccountsRequest {
@@ -1148,6 +1386,9 @@ message GrantAccountRoleRequest {
   string role_code = 2;
   // Motif tracé (500 caractères au plus).
   string reason = 3;
+  // Facultatif : limite l'attribution à ces zones (1 à 77 clés de commune de geo, sans doublon ;
+  // portée SCOPE_TYPE_ZONE, R-RB-03). Absent : portée du rôle.
+  ZoneList zones = 4;
 }
 
 message GrantAccountRoleResponse {
@@ -1194,3 +1435,191 @@ message ResetAccountMfaRequest {
 message ResetAccountMfaResponse {
   AccountDetail detail = 1;
 }
+
+// Un rôle géré au back-office (R-RB-02).
+message ManagedRole {
+  // Code immuable : minuscules, chiffres et "_", 3 à 64 caractères, commence par une lettre.
+  string code = 1;
+  string name = 2;
+  string description = 3;
+  // Service qui l'a livré par défaut ; "identity" pour un rôle créé au back-office.
+  string service = 4;
+  // "default" ou "custom".
+  string origin = 5;
+  ScopeType scope_type = 6;
+  // Permissions cochées, triées par code.
+  repeated string permissions = 7;
+  bool sensitive = 8;
+  bool backoffice_access = 9;
+  bool requires_mfa = 10;
+  bool active = 11;
+  // false pour super_admin (R-RB-04).
+  bool editable = 12;
+  // Attributions actives (une désactivation exige 0).
+  int32 active_assignments = 13;
+  string created_at = 14;
+  // Vide pour un rôle livré par défaut.
+  string created_by = 15;
+  string updated_at = 16;
+  string updated_by = 17;
+  // Vides tant qu'il est actif.
+  string deactivated_at = 18;
+  string deactivated_by = 19;
+}
+
+// Zones d'une attribution de portée SCOPE_TYPE_ZONE (R-RB-03).
+message ZoneList {
+  // Clés de commune du référentiel de geo (ksp.geo.v1.Commune.key), sans doublon.
+  repeated string keys = 1;
+}
+
+// Liste de permissions, pour distinguer « inchangée » (message absent) de « vide ».
+message PermissionSet {
+  repeated string codes = 1;
+}
+
+message ListPermissionsRequest {
+  // Filtre facultatif sur le service déclarant ("cleaning").
+  string service = 1;
+  // Inclure les permissions retirées.
+  bool include_retired = 2;
+}
+
+message ListPermissionsResponse {
+  // Triées par service, module puis code.
+  repeated Permission permissions = 1;
+}
+
+message GetRoleRequest {
+  string role_code = 1;
+}
+
+message GetRoleResponse {
+  ManagedRole role = 1;
+}
+
+message CreateRoleRequest {
+  string code = 1;
+  // 1 à 80 caractères.
+  string name = 2;
+  // 500 caractères au plus.
+  string description = 3;
+  // Codes de permissions déclarées et non retirées, sans doublon (0 à 500).
+  repeated string permissions = 4;
+  bool sensitive = 5;
+  // Motif tracé (500 caractères au plus), obligatoire.
+  string reason = 6;
+}
+
+message CreateRoleResponse {
+  ManagedRole role = 1;
+}
+
+message UpdateRoleRequest {
+  string role_code = 1;
+  optional string name = 2;
+  optional string description = 3;
+  optional bool sensitive = 4;
+  // Absent : permissions inchangées ; présent : liste complète qui remplace la précédente.
+  PermissionSet permissions = 5;
+  // Motif tracé (500 caractères au plus), obligatoire.
+  string reason = 6;
+}
+
+message UpdateRoleResponse {
+  ManagedRole role = 1;
+}
+
+message DeactivateRoleRequest {
+  string role_code = 1;
+  // Motif tracé (500 caractères au plus), obligatoire.
+  string reason = 2;
+}
+
+message DeactivateRoleResponse {
+  ManagedRole role = 1;
+}
+
+// Un membre vu par les membres de son organisation.
+message OrganizationMemberView {
+  string user_id = 1;
+  OrgRole role = 2;
+  // Vides tant que le profil n'est pas complété.
+  string first_name = 3;
+  string last_name = 4;
+  // Indicatif et deux derniers chiffres.
+  string phone_masked = 5;
+  string joined_at = 6;
+}
+
+// Invitation à rejoindre une organisation.
+message OrganizationInvitation {
+  string id = 1;
+  string organization_id = 2;
+  // Raison sociale, pour l'invité.
+  string organization_name = 3;
+  OrgRole role = 4;
+  // Numéro invité, masqué (indicatif et deux derniers chiffres).
+  string phone_masked = 5;
+  // "pending", "accepted", "declined" ou "expired".
+  string status = 6;
+  string invited_by = 7;
+  string invited_at = 8;
+  string expires_at = 9;
+}
+
+message ListOrganizationMembersRequest {
+  string organization_id = 1;
+}
+
+message ListOrganizationMembersResponse {
+  repeated OrganizationMemberView members = 1;
+  // Invitations en attente ; vides pour un membre qui n'est pas administrateur.
+  repeated OrganizationInvitation pending_invitations = 2;
+}
+
+message InviteOrganizationMemberRequest {
+  string organization_id = 1;
+  // Numéro E.164 de la personne invitée (espaces tolérés).
+  string phone_e164 = 2;
+  OrgRole role = 3;
+}
+
+message InviteOrganizationMemberResponse {
+  OrganizationInvitation invitation = 1;
+}
+
+message ListMyOrganizationInvitationsRequest {}
+
+message ListMyOrganizationInvitationsResponse {
+  repeated OrganizationInvitation invitations = 1;
+}
+
+message RespondToOrganizationInvitationRequest {
+  string invitation_id = 1;
+  // true : accepter ; false : refuser.
+  bool accept = 2;
+}
+
+message RespondToOrganizationInvitationResponse {
+  OrganizationInvitation invitation = 1;
+  // Acceptée : l'appartenance créée ; absente sinon.
+  OrganizationMembership membership = 2;
+}
+
+message ChangeOrganizationMemberRoleRequest {
+  string organization_id = 1;
+  string user_id = 2;
+  OrgRole role = 3;
+}
+
+message ChangeOrganizationMemberRoleResponse {
+  OrganizationMemberView member = 1;
+}
+
+message RemoveOrganizationMemberRequest {
+  string organization_id = 1;
+  string user_id = 2;
+}
+
+message RemoveOrganizationMemberResponse {}

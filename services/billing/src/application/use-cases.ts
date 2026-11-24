@@ -1,10 +1,4 @@
 import {
-  RegisterContractUseCase,
-  ResumeContractUseCase,
-  SuspendContractUseCase,
-  TerminateContractUseCase,
-} from './contracts.use-cases';
-import {
   GetBillingSettingsUseCase,
   GetInvoiceUseCase,
   GetMyInvoiceUseCase,
@@ -21,15 +15,12 @@ import {
   RecordOnlineInvoicePaymentUseCase,
 } from './online-payments.use-cases';
 import { HasPendingObligationsUseCase } from './obligations.use-cases';
+import { IssueInvoiceUseCase } from './session-invoices.use-cases';
 import { type BillingDeps } from './ports';
 
 /** Cas d'usage du service (une classe chacun), reliés aux mêmes dépendances. */
 export function createUseCases(deps: BillingDeps) {
   return {
-    registerContract: new RegisterContractUseCase(deps),
-    terminateContract: new TerminateContractUseCase(deps),
-    suspendContract: new SuspendContractUseCase(deps),
-    resumeContract: new ResumeContractUseCase(deps),
     issueDueInvoices: new IssueDueInvoicesUseCase(deps),
     markOverdueInvoices: new MarkOverdueInvoicesUseCase(deps),
     listMyInvoices: new ListMyInvoicesUseCase(deps),
@@ -44,6 +35,7 @@ export function createUseCases(deps: BillingDeps) {
     getWalletDebitStatus: new GetWalletDebitStatusUseCase(deps),
     recordOnlinePayment: new RecordOnlineInvoicePaymentUseCase(deps),
     hasPendingObligations: new HasPendingObligationsUseCase(deps),
+    issueInvoice: new IssueInvoiceUseCase(deps),
   };
 }
 

@@ -12,7 +12,7 @@ import {
 } from '../../domain/session/session-policy';
 import { mfaErrors } from '../mfa/mfa-errors';
 import { type OrganizationRepository } from '../organization/organization.ports';
-import { backofficeRoleClaims, organizationRoleClaims, personalRoleClaims } from '../role/role-claims';
+import { backofficeGrants, organizationRoleClaims, personalRoleClaims } from '../role/role-claims';
 import { type RoleRepository } from '../role/role.ports';
 import { type Clock, type IdGenerator } from '../shared/system.ports';
 import { type AccessTokenIssuer, type AccessTokenSubject } from '../token/access-token-issuer';
@@ -168,7 +168,7 @@ export class RefreshSessionUseCase {
   private async grantsOf(
     stored: StoredRefreshToken,
     now: Date,
-  ): Promise<Pick<AccessTokenSubject, 'roles' | 'mfa' | 'authTime' | 'amr'>> {
+  ): Promise<Pick<AccessTokenSubject, 'roles' | 'mfa' | 'authTime' | 'amr' | 'perms' | 'zonePerms'>> {
     const { session, account } = stored;
     if (sessionCategory(session.clientKind) === 'customer') {
       // Heure de la connexion, pas du renouvellement : un renouvellement n'est pas une authentification.
@@ -185,6 +185,6 @@ export class RefreshSessionUseCase {
       await this.sessions.revokeSession(session.id, account.id, 'backoffice_access_removed', now);
       throw mfaErrors.backofficeForbidden();
     }
-    return { roles: backofficeRoleClaims(assigned), mfa: true, authTime: session.mfaAt, amr: ['otp', 'mfa'] };
+    return { ...backofficeGrants(assigned), mfa: true, authTime: session.mfaAt, amr: ['otp', 'mfa'] };
   }
 }

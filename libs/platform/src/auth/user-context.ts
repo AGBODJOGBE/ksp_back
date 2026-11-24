@@ -43,3 +43,36 @@ export function requireRecentMfa(maxAgeSeconds = 600, now: number = Date.now()):
   }
   return user;
 }
+
+/**
+ * Permission portée par le jeton (ADR-057, décision 4) : valable partout, ou dans la commune
+ * `zoneKey` quand elle est donnée. Jamais d'appel à identity : un changement de rôle s'applique au
+ * renouvellement du jeton (15 minutes au plus).
+ */
+export function hasPermission(user: UserContext, permission: string, zoneKey?: string): boolean {
+  if (user.permissions?.includes(permission)) return true;
+  return zoneKey !== undefined && (user.zonePermissions?.[zoneKey]?.includes(permission) ?? false);
+}
+
+/**
+ * Communes où la permission vaut : 'all' (valable partout), ou la liste des clés de commune (vide :
+ * nulle part). Sert à filtrer une liste de dossiers sur les zones de l'appelant.
+ */
+export function permissionZones(user: UserContext, permission: string): 'all' | string[] {
+  if (user.permissions?.includes(permission)) return 'all';
+  return Object.entries(user.zonePermissions ?? {})
+    .filter(([, permissions]) => permissions.includes(permission))
+    .map(([zone]) => zone)
+    .sort();
+}
+
+/** Exige la permission (partout, ou dans `zoneKey`) ; AUTH_FORBIDDEN nomme la permission manquante. */
+export function requirePermission(permission: string, zoneKey?: string): UserContext {
+  const user = requireUser();
+  if (!hasPermission(user, permission, zoneKey)) {
+    throw AppError.forbidden('AUTH_FORBIDDEN', "Vous n'avez pas les droits nécessaires pour cette action.", {
+      permission,
+    });
+  }
+  return user;
+}
