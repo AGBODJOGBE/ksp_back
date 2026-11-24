@@ -1,6 +1,9 @@
+import { type Metadata } from '@grpc/grpc-js';
 import { recoveryV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
+import { type DebtorSessionScope } from '../../application/debtor-access/debtor-access.use-cases';
 import { RECOVERY_USE_CASES, type RecoveryUseCases } from '../../application/use-cases';
+import { debtorSessionToken } from './debtor-session';
 import { notImplemented } from './not-implemented';
 import {
   amountOf,
@@ -129,63 +132,147 @@ export class RecoveryCreditorGrpcController implements recoveryV1.RecoveryCredit
   }
 }
 
+/**
+ * Débiteur sans compte (ADR-061) : le jeton du lien ouvre l'accès et le code ; les autres méthodes
+ * portent la session (métadonnée x-debtor-session), vérifiée avant tout le reste. Ni le jeton, ni le
+ * code, ni la session ne sont journalisés.
+ */
 @Controller()
 @recoveryV1.RecoveryDebtorServiceControllerMethods()
 export class RecoveryDebtorGrpcController implements recoveryV1.RecoveryDebtorServiceController {
-  openDebtorAccess(): Promise<recoveryV1.OpenDebtorAccessResponse> {
-    return notImplemented('OpenDebtorAccess');
+  constructor(@Inject(RECOVERY_USE_CASES) private readonly useCases: RecoveryUseCases) {}
+
+  async openDebtorAccess(
+    request: recoveryV1.OpenDebtorAccessRequest,
+  ): Promise<recoveryV1.OpenDebtorAccessResponse> {
+    const access = await this.useCases.openDebtorAccess.execute({ token: request.token });
+    return {
+      creditorName: access.creditorName,
+      phoneMasked: access.contactMasked,
+      linkExpiresAt: access.linkExpiresAt.toISOString(),
+    };
   }
 
-  sendDebtorAccessCode(): Promise<recoveryV1.SendDebtorAccessCodeResponse> {
-    return notImplemented('SendDebtorAccessCode');
+  async sendDebtorAccessCode(
+    request: recoveryV1.SendDebtorAccessCodeRequest,
+  ): Promise<recoveryV1.SendDebtorAccessCodeResponse> {
+    const sent = await this.useCases.sendDebtorAccessCode.execute({ token: request.token });
+    return {
+      channel: sent.channel,
+      codeExpiresAt: sent.codeExpiresAt.toISOString(),
+      retryAfterSeconds: sent.retryAfterSeconds,
+    };
   }
 
-  verifyDebtorAccessCode(): Promise<recoveryV1.VerifyDebtorAccessCodeResponse> {
-    return notImplemented('VerifyDebtorAccessCode');
+  async verifyDebtorAccessCode(
+    request: recoveryV1.VerifyDebtorAccessCodeRequest,
+  ): Promise<recoveryV1.VerifyDebtorAccessCodeResponse> {
+    const session = await this.useCases.verifyDebtorAccessCode.execute({
+      token: request.token,
+      code: request.code,
+    });
+    return { sessionToken: session.sessionToken, sessionExpiresAt: session.sessionExpiresAt.toISOString() };
   }
 
-  endDebtorSession(): Promise<recoveryV1.EndDebtorSessionResponse> {
-    return notImplemented('EndDebtorSession');
+  async endDebtorSession(
+    _request: recoveryV1.EndDebtorSessionRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.EndDebtorSessionResponse> {
+    const ended = await this.useCases.endDebtorSession.execute({
+      sessionToken: debtorSessionToken(metadata),
+    });
+    return { endedAt: ended.endedAt.toISOString() };
   }
 
-  getDebtorCase(): Promise<recoveryV1.GetDebtorCaseResponse> {
+  // Méthodes de la session : une session invalide est refusée dès maintenant ; chaque cas d'usage,
+  // livré avec sa branche, recevra le dossier et le débiteur de la session.
+
+  async getDebtorCase(
+    _request: recoveryV1.GetDebtorCaseRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.GetDebtorCaseResponse> {
+    await this.debtorSession(metadata);
     return notImplemented('GetDebtorCase');
   }
 
-  createDebtorPayment(): Promise<recoveryV1.CreateDebtorPaymentResponse> {
+  async createDebtorPayment(
+    _request: recoveryV1.CreateDebtorPaymentRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.CreateDebtorPaymentResponse> {
+    await this.debtorSession(metadata);
     return notImplemented('CreateDebtorPayment');
   }
 
-  simulateDebtorPaymentPlan(): Promise<recoveryV1.SimulateDebtorPaymentPlanResponse> {
+  async simulateDebtorPaymentPlan(
+    _request: recoveryV1.SimulateDebtorPaymentPlanRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.SimulateDebtorPaymentPlanResponse> {
+    await this.debtorSession(metadata);
     return notImplemented('SimulateDebtorPaymentPlan');
   }
 
-  proposeDebtorPaymentPlan(): Promise<recoveryV1.ProposeDebtorPaymentPlanResponse> {
+  async proposeDebtorPaymentPlan(
+    _request: recoveryV1.ProposeDebtorPaymentPlanRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.ProposeDebtorPaymentPlanResponse> {
+    await this.debtorSession(metadata);
     return notImplemented('ProposeDebtorPaymentPlan');
   }
 
-  resendDebtorPlanSignature(): Promise<recoveryV1.ResendDebtorPlanSignatureResponse> {
+  async resendDebtorPlanSignature(
+    _request: recoveryV1.ResendDebtorPlanSignatureRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.ResendDebtorPlanSignatureResponse> {
+    await this.debtorSession(metadata);
     return notImplemented('ResendDebtorPlanSignature');
   }
 
-  disputeDebtorCase(): Promise<recoveryV1.DisputeDebtorCaseResponse> {
+  async disputeDebtorCase(
+    _request: recoveryV1.DisputeDebtorCaseRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.DisputeDebtorCaseResponse> {
+    await this.debtorSession(metadata);
     return notImplemented('DisputeDebtorCase');
   }
 
-  createDebtorUpload(): Promise<recoveryV1.CreateDebtorUploadResponse> {
+  async createDebtorUpload(
+    _request: recoveryV1.CreateDebtorUploadRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.CreateDebtorUploadResponse> {
+    await this.debtorSession(metadata);
     return notImplemented('CreateDebtorUpload');
   }
 
-  completeDebtorUpload(): Promise<recoveryV1.CompleteDebtorUploadResponse> {
+  async completeDebtorUpload(
+    _request: recoveryV1.CompleteDebtorUploadRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.CompleteDebtorUploadResponse> {
+    await this.debtorSession(metadata);
     return notImplemented('CompleteDebtorUpload');
   }
 
-  requestDebtorCallback(): Promise<recoveryV1.RequestDebtorCallbackResponse> {
+  async requestDebtorCallback(
+    _request: recoveryV1.RequestDebtorCallbackRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.RequestDebtorCallbackResponse> {
+    await this.debtorSession(metadata);
     return notImplemented('RequestDebtorCallback');
   }
 
-  getDebtorDocumentUrl(): Promise<recoveryV1.GetDebtorDocumentUrlResponse> {
+  async getDebtorDocumentUrl(
+    _request: recoveryV1.GetDebtorDocumentUrlRequest,
+    metadata?: Metadata,
+  ): Promise<recoveryV1.GetDebtorDocumentUrlResponse> {
+    await this.debtorSession(metadata);
     return notImplemented('GetDebtorDocumentUrl');
+  }
+
+  /**
+   * Dossier et débiteur de la session (`{ caseId, debtorId }`), ou `RECOVERY_DEBTOR_SESSION_INVALID`
+   * (401) : session absente, inconnue, expirée ou révoquée.
+   */
+  private debtorSession(metadata: Metadata | undefined): Promise<DebtorSessionScope> {
+    return this.useCases.resolveDebtorSession.execute({ sessionToken: debtorSessionToken(metadata) });
   }
 }
 

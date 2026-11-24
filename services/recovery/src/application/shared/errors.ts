@@ -47,8 +47,9 @@ const DOMAIN_ERRORS: Record<RecoveryErrorCode, (message: string) => AppError> = 
   RECOVERY_PRICING_RULE_CONFLICT: (m) => AppError.precondition('RECOVERY_PRICING_RULE_CONFLICT', m),
   RECOVERY_APPROVAL_BY_REQUESTER: (m) => AppError.forbidden('RECOVERY_APPROVAL_BY_REQUESTER', m),
   RECOVERY_DEBTOR_LOCKED: (m) => AppError.rateLimited('RECOVERY_DEBTOR_LOCKED', m),
+  // Même message que la gateway pour un jeton mal formé : aucun indice sur la cause (ADR-061).
   RECOVERY_DEBTOR_LINK_INVALID: () =>
-    AppError.notFound('RECOVERY_DEBTOR_LINK_INVALID', 'Ce lien n’est pas valable.'),
+    AppError.notFound('RECOVERY_DEBTOR_LINK_INVALID', 'Ce lien est introuvable ou n’est plus valable.'),
   RECOVERY_DECISION_CLOSED: (m) => AppError.precondition('RECOVERY_DECISION_CLOSED', m),
   // Codes internes du domaine, convertis selon le contrat (outcome.ts).
   RECOVERY_INVALID_AMOUNT: (m) => AppError.invalid('RECOVERY_VALIDATION_FAILED', m, { field: 'amount' }),

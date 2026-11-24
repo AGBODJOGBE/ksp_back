@@ -1,3 +1,11 @@
+import { type DebtorAccessPorts } from './debtor-access/debtor-access.ports';
+import {
+  EndDebtorSessionUseCase,
+  OpenDebtorAccessUseCase,
+  ResolveDebtorSessionUseCase,
+  SendDebtorAccessCodeUseCase,
+  VerifyDebtorAccessCodeUseCase,
+} from './debtor-access/debtor-access.use-cases';
 import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import {
   type AuditLog,
@@ -56,6 +64,8 @@ export interface RecoveryDeps {
   directory: Directory;
   clock: Clock;
   ids: IdGenerator;
+  /** Lien, code et session du débiteur sans compte (ADR-061). */
+  debtorAccess: DebtorAccessPorts;
 }
 
 export function createUseCases(deps: RecoveryDeps) {
@@ -74,6 +84,13 @@ export function createUseCases(deps: RecoveryDeps) {
     simulatePricing: new SimulatePricingUseCase(deps),
     estimateCaseFees: new EstimateCaseFeesUseCase(deps),
     hasPendingObligations: new HasPendingObligationsUseCase({ cases: deps.obligations }),
+    // Accès du débiteur (ADR-061). Les liens s'émettent par DebtorLinks, depuis les cas d'usage
+    // qui écrivent au débiteur ; resolveDebtorSession sert à toutes les méthodes de la session.
+    openDebtorAccess: new OpenDebtorAccessUseCase(deps),
+    sendDebtorAccessCode: new SendDebtorAccessCodeUseCase(deps),
+    verifyDebtorAccessCode: new VerifyDebtorAccessCodeUseCase(deps),
+    endDebtorSession: new EndDebtorSessionUseCase(deps),
+    resolveDebtorSession: new ResolveDebtorSessionUseCase(deps),
   };
 }
 

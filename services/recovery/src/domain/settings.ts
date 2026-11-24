@@ -112,6 +112,10 @@ export const FIXED_RULES = {
   debtorCodeMaxAttempts: 5,
   /** Durée du blocage du débiteur, en minutes (ADR-061). */
   debtorLockMinutes: 60,
+  /** Validité du code d'accès du débiteur, en minutes (ADR-061). */
+  debtorCodeMinutes: 10,
+  /** Délai entre deux codes d'accès du débiteur, en secondes : un par minute (ADR-061). */
+  debtorCodeResendSeconds: 60,
   /** Seuil de « prescription proche » qui permet un saut d'étape, en jours (R-PR-03). */
   prescriptionNearDays: 90,
 } as const;

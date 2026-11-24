@@ -20,6 +20,7 @@ import {
   type WalletGateway,
 } from '../ports';
 import { type RecoveryDeps } from '../use-cases';
+import { memoryDebtorAccess } from './debtor-access.fakes';
 
 /** Doublures en mémoire des ports (tests des cas d'usage). */
 
@@ -193,6 +194,7 @@ export function makeDeps(overrides: Partial<RecoveryDeps> = {}) {
     } as Directory,
     clock: new FixedClock(),
     ids: new SequentialIds(),
+    debtorAccess: memoryDebtorAccess(),
   };
   return { ...base, ...overrides } as typeof base;
 }
