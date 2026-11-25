@@ -116,6 +116,7 @@ export const EVENT_CONSUMERS = {
     'wallet.prepaid.credited',
     'wallet.prepaid.debited',
   ],
+  recovery: ['document.signature.completed'],
   wallet: ['payment.intent.succeeded', 'payment.payout.completed', 'payment.payout.failed'],
 } as const satisfies Record<string, readonly KspEventType[]>;
 

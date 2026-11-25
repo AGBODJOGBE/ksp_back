@@ -30,7 +30,7 @@ describe('AppModule', () => {
   });
 
   it("répond « pas encore disponible » tant qu'un cas d'usage n'est pas livré", async () => {
-    await expect(new RecoveryCreditorGrpcController({} as never).createCase()).rejects.toMatchObject({
+    await expect(new RecoveryCreditorGrpcController({} as never).stopCase()).rejects.toMatchObject({
       code: 'RECOVERY_NOT_IMPLEMENTED',
     });
   });

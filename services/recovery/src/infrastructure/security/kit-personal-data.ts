@@ -27,4 +27,8 @@ export class KitPersonalData implements PersonalData {
   emailIndex(email: string): string {
     return this.index.email('recovery_debtor_email', email);
   }
+
+  nameIndex(token: string): string {
+    return this.index.compute('recovery_debtor_name', token);
+  }
 }

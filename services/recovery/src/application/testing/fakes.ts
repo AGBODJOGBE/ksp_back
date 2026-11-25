@@ -21,6 +21,7 @@ import {
 } from '../ports';
 import { type RecoveryDeps } from '../use-cases';
 import { memoryDebtorAccess } from './debtor-access.fakes';
+import { memoryCaseStores } from './case-fakes';
 
 /** Doublures en mémoire des ports (tests des cas d'usage). */
 
@@ -156,6 +157,9 @@ export class FakePersonalData implements PersonalData {
   emailIndex(email: string): string {
     return `email:${email.toLowerCase()}`;
   }
+  nameIndex(token: string): string {
+    return `name:${token}`;
+  }
 }
 
 const unused = (name: string) => () => {
@@ -195,6 +199,7 @@ export function makeDeps(overrides: Partial<RecoveryDeps> = {}) {
     clock: new FixedClock(),
     ids: new SequentialIds(),
     debtorAccess: memoryDebtorAccess(),
+    ...memoryCaseStores(),
   };
   return { ...base, ...overrides } as typeof base;
 }

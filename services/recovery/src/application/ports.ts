@@ -129,6 +129,8 @@ export interface PersonalData {
   decrypt(value: string, context: string): string;
   phoneIndex(phone: string): string;
   emailIndex(email: string): string;
+  /** Empreinte d'un mot du nom d'un débiteur, déjà normalisé (recherche exacte, ADR-063). */
+  nameIndex(token: string): string;
 }
 
 // ---------------------------------------------------------------------------------------------
