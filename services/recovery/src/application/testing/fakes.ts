@@ -22,6 +22,7 @@ import {
 import { type RecoveryDeps } from '../use-cases';
 import { memoryDebtorAccess } from './debtor-access.fakes';
 import { memoryCaseStores } from './case-fakes';
+import { memoryMoneyStores } from './money-fakes';
 
 /** Doublures en mémoire des ports (tests des cas d'usage). */
 
@@ -167,6 +168,7 @@ const unused = (name: string) => () => {
 };
 
 export function makeDeps(overrides: Partial<RecoveryDeps> = {}) {
+  const caseStores = memoryCaseStores();
   const base = {
     settings: new MemorySettingsStore(),
     holidays: new MemoryHolidayStore(),
@@ -199,7 +201,8 @@ export function makeDeps(overrides: Partial<RecoveryDeps> = {}) {
     clock: new FixedClock(),
     ids: new SequentialIds(),
     debtorAccess: memoryDebtorAccess(),
-    ...memoryCaseStores(),
+    ...caseStores,
+    ...memoryMoneyStores(caseStores.cases),
   };
   return { ...base, ...overrides } as typeof base;
 }

@@ -1,4 +1,4 @@
-import { detectContentType } from './file-signature';
+import { matchesSignature } from './file-signature';
 import { type ContentType, CONTENT_TYPES, policyOf, type Purpose } from './purposes';
 
 /**
@@ -73,6 +73,9 @@ export function neutralFileName(file: Pick<StoredFile, 'id' | 'contentType'>): s
     'image/jpeg': 'jpg',
     'image/png': 'png',
     'image/webp': 'webp',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'text/csv': 'csv',
+    'application/zip': 'zip',
   }[file.contentType];
   return `${file.id}.${extension}`;
 }
@@ -125,13 +128,14 @@ export interface ReceivedContent {
 
 /**
  * Vérifie le contenu reçu : taille réelle égale à la taille déclarée, type enregistré égal au type
- * déclaré, et signature binaire du type déclaré. Renvoie la raison du rejet, ou null.
+ * déclaré, et signature binaire du type déclaré (du texte pour un CSV). Renvoie la raison du rejet,
+ * ou null.
  */
 export function contentProblem(file: StoredFile, content: ReceivedContent): RejectionReason | null {
   if (content.sizeBytes !== file.sizeBytes) return 'size_mismatch';
   const stored = content.contentType?.split(';')[0]?.trim().toLowerCase() ?? null;
   if (stored !== null && stored !== file.contentType) return 'type_mismatch';
-  if (detectContentType(content.head) !== file.contentType) return 'type_mismatch';
+  if (!matchesSignature(file.contentType, content.head)) return 'type_mismatch';
   return null;
 }
 

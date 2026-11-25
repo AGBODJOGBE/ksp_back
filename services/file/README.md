@@ -28,14 +28,19 @@ Lecture : le propriétaire par `GET /api/v1/file/files/{id}` et `GET /api/v1/fil
 
 ## Finalités
 
-| Finalité                      | Types                | Taille | Services   | Compte supprimé |
-| ----------------------------- | -------------------- | ------ | ---------- | --------------- |
-| `recovery_evidence`           | PDF, JPEG, PNG, WebP | 10 Mo  | `recovery` | gardé, détaché  |
-| `cleaning_intervention_photo` | JPEG, PNG, WebP      | 8 Mo   | `cleaning` | gardé, détaché  |
-| `generated_document`          | PDF                  | 20 Mo  | `document` | gardé, détaché  |
-| `avatar`                      | JPEG, PNG, WebP      | 2 Mo   | `identity` | effacé          |
+| Finalité                      | Types                | Taille | Envoi   | Services   | Compte supprimé |
+| ----------------------------- | -------------------- | ------ | ------- | ---------- | --------------- |
+| `recovery_evidence`           | PDF, JPEG, PNG, WebP | 10 Mo  | compte  | `recovery` | gardé, détaché  |
+| `recovery_import`             | XLSX, CSV            | 5 Mo   | compte  | `recovery` | gardé, détaché  |
+| `recovery_evidence_archive`   | ZIP                  | 50 Mo  | compte  | `recovery` | gardé, détaché  |
+| `recovery_debtor_evidence`    | PDF, JPEG, PNG, WebP | 10 Mo  | service | `recovery` | gardé, détaché  |
+| `cleaning_intervention_photo` | JPEG, PNG, WebP      | 8 Mo   | compte  | `cleaning` | gardé, détaché  |
+| `generated_document`          | PDF                  | 20 Mo  | service | `document` | gardé, détaché  |
+| `avatar`                      | JPEG, PNG, WebP      | 2 Mo   | compte  | `identity` | effacé          |
 
-Ajouter une finalité : `src/domain/purposes.ts`, commentaire de `file.proto`, énumération `FilePurpose` du contrat OpenAPI et schéma de la gateway.
+Signature vérifiée à la confirmation : celle du type déclaré pour les images et le PDF ; `PK\x03\x04` (en-tête ZIP) pour une archive ZIP comme pour un classeur XLSX ; un CSV, sans signature, doit commencer par du texte (ni octet nul ni caractère de contrôle hors tabulation et fins de ligne ; marque UTF-8 admise). `recovery_debtor_evidence` : pièces d'un débiteur sans compte, déclarées par recovery (`CreateServiceUpload`), jamais par `POST /api/v1/file/uploads`.
+
+Ajouter une finalité : `src/domain/purposes.ts`, commentaire de `file.proto`, énumération `FileUploadPurpose` du contrat OpenAPI (requête) et schéma de la gateway. L'énumération `FilePurpose` des réponses reste fermée : une finalité nouvelle y est présentée sous une valeur existante, avec sa valeur exacte dans `purposeDetail` (correspondance dans la gateway).
 
 ## Tâches de fond
 

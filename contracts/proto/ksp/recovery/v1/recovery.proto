@@ -164,8 +164,9 @@ service RecoveryDebtorService {
   rpc ResendDebtorPlanSignature(ResendDebtorPlanSignatureRequest) returns (ResendDebtorPlanSignatureResponse);
   // Contestation (R-PR-02) : suspend le dossier.
   rpc DisputeDebtorCase(DisputeDebtorCaseRequest) returns (DisputeDebtorCaseResponse);
-  // Pièce de la contestation envoyée par le débiteur, sans compte : adresse d'envoi présignée par
-  // file (finalité recovery_evidence), puis confirmation.
+  // Pièce de la contestation envoyée par le débiteur, sans compte : déclarée par recovery pour lui
+  // auprès de file (finalité recovery_debtor_evidence, rattachée au dossier dès la déclaration),
+  // adresse d'envoi présignée, puis confirmation.
   rpc CreateDebtorUpload(CreateDebtorUploadRequest) returns (CreateDebtorUploadResponse);
   rpc CompleteDebtorUpload(CompleteDebtorUploadRequest) returns (CompleteDebtorUploadResponse);
   rpc RequestDebtorCallback(RequestDebtorCallbackRequest) returns (RequestDebtorCallbackResponse);

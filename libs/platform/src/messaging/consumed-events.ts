@@ -120,7 +120,8 @@ export const EVENT_CONSUMERS = {
     'wallet.prepaid.credited',
     'wallet.prepaid.debited',
   ],
-  recovery: ['document.signature.completed'],
+  // Recouvrement (ADR-060, point 18) : mandat signé ; lien de paiement du débiteur payé (lot R3).
+  recovery: ['document.signature.completed', 'payment.link.paid'],
   wallet: ['payment.intent.succeeded', 'payment.payout.completed', 'payment.payout.failed'],
 } as const satisfies Record<string, readonly KspEventType[]>;
 

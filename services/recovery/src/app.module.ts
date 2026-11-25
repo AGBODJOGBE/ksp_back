@@ -28,6 +28,12 @@ import {
   CaseDeadlinesService,
 } from './infrastructure/scheduling/case-deadlines.service';
 import { MandateSignatureConsumer } from './interfaces/messaging/mandate-signature.consumer';
+// Argent et espace du débiteur (R3).
+import { NO_SETTLEMENTS } from './application/debtor-space/settlement-terms';
+import { GrpcDebtorUploads, GrpcDocumentUrls } from './infrastructure/grpc/grpc-debtor-files';
+import { PrismaMoneyStore } from './infrastructure/persistence/prisma-money.store';
+import { MoneyEffectsService } from './infrastructure/scheduling/money-effects.service';
+import { PaymentLinkPaidConsumer } from './interfaces/messaging/payment-link-paid.consumer';
 import { GrpcDirectory } from './infrastructure/grpc/grpc-directory';
 import { GrpcDocuments } from './infrastructure/grpc/grpc-documents';
 import { GrpcFiles } from './infrastructure/grpc/grpc-files';
@@ -142,6 +148,10 @@ export class AppModule {
         CaseDeadlinesService,
         { provide: CASE_DEADLINES_INTERVAL_MS, useValue: config.RECOVERY_CASE_DEADLINES_INTERVAL_MS },
         MandateSignatureConsumer,
+        // Argent et espace du débiteur (R3) : dépôt, liens payés, reprise des crédits et des clôtures.
+        PrismaMoneyStore,
+        PaymentLinkPaidConsumer,
+        MoneyEffectsService,
         {
           provide: RECOVERY_USE_CASES,
           inject: [
@@ -156,6 +166,7 @@ export class AppModule {
             PrismaCaseQueries,
             PrismaCaseImportRepository,
             PrismaCreditorPreferencesStore,
+            PrismaMoneyStore,
             WALLET_CLIENT,
             PAYMENT_CLIENT,
             DOCUMENT_CLIENT,
@@ -176,6 +187,7 @@ export class AppModule {
             caseQueries: PrismaCaseQueries,
             imports: PrismaCaseImportRepository,
             preferences: PrismaCreditorPreferencesStore,
+            money: PrismaMoneyStore,
             wallet: ClientGrpc,
             payment: ClientGrpc,
             document: ClientGrpc,
@@ -201,6 +213,9 @@ export class AppModule {
             const fileClient = file.getService<fileV1.FileInternalServiceClient>(
               fileV1.FILE_INTERNAL_SERVICE_NAME,
             );
+            const documentClient = document.getService<documentV1.DocumentInternalServiceClient>(
+              documentV1.DOCUMENT_INTERNAL_SERVICE_NAME,
+            );
             return createUseCases({
               settings,
               holidays,
@@ -223,9 +238,7 @@ export class AppModule {
                 callerOf('payment'),
               ),
               documents: new GrpcDocuments(
-                document.getService<documentV1.DocumentInternalServiceClient>(
-                  documentV1.DOCUMENT_INTERNAL_SERVICE_NAME,
-                ),
+                documentClient,
                 callerOf('document'),
                 config.RECOVERY_LONG_DOCUMENT_DEADLINE_MS,
               ),
@@ -240,6 +253,11 @@ export class AppModule {
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
               debtorAccess,
+              money,
+              debtorUploads: new GrpcDebtorUploads(fileClient, callerOf('file')),
+              documentUrls: new GrpcDocumentUrls(documentClient, callerOf('document')),
+              // Remises de R4, branchées à la fusion.
+              settlementTerms: NO_SETTLEMENTS,
             });
           },
         },

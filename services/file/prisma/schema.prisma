@@ -44,7 +44,8 @@ model ProcessedEvent {
 /// identifiant, aucune donnée personnelle) ; la base ne garde que ses métadonnées.
 model StoredFile {
   id              String    @id @db.Uuid
-  /// recovery_evidence, cleaning_intervention_photo, generated_document ou avatar.
+  /// recovery_evidence, recovery_import, recovery_evidence_archive, recovery_debtor_evidence,
+  /// cleaning_intervention_photo, generated_document ou avatar (src/domain/purposes.ts).
   purpose         String
   /// Nom d'origine nettoyé ; remplacé par un nom neutre quand le compte est supprimé (ADR-036).
   fileName        String    @map("file_name")

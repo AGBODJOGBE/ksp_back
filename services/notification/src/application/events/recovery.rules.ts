@@ -225,18 +225,9 @@ export const RECOVERY_RULES: { readonly [T in RecoveryEventType]?: EventRule<T> 
         }),
   ],
 
-  'recovery.remittance.paid': (event, context) => [
-    toCreditor(
-      event,
-      'recovery.remittance_paid.customer',
-      withOrganization(`${context.portalBaseUrl}/mon-espace/portefeuille`, event.creditor),
-      {
-        gross: formatXof(event.gross.amount),
-        commission: formatXof(event.commission.amount),
-        net: formatXof(event.net.amount),
-      },
-    ),
-  ],
+  // Un seul message au créancier par encaissement (décision validée, lot R3) : le net est crédité
+  // tout de suite après l’encaissement, dont `recovery.payment.collected` a déjà prévenu le créancier.
+  'recovery.remittance.paid': () => [],
 
   'recovery.notice.issued': (event, context) => [
     toCreditor(event, 'recovery.notice_issued.customer', caseLink(context, event), {
