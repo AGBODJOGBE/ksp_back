@@ -4,6 +4,20 @@ import { Controller, Inject } from '@nestjs/common';
 import { type DebtorSessionScope } from '../../application/debtor-access/debtor-access.use-cases';
 import { RECOVERY_USE_CASES, type RecoveryUseCases } from '../../application/use-cases';
 import { debtorSessionToken } from './debtor-session';
+import {
+  caseInputOf,
+  importValuesOf,
+  preferencesOf,
+  presentCase,
+  presentDashboard,
+  presentDocument,
+  presentImport,
+  presentJournal,
+  presentOverview,
+  presentPreferences,
+  presentScoreFactors,
+  presentSummary,
+} from './case-presenters';
 import { notImplemented } from './not-implemented';
 import {
   amountOf,
@@ -16,8 +30,9 @@ import {
 } from './presenters';
 
 // Adaptateurs gRPC des quatre services du contrat (ADR-060) : aucune règle métier ici. R1 livre la
-// tarification, les réglages, les jours fériés et l'estimation des frais ; les autres méthodes
-// répondent « pas encore disponible » jusqu'à leur branche (R2 à R5).
+// tarification, les réglages, les jours fériés et l'estimation des frais ; R2 les dossiers, l'import,
+// les préférences et la recevabilité ; les autres méthodes répondent « pas encore disponible »
+// jusqu'à leur branche (R3 à R5).
 
 @Controller()
 @recoveryV1.RecoveryCreditorServiceControllerMethods()
@@ -47,52 +62,106 @@ export class RecoveryCreditorGrpcController implements recoveryV1.RecoveryCredit
     };
   }
 
-  createCase(): Promise<recoveryV1.CreateCaseResponse> {
-    return notImplemented('CreateCase');
+  // Dossiers (R2) : brouillon, pièces, mandat, frais, suivi, import.
+
+  async createCase(request: recoveryV1.CreateCaseRequest): Promise<recoveryV1.CreateCaseResponse> {
+    const result = await this.useCases.createCase.execute({
+      idempotencyKey: request.idempotencyKey,
+      input: caseInputOf(request.input),
+    });
+    return {
+      case: presentCase(result.view),
+      possibleDuplicates: result.duplicates.map(presentSummary),
+      created: result.created,
+    };
   }
 
-  updateCase(): Promise<recoveryV1.UpdateCaseResponse> {
-    return notImplemented('UpdateCase');
+  async updateCase(request: recoveryV1.UpdateCaseRequest): Promise<recoveryV1.UpdateCaseResponse> {
+    const view = await this.useCases.updateCase.execute({
+      caseId: request.caseId,
+      input: caseInputOf(request.input),
+      completionNote: request.completionNote,
+    });
+    return { case: presentCase(view) };
   }
 
-  addCaseDocument(): Promise<recoveryV1.AddCaseDocumentResponse> {
-    return notImplemented('AddCaseDocument');
+  async addCaseDocument(
+    request: recoveryV1.AddCaseDocumentRequest,
+  ): Promise<recoveryV1.AddCaseDocumentResponse> {
+    const document = await this.useCases.addCaseDocument.execute(request);
+    return { document: presentDocument(document) };
   }
 
-  prepareMandate(): Promise<recoveryV1.PrepareMandateResponse> {
-    return notImplemented('PrepareMandate');
+  async prepareMandate(
+    request: recoveryV1.PrepareMandateRequest,
+  ): Promise<recoveryV1.PrepareMandateResponse> {
+    const result = await this.useCases.prepareMandate.execute(request);
+    return {
+      case: presentCase(result.view),
+      documentId: result.documentId,
+      signatureRequestId: result.signatureRequestId,
+    };
   }
 
-  payCaseFee(): Promise<recoveryV1.PayCaseFeeResponse> {
-    return notImplemented('PayCaseFee');
+  async payCaseFee(request: recoveryV1.PayCaseFeeRequest): Promise<recoveryV1.PayCaseFeeResponse> {
+    return { case: presentCase(await this.useCases.payCaseFee.execute(request)) };
   }
 
-  listMyCases(): Promise<recoveryV1.ListMyCasesResponse> {
-    return notImplemented('ListMyCases');
+  async listMyCases(request: recoveryV1.ListMyCasesRequest): Promise<recoveryV1.ListMyCasesResponse> {
+    const result = await this.useCases.listMyCases.execute({
+      statuses: request.filter?.statuses ?? [],
+      stages: request.filter?.stages ?? [],
+      kinds: request.filter?.kinds ?? [],
+      search: request.filter?.search ?? '',
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return {
+      cases: result.items.map(presentSummary),
+      nextCursor: result.nextCursor ?? '',
+      total: result.total,
+    };
   }
 
-  getMyCase(): Promise<recoveryV1.GetMyCaseResponse> {
-    return notImplemented('GetMyCase');
+  async getMyCase(request: recoveryV1.GetMyCaseRequest): Promise<recoveryV1.GetMyCaseResponse> {
+    return { case: presentCase(await this.useCases.getMyCase.execute(request)) };
   }
 
-  listMyCaseJournal(): Promise<recoveryV1.ListMyCaseJournalResponse> {
-    return notImplemented('ListMyCaseJournal');
+  async listMyCaseJournal(
+    request: recoveryV1.ListMyCaseJournalRequest,
+  ): Promise<recoveryV1.ListMyCaseJournalResponse> {
+    const view = await this.useCases.listMyCaseJournal.execute({
+      caseId: request.caseId,
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return { entries: presentJournal(view), nextCursor: view.nextCursor ?? '' };
   }
 
-  createCaseImport(): Promise<recoveryV1.CreateCaseImportResponse> {
-    return notImplemented('CreateCaseImport');
+  async createCaseImport(
+    request: recoveryV1.CreateCaseImportRequest,
+  ): Promise<recoveryV1.CreateCaseImportResponse> {
+    return { import: presentImport(await this.useCases.createCaseImport.execute(request)) };
   }
 
-  getCaseImport(): Promise<recoveryV1.GetCaseImportResponse> {
-    return notImplemented('GetCaseImport');
+  async getCaseImport(request: recoveryV1.GetCaseImportRequest): Promise<recoveryV1.GetCaseImportResponse> {
+    return { import: presentImport(await this.useCases.getCaseImport.execute(request)) };
   }
 
-  updateCaseImportLine(): Promise<recoveryV1.UpdateCaseImportLineResponse> {
-    return notImplemented('UpdateCaseImportLine');
+  async updateCaseImportLine(
+    request: recoveryV1.UpdateCaseImportLineRequest,
+  ): Promise<recoveryV1.UpdateCaseImportLineResponse> {
+    const view = await this.useCases.updateCaseImportLine.execute({
+      importId: request.importId,
+      row: request.row,
+      values: importValuesOf(request.values),
+      ignore: request.ignore,
+    });
+    return { import: presentImport(view) };
   }
 
-  confirmCaseImport(): Promise<recoveryV1.ConfirmCaseImportResponse> {
-    return notImplemented('ConfirmCaseImport');
+  async confirmCaseImport(
+    request: recoveryV1.ConfirmCaseImportRequest,
+  ): Promise<recoveryV1.ConfirmCaseImportResponse> {
+    return { import: presentImport(await this.useCases.confirmCaseImport.execute(request)) };
   }
 
   listMyDecisions(): Promise<recoveryV1.ListMyDecisionsResponse> {
@@ -119,16 +188,19 @@ export class RecoveryCreditorGrpcController implements recoveryV1.RecoveryCredit
     return notImplemented('ListMyStatements');
   }
 
-  getMyDashboard(): Promise<recoveryV1.GetMyDashboardResponse> {
-    return notImplemented('GetMyDashboard');
+  async getMyDashboard(): Promise<recoveryV1.GetMyDashboardResponse> {
+    return presentDashboard(await this.useCases.getMyDashboard.execute());
   }
 
-  getMyPreferences(): Promise<recoveryV1.GetMyPreferencesResponse> {
-    return notImplemented('GetMyPreferences');
+  async getMyPreferences(): Promise<recoveryV1.GetMyPreferencesResponse> {
+    return { preferences: presentPreferences(await this.useCases.getMyPreferences.execute()) };
   }
 
-  updateMyPreferences(): Promise<recoveryV1.UpdateMyPreferencesResponse> {
-    return notImplemented('UpdateMyPreferences');
+  async updateMyPreferences(
+    request: recoveryV1.UpdateMyPreferencesRequest,
+  ): Promise<recoveryV1.UpdateMyPreferencesResponse> {
+    const stored = await this.useCases.updateMyPreferences.execute(preferencesOf(request.preferences));
+    return { preferences: presentPreferences(stored) };
   }
 }
 
@@ -301,32 +373,66 @@ export class RecoveryPartnerGrpcController implements recoveryV1.RecoveryPartner
 export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServiceController {
   constructor(@Inject(RECOVERY_USE_CASES) private readonly useCases: RecoveryUseCases) {}
 
-  getRecoveryOverview(): Promise<recoveryV1.GetRecoveryOverviewResponse> {
-    return notImplemented('GetRecoveryOverview');
+  // Dossiers (R2) : tableau de bord, liste, fiche, journal, recevabilité, affectation.
+
+  async getRecoveryOverview(
+    request: recoveryV1.GetRecoveryOverviewRequest,
+  ): Promise<recoveryV1.GetRecoveryOverviewResponse> {
+    return presentOverview(await this.useCases.getRecoveryOverview.execute(request));
   }
 
   getMyWorkQueue(): Promise<recoveryV1.GetMyWorkQueueResponse> {
     return notImplemented('GetMyWorkQueue');
   }
 
-  listCases(): Promise<recoveryV1.ListCasesResponse> {
-    return notImplemented('ListCases');
+  async listCases(request: recoveryV1.ListCasesRequest): Promise<recoveryV1.ListCasesResponse> {
+    const filter = request.filter;
+    const result = await this.useCases.listCases.execute({
+      statuses: filter?.statuses ?? [],
+      stages: filter?.stages ?? [],
+      kinds: filter?.kinds ?? [],
+      assignedAgentId: filter?.assignedAgentId ?? '',
+      creditorId: filter?.creditorId ?? '',
+      partnerId: filter?.partnerId ?? '',
+      communeKey: filter?.communeKey ?? '',
+      search: filter?.search ?? '',
+      idleDays: filter?.idleDays ?? 0,
+      prescriptionNear: filter?.prescriptionNear ?? false,
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return {
+      cases: result.items.map(presentSummary),
+      nextCursor: result.nextCursor ?? '',
+      total: result.total,
+    };
   }
 
-  getCase(): Promise<recoveryV1.GetCaseResponse> {
-    return notImplemented('GetCase');
+  async getCase(request: recoveryV1.GetCaseRequest): Promise<recoveryV1.GetCaseResponse> {
+    const result = await this.useCases.getCase.execute(request);
+    return {
+      case: presentCase(result.view),
+      scoreFactors: presentScoreFactors(result.score),
+      injunctionEligible: result.injunctionEligible,
+    };
   }
 
-  listCaseJournal(): Promise<recoveryV1.ListCaseJournalResponse> {
-    return notImplemented('ListCaseJournal');
+  async listCaseJournal(
+    request: recoveryV1.ListCaseJournalRequest,
+  ): Promise<recoveryV1.ListCaseJournalResponse> {
+    const view = await this.useCases.listCaseJournal.execute({
+      caseId: request.caseId,
+      includeInternal: request.includeInternal,
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return { entries: presentJournal(view), nextCursor: view.nextCursor ?? '' };
   }
 
-  assessCase(): Promise<recoveryV1.AssessCaseResponse> {
-    return notImplemented('AssessCase');
+  async assessCase(request: recoveryV1.AssessCaseRequest): Promise<recoveryV1.AssessCaseResponse> {
+    return { case: presentCase(await this.useCases.assessCase.execute(request)) };
   }
 
-  assignCase(): Promise<recoveryV1.AssignCaseResponse> {
-    return notImplemented('AssignCase');
+  async assignCase(request: recoveryV1.AssignCaseRequest): Promise<recoveryV1.AssignCaseResponse> {
+    return { case: presentCase(await this.useCases.assignCase.execute(request)) };
   }
 
   recordContact(): Promise<recoveryV1.RecordContactResponse> {

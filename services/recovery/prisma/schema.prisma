@@ -140,6 +140,25 @@ model RecoveryCase {
   version                Int        @default(0)
   createdAt              DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// Lot R2 : demande de signature du mandat, forfait d'étude figé au mandat (règle et montant).
+  mandateSignatureId     String?    @map("mandate_signature_id") @db.Uuid
+  studyFee               Int        @default(0) @map("study_fee")
+  studyFeeRuleId         String?    @map("study_fee_rule_id") @db.Uuid
+  studyFeeRuleVersion    Int?       @map("study_fee_rule_version")
+  /// Débit des frais demandé à wallet sans réponse connue : rapproché avant toute suppression.
+  feeDebitAttemptedAt    DateTime?  @map("fee_debit_attempted_at") @db.Timestamptz(3)
+  /// Dossier refusé : remboursement du débit entier, puis débit du forfait d'étude.
+  feeRefundTransactionId String?    @map("fee_refund_transaction_id") @db.Uuid
+  feeRefundedAt          DateTime?  @map("fee_refunded_at") @db.Timestamptz(3)
+  studyFeeTransactionId  String?    @map("study_fee_transaction_id") @db.Uuid
+  studyFeeChargedAt      DateTime?  @map("study_fee_charged_at") @db.Timestamptz(3)
+  /// Motif du complément demandé ou du refus ; réponse du créancier ; clé de la décision d'examen.
+  reviewNote             String?    @map("review_note")
+  completionNote         String?    @map("completion_note")
+  assessmentKey          String?    @map("assessment_key")
+  infoRequestedAt        DateTime?  @map("info_requested_at") @db.Timestamptz(3)
+  /// Dernière entrée du journal de preuve (dossiers sans action).
+  lastActionAt           DateTime?  @map("last_action_at") @db.Timestamptz(3)
 
   debtors          Debtor[]
   claims           Claim[]
@@ -166,6 +185,8 @@ model RecoveryCase {
   @@index([status, stage])
   @@index([assignedAgentId, status])
   @@index([prescriptionDate])
+  @@index([status, createdAt])
+  @@index([status, infoRequestedAt])
   @@map("recovery_cases")
 }
 
@@ -184,11 +205,14 @@ model Debtor {
   position     Int      @default(0)
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// Empreintes des mots du nom (BlindIndex) : recherche exacte d'un débiteur sans déchiffrer.
+  nameTokens   String[] @default([]) @map("name_tokens")
 
   case     RecoveryCase    @relation(fields: [caseId], references: [id], onDelete: Cascade)
   contacts DebtorContact[]
 
   @@index([caseId])
+  @@index([nameTokens], type: Gin)
   @@map("debtors")
 }
 
@@ -603,19 +627,23 @@ model OfflinePayment {
 
 /// Import tableur d'un créancier entreprise (R-SD-01, R-SD-02).
 model CaseImport {
-  id             String    @id @db.Uuid
-  creditorType   PartyType @map("creditor_type")
-  creditorId     String    @map("creditor_id") @db.Uuid
-  createdBy      String    @map("created_by") @db.Uuid
-  fileId         String?   @map("file_id") @db.Uuid
-  /// validating, ready, confirmed ou failed.
-  status         String    @default("validating")
-  linesTotal     Int       @default(0) @map("lines_total")
-  linesValid     Int       @default(0) @map("lines_valid")
-  linesInvalid   Int       @default(0) @map("lines_invalid")
-  idempotencyKey String?   @map("idempotency_key")
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                    String    @id @db.Uuid
+  creditorType          PartyType @map("creditor_type")
+  creditorId            String    @map("creditor_id") @db.Uuid
+  createdBy             String    @map("created_by") @db.Uuid
+  fileId                String?   @map("file_id") @db.Uuid
+  /// checked (contrôlé, à confirmer), confirmed ou expired (contrat CaseImport).
+  status                String    @default("checked")
+  linesTotal            Int       @default(0) @map("lines_total")
+  linesValid            Int       @default(0) @map("lines_valid")
+  linesInvalid          Int       @default(0) @map("lines_invalid")
+  idempotencyKey        String?   @map("idempotency_key")
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// Lot R2 : offre des dossiers (b2b, b2c), archive des justificatifs, verrou optimiste.
+  kind                  CaseKind  @default(b2b)
+  evidenceArchiveFileId String?   @map("evidence_archive_file_id") @db.Uuid
+  version               Int       @default(0)
 
   lines CaseImportLine[]
 
@@ -779,6 +807,21 @@ model Holiday {
   @@map("holidays")
 }
 
+/// Préférences d'un créancier (compte ou organisation, 14.1) : barèmes par défaut de ses nouveaux
+/// dossiers, comptes à prévenir.
+model CreditorPreference {
+  creditorType  PartyType @map("creditor_type")
+  creditorId    String    @map("creditor_id") @db.Uuid
+  b2bScale      Json?     @map("b2b_scale")
+  b2cScale      Json?     @map("b2c_scale")
+  notifyUserIds String[]  @default([]) @map("notify_user_ids") @db.Uuid
+  updatedAt     DateTime  @map("updated_at") @db.Timestamptz(3)
+  updatedBy     String?   @map("updated_by") @db.Uuid
+
+  @@id([creditorType, creditorId])
+  @@map("creditor_preferences")
+}
+
 /// Journal de preuve (R-PR-08) : horodaté, attribué, en ajout seul (déclencheur SQL). Exporté en PDF
 /// pour l'huissier, l'avocat ou le juge. Jamais de coordonnées du débiteur.
 model EvidenceEntry {
@@ -798,6 +841,10 @@ model EvidenceEntry {
   refType        String?  @map("ref_type")
   refId          String?  @map("ref_id") @db.Uuid
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Lot R2 : nature de l'entrée (`JournalEntry.kind`), sens d'un contact, montant d'un paiement.
+  kind           String?
+  direction      String?
+  amount         Int?
 
   case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
 

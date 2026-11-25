@@ -6,6 +6,15 @@ import {
   SendDebtorAccessCodeUseCase,
   VerifyDebtorAccessCodeUseCase,
 } from './debtor-access/debtor-access.use-cases';
+import { createCaseUseCases } from './cases';
+import {
+  type CaseImportRepository,
+  type CaseQueries,
+  type CaseRepository,
+  type CreditorPreferencesStore,
+  type CreditorProfiles,
+  type SpreadsheetReader,
+} from './cases/ports';
 import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import {
   type AuditLog,
@@ -66,6 +75,13 @@ export interface RecoveryDeps {
   ids: IdGenerator;
   /** Lien, code et session du débiteur sans compte (ADR-061). */
   debtorAccess: DebtorAccessPorts;
+  // Dossiers (R2) : dépôt, lectures, imports, préférences, identité du créancier, tableurs.
+  cases: CaseRepository;
+  caseQueries: CaseQueries;
+  imports: CaseImportRepository;
+  preferences: CreditorPreferencesStore;
+  creditorProfiles: CreditorProfiles;
+  spreadsheets: SpreadsheetReader;
 }
 
 export function createUseCases(deps: RecoveryDeps) {
@@ -91,6 +107,7 @@ export function createUseCases(deps: RecoveryDeps) {
     verifyDebtorAccessCode: new VerifyDebtorAccessCodeUseCase(deps),
     endDebtorSession: new EndDebtorSessionUseCase(deps),
     resolveDebtorSession: new ResolveDebtorSessionUseCase(deps),
+    ...createCaseUseCases(deps),
   };
 }
 

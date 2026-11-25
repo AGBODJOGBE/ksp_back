@@ -11,8 +11,23 @@ import {
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
 import { type DebtorAccessPorts } from './application/debtor-access/debtor-access.ports';
+import { type PersonalData } from './application/ports';
 import { createUseCases, RECOVERY_USE_CASES } from './application/use-cases';
 import { type ServiceConfig } from './config';
+import { GrpcCreditorProfiles } from './infrastructure/grpc/grpc-creditor-profiles';
+import { FileSpreadsheetReader } from './infrastructure/imports/file-spreadsheet-reader';
+import { PrismaCaseImportRepository } from './infrastructure/persistence/prisma-case-imports.repository';
+import { PrismaCaseQueries } from './infrastructure/persistence/prisma-case-queries';
+import {
+  CASE_PERSONAL_DATA,
+  PrismaCaseRepository,
+} from './infrastructure/persistence/prisma-cases.repository';
+import { PrismaCreditorPreferencesStore } from './infrastructure/persistence/prisma-creditor-preferences.store';
+import {
+  CASE_DEADLINES_INTERVAL_MS,
+  CaseDeadlinesService,
+} from './infrastructure/scheduling/case-deadlines.service';
+import { MandateSignatureConsumer } from './interfaces/messaging/mandate-signature.consumer';
 import { GrpcDirectory } from './infrastructure/grpc/grpc-directory';
 import { GrpcDocuments } from './infrastructure/grpc/grpc-documents';
 import { GrpcFiles } from './infrastructure/grpc/grpc-files';
@@ -103,6 +118,30 @@ export class AppModule {
             baseUrl: config.RECOVERY_DEBTOR_BASE_URL,
           }),
         },
+        // Dossiers (R2) : coordonnées chiffrées, dépôts, tâche des échéances, signatures du mandat.
+        {
+          provide: CASE_PERSONAL_DATA,
+          useFactory: () =>
+            new KitPersonalData(
+              FieldCipher.fromConfig(
+                config.RECOVERY_PII_ENCRYPTION_KEYS,
+                config.NODE_ENV,
+                'RECOVERY_PII_ENCRYPTION_KEYS',
+              ),
+              BlindIndex.fromConfig(
+                config.RECOVERY_BLIND_INDEX_KEYS,
+                config.NODE_ENV,
+                'RECOVERY_BLIND_INDEX_KEYS',
+              ),
+            ),
+        },
+        PrismaCaseRepository,
+        PrismaCaseQueries,
+        PrismaCaseImportRepository,
+        PrismaCreditorPreferencesStore,
+        CaseDeadlinesService,
+        { provide: CASE_DEADLINES_INTERVAL_MS, useValue: config.RECOVERY_CASE_DEADLINES_INTERVAL_MS },
+        MandateSignatureConsumer,
         {
           provide: RECOVERY_USE_CASES,
           inject: [
@@ -112,6 +151,11 @@ export class AppModule {
             PrismaAuditLog,
             PrismaCaseObligations,
             DEBTOR_ACCESS,
+            CASE_PERSONAL_DATA,
+            PrismaCaseRepository,
+            PrismaCaseQueries,
+            PrismaCaseImportRepository,
+            PrismaCreditorPreferencesStore,
             WALLET_CLIENT,
             PAYMENT_CLIENT,
             DOCUMENT_CLIENT,
@@ -127,6 +171,11 @@ export class AppModule {
             audit: PrismaAuditLog,
             obligations: PrismaCaseObligations,
             debtorAccess: DebtorAccessPorts,
+            personalData: PersonalData,
+            cases: PrismaCaseRepository,
+            caseQueries: PrismaCaseQueries,
+            imports: PrismaCaseImportRepository,
+            preferences: PrismaCreditorPreferencesStore,
             wallet: ClientGrpc,
             payment: ClientGrpc,
             document: ClientGrpc,
@@ -146,24 +195,25 @@ export class AppModule {
                 defaultDeadlineMs: config.RECOVERY_GRPC_DEADLINE_MS,
                 ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}),
               });
+            const identityClient = identity.getService<identityV1.IdentityServiceClient>(
+              identityV1.IDENTITY_SERVICE_NAME,
+            );
+            const fileClient = file.getService<fileV1.FileInternalServiceClient>(
+              fileV1.FILE_INTERNAL_SERVICE_NAME,
+            );
             return createUseCases({
               settings,
               holidays,
               rules,
               audit,
               obligations,
-              personalData: new KitPersonalData(
-                FieldCipher.fromConfig(
-                  config.RECOVERY_PII_ENCRYPTION_KEYS,
-                  config.NODE_ENV,
-                  'RECOVERY_PII_ENCRYPTION_KEYS',
-                ),
-                BlindIndex.fromConfig(
-                  config.RECOVERY_BLIND_INDEX_KEYS,
-                  config.NODE_ENV,
-                  'RECOVERY_BLIND_INDEX_KEYS',
-                ),
-              ),
+              personalData,
+              cases,
+              caseQueries,
+              imports,
+              preferences,
+              creditorProfiles: new GrpcCreditorProfiles(identityClient, callerOf('identity')),
+              spreadsheets: new FileSpreadsheetReader(fileClient, callerOf('file')),
               wallet: new GrpcWalletGateway(
                 wallet.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
                 callerOf('wallet'),
@@ -179,20 +229,14 @@ export class AppModule {
                 callerOf('document'),
                 config.RECOVERY_LONG_DOCUMENT_DEADLINE_MS,
               ),
-              files: new GrpcFiles(
-                file.getService<fileV1.FileInternalServiceClient>(fileV1.FILE_INTERNAL_SERVICE_NAME),
-                callerOf('file'),
-              ),
+              files: new GrpcFiles(fileClient, callerOf('file')),
               notifier: new GrpcNotifier(
                 notification.getService<notificationV1.NotificationServiceClient>(
                   notificationV1.NOTIFICATION_SERVICE_NAME,
                 ),
                 callerOf('notification'),
               ),
-              directory: new GrpcDirectory(
-                identity.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
-                callerOf('identity'),
-              ),
+              directory: new GrpcDirectory(identityClient, callerOf('identity')),
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
               debtorAccess,

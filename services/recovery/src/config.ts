@@ -59,6 +59,8 @@ export const configSchema = baseServiceConfigSchema
     RECOVERY_GRPC_DEADLINE_MS: z.coerce.number().int().min(500).max(30_000).default(3_000),
     /** Échéance de la production d'un PDF long (journal de preuve, ADR-060) : 15 secondes. */
     RECOVERY_LONG_DOCUMENT_DEADLINE_MS: z.coerce.number().int().min(3_000).max(60_000).default(15_000),
+    /** Intervalle de la tâche des échéances des dossiers (R-SD-04, 4.4) : 10 minutes ; 0 : désactivée. */
+    RECOVERY_CASE_DEADLINES_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
   })
   .superRefine((cfg, ctx) => {
     requireFieldKeysInProduction(cfg, ctx, ['RECOVERY_PII_ENCRYPTION_KEYS', 'RECOVERY_BLIND_INDEX_KEYS']);
