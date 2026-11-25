@@ -25,4 +25,11 @@ export const billingParams = {
     .string()
     .regex(/^[A-Za-z0-9_-]{8,100}$/)
     .optional(),
+  // Recouvrement (ADR-064) : factures de commission.
+  commissionInvoiceStatus: z.enum(['pending_payment', 'paid', 'cancelled']).optional(),
+  /** Mois facturé AAAA-MM (heure du Bénin). */
+  optionalPeriod: z
+    .string()
+    .regex(/^[0-9]{4}-(0[1-9]|1[0-2])$/)
+    .optional(),
 };

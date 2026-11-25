@@ -21,6 +21,10 @@ export const EVENT_CONSUMERS = {
     // Lot F (R-PE-04) : virement ou Mobile Money crédité au portefeuille pour une facture
     // (forObject "billing_invoice"), débité aussitôt.
     'wallet.prepaid.credited',
+    // Recouvrement (ADR-064) : encaissements de la facture mensuelle de commission, et débits des
+    // frais de dossier par recovery (service "recovery") qui donnent chacun un reçu.
+    'recovery.payment.collected',
+    'wallet.prepaid.debited',
   ],
   cleaning: [
     'billing.invoice.overdue',

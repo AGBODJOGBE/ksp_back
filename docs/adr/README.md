@@ -67,6 +67,7 @@ Chaque décision importante fait l'objet d'une fiche courte : contexte, décisio
 | [ADR-061](0061-acces-du-debiteur-sans-compte.md)                  | Accès du débiteur sans compte porté par `recovery` : lien haché de 30 jours renouvelé à chaque relance, code à chaque ouverture, blocage d'une heure, session courte                                                             | Accepté |
 | [ADR-062](0062-tarification-du-recouvrement.md)                   | Tarification du recouvrement dans `recovery` : règles fixes, en pourcentage, par tranche ou par étape, bornes, version figée dans le mandat, tarif négocié validé à deux                                                         | Accepté |
 | [ADR-063](0063-chiffrement-des-champs-et-empreintes.md)           | Chiffrement des champs dans le kit : AES-256-GCM v2 avec identifiant de clé, rotation par trousseau, relecture v1, empreinte HMAC par finalité (clé dérivée par HKDF), refus en production                                       | Accepté |
+| [ADR-064](0064-factures-de-commission-du-recouvrement.md)         | Recouvrement dans `billing` : facture mensuelle de commission par créancier, hors taxe, série FCR ; commission `invoiced` débitée du portefeuille avec nouvel essai ; reçus des frais de dossier, série RFD                      | Accepté |
 
 Le statut est celui de la ligne « Statut » de chaque fiche, qui fait foi.
 
