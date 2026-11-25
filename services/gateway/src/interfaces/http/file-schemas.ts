@@ -6,7 +6,15 @@ import { z } from 'zod';
  */
 export const fileBodies = {
   createFileUpload: z.strictObject({
-    purpose: z.enum(['recovery_evidence', 'cleaning_intervention_photo', 'generated_document', 'avatar']),
+    // FileUploadPurpose du contrat ; recovery_debtor_evidence n'y est pas (déclarée par recovery seul).
+    purpose: z.enum([
+      'recovery_evidence',
+      'cleaning_intervention_photo',
+      'generated_document',
+      'avatar',
+      'recovery_import',
+      'recovery_evidence_archive',
+    ]),
     fileName: z.string().min(1).max(255),
     contentType: z.string().min(3).max(100),
     sizeBytes: z

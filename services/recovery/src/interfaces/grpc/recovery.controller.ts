@@ -27,6 +27,14 @@ import {
   presentWorkItem,
   termsInputOf,
 } from './amicable-presenters';
+import {
+  presentCollection,
+  presentDebtorCase,
+  presentDispute,
+  presentMoneyCase,
+  presentOfflinePayment,
+  presentRemittance,
+} from './money-presenters';
 import { notImplemented } from './not-implemented';
 import {
   amountOf,
@@ -40,8 +48,8 @@ import {
 
 // Adaptateurs gRPC des quatre services du contrat (ADR-060) : aucune règle métier ici. R1 livre la
 // tarification, les réglages, les jours fériés et l'estimation des frais ; R2 les dossiers, l'import,
-// les préférences et la recevabilité ; les autres méthodes répondent « pas encore disponible »
-// jusqu'à leur branche (R3 à R5).
+// les préférences et la recevabilité ; R3 l'argent et l'espace du débiteur ; les autres méthodes
+// répondent « pas encore disponible » jusqu'à leur branche (R4, R5).
 
 @Controller()
 @recoveryV1.RecoveryCreditorServiceControllerMethods()
@@ -132,7 +140,8 @@ export class RecoveryCreditorGrpcController implements recoveryV1.RecoveryCredit
   }
 
   async getMyCase(request: recoveryV1.GetMyCaseRequest): Promise<recoveryV1.GetMyCaseResponse> {
-    return { case: presentCase(await this.useCases.getMyCase.execute(request)) };
+    const view = await this.useCases.getMyCase.execute(request);
+    return { case: presentMoneyCase(await this.useCases.addCaseMoney.execute(view)) };
   }
 
   async listMyCaseJournal(
@@ -197,12 +206,32 @@ export class RecoveryCreditorGrpcController implements recoveryV1.RecoveryCredit
     return notImplemented('StopCase');
   }
 
-  declareDirectPayment(): Promise<recoveryV1.DeclareDirectPaymentResponse> {
-    return notImplemented('DeclareDirectPayment');
+  // Argent (R3) : paiement reçu directement, reversements.
+
+  async declareDirectPayment(
+    request: recoveryV1.DeclareDirectPaymentRequest,
+  ): Promise<recoveryV1.DeclareDirectPaymentResponse> {
+    const result = await this.useCases.declareDirectPayment.execute({
+      caseId: request.caseId,
+      idempotencyKey: request.idempotencyKey,
+      amount: amountOf('amount', request.amount),
+      receivedOn: request.receivedOn,
+      note: request.note,
+      proofFileId: request.proofFileId,
+    });
+    return { case: presentMoneyCase(result.view), collection: presentCollection(result.collection) };
   }
 
-  listMyRemittances(): Promise<recoveryV1.ListMyRemittancesResponse> {
-    return notImplemented('ListMyRemittances');
+  async listMyRemittances(
+    request: recoveryV1.ListMyRemittancesRequest,
+  ): Promise<recoveryV1.ListMyRemittancesResponse> {
+    const result = await this.useCases.listMyRemittances.execute({
+      caseId: request.caseId,
+      from: request.from,
+      to: request.to,
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return { remittances: result.items.map(presentRemittance), nextCursor: result.nextCursor ?? '' };
   }
 
   listMyStatements(): Promise<recoveryV1.ListMyStatementsResponse> {
@@ -277,23 +306,31 @@ export class RecoveryDebtorGrpcController implements recoveryV1.RecoveryDebtorSe
     return { endedAt: ended.endedAt.toISOString() };
   }
 
-  // Méthodes de la session : une session invalide est refusée dès maintenant ; chaque cas d'usage,
-  // livré avec sa branche, recevra le dossier et le débiteur de la session.
+  // Méthodes de la session : une session invalide est refusée avant tout le reste ; chaque cas d'usage
+  // reçoit le dossier et le débiteur de la session (R3 : situation, paiement, contestation, pièces,
+  // rappel, documents ; R4 : échéancier).
 
   async getDebtorCase(
     _request: recoveryV1.GetDebtorCaseRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.GetDebtorCaseResponse> {
-    await this.debtorSession(metadata);
-    return notImplemented('GetDebtorCase');
+    const { caseId, debtorId } = await this.debtorSession(metadata);
+    return { case: presentDebtorCase(await this.useCases.getDebtorCase.execute({ caseId, debtorId })) };
   }
 
   async createDebtorPayment(
-    _request: recoveryV1.CreateDebtorPaymentRequest,
+    request: recoveryV1.CreateDebtorPaymentRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.CreateDebtorPaymentResponse> {
-    await this.debtorSession(metadata);
-    return notImplemented('CreateDebtorPayment');
+    const { caseId, debtorId } = await this.debtorSession(metadata);
+    const link = await this.useCases.createDebtorPayment.execute({
+      caseId,
+      debtorId,
+      idempotencyKey: request.idempotencyKey,
+      amount: amountOf('amount', request.amount),
+      settlementId: request.settlementId,
+    });
+    return { paymentUrl: link.url, amount: money(link.amount), expiresAt: link.expiresAt.toISOString() };
   }
 
   // Échéancier du débiteur (R4) : simulation, proposition, nouveau lien de signature.
@@ -339,43 +376,70 @@ export class RecoveryDebtorGrpcController implements recoveryV1.RecoveryDebtorSe
   }
 
   async disputeDebtorCase(
-    _request: recoveryV1.DisputeDebtorCaseRequest,
+    request: recoveryV1.DisputeDebtorCaseRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.DisputeDebtorCaseResponse> {
-    await this.debtorSession(metadata);
-    return notImplemented('DisputeDebtorCase');
+    const { caseId, debtorId } = await this.debtorSession(metadata);
+    const dispute = await this.useCases.disputeDebtorCase.execute({
+      caseId,
+      debtorId,
+      idempotencyKey: request.idempotencyKey,
+      reason: request.reason,
+      text: request.text,
+      fileIds: request.fileIds,
+    });
+    return { dispute: presentDispute(dispute) };
   }
 
   async createDebtorUpload(
-    _request: recoveryV1.CreateDebtorUploadRequest,
+    request: recoveryV1.CreateDebtorUploadRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.CreateDebtorUploadResponse> {
-    await this.debtorSession(metadata);
-    return notImplemented('CreateDebtorUpload');
+    const { caseId, debtorId } = await this.debtorSession(metadata);
+    const slot = await this.useCases.createDebtorUpload.execute({
+      caseId,
+      debtorId,
+      fileName: request.fileName,
+      contentType: request.contentType,
+      sizeBytes: request.sizeBytes,
+    });
+    return {
+      fileId: slot.fileId,
+      uploadUrl: slot.url,
+      uploadExpiresAt: slot.expiresAt,
+      uploadHeaders: slot.headers,
+    };
   }
 
   async completeDebtorUpload(
-    _request: recoveryV1.CompleteDebtorUploadRequest,
+    request: recoveryV1.CompleteDebtorUploadRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.CompleteDebtorUploadResponse> {
-    await this.debtorSession(metadata);
-    return notImplemented('CompleteDebtorUpload');
+    const { caseId, debtorId } = await this.debtorSession(metadata);
+    return this.useCases.completeDebtorUpload.execute({ caseId, debtorId, fileId: request.fileId });
   }
 
   async requestDebtorCallback(
-    _request: recoveryV1.RequestDebtorCallbackRequest,
+    request: recoveryV1.RequestDebtorCallbackRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.RequestDebtorCallbackResponse> {
-    await this.debtorSession(metadata);
-    return notImplemented('RequestDebtorCallback');
+    const { caseId, debtorId } = await this.debtorSession(metadata);
+    const result = await this.useCases.requestDebtorCallback.execute({
+      caseId,
+      debtorId,
+      preferredFrom: request.preferredFrom,
+      preferredTo: request.preferredTo,
+      message: request.message,
+    });
+    return { requestedAt: result.requestedAt.toISOString() };
   }
 
   async getDebtorDocumentUrl(
-    _request: recoveryV1.GetDebtorDocumentUrlRequest,
+    request: recoveryV1.GetDebtorDocumentUrlRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.GetDebtorDocumentUrlResponse> {
-    await this.debtorSession(metadata);
-    return notImplemented('GetDebtorDocumentUrl');
+    const { caseId, debtorId } = await this.debtorSession(metadata);
+    return this.useCases.getDebtorDocumentUrl.execute({ caseId, debtorId, documentId: request.documentId });
   }
 
   /**
@@ -452,7 +516,7 @@ export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServ
   async getCase(request: recoveryV1.GetCaseRequest): Promise<recoveryV1.GetCaseResponse> {
     const result = await this.useCases.getCase.execute(request);
     return {
-      case: presentCase(result.view),
+      case: presentMoneyCase(await this.useCases.addCaseMoney.execute(result.view)),
       scoreFactors: presentScoreFactors(result.score),
       injunctionEligible: result.injunctionEligible,
     };
@@ -551,8 +615,17 @@ export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServ
     return notImplemented('RecordNoticeDelivery');
   }
 
-  resolveDispute(): Promise<recoveryV1.ResolveDisputeResponse> {
-    return notImplemented('ResolveDispute');
+  async resolveDispute(
+    request: recoveryV1.ResolveDisputeRequest,
+  ): Promise<recoveryV1.ResolveDisputeResponse> {
+    const view = await this.useCases.resolveDispute.execute({
+      caseId: request.caseId,
+      disputeId: request.disputeId,
+      resolution: request.resolution,
+      correctedDue: amountOf('correctedDue', request.correctedDue),
+      note: request.note,
+    });
+    return { case: presentMoneyCase(view) };
   }
 
   requestEscalation(): Promise<recoveryV1.RequestEscalationResponse> {
@@ -571,24 +644,67 @@ export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServ
     return notImplemented('WithdrawPartner');
   }
 
-  recordOfflinePayment(): Promise<recoveryV1.RecordOfflinePaymentResponse> {
-    return notImplemented('RecordOfflinePayment');
+  // Argent (R3) : paiements hors ligne validés à deux, trop-perçus remboursés.
+
+  async recordOfflinePayment(
+    request: recoveryV1.RecordOfflinePaymentRequest,
+  ): Promise<recoveryV1.RecordOfflinePaymentResponse> {
+    const view = await this.useCases.recordOfflinePayment.execute({
+      caseId: request.caseId,
+      idempotencyKey: request.idempotencyKey,
+      source: request.source,
+      amount: amountOf('amount', request.amount),
+      receivedOn: request.receivedOn,
+      reference: request.reference,
+      proofFileId: request.proofFileId,
+    });
+    return { payment: presentOfflinePayment(view) };
   }
 
-  listOfflinePayments(): Promise<recoveryV1.ListOfflinePaymentsResponse> {
-    return notImplemented('ListOfflinePayments');
+  async listOfflinePayments(
+    request: recoveryV1.ListOfflinePaymentsRequest,
+  ): Promise<recoveryV1.ListOfflinePaymentsResponse> {
+    const result = await this.useCases.listOfflinePayments.execute({
+      statuses: request.statuses,
+      caseId: request.caseId,
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return { payments: result.items.map(presentOfflinePayment), nextCursor: result.nextCursor ?? '' };
   }
 
-  approveOfflinePayment(): Promise<recoveryV1.ApproveOfflinePaymentResponse> {
-    return notImplemented('ApproveOfflinePayment');
+  async approveOfflinePayment(
+    request: recoveryV1.ApproveOfflinePaymentRequest,
+  ): Promise<recoveryV1.ApproveOfflinePaymentResponse> {
+    const result = await this.useCases.approveOfflinePayment.execute({
+      offlinePaymentId: request.offlinePaymentId,
+    });
+    return {
+      payment: presentOfflinePayment(result.payment),
+      collection: presentCollection(result.collection),
+    };
   }
 
-  rejectOfflinePayment(): Promise<recoveryV1.RejectOfflinePaymentResponse> {
-    return notImplemented('RejectOfflinePayment');
+  async rejectOfflinePayment(
+    request: recoveryV1.RejectOfflinePaymentRequest,
+  ): Promise<recoveryV1.RejectOfflinePaymentResponse> {
+    const view = await this.useCases.rejectOfflinePayment.execute({
+      offlinePaymentId: request.offlinePaymentId,
+      reason: request.reason,
+    });
+    return { payment: presentOfflinePayment(view) };
   }
 
-  recordOverpaymentRefund(): Promise<recoveryV1.RecordOverpaymentRefundResponse> {
-    return notImplemented('RecordOverpaymentRefund');
+  async recordOverpaymentRefund(
+    request: recoveryV1.RecordOverpaymentRefundRequest,
+  ): Promise<recoveryV1.RecordOverpaymentRefundResponse> {
+    const view = await this.useCases.recordOverpaymentRefund.execute({
+      caseId: request.caseId,
+      idempotencyKey: request.idempotencyKey,
+      amount: amountOf('amount', request.amount),
+      reference: request.reference,
+      note: request.note,
+    });
+    return { case: presentMoneyCase(view) };
   }
 
   closeCase(): Promise<recoveryV1.CloseCaseResponse> {

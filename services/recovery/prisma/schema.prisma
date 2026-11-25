@@ -159,6 +159,13 @@ model RecoveryCase {
   infoRequestedAt        DateTime?  @map("info_requested_at") @db.Timestamptz(3)
   /// Dernière entrée du journal de preuve (dossiers sans action).
   lastActionAt           DateTime?  @map("last_action_at") @db.Timestamptz(3)
+  /// Lot R3 : clôture (note, auteur, attestation de solde) ; effets de la clôture terminés (attestation,
+  /// liens du débiteur révoqués, recovery.case.closed), repris par la tâche tant qu'ils ne le sont pas.
+  closureNote            String?    @map("closure_note")
+  closedByType           String?    @map("closed_by_type")
+  closedById             String?    @map("closed_by_id") @db.Uuid
+  certificateDocumentId  String?    @map("settlement_certificate_document_id") @db.Uuid
+  closureCompletedAt     DateTime?  @map("closure_completed_at") @db.Timestamptz(3)
 
   debtors          Debtor[]
   claims           Claim[]
@@ -181,6 +188,7 @@ model RecoveryCase {
   evidence         EvidenceEntry[]
   settlements      Settlement[]
   debtorMessages   DebtorMessage[]
+  refunds          OverpaymentRefund[]
 
   @@unique([creditorType, creditorId, idempotencyKey])
   @@index([creditorType, creditorId, status])
@@ -579,9 +587,16 @@ model PaymentRequest {
   expiresAt     DateTime  @map("expires_at") @db.Timestamptz(3)
   paidAt        DateTime? @map("paid_at") @db.Timestamptz(3)
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Lot R3 : débiteur qui a demandé le lien, clé de sa demande, adresse de la page de paiement,
+  /// remise payée par ce lien (R4).
+  debtorId      String?   @map("debtor_id") @db.Uuid
+  settlementId  String?   @map("settlement_id") @db.Uuid
+  debtorKey     String?   @map("idempotency_key")
+  paymentUrl    String?   @map("payment_url")
 
   case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
+  @@unique([caseId, debtorKey])
   @@index([caseId, status])
   @@map("payment_requests")
 }
@@ -591,7 +606,8 @@ model PaymentRequest {
 model Collection {
   id                  String    @id @db.Uuid
   caseId              String    @map("case_id") @db.Uuid
-  /// payment_link, offline, partner ou direct (payé directement au créancier, R-PR-07).
+  /// payment_link, offline_cash, offline_transfer, partner ou direct_to_creditor (payé directement au
+  /// créancier, R-PR-07) : valeurs du contrat.
   source              String
   /// Référence d'idempotence : payment:<id>, offline:<id>, direct:<id>.
   reference           String    @unique
@@ -611,6 +627,19 @@ model Collection {
   creditedAt          DateTime? @map("credited_at") @db.Timestamptz(3)
   collectedAt         DateTime  @map("collected_at") @db.Timestamptz(3)
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Lot R3 : étape à l'encaissement ; commission retenue (deducted) ou facturée au créancier
+  /// (invoiced, paiement direct) ; reçu au débiteur (moyen imprimé, référence de l'opération, document
+  /// produit) ; preuve et note d'un paiement direct ; compte qui l'a déclaré ou validé. Étape : notice…
+  /// litigation (valeurs du contrat) ; montant dû avant l'encaissement (imprimé sur le reçu).
+  stage               String?
+  dueBefore           Int       @default(0) @map("due_before")
+  settlement          String    @default("deducted") @map("commission_settlement")
+  receiptMethod       String?   @map("receipt_method")
+  receiptReference    String?   @map("receipt_reference")
+  receiptDocumentId   String?   @map("receipt_document_id") @db.Uuid
+  proofFileId         String?   @map("proof_file_id") @db.Uuid
+  note                String?
+  recordedBy          String?   @map("recorded_by") @db.Uuid
 
   case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
@@ -631,7 +660,7 @@ model OfflinePayment {
   receivedAt      DateTime  @map("received_at") @db.Timestamptz(3)
   recordedBy      String    @map("recorded_by") @db.Uuid
   partnerId       String?   @map("partner_id") @db.Uuid
-  /// pending, approved ou rejected.
+  /// pending_approval, approved ou rejected (valeurs du contrat).
   status          String    @default("pending")
   reviewedBy      String?   @map("reviewed_by") @db.Uuid
   reviewedAt      DateTime? @map("reviewed_at") @db.Timestamptz(3)
@@ -639,10 +668,15 @@ model OfflinePayment {
   collectionId    String?   @unique @map("collection_id") @db.Uuid
   idempotencyKey  String?   @map("idempotency_key")
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Lot R3 : preuve (reçu de caisse, avis de virement), note, assignation du partenaire déclarant.
+  proofFileId     String?   @map("proof_file_id") @db.Uuid
+  note            String?
+  assignmentId    String?   @map("partner_assignment_id") @db.Uuid
 
   case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
   @@unique([recordedBy, idempotencyKey])
+  @@index([caseId, createdAt])
   @@index([status, createdAt])
   @@map("offline_payments")
 }
@@ -706,9 +740,15 @@ model Dispute {
   resolution        String?
   resolvedBy        String?   @map("resolved_by") @db.Uuid
   resolvedAt        DateTime? @map("resolved_at") @db.Timestamptz(3)
+  /// Lot R3 : débiteur qui conteste, ses pièces (file), clé de sa demande, motif écrit de la suite.
+  debtorId          String?   @map("debtor_id") @db.Uuid
+  fileIds           String[]  @default([]) @map("file_ids") @db.Uuid
+  idempotencyKey    String?   @map("idempotency_key")
+  resolutionNote    String?   @map("resolution_note")
 
   case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
+  @@unique([caseId, idempotencyKey])
   @@index([caseId, status])
   @@map("disputes")
 }
@@ -779,11 +819,34 @@ model CallbackRequest {
   handledBy String?   @map("handled_by") @db.Uuid
   handledAt DateTime? @map("handled_at") @db.Timestamptz(3)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Lot R3 : débiteur qui demande le rappel et son message, chiffré (ADR-063).
+  debtorId  String?   @map("debtor_id") @db.Uuid
+  noteEnc   String?   @map("note_enc")
 
   case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
+  @@index([caseId, createdAt])
   @@index([status, slotStart])
   @@map("callback_requests")
+}
+
+/// Trop-perçu remboursé à la main au débiteur par la finance (ADR-060, point 9) : référence du
+/// virement ou du transfert Mobile Money, idempotent par (auteur, clé).
+model OverpaymentRefund {
+  id             String   @id @db.Uuid
+  caseId         String   @map("case_id") @db.Uuid
+  amount         Int
+  reference      String
+  note           String?
+  recordedBy     String   @map("recorded_by") @db.Uuid
+  idempotencyKey String   @map("idempotency_key")
+  recordedAt     DateTime @map("recorded_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@unique([recordedBy, idempotencyKey])
+  @@index([caseId])
+  @@map("overpayment_refunds")
 }
 
 /// Lien personnel du débiteur (ADR-061) : jeton aléatoire dont seule l'empreinte est gardée, code

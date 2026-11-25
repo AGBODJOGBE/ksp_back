@@ -14,12 +14,25 @@ const orNull = (value: string | undefined): string | null => (value ? value : nu
 /** La confirmation relit le contenu dans le stockage (et passera par l'antivirus). */
 const COMPLETE_DEADLINE_MS = 10_000;
 
+/**
+ * Finalités ajoutées après la publication de `FilePurpose`, énumération figée des réponses REST (une
+ * valeur nouvelle y serait une rupture pour les fronts) : présentées sous la valeur de leur famille,
+ * la finalité exacte dans le champ facultatif `purposeDetail` (comme ADR-053).
+ */
+const PRESENTED_PURPOSES = new Map<string, string>([
+  ['recovery_import', 'recovery_evidence'],
+  ['recovery_evidence_archive', 'recovery_evidence'],
+  ['recovery_debtor_evidence', 'recovery_evidence'],
+]);
+
 /** Traduction d'un fichier ksp.file.v1 vers le JSON du contrat OpenAPI. */
 export function presentFile(value: fileV1.StoredFile | undefined) {
   if (!value?.id) throw malformed('fichier');
+  const purpose = PRESENTED_PURPOSES.get(value.purpose) ?? value.purpose;
   return {
     id: value.id,
-    purpose: value.purpose,
+    purpose,
+    ...(purpose !== value.purpose ? { purposeDetail: value.purpose } : {}),
     fileName: value.fileName,
     contentType: value.contentType,
     sizeBytes: Number(value.sizeBytes),

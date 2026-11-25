@@ -4,6 +4,7 @@ import {
   createAmicableUseCases,
   type DocumentCancellation,
 } from './amicable';
+import { AmicableSettlementTerms } from './amicable/settlement-terms';
 import { type DebtorAccessPorts } from './debtor-access/debtor-access.ports';
 import {
   EndDebtorSessionUseCase,
@@ -21,6 +22,11 @@ import {
   type CreditorProfiles,
   type SpreadsheetReader,
 } from './cases/ports';
+import { type DebtorUploads, type DocumentUrls } from './debtor-space/debtor-space.ports';
+import { NO_SETTLEMENTS, type SettlementTerms } from './debtor-space/settlement-terms';
+import { createMoneyUseCases } from './money';
+import { CaseClosure } from './money/case-closure.service';
+import { type MoneyStore } from './money/money.ports';
 import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import {
   type AuditLog,
@@ -92,9 +98,32 @@ export interface RecoveryDeps {
   amicable: AmicableStore;
   documentCancellation: DocumentCancellation;
   amicableOptions: AmicableOptions;
+  // Argent et espace du débiteur (R3) : encaissements, paiements hors ligne, contestations, pièces.
+  money: MoneyStore;
+  debtorUploads: DebtorUploads;
+  documentUrls: DocumentUrls;
+}
+
+/**
+ * Les dépendances, plus les remises (R-PR-05) : vue qui relit `deps` à chaque accès, sans copie, pour
+ * suivre un port remplacé après la création (doublures des tests).
+ */
+function withSettlementTerms(
+  deps: RecoveryDeps,
+  settlementTerms: SettlementTerms,
+): RecoveryDeps & { settlementTerms: SettlementTerms } {
+  return Object.create(deps, {
+    settlementTerms: { value: settlementTerms, enumerable: true },
+  }) as RecoveryDeps & {
+    settlementTerms: SettlementTerms;
+  };
 }
 
 export function createUseCases(deps: RecoveryDeps) {
+  // Remises de R4 payées par le lien du débiteur (R3) : exécutées, puis dossier clos par le service
+  // de clôture de R3 (« accord transactionnel exécuté »).
+  const closure = new CaseClosure(withSettlementTerms(deps, NO_SETTLEMENTS));
+  const moneyDeps = withSettlementTerms(deps, new AmicableSettlementTerms(deps, closure));
   return {
     getSettings: new GetSettingsUseCase(deps),
     updateSettings: new UpdateSettingsUseCase(deps),
@@ -119,6 +148,7 @@ export function createUseCases(deps: RecoveryDeps) {
     resolveDebtorSession: new ResolveDebtorSessionUseCase(deps),
     ...createCaseUseCases(deps),
     ...createAmicableUseCases(deps),
+    ...createMoneyUseCases(moneyDeps),
   };
 }
 

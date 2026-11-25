@@ -103,7 +103,7 @@ describe('RecoveryDebtorGrpcController (ADR-061)', () => {
   });
 
   it.each(SESSION_METHODS)(
-    '%s : session absente ou inconnue refusée (401), session valable acceptée',
+    '%s : session absente ou inconnue refusée (401), session valable transmise au cas d’usage',
     async (method) => {
       const { token } = await links.issue({ caseId: CASE_ID, debtorId: DEBTOR_ID });
       await gateway(() => controller.sendDebtorAccessCode({ token }));

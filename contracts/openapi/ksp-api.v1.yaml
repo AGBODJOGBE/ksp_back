@@ -17594,8 +17594,17 @@ paths:
         | Finalité | Types | Taille max |
         | --- | --- | --- |
         | `recovery_evidence` | PDF, JPEG, PNG, WebP | 10 Mo |
+        | `recovery_import` | XLSX, CSV | 5 Mo |
+        | `recovery_evidence_archive` | ZIP | 50 Mo |
         | `cleaning_intervention_photo` | JPEG, PNG, WebP | 8 Mo |
         | `avatar` | JPEG, PNG, WebP | 2 Mo |
+
+        Types MIME : PDF `application/pdf`, JPEG `image/jpeg`, PNG `image/png`, WebP `image/webp`, XLSX
+        `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, CSV `text/csv`, ZIP `application/zip`.
+        Le contenu doit porter la signature du type déclaré (un CSV : du texte), sinon il est rejeté à la
+        confirmation (`type_mismatch`). Dans les réponses, un fichier `recovery_import` ou
+        `recovery_evidence_archive` est présenté en `purpose: recovery_evidence`, avec sa finalité exacte dans
+        `purposeDetail`.
 
         `generated_document` est réservé aux services (`FILE_PURPOSE_FORBIDDEN`). Quota par compte : 20 envois
         en attente et 500 Mo déclarés sur 24 heures (`FILE_QUOTA_EXCEEDED`).
@@ -34559,14 +34568,29 @@ components:
 
     FilePurpose:
       description: |
-        Finalité du fichier (ADR-038), liste fermée et extensible : `recovery_evidence` (pièce justificative du
+        Finalité du fichier (ADR-038), telle que présentée dans les réponses : `recovery_evidence` (pièce du
         Recouvrement), `cleaning_intervention_photo` (photo d'un passage du Nettoyage), `generated_document`
-        (PDF produit par KSP, réservé aux services), `avatar` (photo de profil).
+        (PDF produit par KSP, réservé aux services), `avatar` (photo de profil). Liste figée : une finalité
+        ajoutée depuis est présentée sous la valeur de sa famille, avec sa valeur exacte dans `purposeDetail`
+        (`StoredFile`).
       enum:
         - recovery_evidence
         - cleaning_intervention_photo
         - generated_document
         - avatar
+    FileUploadPurpose:
+      description: |
+        Finalité déclarée à l'envoi (ADR-038), liste fermée et extensible par ajout : celles de `FilePurpose`,
+        plus `recovery_import` (tableur d'import des dossiers du Recouvrement, XLSX ou CSV) et
+        `recovery_evidence_archive` (archive ZIP des justificatifs d'un import). `generated_document` reste
+        réservé aux services (`FILE_PURPOSE_FORBIDDEN`).
+      enum:
+        - recovery_evidence
+        - cleaning_intervention_photo
+        - generated_document
+        - avatar
+        - recovery_import
+        - recovery_evidence_archive
     CreateFileUploadRequest:
       type: object
       additionalProperties: false
@@ -34577,7 +34601,7 @@ components:
         - sizeBytes
       properties:
         purpose:
-          $ref: '#/components/schemas/FilePurpose'
+          $ref: '#/components/schemas/FileUploadPurpose'
         fileName:
           type: string
           minLength: 1
@@ -34587,7 +34611,9 @@ components:
           type: string
           minLength: 3
           maxLength: 100
-          description: Type MIME, accepté selon la finalité (`application/pdf`, `image/jpeg`, `image/png`, `image/webp`).
+          description: |
+            Type MIME, accepté selon la finalité (`application/pdf`, `image/jpeg`, `image/png`, `image/webp`,
+            `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `text/csv`, `application/zip`).
         sizeBytes:
           type: integer
           minimum: 1
@@ -34613,6 +34639,13 @@ components:
           format: uuid
         purpose:
           $ref: '#/components/schemas/FilePurpose'
+        purposeDetail:
+          type: string
+          description: |
+            Finalité exacte, présente seulement quand elle diffère de `purpose` : `recovery_import` (tableur
+            d'import), `recovery_evidence_archive` (archive des justificatifs) ou `recovery_debtor_evidence`
+            (pièce d'un débiteur sans compte), présentées sous `recovery_evidence`. Chaîne ouverte : d'autres
+            valeurs peuvent s'ajouter.
         fileName:
           type: string
         contentType:

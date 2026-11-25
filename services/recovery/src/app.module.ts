@@ -34,6 +34,11 @@ import {
   CaseDeadlinesService,
 } from './infrastructure/scheduling/case-deadlines.service';
 import { MandateSignatureConsumer } from './interfaces/messaging/mandate-signature.consumer';
+// Argent et espace du débiteur (R3).
+import { GrpcDebtorUploads, GrpcDocumentUrls } from './infrastructure/grpc/grpc-debtor-files';
+import { PrismaMoneyStore } from './infrastructure/persistence/prisma-money.store';
+import { MoneyEffectsService } from './infrastructure/scheduling/money-effects.service';
+import { PaymentLinkPaidConsumer } from './interfaces/messaging/payment-link-paid.consumer';
 import { GrpcDirectory } from './infrastructure/grpc/grpc-directory';
 import { GrpcDocuments } from './infrastructure/grpc/grpc-documents';
 import { GrpcFiles } from './infrastructure/grpc/grpc-files';
@@ -152,6 +157,10 @@ export class AppModule {
         PrismaAmicableStore,
         AmicableTasksService,
         { provide: AMICABLE_TASKS_INTERVAL_MS, useValue: config.RECOVERY_AMICABLE_INTERVAL_MS },
+        // Argent et espace du débiteur (R3) : dépôt, liens payés, reprise des crédits et des clôtures.
+        PrismaMoneyStore,
+        PaymentLinkPaidConsumer,
+        MoneyEffectsService,
         {
           provide: RECOVERY_USE_CASES,
           inject: [
@@ -167,6 +176,7 @@ export class AppModule {
             PrismaCaseImportRepository,
             PrismaCreditorPreferencesStore,
             PrismaAmicableStore,
+            PrismaMoneyStore,
             WALLET_CLIENT,
             PAYMENT_CLIENT,
             DOCUMENT_CLIENT,
@@ -188,6 +198,7 @@ export class AppModule {
             imports: PrismaCaseImportRepository,
             preferences: PrismaCreditorPreferencesStore,
             amicable: PrismaAmicableStore,
+            money: PrismaMoneyStore,
             wallet: ClientGrpc,
             payment: ClientGrpc,
             document: ClientGrpc,
@@ -256,6 +267,9 @@ export class AppModule {
               amicable,
               documentCancellation: new GrpcDocumentCancellation(documentClient, callerOf('document')),
               amicableOptions: { debtorChannels: config.RECOVERY_DEBTOR_CHANNELS },
+              money,
+              debtorUploads: new GrpcDebtorUploads(fileClient, callerOf('file')),
+              documentUrls: new GrpcDocumentUrls(documentClient, callerOf('document')),
             });
           },
         },
