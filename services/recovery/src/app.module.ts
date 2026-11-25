@@ -10,6 +10,7 @@ import {
 } from '@ksp/platform';
 import { type DynamicModule, Logger, Module } from '@nestjs/common';
 import { type ClientGrpc, ClientsModule } from '@nestjs/microservices';
+import { type DebtorAccessPorts } from './application/debtor-access/debtor-access.ports';
 import { createUseCases, RECOVERY_USE_CASES } from './application/use-cases';
 import { type ServiceConfig } from './config';
 import { GrpcDirectory } from './infrastructure/grpc/grpc-directory';
@@ -19,6 +20,11 @@ import { GrpcNotifier } from './infrastructure/grpc/grpc-notifier';
 import { GrpcPaymentLinks } from './infrastructure/grpc/grpc-payment-links';
 import { GrpcWalletGateway } from './infrastructure/grpc/grpc-wallet.gateway';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
+import { PrismaDebtorAccessJournal } from './infrastructure/persistence/prisma-debtor-access.journal';
+import {
+  PrismaDebtorAccessStore,
+  PrismaDebtorCaseReader,
+} from './infrastructure/persistence/prisma-debtor-access.stores';
 import { PrismaPricingRuleStore } from './infrastructure/persistence/prisma-pricing-rules.store';
 import {
   PrismaAuditLog,
@@ -28,6 +34,7 @@ import {
 } from './infrastructure/persistence/prisma-settings.stores';
 import { PrismaService } from './infrastructure/prisma/prisma.service';
 import { KitPersonalData } from './infrastructure/security/kit-personal-data';
+import { NodeDebtorSecrets } from './infrastructure/security/node-debtor-secrets';
 import { SystemClock, UuidV7Generator } from './infrastructure/system/system';
 import { ObligationGrpcController } from './interfaces/grpc/obligation.controller';
 import {
@@ -43,6 +50,7 @@ const DOCUMENT_CLIENT = Symbol('DOCUMENT_CLIENT');
 const FILE_CLIENT = Symbol('FILE_CLIENT');
 const NOTIFICATION_CLIENT = Symbol('NOTIFICATION_CLIENT');
 const IDENTITY_CLIENT = Symbol('IDENTITY_CLIENT');
+const DEBTOR_ACCESS = Symbol('DEBTOR_ACCESS');
 
 /** Racine de composition : relie les cas d'usage à leurs adaptateurs (ADR-060). */
 @Module({})
@@ -76,6 +84,25 @@ export class AppModule {
         PrismaPricingRuleStore,
         PrismaAuditLog,
         PrismaCaseObligations,
+        PrismaDebtorAccessStore,
+        PrismaDebtorCaseReader,
+        PrismaDebtorAccessJournal,
+        {
+          // Accès du débiteur sans compte (ADR-061) : lien, code, session et leur journal de preuve.
+          provide: DEBTOR_ACCESS,
+          inject: [PrismaDebtorAccessStore, PrismaDebtorCaseReader, PrismaDebtorAccessJournal],
+          useFactory: (
+            store: PrismaDebtorAccessStore,
+            reader: PrismaDebtorCaseReader,
+            journal: PrismaDebtorAccessJournal,
+          ): DebtorAccessPorts => ({
+            store,
+            reader,
+            journal,
+            secrets: new NodeDebtorSecrets(config.RECOVERY_DEBTOR_CODE_HMAC_SECRET),
+            baseUrl: config.RECOVERY_DEBTOR_BASE_URL,
+          }),
+        },
         {
           provide: RECOVERY_USE_CASES,
           inject: [
@@ -84,6 +111,7 @@ export class AppModule {
             PrismaPricingRuleStore,
             PrismaAuditLog,
             PrismaCaseObligations,
+            DEBTOR_ACCESS,
             WALLET_CLIENT,
             PAYMENT_CLIENT,
             DOCUMENT_CLIENT,
@@ -98,6 +126,7 @@ export class AppModule {
             rules: PrismaPricingRuleStore,
             audit: PrismaAuditLog,
             obligations: PrismaCaseObligations,
+            debtorAccess: DebtorAccessPorts,
             wallet: ClientGrpc,
             payment: ClientGrpc,
             document: ClientGrpc,
@@ -166,6 +195,7 @@ export class AppModule {
               ),
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
+              debtorAccess,
             });
           },
         },

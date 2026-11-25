@@ -1,6 +1,7 @@
 import {
   baseServiceConfigSchema,
   fieldKeyringEnv,
+  refuseDevelopmentSecrets,
   requireFieldKeysInProduction,
   requireGrpcAddressesInProduction,
   sharesKeyMaterial,
@@ -9,6 +10,14 @@ import { z } from 'zod';
 
 /** Variable vide (ligne « NOM= » d'un fichier .env) : considérée comme absente. */
 const unset = (value: unknown) => (value === '' ? undefined : value);
+
+/**
+ * Secrets de développement du .env.example : connus de tous, refusés en production (ADR-050). Le
+ * test de configuration vérifie qu'ils restent ceux du fichier.
+ */
+export const DEV_SECRETS = {
+  RECOVERY_DEBTOR_CODE_HMAC_SECRET: 'dev-only-recovery-debtor-code-hmac-secret-0123456789',
+} as const;
 
 /**
  * Configuration du service : variables communes, plus celles propres à recovery (ADR-060 à 063).
@@ -30,8 +39,22 @@ export const configSchema = baseServiceConfigSchema
     RECOVERY_PII_ENCRYPTION_KEYS: fieldKeyringEnv('RECOVERY_PII_ENCRYPTION_KEYS'),
     /** Trousseau des empreintes de recherche du téléphone et de l'e-mail (BlindIndex, ADR-063). */
     RECOVERY_BLIND_INDEX_KEYS: fieldKeyringEnv('RECOVERY_BLIND_INDEX_KEYS'),
-    /** Adresse du portail : liens « Mon espace » et lien personnel du débiteur (ADR-061). */
+    /** Adresse du portail : liens « Mon espace ». */
     PORTAL_BASE_URL: z.preprocess(unset, z.url().default('http://localhost:3010')),
+    /**
+     * Page du portail qui ouvre le lien personnel du débiteur : `<adresse>/<jeton>` (ADR-061 ; chemin
+     * à fixer avec le front, « /recouvrement » proposé). HTTPS en production : le jeton est dans
+     * l'adresse.
+     */
+    RECOVERY_DEBTOR_BASE_URL: z.preprocess(unset, z.url().default('http://localhost:3010/recouvrement')),
+    /**
+     * Clé du HMAC des codes d'accès du débiteur (32 caractères au moins), fournie par le coffre en
+     * production, jamais journalisée : sans elle, une fuite de la base ne révèle aucun code (ADR-061).
+     */
+    RECOVERY_DEBTOR_CODE_HMAC_SECRET: z.preprocess(
+      unset,
+      z.string().min(32).default(DEV_SECRETS.RECOVERY_DEBTOR_CODE_HMAC_SECRET),
+    ),
     /** Échéance d'un appel gRPC ordinaire, en millisecondes. */
     RECOVERY_GRPC_DEADLINE_MS: z.coerce.number().int().min(500).max(30_000).default(3_000),
     /** Échéance de la production d'un PDF long (journal de preuve, ADR-060) : 15 secondes. */
@@ -46,6 +69,14 @@ export const configSchema = baseServiceConfigSchema
         code: 'custom',
         path: ['RECOVERY_BLIND_INDEX_KEYS'],
         message: 'La clé des empreintes doit être distincte de la clé de chiffrement (ADR-063).',
+      });
+    }
+    refuseDevelopmentSecrets(cfg, ctx, DEV_SECRETS);
+    if (cfg.NODE_ENV === 'production' && !cfg.RECOVERY_DEBTOR_BASE_URL.startsWith('https://')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['RECOVERY_DEBTOR_BASE_URL'],
+        message: 'Adresse HTTPS obligatoire en production : le lien du débiteur porte son jeton (ADR-061).',
       });
     }
     if (cfg.NODE_ENV === 'production' && (!cfg.IDENTITY_TOKEN_URL || !cfg.SERVICE_CLIENT_SECRET)) {

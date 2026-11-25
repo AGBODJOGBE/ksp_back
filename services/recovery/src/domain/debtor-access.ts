@@ -1,4 +1,5 @@
 import { addDaysToInstant } from './calendar';
+import { type CaseStatus } from './case';
 import { type Outcome, refusal, success } from './outcome';
 
 /**
@@ -78,4 +79,32 @@ export function registerSuccess(): CodeAttempts {
 /** Fin d'une session ouverte par un code juste (`debtorSessionMinutes`, 30). */
 export function sessionExpiry(now: Date, debtorSessionMinutes: number): Date {
   return new Date(now.getTime() + debtorSessionMinutes * 60_000);
+}
+
+/**
+ * Le débiteur n'accède qu'à un dossier en cours de recouvrement : actif, ou suspendu par sa
+ * contestation. Sinon son lien et sa session ne valent plus rien (dossier clos, refusé).
+ */
+export function isOpenToDebtor(status: CaseStatus): boolean {
+  return status === 'active' || status === 'suspended';
+}
+
+/** Échéance d'un code envoyé maintenant (`debtorCodeMinutes`, 10 — `FIXED_RULES`). */
+export function codeExpiry(now: Date, debtorCodeMinutes: number): Date {
+  return new Date(now.getTime() + debtorCodeMinutes * 60_000);
+}
+
+/** Un code se compare s'il existe et n'a pas expiré ; sinon `RECOVERY_DEBTOR_CODE_EXPIRED`. */
+export function isCodeValid(code: { expiresAt: Date } | null, now: Date): boolean {
+  return code !== null && now < code.expiresAt;
+}
+
+/**
+ * Secondes avant qu'un nouveau code puisse partir (un par minute : `RECOVERY_DEBTOR_CODE_TOO_SOON`,
+ * `retryAfterSeconds`), 0 s'il peut partir maintenant.
+ */
+export function codeResendWait(lastSentAt: Date | null, now: Date, resendSeconds: number): number {
+  if (lastSentAt === null) return 0;
+  const waitMs = lastSentAt.getTime() + resendSeconds * 1000 - now.getTime();
+  return waitMs > 0 ? Math.ceil(waitMs / 1000) : 0;
 }
