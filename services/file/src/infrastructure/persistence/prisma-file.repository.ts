@@ -31,7 +31,9 @@ function toDomain(row: FileRow): StoredFile {
 /** Extension d'un nom neutre, comme neutralFileName du domaine. */
 const NEUTRAL_NAME_SQL =
   "id::text || '.' || CASE content_type WHEN 'application/pdf' THEN 'pdf' WHEN 'image/jpeg' THEN 'jpg' " +
-  "WHEN 'image/png' THEN 'png' WHEN 'image/webp' THEN 'webp' ELSE 'bin' END";
+  "WHEN 'image/png' THEN 'png' WHEN 'image/webp' THEN 'webp' " +
+  "WHEN 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' THEN 'xlsx' " +
+  "WHEN 'text/csv' THEN 'csv' WHEN 'application/zip' THEN 'zip' ELSE 'bin' END";
 
 /**
  * Dépôt des fichiers. Chaque changement d'état est conditionnel (état attendu dans la clause WHERE) :

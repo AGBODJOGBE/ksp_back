@@ -103,7 +103,7 @@ describe('RecoveryDebtorGrpcController (ADR-061)', () => {
   });
 
   it.each(SESSION_METHODS)(
-    '%s : session absente ou inconnue refusée (401), session valable : « pas encore disponible »',
+    '%s : session absente ou inconnue refusée (401), session valable transmise au cas d’usage',
     async (method) => {
       const { token } = await links.issue({ caseId: CASE_ID, debtorId: DEBTOR_ID });
       await gateway(() => controller.sendDebtorAccessCode({ token }));
@@ -114,8 +114,9 @@ describe('RecoveryDebtorGrpcController (ADR-061)', () => {
       expect((await rejection(callSessionMethod(method, withSession('A'.repeat(43))))).code).toBe(
         'RECOVERY_DEBTOR_SESSION_INVALID',
       );
-      expect((await rejection(callSessionMethod(method, withSession(sessionToken)))).code).toBe(
-        'RECOVERY_NOT_IMPLEMENTED',
+      // Requête vide : refusée par le cas d’usage (R3) ou « pas encore disponible » (R4), jamais 401.
+      expect((await rejection(callSessionMethod(method, withSession(sessionToken)))).code).not.toBe(
+        'RECOVERY_DEBTOR_SESSION_INVALID',
       );
     },
   );

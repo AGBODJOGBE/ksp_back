@@ -132,21 +132,32 @@ describeWithDatabase('dépôt file (PostgreSQL)', () => {
       status: 'available',
       subject: { type: 'identity_user', id: owner },
     });
+    const spreadsheet = draft({
+      ownerId: owner,
+      purpose: 'recovery_import',
+      fileName: 'Dossiers Koffi.xlsx',
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      status: 'available',
+      subject: { type: 'recovery_import', id: '0192f1c4-0000-7000-8000-00000000c011' },
+      attachedBy: 'recovery',
+      attachedAt: new Date(),
+    });
     const pending = draft({ ownerId: owner });
-    for (const file of [kept, avatar, pending]) await files.create(file);
+    for (const file of [kept, avatar, spreadsheet, pending]) await files.create(file);
     const input = {
       eventId: '0192f1c4-0000-7000-8000-0000000e0001',
       consumer: 'file.identity.user.deleted',
       erasedPurposes: ['avatar'] as const,
       now: new Date(),
     };
-    expect(await files.eraseAccount(owner, input)).toEqual({ status: 'processed', erased: 2, detached: 1 });
+    expect(await files.eraseAccount(owner, input)).toEqual({ status: 'processed', erased: 2, detached: 2 });
     expect(await files.eraseAccount(owner, input)).toEqual({ status: 'duplicate', erased: 0, detached: 0 });
     expect(await files.findById(kept.id)).toMatchObject({
       status: 'available',
       ownerId: null,
       fileName: `${kept.id}.png`,
     });
+    expect((await files.findById(spreadsheet.id))?.fileName).toBe(`${spreadsheet.id}.xlsx`);
     expect(await files.findById(avatar.id)).toMatchObject({
       status: 'deleted',
       deletionReason: 'account_deleted',

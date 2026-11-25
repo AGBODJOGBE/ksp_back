@@ -2366,8 +2366,9 @@ export interface RecoveryDebtorServiceClient {
   disputeDebtorCase(request: DisputeDebtorCaseRequest, metadata?: Metadata): Observable<DisputeDebtorCaseResponse>;
 
   /**
-   * Pièce de la contestation envoyée par le débiteur, sans compte : adresse d'envoi présignée par
-   * file (finalité recovery_evidence), puis confirmation.
+   * Pièce de la contestation envoyée par le débiteur, sans compte : déclarée par recovery pour lui
+   * auprès de file (finalité recovery_debtor_evidence, rattachée au dossier dès la déclaration),
+   * adresse d'envoi présignée, puis confirmation.
    */
 
   createDebtorUpload(request: CreateDebtorUploadRequest, metadata?: Metadata): Observable<CreateDebtorUploadResponse>;
@@ -2481,8 +2482,9 @@ export interface RecoveryDebtorServiceController {
   ): Promise<DisputeDebtorCaseResponse> | Observable<DisputeDebtorCaseResponse> | DisputeDebtorCaseResponse;
 
   /**
-   * Pièce de la contestation envoyée par le débiteur, sans compte : adresse d'envoi présignée par
-   * file (finalité recovery_evidence), puis confirmation.
+   * Pièce de la contestation envoyée par le débiteur, sans compte : déclarée par recovery pour lui
+   * auprès de file (finalité recovery_debtor_evidence, rattachée au dossier dès la déclaration),
+   * adresse d'envoi présignée, puis confirmation.
    */
 
   createDebtorUpload(

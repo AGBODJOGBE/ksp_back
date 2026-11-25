@@ -1,6 +1,6 @@
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
-import { FILE_ID, type FileServer, startFileStub } from './support/file-stub';
+import { FILE_ID, type FileServer, protoFile, startFileStub } from './support/file-stub';
 import {
   type IdentityServer,
   ORIGINS,
@@ -64,6 +64,36 @@ describe('gateway → file', () => {
     expect(res.body.file).toMatchObject({ id: FILE_ID, status: 'pending', subject: null, completedAt: null });
     expect(res.body.upload).toMatchObject({ method: 'PUT', headers: { 'Content-Type': 'image/jpeg' } });
     expect(res.body.upload.url).toContain('X-Amz-Signature');
+    expect(res.body.file.purpose).toBe('cleaning_intervention_photo');
+    expect(res.body.file).not.toHaveProperty('purposeDetail');
+  });
+
+  it('tableur d’import et archive des justificatifs : finalité exacte dans purposeDetail', async () => {
+    const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    for (const [purpose, contentType] of [
+      ['recovery_import', XLSX],
+      ['recovery_import', 'text/csv'],
+      ['recovery_evidence_archive', 'application/zip'],
+    ] as const) {
+      file.stub.on('createUpload', async () => ({
+        file: { ...protoFile, purpose, contentType },
+        upload: {
+          url: 'https://files.ksp.bj/ksp-files/incoming/x?X-Amz-Signature=1',
+          method: 'PUT',
+          headers: {},
+        },
+      }));
+      const body = { purpose, fileName: 'import', contentType, sizeBytes: 1024 };
+      const res = await authed(request(app.getHttpServer()).post('/api/v1/file/uploads')).send(body);
+      expect(res.status).toBe(200);
+      expect(file.stub.last('createUpload')?.request).toEqual(body);
+      // Énumération des réponses inchangée : la famille dans purpose, la finalité exacte à côté.
+      expect(res.body.file).toMatchObject({
+        purpose: 'recovery_evidence',
+        purposeDetail: purpose,
+        contentType,
+      });
+    }
   });
 
   it('champ inconnu ou taille non entière : refus par la gateway, file n’est pas appelé', async () => {
@@ -71,6 +101,8 @@ describe('gateway → file', () => {
       { ...BODY, ownerId: USER_ID },
       { ...BODY, sizeBytes: 1.5 },
       { ...BODY, purpose: 'x' },
+      // Pièce d'un débiteur sans compte : déclarée par recovery seulement.
+      { ...BODY, purpose: 'recovery_debtor_evidence' },
     ]) {
       const res = await authed(request(app.getHttpServer()).post('/api/v1/file/uploads')).send(body);
       expect(res.status).toBe(400);
@@ -88,6 +120,13 @@ describe('gateway → file', () => {
     expect((await authed(server.get(`/api/v1/file/files/${FILE_ID}`))).body.subject).toEqual({
       type: 'cleaning_intervention',
       id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d1000',
+    });
+    file.stub.on('getMyFile', async () => ({
+      file: { ...protoFile, purpose: 'recovery_evidence_archive', contentType: 'application/zip' },
+    }));
+    expect((await authed(server.get(`/api/v1/file/files/${FILE_ID}`))).body).toMatchObject({
+      purpose: 'recovery_evidence',
+      purposeDetail: 'recovery_evidence_archive',
     });
     const link = await authed(server.get(`/api/v1/file/files/${FILE_ID}/download-url`));
     expect(link.body).toEqual({

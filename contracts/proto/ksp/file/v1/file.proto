@@ -16,19 +16,22 @@ package ksp.file.v1;
 //   superviseur d'une mission) : il obtient alors une adresse de lecture pour son utilisateur.
 //
 // Parcours d'envoi : CreateUpload (adresse PUT présignée) → envoi du contenu par le client
-// directement au stockage → CompleteUpload (présence, taille réelle, signature binaire des images et
-// PDF) → "available", sinon "rejected". Un fichier non confirmé est purgé après un délai ; un fichier
-// jamais rattaché à un objet métier aussi.
+// directement au stockage → CompleteUpload (présence, taille réelle, signature binaire : images, PDF,
+// ZIP et XLSX ; texte pour un CSV) → "available", sinon "rejected". Un fichier non confirmé est purgé
+// après un délai ; un fichier jamais rattaché à un objet métier aussi.
 //
 // Finalités (liste fermée, extensible par ajout) et limites :
 //   recovery_evidence             PDF, JPEG, PNG, WebP   10 Mo   services : recovery
+//   recovery_import               XLSX, CSV               5 Mo   services : recovery (tableur d'import, ADR-060)
+//   recovery_evidence_archive     ZIP                    50 Mo   services : recovery (archive décompressée par
+//                                                                recovery avec limites de taille et de nombre)
+//   recovery_debtor_evidence      PDF, JPEG, PNG, WebP   10 Mo   services : recovery (envoi par le service seul :
+//                                                                pièces d'un débiteur sans compte, ADR-061)
 //   cleaning_intervention_photo   JPEG, PNG, WebP         8 Mo   services : cleaning
 //   generated_document            PDF                    20 Mo   services : document (envoi par le service seul)
 //   avatar                        JPEG, PNG, WebP         2 Mo   services : identity
-//   Prévues par ADR-060 (ajoutées au code de file et à l'API avec l'import des dossiers) :
-//   recovery_import               XLSX, CSV               5 Mo   services : recovery
-//   recovery_evidence_archive     ZIP                    50 Mo   services : recovery (archive décompressée par
-//                                                                recovery avec limites de taille et de nombre)
+// Types MIME : application/pdf, image/jpeg, image/png, image/webp, text/csv, application/zip et
+// application/vnd.openxmlformats-officedocument.spreadsheetml.sheet (XLSX).
 //
 // Conventions : dates ISO 8601 en UTC (chaîne vide = absente) ; tailles en octets ; valeurs
 // énumérées en snake_case, identiques à l'API REST. Les adresses présignées sont des secrets à
@@ -86,7 +89,8 @@ message FileSubject {
 
 message StoredFile {
   string id = 1;
-  // Finalité : "recovery_evidence", "cleaning_intervention_photo", "generated_document" ou "avatar".
+  // Finalité : "recovery_evidence", "recovery_import", "recovery_evidence_archive",
+  // "recovery_debtor_evidence", "cleaning_intervention_photo", "generated_document" ou "avatar".
   string purpose = 2;
   // Nom d'origine, nettoyé (sans chemin ni caractère de contrôle), servi au téléchargement.
   string file_name = 3;
