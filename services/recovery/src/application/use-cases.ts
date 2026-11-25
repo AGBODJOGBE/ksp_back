@@ -15,6 +15,10 @@ import {
   type CreditorProfiles,
   type SpreadsheetReader,
 } from './cases/ports';
+import { type DebtorUploads, type DocumentUrls } from './debtor-space/debtor-space.ports';
+import { type SettlementTerms } from './debtor-space/settlement-terms';
+import { createMoneyUseCases } from './money';
+import { type MoneyStore } from './money/money.ports';
 import { HasPendingObligationsUseCase } from './obligations.use-cases';
 import {
   type AuditLog,
@@ -82,6 +86,11 @@ export interface RecoveryDeps {
   preferences: CreditorPreferencesStore;
   creditorProfiles: CreditorProfiles;
   spreadsheets: SpreadsheetReader;
+  // Argent et espace du débiteur (R3) : encaissements, paiements hors ligne, contestations, pièces.
+  money: MoneyStore;
+  debtorUploads: DebtorUploads;
+  documentUrls: DocumentUrls;
+  settlementTerms: SettlementTerms;
 }
 
 export function createUseCases(deps: RecoveryDeps) {
@@ -108,6 +117,7 @@ export function createUseCases(deps: RecoveryDeps) {
     endDebtorSession: new EndDebtorSessionUseCase(deps),
     resolveDebtorSession: new ResolveDebtorSessionUseCase(deps),
     ...createCaseUseCases(deps),
+    ...createMoneyUseCases(deps),
   };
 }
 

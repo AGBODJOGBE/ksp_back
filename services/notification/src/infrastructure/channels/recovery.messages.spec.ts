@@ -164,7 +164,10 @@ describe('événements du recouvrement écoutés (partie 17.2)', () => {
     expect(intentsOf('recovery.case.stage_changed')).toEqual([]);
   });
 
-  it.each(listened)('%s : modèles connus, variables valides, texte et modèle WhatsApp complets', (type) => {
+  // Reversement : aucun message, l’encaissement a déjà prévenu le créancier (un seul message).
+  const messaged = listened.filter((type) => type !== 'recovery.remittance.paid');
+
+  it.each(messaged)('%s : modèles connus, variables valides, texte et modèle WhatsApp complets', (type) => {
     const intents = intentsOf(type);
     expect(intents.length).toBeGreaterThan(0);
     for (const intent of intents) {
@@ -284,8 +287,8 @@ describe('destinataires et liens', () => {
     ).toThrow('date illisible');
   });
 
-  it('reversement : lien vers le portefeuille', () => {
-    expect(intentsOf('recovery.remittance.paid')[0]!.link).toBe('https://ksp.bj/mon-espace/portefeuille');
+  it('reversement : aucun message, un seul message au créancier par encaissement', () => {
+    expect(intentsOf('recovery.remittance.paid')).toEqual([]);
   });
 });
 

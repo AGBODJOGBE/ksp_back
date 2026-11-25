@@ -3,11 +3,24 @@
  * types acceptés, la taille maximale, qui envoie le contenu, les services qui en sont responsables
  * et le sort de ses fichiers à la suppression d'un compte (ADR-036).
  */
-export const CONTENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'] as const;
+export const CONTENT_TYPES = [
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/csv',
+  'application/zip',
+] as const;
 export type ContentType = (typeof CONTENT_TYPES)[number];
 
 const MB = 1024 * 1024;
 const IMAGES: readonly ContentType[] = ['image/jpeg', 'image/png', 'image/webp'];
+/** Tableurs : classeur XLSX ou CSV. */
+const SPREADSHEETS: readonly ContentType[] = [
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/csv',
+];
 
 export interface PurposePolicy {
   contentTypes: readonly ContentType[];
@@ -33,6 +46,36 @@ export const PURPOSES = {
     contentTypes: ['application/pdf', ...IMAGES],
     maxBytes: 10 * MB,
     uploadedBy: 'user',
+    services: ['recovery'],
+    onAccountDeleted: 'keep',
+  },
+  /** Tableur d'import des dossiers de recouvrement (ADR-060), lu par recovery. */
+  recovery_import: {
+    contentTypes: SPREADSHEETS,
+    maxBytes: 5 * MB,
+    uploadedBy: 'user',
+    services: ['recovery'],
+    onAccountDeleted: 'keep',
+  },
+  /**
+   * Archive ZIP des justificatifs d'un import (ADR-060) : décompressée par recovery, avec ses
+   * propres limites de taille et de nombre de pièces.
+   */
+  recovery_evidence_archive: {
+    contentTypes: ['application/zip'],
+    maxBytes: 50 * MB,
+    uploadedBy: 'user',
+    services: ['recovery'],
+    onAccountDeleted: 'keep',
+  },
+  /**
+   * Pièces d'un débiteur sans compte (contestation, ADR-061) : déclarées par recovery pour lui,
+   * rattachées au dossier dès la déclaration. Jamais envoyées par un compte connecté.
+   */
+  recovery_debtor_evidence: {
+    contentTypes: ['application/pdf', ...IMAGES],
+    maxBytes: 10 * MB,
+    uploadedBy: 'service',
     services: ['recovery'],
     onAccountDeleted: 'keep',
   },

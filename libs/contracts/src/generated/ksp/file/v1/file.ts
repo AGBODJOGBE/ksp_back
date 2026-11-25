@@ -18,7 +18,10 @@ export interface FileSubject {
 
 export interface StoredFile {
   id: string;
-  /** Finalité : "recovery_evidence", "cleaning_intervention_photo", "generated_document" ou "avatar". */
+  /**
+   * Finalité : "recovery_evidence", "recovery_import", "recovery_evidence_archive",
+   * "recovery_debtor_evidence", "cleaning_intervention_photo", "generated_document" ou "avatar".
+   */
   purpose: string;
   /** Nom d'origine, nettoyé (sans chemin ni caractère de contrôle), servi au téléchargement. */
   fileName: string;

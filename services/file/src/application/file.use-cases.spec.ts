@@ -14,6 +14,10 @@ import {
 import { createUseCases } from './use-cases';
 
 const HOUR = 3_600_000;
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+/** En-tête local d'une archive ZIP (aussi celui d'un classeur XLSX). */
+const ZIP_BYTES = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00, 0x08, 0x00]);
+const CSV_BYTES = new TextEncoder().encode('\uFEFFréférence;débiteur;montant\r\nA-1;Koffi;15000\r\n');
 
 function setup(overrides = {}) {
   const ctx = testDeps(overrides);
@@ -76,6 +80,16 @@ describe('envoi par un compte connecté', () => {
       'finalité réservée aux services',
       { purpose: 'generated_document', contentType: 'application/pdf' },
       'FILE_PURPOSE_FORBIDDEN',
+    ],
+    [
+      'pièce d’un débiteur, déclarée par recovery seulement',
+      { purpose: 'recovery_debtor_evidence', contentType: 'application/pdf' },
+      'FILE_PURPOSE_FORBIDDEN',
+    ],
+    [
+      'tableur au format Excel 97',
+      { purpose: 'recovery_import', contentType: 'application/vnd.ms-excel' },
+      'FILE_TYPE_NOT_ALLOWED',
     ],
   ])('%s : %s', async (_label, change, code) => {
     const ctx = setup();
@@ -218,6 +232,43 @@ describe('confirmation de l’envoi', () => {
     );
     expect(error.code).toBe('FILE_NOT_FOUND');
   });
+
+  it.each([
+    ['tableur CSV', 'recovery_import', 'dossiers.csv', 'text/csv', CSV_BYTES],
+    ['classeur XLSX', 'recovery_import', 'dossiers.xlsx', XLSX, ZIP_BYTES],
+    ['archive des justificatifs', 'recovery_evidence_archive', 'pieces.zip', 'application/zip', ZIP_BYTES],
+  ])(
+    '%s : signature ZIP ou texte vérifiée, puis disponible',
+    async (_label, purpose, fileName, type, bytes) => {
+      const ctx = setup();
+      const declaration = { purpose, fileName, contentType: type, sizeBytes: bytes.length };
+      const ticket = await asUser(OWNER_ID, () => ctx.useCases.createUpload.execute(declaration));
+      expect(ticket.upload.headers).toEqual({ 'Content-Type': type });
+      ctx.storage.put(incomingKeyFor(ticket.file.id), bytes, type);
+      const file = await asUser(OWNER_ID, () => ctx.useCases.completeUpload.byOwner(ticket.file.id));
+      expect(file).toMatchObject({ purpose, status: 'available', ownerId: OWNER_ID, subject: null });
+    },
+  );
+
+  it.each([
+    [
+      'exécutable annoncé CSV',
+      'recovery_import',
+      'text/csv',
+      Uint8Array.from([0x4d, 0x5a, 0x90, 0x00, 0, 0]),
+    ],
+    ['PDF annoncé ZIP', 'recovery_evidence_archive', 'application/zip', PDF_BYTES],
+  ])('%s : rejeté (type_mismatch)', async (_label, purpose, type, bytes) => {
+    const ctx = setup();
+    const declaration = { purpose, fileName: 'piege', contentType: type, sizeBytes: bytes.length };
+    const ticket = await asUser(OWNER_ID, () => ctx.useCases.createUpload.execute(declaration));
+    ctx.storage.put(incomingKeyFor(ticket.file.id), bytes, type);
+    const error = await rejection(
+      asUser(OWNER_ID, () => ctx.useCases.completeUpload.byOwner(ticket.file.id)),
+    );
+    expect(error.details).toEqual({ reason: 'type_mismatch' });
+    expect(ctx.storage.objects.has(ticket.file.storageKey)).toBe(false);
+  });
 });
 
 describe('lecture par le propriétaire', () => {
@@ -357,6 +408,33 @@ describe('services métier', () => {
           subject,
         }),
       ),
+    );
+    expect(forbidden.code).toBe('FILE_PURPOSE_FORBIDDEN');
+  });
+
+  it('pièce d’un débiteur sans compte : déclarée par recovery, rattachée au dossier, sans propriétaire', async () => {
+    const ctx = setup();
+    const subject = { type: 'recovery_case', id: '0192f1c4-0000-7000-8000-00000000c001' };
+    const declaration = {
+      purpose: 'recovery_debtor_evidence',
+      fileName: 'reçu de paiement.jpg',
+      contentType: 'image/jpeg',
+      sizeBytes: JPEG_BYTES.length,
+      subject,
+    };
+    const ticket = await asService('recovery', () => ctx.useCases.createServiceUpload.execute(declaration));
+    expect(ticket.file).toMatchObject({
+      purpose: 'recovery_debtor_evidence',
+      subject,
+      attachedBy: 'recovery',
+      ownerId: null,
+    });
+    ctx.storage.put(incomingKeyFor(ticket.file.id), JPEG_BYTES, 'image/jpeg');
+    const file = await asService('recovery', () => ctx.useCases.completeUpload.byService(ticket.file.id));
+    expect(file.status).toBe('available');
+    // Finalité du seul recovery.
+    const forbidden = await rejection(
+      asService('cleaning', () => ctx.useCases.createServiceUpload.execute(declaration)),
     );
     expect(forbidden.code).toBe('FILE_PURPOSE_FORBIDDEN');
   });
