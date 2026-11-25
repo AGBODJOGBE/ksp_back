@@ -12,6 +12,11 @@ const statusFrom = (query: Query) => parseParam(billingParams.invoiceStatus, que
 const optionalId = (query: Query, name: string) => parseParam(billingParams.optionalId, query[name], name);
 const optionalDate = (query: Query, name: string) =>
   parseParam(billingParams.optionalDate, query[name], name);
+// Recouvrement (ADR-064) : état et mois facturé d'une facture de commission.
+const commissionFilters = (query: Query) => ({
+  status: parseParam(billingParams.commissionInvoiceStatus, query['status'], 'status'),
+  period: parseParam(billingParams.optionalPeriod, query['period'], 'period'),
+});
 
 /**
  * Routes /api/v1/billing/* (« Mes factures ») et /api/v1/admin/billing/* (back-office). Rôles et
@@ -79,5 +84,35 @@ export class BillingHttpController {
   @Route('updateBillingSettings')
   updateSettings(@Body() body: unknown) {
     return this.billing.updateSettings(parseBody(requestBodies.updateBillingSettings, body));
+  }
+
+  // --- Recouvrement (ADR-064) : factures de commission et reçus des frais de dossier ------------
+
+  @Route('listMyCommissionInvoices')
+  listMyCommissionInvoices(@Query() query: Query) {
+    const filters = commissionFilters(query);
+    return this.billing.listMyCommissionInvoices(pageFrom(query), filters);
+  }
+
+  @Route('getMyCommissionInvoice')
+  getMyCommissionInvoice(@Param('id') id: unknown) {
+    return this.billing.getMyCommissionInvoice(idFrom(id));
+  }
+
+  @Route('listMyFeeReceipts')
+  listMyFeeReceipts(@Query() query: Query) {
+    const caseId = optionalId(query, 'caseId');
+    return this.billing.listMyFeeReceipts(pageFrom(query), caseId);
+  }
+
+  @Route('listCommissionInvoices')
+  listCommissionInvoices(@Query() query: Query) {
+    const filters = { ...commissionFilters(query), creditorId: optionalId(query, 'creditorId') };
+    return this.billing.listCommissionInvoices(pageFrom(query), filters);
+  }
+
+  @Route('getCommissionInvoice')
+  getCommissionInvoice(@Param('id') id: unknown) {
+    return this.billing.getCommissionInvoice(idFrom(id));
   }
 }

@@ -7,6 +7,12 @@ import { presentInvoice, presentSettings } from './presenters';
 // Lot F : avoirs.
 import { MONTHLY_USE_CASES, type MonthlyBillingUseCases } from '../../application/monthly/use-cases';
 import { parseLines, presentCreditNoteResult } from './monthly-presenters';
+// Recouvrement (ADR-064) : factures de commission et reçus des frais.
+import {
+  RECOVERY_BILLING_USE_CASES,
+  type RecoveryBillingUseCases,
+} from '../../application/recovery/use-cases';
+import { presentCommissionInvoice, presentFeeReceipt } from './recovery-presenters';
 
 /** Méthodes du contrat v2 (CDC Nettoyage v2) pas encore livrées : réponse NOT_IMPLEMENTED. */
 function notImplemented(method: string): Promise<never> {
@@ -17,17 +23,27 @@ function notImplemented(method: string): Promise<never> {
 
 /**
  * ksp.common.v1.ObligationService, interrogé par identity avant la suppression d'un compte
- * (UC-ID-11, ADR-036). Le contrôle de l'appelant est fait par le cas d'usage.
+ * (UC-ID-11, ADR-036) : factures du Nettoyage, puis factures de commission du recouvrement
+ * (ADR-064). Le contrôle de l'appelant est fait par les cas d'usage.
  */
 @Controller()
 @commonV1.ObligationServiceControllerMethods()
 export class ObligationGrpcController implements commonV1.ObligationServiceController {
-  constructor(@Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases) {}
+  constructor(
+    @Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases,
+    @Inject(RECOVERY_BILLING_USE_CASES) private readonly recovery: RecoveryBillingUseCases,
+  ) {}
 
   async hasPendingObligations(
     request: commonV1.HasPendingObligationsRequest,
   ): Promise<commonV1.HasPendingObligationsResponse> {
-    const obligations = await this.useCases.hasPendingObligations.execute({ userId: request.userId });
+    const obligations = [
+      ...(await this.useCases.hasPendingObligations.execute({ userId: request.userId })),
+      ...(await this.recovery.hasPendingObligations.execute({
+        userId: request.userId,
+        organizationId: request.organizationId,
+      })),
+    ];
     return { hasPending: obligations.length > 0, obligations };
   }
 }
@@ -36,7 +52,11 @@ export class ObligationGrpcController implements commonV1.ObligationServiceContr
 @Controller()
 @billingV1.BillingServiceControllerMethods()
 export class BillingGrpcController implements billingV1.BillingServiceController {
-  constructor(@Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases) {}
+  constructor(
+    @Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases,
+    // Recouvrement (ADR-064).
+    @Inject(RECOVERY_BILLING_USE_CASES) private readonly recovery: RecoveryBillingUseCases,
+  ) {}
 
   async listMyInvoices(request: billingV1.ListMyInvoicesRequest): Promise<billingV1.ListMyInvoicesResponse> {
     const page = await this.useCases.listMyInvoices.execute({
@@ -71,6 +91,41 @@ export class BillingGrpcController implements billingV1.BillingServiceController
   updateMyBillingPreferences(): Promise<billingV1.UpdateMyBillingPreferencesResponse> {
     return notImplemented('UpdateMyBillingPreferences');
   }
+
+  // Recouvrement (ADR-064).
+  async listMyCommissionInvoices(
+    request: billingV1.ListMyCommissionInvoicesRequest,
+  ): Promise<billingV1.ListMyCommissionInvoicesResponse> {
+    const page = await this.recovery.listMyCommissionInvoices.execute({
+      page: parsePage(request.page),
+      status: request.status,
+      period: request.period,
+    });
+    return {
+      commissionInvoices: page.items.map(presentCommissionInvoice),
+      nextCursor: page.nextCursor ?? '',
+    };
+  }
+
+  async getMyCommissionInvoice(
+    request: billingV1.GetMyCommissionInvoiceRequest,
+  ): Promise<billingV1.GetMyCommissionInvoiceResponse> {
+    return {
+      commissionInvoice: presentCommissionInvoice(
+        await this.recovery.getMyCommissionInvoice.execute(request.invoiceId),
+      ),
+    };
+  }
+
+  async listMyFeeReceipts(
+    request: billingV1.ListMyFeeReceiptsRequest,
+  ): Promise<billingV1.ListMyFeeReceiptsResponse> {
+    const page = await this.recovery.listMyFeeReceipts.execute({
+      page: parsePage(request.page),
+      caseId: request.caseId,
+    });
+    return { receipts: page.items.map(presentFeeReceipt), nextCursor: page.nextCursor ?? '' };
+  }
 }
 
 /** Adaptateur gRPC du back-office : factures, paiement manuel, réglages. Droits vérifiés par les cas d'usage. */
@@ -81,6 +136,8 @@ export class BillingAdminGrpcController implements billingV1.BillingAdminService
     @Inject(BILLING_USE_CASES) private readonly useCases: BillingUseCases,
     // Lot F : avoirs saisis par la finance.
     @Inject(MONTHLY_USE_CASES) private readonly monthly: MonthlyBillingUseCases,
+    // Recouvrement (ADR-064) : factures de commission.
+    @Inject(RECOVERY_BILLING_USE_CASES) private readonly recovery: RecoveryBillingUseCases,
   ) {}
 
   async listInvoices(request: billingV1.ListInvoicesRequest): Promise<billingV1.ListInvoicesResponse> {
@@ -141,6 +198,32 @@ export class BillingAdminGrpcController implements billingV1.BillingAdminService
 
   listCreditNotes(): Promise<billingV1.ListCreditNotesResponse> {
     return notImplemented('ListCreditNotes');
+  }
+
+  // Recouvrement (ADR-064).
+  async listCommissionInvoices(
+    request: billingV1.ListCommissionInvoicesRequest,
+  ): Promise<billingV1.ListCommissionInvoicesResponse> {
+    const page = await this.recovery.listCommissionInvoices.execute({
+      page: parsePage(request.page),
+      status: request.status,
+      period: request.period,
+      creditorId: request.creditorId,
+    });
+    return {
+      commissionInvoices: page.items.map(presentCommissionInvoice),
+      nextCursor: page.nextCursor ?? '',
+    };
+  }
+
+  async getCommissionInvoice(
+    request: billingV1.GetCommissionInvoiceRequest,
+  ): Promise<billingV1.GetCommissionInvoiceResponse> {
+    return {
+      commissionInvoice: presentCommissionInvoice(
+        await this.recovery.getCommissionInvoice.execute(request.invoiceId),
+      ),
+    };
   }
 }
 

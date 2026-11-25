@@ -17,6 +17,11 @@ import { PrismaMonthlyInvoiceRepository } from './infrastructure/persistence/pri
 import { MonthlyBillingSchedulerService } from './infrastructure/scheduling/monthly-billing-scheduler.service';
 import { PgRunLock } from './infrastructure/scheduling/pg-run-lock';
 import { GrpcWalletCredits } from './infrastructure/wallet/grpc-wallet-credits';
+// Recouvrement (ADR-064) : factures de commission et reçus des frais.
+import { createRecoveryBillingUseCases, RECOVERY_BILLING_USE_CASES } from './application/recovery/use-cases';
+import { RecoveryEventsConsumer } from './infrastructure/messaging/recovery-events.consumer';
+import { PrismaRecoveryBillingRepository } from './infrastructure/persistence/prisma-recovery-billing.repository';
+import { CommissionBillingSchedulerService } from './infrastructure/scheduling/commission-billing-scheduler.service';
 import { type ServiceConfig } from './config';
 import { IdentityOrganizationDirectory } from './infrastructure/identity/identity-organization-directory';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
@@ -169,6 +174,45 @@ export class AppModule {
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
             });
+          },
+        },
+        // Recouvrement (ADR-064) : encaissements et débits appris par événement, facture mensuelle de
+        // commission, débit automatique (wallet.Debit), reçus ; en-tête des organisations par identity.
+        PrismaRecoveryBillingRepository,
+        RecoveryEventsConsumer,
+        CommissionBillingSchedulerService,
+        {
+          provide: RECOVERY_BILLING_USE_CASES,
+          inject: [
+            PrismaRecoveryBillingRepository,
+            IDENTITY_CLIENT,
+            WALLET_CLIENT,
+            { token: SERVICE_TOKEN_PROVIDER, optional: true },
+          ],
+          useFactory: (
+            recovery: PrismaRecoveryBillingRepository,
+            grpc: ClientGrpc,
+            walletGrpc: ClientGrpc,
+            serviceTokens: ServiceTokenProvider | undefined,
+          ) => {
+            const caller = (target: string) =>
+              new GrpcCaller({ target, ...(serviceTokens ? { serviceTokenProvider: serviceTokens } : {}) });
+            return createRecoveryBillingUseCases(
+              {
+                recovery,
+                organizations: new IdentityOrganizationDirectory(
+                  grpc.getService<identityV1.IdentityServiceClient>(identityV1.IDENTITY_SERVICE_NAME),
+                  caller('identity'),
+                ),
+                wallet: new GrpcWalletLedger(
+                  walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
+                  caller('wallet'),
+                ),
+                clock: new SystemClock(),
+                ids: new UuidV7Generator(),
+              },
+              { debitRetryDelayMs: config.BILLING_COMMISSION_DEBIT_RETRY_MS },
+            );
           },
         },
       ],

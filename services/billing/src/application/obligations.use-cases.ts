@@ -9,7 +9,7 @@ export interface PendingObligation {
 }
 
 /** Montant lisible : 34 000 FCFA (montants entiers en XOF). */
-function formatAmount(amount: number): string {
+export function formatAmount(amount: number): string {
   return `${String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} FCFA`;
 }
 

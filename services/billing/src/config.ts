@@ -10,6 +10,11 @@ export const configSchema = baseServiceConfigSchema
     IDENTITY_GRPC_URL: z.string().min(1).default('localhost:50051'),
     /** Adresse gRPC de wallet : facture payée par le portefeuille prépayé (ADR-046). */
     WALLET_GRPC_URL: z.string().min(1).default('localhost:50057'),
+    /**
+     * Recouvrement (ADR-064) : délai avant un nouveau débit de la commission d'une facture après un
+     * solde insuffisant ; un jour par défaut, une heure au moins.
+     */
+    BILLING_COMMISSION_DEBIT_RETRY_MS: z.coerce.number().int().min(3_600_000).default(86_400_000),
   })
   .refine(
     (cfg) =>

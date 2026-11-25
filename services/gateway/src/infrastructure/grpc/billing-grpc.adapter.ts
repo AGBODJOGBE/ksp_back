@@ -5,6 +5,7 @@ import { Logger } from '@nestjs/common';
 import { type Observable } from 'rxjs';
 import {
   type BillingApi,
+  type CommissionInvoiceFilters,
   type InvoiceFilters,
   type InvoicePaymentInput,
 } from '../../application/billing/billing.ports';
@@ -81,6 +82,87 @@ export function presentBillingSettings(value: billingV1.BillingSettings | undefi
 
 const list = (res: { invoices: billingV1.Invoice[]; nextCursor: string }) => ({
   data: res.invoices.map(presentInvoice),
+  nextCursor: res.nextCursor || null,
+});
+
+const party = (value: billingV1.BillingParty | undefined, what: string) => {
+  if (!value) throw malformed(what);
+  return { type: value.type, id: value.id };
+};
+
+/**
+ * Recouvrement (ADR-064) : facture de commission ksp.billing.v1 vers le JSON du contrat OpenAPI.
+ * Montants hors taxe ; débit automatique et en-tête absents (message vide) → null.
+ */
+export function presentCommissionInvoice(value: billingV1.CommissionInvoice | undefined) {
+  if (!value) throw malformed('facture de commission');
+  return {
+    id: value.id,
+    number: value.number,
+    status: value.status,
+    creditor: party(value.creditor, 'créancier'),
+    period: value.period,
+    periodStart: value.periodStart,
+    periodEnd: value.periodEnd,
+    lines: value.lines.map((line) => ({
+      caseId: line.caseId,
+      caseNumber: line.caseNumber,
+      collectionId: line.collectionId,
+      receivedAt: line.receivedAt,
+      receivedOn: line.receivedOn,
+      source: line.source,
+      gross: money(line.gross),
+      commission: money(line.commission),
+      settlement: line.settlement,
+    })),
+    totalCollected: money(value.totalCollected),
+    commissionDeducted: money(value.commissionDeducted),
+    commissionInvoiced: money(value.commissionInvoiced),
+    commissionTotal: money(value.commissionTotal),
+    balance: money(value.balance),
+    amountsExcludingTax: value.amountsExcludingTax,
+    issuedAt: value.issuedAt,
+    paidAt: orNull(value.paidAt),
+    walletTransactionId: orNull(value.walletTransactionId),
+    debit: value.debit
+      ? {
+          attempts: value.debit.attempts,
+          lastAttemptAt: orNull(value.debit.lastAttemptAt),
+          nextAttemptAt: orNull(value.debit.nextAttemptAt),
+          lastFailure: orNull(value.debit.lastFailure),
+          missing: value.debit.missing ? money(value.debit.missing) : null,
+        }
+      : null,
+    organization: value.organization
+      ? {
+          legalName: value.organization.legalName,
+          address: value.organization.address,
+          ifu: value.organization.ifu,
+          rccm: orNull(value.organization.rccm),
+        }
+      : null,
+  };
+}
+
+/** Recouvrement (ADR-064) : reçu des frais ksp.billing.v1 vers le JSON du contrat OpenAPI. */
+export function presentFeeReceipt(value: billingV1.FeeReceipt) {
+  return {
+    id: value.id,
+    number: value.number,
+    kind: value.kind,
+    payer: party(value.payer, 'titulaire'),
+    caseId: value.caseId,
+    caseNumber: orNull(value.caseNumber),
+    label: value.label,
+    amount: money(value.amount),
+    paidAt: value.paidAt,
+    issuedAt: value.issuedAt,
+    walletTransactionId: value.walletTransactionId,
+  };
+}
+
+const commissionList = (res: { commissionInvoices: billingV1.CommissionInvoice[]; nextCursor: string }) => ({
+  data: res.commissionInvoices.map(presentCommissionInvoice),
   nextCursor: res.nextCursor || null,
 });
 
@@ -171,6 +253,56 @@ export class BillingGrpcAdapter implements BillingApi {
       this.clients.admin.updateBillingSettings({ settings: { ...input, updatedBy: '', updatedAt: '' } }, m),
     );
     return presentBillingSettings(res.settings);
+  }
+
+  // --- Recouvrement (ADR-064) : lectures seulement ---------------------------------------------
+
+  async listMyCommissionInvoices(value: Page, filters: CommissionInvoiceFilters): Promise<Json> {
+    return commissionList(
+      await this.read('listMyCommissionInvoices', (m) =>
+        this.clients.invoices.listMyCommissionInvoices(
+          { page: page(value), status: filters.status ?? '', period: filters.period ?? '' },
+          m,
+        ),
+      ),
+    );
+  }
+
+  async getMyCommissionInvoice(id: string): Promise<Json> {
+    const res = await this.read('getMyCommissionInvoice', (m) =>
+      this.clients.invoices.getMyCommissionInvoice({ invoiceId: id }, m),
+    );
+    return presentCommissionInvoice(res.commissionInvoice);
+  }
+
+  async listMyFeeReceipts(value: Page, caseId: string | undefined): Promise<Json> {
+    const res = await this.read('listMyFeeReceipts', (m) =>
+      this.clients.invoices.listMyFeeReceipts({ page: page(value), caseId: caseId ?? '' }, m),
+    );
+    return { data: res.receipts.map(presentFeeReceipt), nextCursor: res.nextCursor || null };
+  }
+
+  async listCommissionInvoices(value: Page, filters: CommissionInvoiceFilters): Promise<Json> {
+    return commissionList(
+      await this.read('listCommissionInvoices', (m) =>
+        this.clients.admin.listCommissionInvoices(
+          {
+            page: page(value),
+            status: filters.status ?? '',
+            period: filters.period ?? '',
+            creditorId: filters.creditorId ?? '',
+          },
+          m,
+        ),
+      ),
+    );
+  }
+
+  async getCommissionInvoice(id: string): Promise<Json> {
+    const res = await this.read('getCommissionInvoice', (m) =>
+      this.clients.admin.getCommissionInvoice({ invoiceId: id }, m),
+    );
+    return presentCommissionInvoice(res.commissionInvoice);
   }
 
   // --- Appels -----------------------------------------------------------------------------------

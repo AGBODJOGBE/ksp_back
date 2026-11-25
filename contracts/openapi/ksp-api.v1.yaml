@@ -15194,6 +15194,239 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/billing/commission-invoices:
+    get:
+      tags:
+        - Facturation
+      operationId: listMyCommissionInvoices
+      summary: Mes factures de commission (recouvrement)
+      description: |
+        ADR-064 (R-CO-05). Factures mensuelles de commission du recouvrement : celles de l'organisation active
+        (contexte entreprise, tout membre) ou du client lui-même (contexte personnel), les plus récentes d'abord.
+        Émises le 1er de chaque mois (heure du Bénin) pour les encaissements du mois écoulé, une ligne par
+        encaissement. Montants **hors taxe** (`amountsExcludingTax`), aucune ligne de TVA. La commission retenue à
+        l'encaissement est déjà réglée ; celle d'un paiement reçu directement par le créancier est débitée de son
+        portefeuille prépayé (`debit` : solde insuffisant, montant manquant, prochain essai).
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `BILLING_VALIDATION_FAILED` (400).
+      x-ksp-grpc: ksp.billing.v1.BillingService/ListMyCommissionInvoices
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/CommissionInvoiceStatus'
+        - $ref: '#/components/parameters/CommissionInvoicePeriod'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommissionInvoiceList'
+              example:
+                data:
+                  - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7301
+                    number: FCR-2026-000007
+                    status: pending_payment
+                    creditor:
+                      type: organization
+                      id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000
+                    period: '2026-11'
+                    periodStart: 2026-10-31T23:00:00Z
+                    periodEnd: 2026-11-30T23:00:00Z
+                    lines:
+                      - caseId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5000
+                        caseNumber: RC-000123
+                        collectionId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5101
+                        receivedAt: 2026-11-04T10:00:00Z
+                        receivedOn: '2026-11-04'
+                        source: direct_to_creditor
+                        gross:
+                          amount: 60000
+                          currency: XOF
+                        commission:
+                          amount: 9000
+                          currency: XOF
+                        settlement: invoiced
+                      - caseId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5001
+                        caseNumber: RC-000124
+                        collectionId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5102
+                        receivedAt: 2026-11-20T10:00:00Z
+                        receivedOn: '2026-11-20'
+                        source: payment_link
+                        gross:
+                          amount: 100000
+                          currency: XOF
+                        commission:
+                          amount: 10000
+                          currency: XOF
+                        settlement: deducted
+                    totalCollected:
+                      amount: 160000
+                      currency: XOF
+                    commissionDeducted:
+                      amount: 10000
+                      currency: XOF
+                    commissionInvoiced:
+                      amount: 9000
+                      currency: XOF
+                    commissionTotal:
+                      amount: 19000
+                      currency: XOF
+                    balance:
+                      amount: 9000
+                      currency: XOF
+                    amountsExcludingTax: true
+                    issuedAt: 2026-11-30T23:00:00Z
+                    paidAt: null
+                    walletTransactionId: null
+                    debit:
+                      attempts: 1
+                      lastAttemptAt: 2026-11-30T23:00:00Z
+                      nextAttemptAt: 2026-12-01T23:00:00Z
+                      lastFailure: insufficient_funds
+                      missing:
+                        amount: 5000
+                        currency: XOF
+                    organization:
+                      legalName: SARL Bénin Propre
+                      address: Lot 12, Haie Vive, Cotonou
+                      ifu: '3201912345678'
+                      rccm: RB/COT/19 B 1234
+                nextCursor: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/billing/commission-invoices/{id}:
+    get:
+      tags:
+        - Facturation
+      operationId: getMyCommissionInvoice
+      summary: Détail d’une de mes factures de commission
+      description: |
+        ADR-064. Hors du périmètre du client (autre compte, autre organisation) : 404, sans révéler l'existence de la
+        facture.
+
+        Erreurs : `BILLING_INVOICE_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.billing.v1.BillingService/GetMyCommissionInvoice
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommissionInvoice'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/billing/receipts:
+    get:
+      tags:
+        - Facturation
+      operationId: listMyFeeReceipts
+      summary: Mes reçus de frais (recouvrement)
+      description: |
+        ADR-064. Reçus des frais de dossier et des forfaits d'étude du recouvrement payés par le portefeuille de
+        l'organisation active (tout membre) ou du client lui-même, les plus récents d'abord : un reçu par débit, émis
+        par billing. Un remboursement ultérieur ne l'annule pas.
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400).
+      x-ksp-grpc: ksp.billing.v1.BillingService/ListMyFeeReceipts
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: caseId
+          in: query
+          required: false
+          description: Dossier du recouvrement.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeeReceiptList'
+              example:
+                data:
+                  - id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7401
+                    number: RFD-2026-000012
+                    kind: case_fee
+                    payer:
+                      type: organization
+                      id: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000
+                    caseId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5000
+                    caseNumber: RC-000123
+                    label: Frais de dossier RC-000123
+                    amount:
+                      amount: 25000
+                      currency: XOF
+                    paidAt: 2026-11-03T09:00:00Z
+                    issuedAt: 2026-11-03T09:00:02Z
+                    walletTransactionId: 0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7501
+                nextCursor: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /api/v1/admin/billing/invoices:
     get:
       tags:
@@ -15547,6 +15780,114 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/billing/commission-invoices:
+    get:
+      tags:
+        - Facturation (back-office)
+      operationId: listCommissionInvoices
+      summary: Factures de commission (back-office)
+      description: |
+        ADR-064 (R-CO-05). Factures mensuelles de commission du recouvrement de tous les créanciers, les plus récentes
+        d'abord, avec l'état du débit automatique : la finance suit celles qui restent dues (solde insuffisant,
+        prochain essai). Montants hors taxe.
+
+        Rôles : `finance_officer`, `super_admin`, `recovery_admin` (lecture) ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `GATEWAY_VALIDATION_FAILED` (400), `BILLING_VALIDATION_FAILED` (400).
+      x-ksp-grpc: ksp.billing.v1.BillingAdminService/ListCommissionInvoices
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+        - recovery_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/CommissionInvoiceStatus'
+        - $ref: '#/components/parameters/CommissionInvoicePeriod'
+        - name: creditorId
+          in: query
+          required: false
+          description: Créancier (compte ou organisation).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommissionInvoiceList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /api/v1/admin/billing/commission-invoices/{id}:
+    get:
+      tags:
+        - Facturation (back-office)
+      operationId: getCommissionInvoice
+      summary: Détail d’une facture de commission (back-office)
+      description: |
+        ADR-064. Rôles : `finance_officer`, `super_admin`, `recovery_admin` (lecture) ; double authentification faite pendant la session (12 heures au plus).
+
+        Erreurs : `BILLING_INVOICE_NOT_FOUND` (404).
+      x-ksp-grpc: ksp.billing.v1.BillingAdminService/GetCommissionInvoice
+      x-ksp-access: authenticated
+      x-ksp-rate-limit: authenticated
+      x-ksp-roles:
+        - finance_officer
+        - super_admin
+        - recovery_admin
+      x-ksp-mfa-max-age: 43200
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: Succès
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/X-Correlation-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommissionInvoice'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -23440,6 +23781,21 @@ components:
       required: false
       schema:
         $ref: '#/components/schemas/InvoiceStatus'
+    CommissionInvoiceStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/CommissionInvoiceStatus'
+    CommissionInvoicePeriod:
+      name: period
+      in: query
+      required: false
+      description: Mois facturé AAAA-MM (heure du Bénin).
+      schema:
+        type: string
+        pattern: ^[0-9]{4}-(0[1-9]|1[0-2])$
+      example: '2026-11'
     OrganizationId:
       name: id
       in: path
@@ -34493,6 +34849,289 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Invoice'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    CommissionInvoiceStatus:
+      enum:
+        - pending_payment
+        - paid
+        - cancelled
+      description: |
+        ADR-064. `pending_payment` tant que la commission à débiter n'est pas réglée par le portefeuille ; `paid` une
+        fois débitée, ou dès l'émission s'il n'y a rien à débiter ; `cancelled` réservé.
+    BillingParty:
+      type: object
+      additionalProperties: false
+      description: Créancier facturé, ou titulaire du portefeuille débité (identifiants seulement).
+      required:
+        - type
+        - id
+      properties:
+        type:
+          enum:
+            - user
+            - organization
+        id:
+          type: string
+          format: uuid
+    CommissionInvoiceLine:
+      type: object
+      additionalProperties: false
+      description: Un encaissement du dossier. Montants hors taxe.
+      required:
+        - caseId
+        - caseNumber
+        - collectionId
+        - receivedAt
+        - receivedOn
+        - source
+        - gross
+        - commission
+        - settlement
+      properties:
+        caseId:
+          type: string
+          format: uuid
+        caseNumber:
+          type: string
+          description: Numéro lisible du dossier (RC-…).
+        collectionId:
+          type: string
+          format: uuid
+        receivedAt:
+          type: string
+          format: date-time
+        receivedOn:
+          type: string
+          format: date
+          description: Jour de l'encaissement (heure du Bénin).
+        source:
+          enum:
+            - payment_link
+            - offline_cash
+            - offline_transfer
+            - partner
+            - direct_to_creditor
+          description: Origine de l'encaissement ; `direct_to_creditor` pour un paiement reçu directement par le créancier.
+        gross:
+          $ref: '#/components/schemas/Money'
+        commission:
+          $ref: '#/components/schemas/Money'
+        settlement:
+          enum:
+            - deducted
+            - invoiced
+          description: '`deducted` : retenue à l’encaissement, déjà réglée ; `invoiced` : débitée du portefeuille du créancier.'
+    CommissionDebit:
+      type: object
+      additionalProperties: false
+      description: Débit automatique de la commission à débiter, du portefeuille prépayé du créancier (ADR-046).
+      required:
+        - attempts
+        - lastAttemptAt
+        - nextAttemptAt
+        - lastFailure
+        - missing
+      properties:
+        attempts:
+          type: integer
+          minimum: 0
+          description: Tentatives faites (la première à l'émission).
+        lastAttemptAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        nextAttemptAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Prochain essai ; null une fois la facture réglée.
+        lastFailure:
+          description: Dernier échec ; null sinon.
+          oneOf:
+            - enum:
+                - insufficient_funds
+                - wallet_error
+            - type: 'null'
+        missing:
+          description: Montant manquant au dernier essai (solde insuffisant) ; null sinon.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+    CommissionInvoice:
+      type: object
+      additionalProperties: false
+      description: |
+        ADR-064 (R-CO-05). Facture mensuelle de commission du recouvrement d'un créancier, une ligne par
+        encaissement. Hors taxe : aucune ligne de TVA. Une facture émise ne se modifie jamais ; seul son
+        règlement évolue.
+      required:
+        - id
+        - number
+        - status
+        - creditor
+        - period
+        - periodStart
+        - periodEnd
+        - lines
+        - totalCollected
+        - commissionDeducted
+        - commissionInvoiced
+        - commissionTotal
+        - balance
+        - amountsExcludingTax
+        - issuedAt
+        - paidAt
+        - walletTransactionId
+        - debit
+        - organization
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          pattern: ^FCR-[0-9]{4}-[0-9]{6}$
+          description: Numéro continu par année (année du mois facturé), série distincte des factures du Nettoyage.
+        status:
+          $ref: '#/components/schemas/CommissionInvoiceStatus'
+        creditor:
+          $ref: '#/components/schemas/BillingParty'
+        period:
+          type: string
+          pattern: ^[0-9]{4}-(0[1-9]|1[0-2])$
+          description: Mois facturé AAAA-MM (heure du Bénin).
+        periodStart:
+          type: string
+          format: date-time
+          description: Premier instant du mois facturé (minuit, heure du Bénin).
+        periodEnd:
+          type: string
+          format: date-time
+          description: Borne **exclusive** (minuit, heure du Bénin, du 1er du mois suivant).
+        lines:
+          type: array
+          description: Par date d'encaissement.
+          items:
+            $ref: '#/components/schemas/CommissionInvoiceLine'
+        totalCollected:
+          $ref: '#/components/schemas/Money'
+        commissionDeducted:
+          $ref: '#/components/schemas/Money'
+        commissionInvoiced:
+          $ref: '#/components/schemas/Money'
+        commissionTotal:
+          $ref: '#/components/schemas/Money'
+        balance:
+          $ref: '#/components/schemas/Money'
+        amountsExcludingTax:
+          const: true
+          description: Montants hors taxe, à afficher « HT » (aucune ligne de TVA).
+        issuedAt:
+          type: string
+          format: date-time
+        paidAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        walletTransactionId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Débit du portefeuille qui a réglé la commission à débiter.
+        debit:
+          description: Débit automatique ; null sans commission à débiter.
+          oneOf:
+            - $ref: '#/components/schemas/CommissionDebit'
+            - type: 'null'
+        organization:
+          description: En-tête d'une organisation créancière, copié d'identity à l'émission ; null pour un compte.
+          oneOf:
+            - $ref: '#/components/schemas/InvoiceOrganization'
+            - type: 'null'
+    CommissionInvoiceList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommissionInvoice'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    FeeReceipt:
+      type: object
+      additionalProperties: false
+      description: ADR-064. Reçu d'un débit du portefeuille pour des frais du recouvrement ; jamais annulé.
+      required:
+        - id
+        - number
+        - kind
+        - payer
+        - caseId
+        - caseNumber
+        - label
+        - amount
+        - paidAt
+        - issuedAt
+        - walletTransactionId
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          pattern: ^RFD-[0-9]{4}-[0-9]{6}$
+          description: Numéro continu par année (année du paiement).
+        kind:
+          type: string
+          description: '`case_fee` (frais de dossier) ou `study_fee` (forfait d’étude) ; d’autres natures pourront s’ajouter.'
+        payer:
+          $ref: '#/components/schemas/BillingParty'
+        caseId:
+          type: string
+          format: uuid
+        caseNumber:
+          type:
+            - string
+            - 'null'
+          description: Numéro lisible du dossier (RC-…) ; null s'il n'est pas connu.
+        label:
+          type: string
+          description: Libellé du débit, par exemple « Frais de dossier RC-000123 ».
+        amount:
+          $ref: '#/components/schemas/Money'
+        paidAt:
+          type: string
+          format: date-time
+        issuedAt:
+          type: string
+          format: date-time
+        walletTransactionId:
+          type: string
+          format: uuid
+    FeeReceiptList:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - nextCursor
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeeReceipt'
         nextCursor:
           type:
             - string

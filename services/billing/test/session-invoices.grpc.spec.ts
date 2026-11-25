@@ -17,6 +17,11 @@ import { type Observable } from 'rxjs';
 import { createMonthlyUseCases, MONTHLY_USE_CASES } from '../src/application/monthly/use-cases';
 import { CUSTOMER_ID, testWorld } from '../src/application/testing/fakes';
 import { FakeWalletCredits, InMemoryMonthly } from '../src/application/testing/monthly-fakes';
+import { recoveryTestWorld } from '../src/application/testing/recovery-fakes';
+import {
+  createRecoveryBillingUseCases,
+  RECOVERY_BILLING_USE_CASES,
+} from '../src/application/recovery/use-cases';
 import { BILLING_USE_CASES, createUseCases } from '../src/application/use-cases';
 import {
   BillingGrpcController,
@@ -64,6 +69,8 @@ describe('émission des factures de séance en gRPC', () => {
             walletCredits: new FakeWalletCredits(),
           }),
         },
+        // Recouvrement (ADR-064) : même contrôleur de l'espace client.
+        { provide: RECOVERY_BILLING_USE_CASES, useValue: createRecoveryBillingUseCases(recoveryTestWorld()) },
         GrpcContextInterceptor,
       ],
     })
