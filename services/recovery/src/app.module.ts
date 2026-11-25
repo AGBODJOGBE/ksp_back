@@ -15,6 +15,12 @@ import { type PersonalData } from './application/ports';
 import { createUseCases, RECOVERY_USE_CASES } from './application/use-cases';
 import { type ServiceConfig } from './config';
 import { GrpcCreditorProfiles } from './infrastructure/grpc/grpc-creditor-profiles';
+import { GrpcDocumentCancellation } from './infrastructure/grpc/grpc-document-cancellation';
+import { PrismaAmicableStore } from './infrastructure/persistence/prisma-amicable.store';
+import {
+  AMICABLE_TASKS_INTERVAL_MS,
+  AmicableTasksService,
+} from './infrastructure/scheduling/amicable-tasks.service';
 import { FileSpreadsheetReader } from './infrastructure/imports/file-spreadsheet-reader';
 import { PrismaCaseImportRepository } from './infrastructure/persistence/prisma-case-imports.repository';
 import { PrismaCaseQueries } from './infrastructure/persistence/prisma-case-queries';
@@ -142,6 +148,10 @@ export class AppModule {
         CaseDeadlinesService,
         { provide: CASE_DEADLINES_INTERVAL_MS, useValue: config.RECOVERY_CASE_DEADLINES_INTERVAL_MS },
         MandateSignatureConsumer,
+        // Procédure amiable (R4) : contacts, échéanciers, décisions, messages, et sa tâche planifiée.
+        PrismaAmicableStore,
+        AmicableTasksService,
+        { provide: AMICABLE_TASKS_INTERVAL_MS, useValue: config.RECOVERY_AMICABLE_INTERVAL_MS },
         {
           provide: RECOVERY_USE_CASES,
           inject: [
@@ -156,6 +166,7 @@ export class AppModule {
             PrismaCaseQueries,
             PrismaCaseImportRepository,
             PrismaCreditorPreferencesStore,
+            PrismaAmicableStore,
             WALLET_CLIENT,
             PAYMENT_CLIENT,
             DOCUMENT_CLIENT,
@@ -176,6 +187,7 @@ export class AppModule {
             caseQueries: PrismaCaseQueries,
             imports: PrismaCaseImportRepository,
             preferences: PrismaCreditorPreferencesStore,
+            amicable: PrismaAmicableStore,
             wallet: ClientGrpc,
             payment: ClientGrpc,
             document: ClientGrpc,
@@ -201,6 +213,9 @@ export class AppModule {
             const fileClient = file.getService<fileV1.FileInternalServiceClient>(
               fileV1.FILE_INTERNAL_SERVICE_NAME,
             );
+            const documentClient = document.getService<documentV1.DocumentInternalServiceClient>(
+              documentV1.DOCUMENT_INTERNAL_SERVICE_NAME,
+            );
             return createUseCases({
               settings,
               holidays,
@@ -223,9 +238,7 @@ export class AppModule {
                 callerOf('payment'),
               ),
               documents: new GrpcDocuments(
-                document.getService<documentV1.DocumentInternalServiceClient>(
-                  documentV1.DOCUMENT_INTERNAL_SERVICE_NAME,
-                ),
+                documentClient,
                 callerOf('document'),
                 config.RECOVERY_LONG_DOCUMENT_DEADLINE_MS,
               ),
@@ -240,6 +253,9 @@ export class AppModule {
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
               debtorAccess,
+              amicable,
+              documentCancellation: new GrpcDocumentCancellation(documentClient, callerOf('document')),
+              amicableOptions: { debtorChannels: config.RECOVERY_DEBTOR_CHANNELS },
             });
           },
         },

@@ -22,6 +22,8 @@ import {
 import { type RecoveryDeps } from '../use-cases';
 import { memoryDebtorAccess } from './debtor-access.fakes';
 import { memoryCaseStores } from './case-fakes';
+import { type AmicableOptions } from '../amicable/amicable.ports';
+import { MemoryAmicableStore, MemoryDocumentCancellation } from './amicable-fakes';
 
 /** Doublures en mémoire des ports (tests des cas d'usage). */
 
@@ -167,6 +169,7 @@ const unused = (name: string) => () => {
 };
 
 export function makeDeps(overrides: Partial<RecoveryDeps> = {}) {
+  const caseStores = memoryCaseStores();
   const base = {
     settings: new MemorySettingsStore(),
     holidays: new MemoryHolidayStore(),
@@ -199,7 +202,11 @@ export function makeDeps(overrides: Partial<RecoveryDeps> = {}) {
     clock: new FixedClock(),
     ids: new SequentialIds(),
     debtorAccess: memoryDebtorAccess(),
-    ...memoryCaseStores(),
+    ...caseStores,
+    // Procédure amiable (R4) : ordre des canaux du service, e-mail d'abord (choix à trancher).
+    amicable: new MemoryAmicableStore(caseStores.cases),
+    documentCancellation: new MemoryDocumentCancellation(),
+    amicableOptions: { debtorChannels: ['email', 'whatsapp'] } as AmicableOptions,
   };
   return { ...base, ...overrides } as typeof base;
 }

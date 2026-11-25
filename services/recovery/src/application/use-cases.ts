@@ -1,3 +1,9 @@
+import {
+  type AmicableOptions,
+  type AmicableStore,
+  createAmicableUseCases,
+  type DocumentCancellation,
+} from './amicable';
 import { type DebtorAccessPorts } from './debtor-access/debtor-access.ports';
 import {
   EndDebtorSessionUseCase,
@@ -82,6 +88,10 @@ export interface RecoveryDeps {
   preferences: CreditorPreferencesStore;
   creditorProfiles: CreditorProfiles;
   spreadsheets: SpreadsheetReader;
+  // Procédure amiable (R4) : contacts, promesses, échéanciers, décisions, messages au débiteur.
+  amicable: AmicableStore;
+  documentCancellation: DocumentCancellation;
+  amicableOptions: AmicableOptions;
 }
 
 export function createUseCases(deps: RecoveryDeps) {
@@ -108,6 +118,7 @@ export function createUseCases(deps: RecoveryDeps) {
     endDebtorSession: new EndDebtorSessionUseCase(deps),
     resolveDebtorSession: new ResolveDebtorSessionUseCase(deps),
     ...createCaseUseCases(deps),
+    ...createAmicableUseCases(deps),
   };
 }
 

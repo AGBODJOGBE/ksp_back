@@ -18,6 +18,15 @@ import {
   presentScoreFactors,
   presentSummary,
 } from './case-presenters';
+import {
+  presentDecision,
+  presentPlan,
+  presentPromise,
+  presentSettlement,
+  presentSimulation,
+  presentWorkItem,
+  termsInputOf,
+} from './amicable-presenters';
 import { notImplemented } from './not-implemented';
 import {
   amountOf,
@@ -164,12 +173,24 @@ export class RecoveryCreditorGrpcController implements recoveryV1.RecoveryCredit
     return { import: presentImport(await this.useCases.confirmCaseImport.execute(request)) };
   }
 
-  listMyDecisions(): Promise<recoveryV1.ListMyDecisionsResponse> {
-    return notImplemented('ListMyDecisions');
+  // Décisions du créancier (R4) : échéancier hors barème, remise, saut d'étape, contestation.
+
+  async listMyDecisions(
+    request: recoveryV1.ListMyDecisionsRequest,
+  ): Promise<recoveryV1.ListMyDecisionsResponse> {
+    const result = await this.useCases.listMyDecisions.execute({
+      statuses: request.statuses,
+      caseId: request.caseId,
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return { decisions: result.items.map(presentDecision), nextCursor: result.nextCursor ?? '' };
   }
 
-  answerDecision(): Promise<recoveryV1.AnswerDecisionResponse> {
-    return notImplemented('AnswerDecision');
+  async answerDecision(
+    request: recoveryV1.AnswerDecisionRequest,
+  ): Promise<recoveryV1.AnswerDecisionResponse> {
+    const result = await this.useCases.answerDecision.execute(request);
+    return { decision: presentDecision(result.decision), case: presentCase(result.view) };
   }
 
   stopCase(): Promise<recoveryV1.StopCaseResponse> {
@@ -275,28 +296,46 @@ export class RecoveryDebtorGrpcController implements recoveryV1.RecoveryDebtorSe
     return notImplemented('CreateDebtorPayment');
   }
 
+  // Échéancier du débiteur (R4) : simulation, proposition, nouveau lien de signature.
+
   async simulateDebtorPaymentPlan(
-    _request: recoveryV1.SimulateDebtorPaymentPlanRequest,
+    request: recoveryV1.SimulateDebtorPaymentPlanRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.SimulateDebtorPaymentPlanResponse> {
-    await this.debtorSession(metadata);
-    return notImplemented('SimulateDebtorPaymentPlan');
+    const { caseId } = await this.debtorSession(metadata);
+    const simulation = await this.useCases.simulateDebtorPaymentPlan.execute({
+      caseId,
+      terms: termsInputOf(request.terms),
+    });
+    return presentSimulation(simulation);
   }
 
   async proposeDebtorPaymentPlan(
-    _request: recoveryV1.ProposeDebtorPaymentPlanRequest,
+    request: recoveryV1.ProposeDebtorPaymentPlanRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.ProposeDebtorPaymentPlanResponse> {
-    await this.debtorSession(metadata);
-    return notImplemented('ProposeDebtorPaymentPlan');
+    const { caseId, debtorId } = await this.debtorSession(metadata);
+    const plan = await this.useCases.proposeDebtorPaymentPlan.execute({
+      caseId,
+      debtorId,
+      idempotencyKey: request.idempotencyKey,
+      terms: termsInputOf(request.terms),
+      message: request.message,
+    });
+    return { plan: presentPlan(plan) };
   }
 
   async resendDebtorPlanSignature(
-    _request: recoveryV1.ResendDebtorPlanSignatureRequest,
+    request: recoveryV1.ResendDebtorPlanSignatureRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.ResendDebtorPlanSignatureResponse> {
-    await this.debtorSession(metadata);
-    return notImplemented('ResendDebtorPlanSignature');
+    const { caseId, debtorId } = await this.debtorSession(metadata);
+    const result = await this.useCases.resendDebtorPlanSignature.execute({
+      caseId,
+      debtorId,
+      planId: request.planId,
+    });
+    return { signatureExpiresAt: result.signatureExpiresAt.toISOString() };
   }
 
   async disputeDebtorCase(
@@ -381,8 +420,11 @@ export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServ
     return presentOverview(await this.useCases.getRecoveryOverview.execute(request));
   }
 
-  getMyWorkQueue(): Promise<recoveryV1.GetMyWorkQueueResponse> {
-    return notImplemented('GetMyWorkQueue');
+  async getMyWorkQueue(
+    request: recoveryV1.GetMyWorkQueueRequest,
+  ): Promise<recoveryV1.GetMyWorkQueueResponse> {
+    const items = await this.useCases.getMyWorkQueue.execute({ day: request.day });
+    return { items: items.map(presentWorkItem) };
   }
 
   async listCases(request: recoveryV1.ListCasesRequest): Promise<recoveryV1.ListCasesResponse> {
@@ -435,36 +477,70 @@ export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServ
     return { case: presentCase(await this.useCases.assignCase.execute(request)) };
   }
 
-  recordContact(): Promise<recoveryV1.RecordContactResponse> {
-    return notImplemented('RecordContact');
+  // Procédure amiable (R4) : contacts, promesses, notes, messages, échéanciers, remises, étapes.
+
+  async recordContact(request: recoveryV1.RecordContactRequest): Promise<recoveryV1.RecordContactResponse> {
+    return { entry: presentJournal(await this.useCases.recordContact.execute(request))[0] };
   }
 
-  recordPromise(): Promise<recoveryV1.RecordPromiseResponse> {
-    return notImplemented('RecordPromise');
+  async recordPromise(request: recoveryV1.RecordPromiseRequest): Promise<recoveryV1.RecordPromiseResponse> {
+    const promise = await this.useCases.recordPromise.execute({
+      caseId: request.caseId,
+      idempotencyKey: request.idempotencyKey,
+      amount: amountOf('amount', request.amount),
+      dueDate: request.dueDate,
+      note: request.note,
+    });
+    return { promise: presentPromise(promise) };
   }
 
-  addInternalNote(): Promise<recoveryV1.AddInternalNoteResponse> {
-    return notImplemented('AddInternalNote');
+  async addInternalNote(
+    request: recoveryV1.AddInternalNoteRequest,
+  ): Promise<recoveryV1.AddInternalNoteResponse> {
+    return { entry: presentJournal(await this.useCases.addInternalNote.execute(request))[0] };
   }
 
-  sendDebtorMessage(): Promise<recoveryV1.SendDebtorMessageResponse> {
-    return notImplemented('SendDebtorMessage');
+  async sendDebtorMessage(
+    request: recoveryV1.SendDebtorMessageRequest,
+  ): Promise<recoveryV1.SendDebtorMessageResponse> {
+    return { entry: presentJournal(await this.useCases.sendDebtorMessage.execute(request))[0] };
   }
 
-  proposePaymentPlan(): Promise<recoveryV1.ProposePaymentPlanResponse> {
-    return notImplemented('ProposePaymentPlan');
+  async proposePaymentPlan(
+    request: recoveryV1.ProposePaymentPlanRequest,
+  ): Promise<recoveryV1.ProposePaymentPlanResponse> {
+    const plan = await this.useCases.proposePaymentPlan.execute({
+      caseId: request.caseId,
+      idempotencyKey: request.idempotencyKey,
+      terms: termsInputOf(request.terms),
+      note: request.note,
+    });
+    return { plan: presentPlan(plan) };
   }
 
-  approvePaymentPlan(): Promise<recoveryV1.ApprovePaymentPlanResponse> {
-    return notImplemented('ApprovePaymentPlan');
+  async approvePaymentPlan(
+    request: recoveryV1.ApprovePaymentPlanRequest,
+  ): Promise<recoveryV1.ApprovePaymentPlanResponse> {
+    return { plan: presentPlan(await this.useCases.approvePaymentPlan.execute(request)) };
   }
 
-  proposeSettlement(): Promise<recoveryV1.ProposeSettlementResponse> {
-    return notImplemented('ProposeSettlement');
+  async proposeSettlement(
+    request: recoveryV1.ProposeSettlementRequest,
+  ): Promise<recoveryV1.ProposeSettlementResponse> {
+    const settlement = await this.useCases.proposeSettlement.execute({
+      caseId: request.caseId,
+      idempotencyKey: request.idempotencyKey,
+      payNow: amountOf('payNow', request.payNow),
+      validUntil: request.validUntil,
+      note: request.note,
+    });
+    return { settlement: presentSettlement(settlement) };
   }
 
-  changeCaseStage(): Promise<recoveryV1.ChangeCaseStageResponse> {
-    return notImplemented('ChangeCaseStage');
+  async changeCaseStage(
+    request: recoveryV1.ChangeCaseStageRequest,
+  ): Promise<recoveryV1.ChangeCaseStageResponse> {
+    return { case: presentCase(await this.useCases.changeCaseStage.execute(request)) };
   }
 
   issueFormalNotice(): Promise<recoveryV1.IssueFormalNoticeResponse> {
