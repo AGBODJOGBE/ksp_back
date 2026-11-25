@@ -1474,6 +1474,45 @@ describe('contrat OpenAPI : réponses réelles de la gateway', () => {
         403,
         () => call('listInvoices', { auth: 'customer' }),
       ],
+      // Recouvrement (ADR-064).
+      [
+        'facture de commission d’un autre créancier',
+        'getMyCommissionInvoice',
+        404,
+        () => {
+          billing.stub.on('getMyCommissionInvoice', () =>
+            Promise.reject(AppError.notFound('BILLING_INVOICE_NOT_FOUND', 'Facture introuvable.')),
+          );
+          return call('getMyCommissionInvoice');
+        },
+      ],
+      [
+        'factures de commission : mois mal formé',
+        'listMyCommissionInvoices',
+        400,
+        () =>
+          from(http().get('/api/v1/billing/commission-invoices?period=2026-13')).set(
+            'Authorization',
+            `Bearer ${token}`,
+          ),
+      ],
+      [
+        'factures de commission du back-office pour un client',
+        'listCommissionInvoices',
+        403,
+        () => call('listCommissionInvoices', { auth: 'customer' }),
+      ],
+      [
+        'facture de commission inconnue au back-office',
+        'getCommissionInvoice',
+        404,
+        () => {
+          billing.stub.on('getCommissionInvoice', () =>
+            Promise.reject(AppError.notFound('BILLING_INVOICE_NOT_FOUND', 'Facture introuvable.')),
+          );
+          return call('getCommissionInvoice');
+        },
+      ],
       [
         'paiement au-delà du reste dû',
         'recordInvoicePayment',

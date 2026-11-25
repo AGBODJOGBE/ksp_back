@@ -1,8 +1,8 @@
 # Service `billing`
 
 Facturation mensuelle des contrats d'entreprise du Nettoyage (cahier des charges Nettoyage,
-partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/billing/v1/` ;
-événements : `contracts/events/billing/`.
+partie 10) : version minimale du lot 2 ; factures de commission et reçus des frais du recouvrement
+(ADR-064). Contrat gRPC : `contracts/proto/ksp/billing/v1/` ; événements : `contracts/events/billing/`.
 
 ## Règles
 
@@ -88,6 +88,37 @@ partie 10) : version minimale du lot 2. Contrat gRPC : `contracts/proto/ksp/bill
   version 2, sans `contractId` ; une facture v1 garde la version 1.
 - **Tâche planifiée** (`BILLING_SCHEDULER_INTERVAL_MS`) : émission, impayées, relances, sous un verrou
   consultatif PostgreSQL (`pg_try_advisory_xact_lock`) : une seule réplique fait le passage.
+
+## Facturation du recouvrement (ADR-060 décision 11, R-CO-05 ; ADR-064)
+
+- **Encaissements appris par événement** : `recovery.payment.collected` (inbox) donne une ligne par
+  encaissement (`commission_collections`) ; montant brut, commission et mode de règlement viennent de
+  l'événement, billing ne recalcule jamais la commission.
+- **Facture de commission** le 1er du mois à 00:00 (heure du Bénin), au premier passage de la tâche : une
+  par créancier (compte ou organisation) avec ses encaissements non facturés reçus avant la fin du mois
+  écoulé ; un encaissement arrivé après l'émission part sur la facture suivante. Une ligne par
+  encaissement (dossier, date, origine, brut, commission, mode de règlement), figée
+  (`commission_invoice_lines`) ; totaux encaissé, commission retenue, à débiter, totale. **Hors taxe** :
+  aucune ligne de TVA. Numéro `FCR-<année>-<000001>` (compteur `series_counters`, année du mois facturé).
+  En-tête d'une organisation créancière copié d'identity à l'émission, comme les factures du Nettoyage.
+  Publie `billing.commission_invoice.issued` (identifiants et montants).
+- **Règlement** : commission `deducted` déjà réglée ; commission `invoiced` (paiement reçu directement
+  par le créancier) débitée du portefeuille prépayé du créancier (`wallet.Debit`, objet
+  `billing_commission_invoice`, clé `billing_commission_invoice:<id>`) au passage de l'émission. Solde
+  insuffisant : facture due, montant manquant noté, nouvel essai après
+  `BILLING_COMMISSION_DEBIT_RETRY_MS` (un jour) ; autre échec de wallet : un quart d'heure. Sans
+  commission à débiter : réglée dès l'émission.
+- **Reçus des frais** : `wallet.prepaid.debited` de `recovery` pour `recovery_case_fee` ou
+  `recovery_study_fee` donne un reçu `RFD-<année>-<000001>` (année du paiement), un par transaction du
+  portefeuille ; un remboursement ultérieur ne l'annule pas. Tout autre débit est ignoré.
+- **Lecture** (gateway seule) : `ListMyCommissionInvoices`, `GetMyCommissionInvoice`, `ListMyFeeReceipts`
+  (compte, ou organisation active, tout membre) ; `ListCommissionInvoices`, `GetCommissionInvoice` au
+  back-office (`finance_officer`, `super_admin`, `recovery_admin` en lecture ; double authentification de la
+  session). Pas de PDF.
+- **Suppression d'un compte** : une facture de commission due du compte bloque (`unpaid_invoice`, numéro
+  FCR) ; celle d'une organisation seulement si identity la désigne (`organization_id`).
+- **Tâche planifiée** : `CommissionBillingSchedulerService`, même intervalle, verrou consultatif propre
+  (`billing.commission_billing`).
 
 ## Paiement par le portefeuille prépayé (ADR-046)
 

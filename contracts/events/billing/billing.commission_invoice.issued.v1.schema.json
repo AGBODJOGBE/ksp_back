@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ksp.bj/events/billing/billing.commission_invoice.issued.v1.schema.json",
+  "title": "billing.commission_invoice.issued",
+  "description": "Facture mensuelle de commission du recouvrement émise pour un créancier (ADR-064, R-CO-05) : le 1er du mois, heure du Bénin, pour ses encaissements du mois écoulé. Montants hors taxe. La commission retenue à l'encaissement (commissionDeducted) est déjà réglée ; la commission à débiter (commissionInvoiced) est débitée par billing du portefeuille du créancier. Servira à recovery pour ses relevés mensuels. Identifiants et montants seulement.",
+  "x-event-type": "billing.commission_invoice.issued",
+  "x-event-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "invoiceId",
+    "invoiceNumber",
+    "creditor",
+    "period",
+    "totalCollected",
+    "commissionDeducted",
+    "commissionInvoiced",
+    "commissionTotal",
+    "issuedAt"
+  ],
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "XOF"
+        }
+      }
+    },
+    "creditor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "Créancier facturé : un compte ou une organisation (identifiants seulement)",
+      "properties": {
+        "type": {
+          "enum": ["user", "organization"]
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  },
+  "properties": {
+    "invoiceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "invoiceNumber": {
+      "type": "string",
+      "pattern": "^FCR-[0-9]{4}-[0-9]{6}$"
+    },
+    "creditor": {
+      "$ref": "#/$defs/creditor"
+    },
+    "period": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+      "description": "Mois facturé AAAA-MM (heure du Bénin)"
+    },
+    "totalCollected": {
+      "$ref": "#/$defs/money",
+      "description": "Somme des montants encaissés du mois"
+    },
+    "commissionDeducted": {
+      "$ref": "#/$defs/money",
+      "description": "Commission retenue à l'encaissement, déjà réglée"
+    },
+    "commissionInvoiced": {
+      "$ref": "#/$defs/money",
+      "description": "Commission des paiements reçus directement par le créancier, à débiter de son portefeuille"
+    },
+    "commissionTotal": {
+      "$ref": "#/$defs/money",
+      "description": "commissionDeducted + commissionInvoiced"
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
