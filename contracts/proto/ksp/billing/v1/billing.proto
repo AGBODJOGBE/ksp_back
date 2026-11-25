@@ -46,6 +46,23 @@ import "ksp/common/v1/money.proto";
 // - corrections : une facture émise ne se modifie jamais ; une erreur se corrige par un avoir
 //   (IssueCreditNote, R-PE-07).
 //
+// Recouvrement (ADR-060 décision 11, R-CO-05 ; ADR-064) — documents propres, hors du message Invoice
+// (numéro FAC-, source "cleaning") :
+// - facture de commission (CommissionInvoice), numéro FCR-<année>-<numéro sur 6 chiffres>, continu par
+//   année (année du mois facturé) : le 1er de chaque mois à 00:00 (heure du Bénin), une par créancier
+//   (compte ou organisation) pour ses encaissements du mois écoulé, appris par l'événement
+//   recovery.payment.collected (un encaissement arrivé après l'émission part sur la facture suivante).
+//   Hors taxe : aucune ligne de TVA. La commission retenue à l'encaissement ("deducted") est déjà
+//   réglée ; celle d'un paiement reçu directement par le créancier ("invoiced") est débitée par billing
+//   du portefeuille prépayé du créancier à l'émission (objet "billing_commission_invoice"), puis de
+//   nouveau après un délai réglable (un jour par défaut) tant que le solde ne suffit pas. Publie
+//   billing.commission_invoice.issued ;
+// - reçu des frais de dossier (FeeReceipt), numéro RFD-<année>-<numéro sur 6 chiffres>, continu par
+//   année (année du paiement) : un par débit du portefeuille fait par recovery pour des frais de
+//   dossier ou un forfait d'étude (wallet.prepaid.debited, objets "recovery_case_fee" et
+//   "recovery_study_fee"). Un remboursement ultérieur ne l'annule pas.
+// Pas de PDF : les données passent par l'API.
+//
 // L'utilisateur connecté n'est jamais dans les messages : la gateway le transmet dans les
 // métadonnées gRPC (x-user-id, x-active-context, x-user-roles, x-user-mfa…). Le service
 // revérifie toujours ses droits.
@@ -92,6 +109,14 @@ service BillingService {
   // l'échéance). Lecture : tout membre ; modification : org_admin.
   rpc GetMyBillingPreferences(GetMyBillingPreferencesRequest) returns (GetMyBillingPreferencesResponse);
   rpc UpdateMyBillingPreferences(UpdateMyBillingPreferencesRequest) returns (UpdateMyBillingPreferencesResponse);
+  // Recouvrement (ADR-064) : factures de commission du créancier connecté (contexte personnel) ou de
+  // son organisation active (tout membre), les plus récentes d'abord. Hors périmètre :
+  // BILLING_INVOICE_NOT_FOUND.
+  rpc ListMyCommissionInvoices(ListMyCommissionInvoicesRequest) returns (ListMyCommissionInvoicesResponse);
+  rpc GetMyCommissionInvoice(GetMyCommissionInvoiceRequest) returns (GetMyCommissionInvoiceResponse);
+  // Recouvrement (ADR-064) : reçus des frais de dossier payés par le portefeuille du client ou de son
+  // organisation active (tout membre), les plus récents d'abord.
+  rpc ListMyFeeReceipts(ListMyFeeReceiptsRequest) returns (ListMyFeeReceiptsResponse);
 }
 
 // Back-office : finance_officer, cleaning_supervisor, cleaning_admin, super_admin, avec double
@@ -119,6 +144,11 @@ service BillingAdminService {
   rpc IssueAdminCreditNote(IssueAdminCreditNoteRequest) returns (IssueAdminCreditNoteResponse);
   // v2 : avoirs, les plus récents d'abord ; filtres facultatifs.
   rpc ListCreditNotes(ListCreditNotesRequest) returns (ListCreditNotesResponse);
+  // Recouvrement (ADR-064) : factures de commission de tous les créanciers, les plus récentes
+  // d'abord, avec l'état du débit automatique (la finance suit celles qui restent dues).
+  // finance_officer, super_admin, recovery_admin (lecture) ; double authentification de la session.
+  rpc ListCommissionInvoices(ListCommissionInvoicesRequest) returns (ListCommissionInvoicesResponse);
+  rpc GetCommissionInvoice(GetCommissionInvoiceRequest) returns (GetCommissionInvoiceResponse);
 }
 
 // v2 (CDC Nettoyage v2, partie 15.4) : émission par les services métier, réservée à cleaning
@@ -556,4 +586,157 @@ message ListCreditNotesRequest {
 message ListCreditNotesResponse {
   repeated CreditNote credit_notes = 1;
   string next_cursor = 2;
+}
+
+// Recouvrement (ADR-064) : créancier facturé, ou titulaire du portefeuille qui a payé des frais.
+message BillingParty {
+  // "user" (compte) ou "organization".
+  string type = 1;
+  string id = 2;
+}
+
+// Recouvrement (ADR-064) : une ligne par encaissement. Montants hors taxe.
+message CommissionInvoiceLine {
+  string case_id = 1;
+  // Numéro lisible du dossier (RC-…).
+  string case_number = 2;
+  // Encaissement chez recovery.
+  string collection_id = 3;
+  string received_at = 4;
+  // Jour de l'encaissement (AAAA-MM-JJ, heure du Bénin).
+  string received_on = 5;
+  // Origine : "payment_link", "offline_cash", "offline_transfer", "partner" ou "direct_to_creditor".
+  string source = 6;
+  // Montant encaissé (brut).
+  ksp.common.v1.Money gross = 7;
+  // Commission de l'encaissement, 0 possible.
+  ksp.common.v1.Money commission = 8;
+  // "deducted" : retenue à l'encaissement, déjà réglée ; "invoiced" : paiement reçu directement par le
+  // créancier, commission débitée de son portefeuille.
+  string settlement = 9;
+}
+
+// Recouvrement (ADR-064) : débit automatique de la commission "invoiced" du portefeuille du créancier.
+message CommissionDebit {
+  // Tentatives faites (la première à l'émission).
+  int32 attempts = 1;
+  string last_attempt_at = 2;
+  // Prochaine tentative ; vide une fois la facture réglée.
+  string next_attempt_at = 3;
+  // Dernier échec : "insufficient_funds" (solde insuffisant) ou "wallet_error" (wallet indisponible ou
+  // refus) ; vide sinon.
+  string last_failure = 4;
+  // Montant manquant au dernier essai (solde insuffisant) ; absent sinon.
+  ksp.common.v1.Money missing = 5;
+}
+
+// Recouvrement (ADR-064) : facture mensuelle de commission d'un créancier. Montants hors taxe, aucune
+// ligne de TVA. Une facture émise ne se modifie jamais ; seul son règlement évolue.
+message CommissionInvoice {
+  string id = 1;
+  // FCR-<année>-<numéro sur 6 chiffres>, unique et sans trou par année (année du mois facturé).
+  string number = 2;
+  // "pending_payment" (commission à débiter pas encore réglée) ou "paid" ; "cancelled" réservé.
+  string status = 3;
+  BillingParty creditor = 4;
+  // Mois facturé (AAAA-MM) et ses bornes : minuit, heure du Bénin ; period_end est exclusive.
+  string period = 5;
+  string period_start = 6;
+  string period_end = 7;
+  // Par date d'encaissement.
+  repeated CommissionInvoiceLine lines = 8;
+  // Somme des montants encaissés.
+  ksp.common.v1.Money total_collected = 9;
+  // Commission retenue à l'encaissement (déjà réglée).
+  ksp.common.v1.Money commission_deducted = 10;
+  // Commission à débiter du portefeuille du créancier.
+  ksp.common.v1.Money commission_invoiced = 11;
+  // commission_deducted + commission_invoiced.
+  ksp.common.v1.Money commission_total = 12;
+  // Reste à débiter : commission_invoiced tant que la facture est due, 0 ensuite.
+  ksp.common.v1.Money balance = 13;
+  // Toujours vrai : montants hors taxe.
+  bool amounts_excluding_tax = 14;
+  string issued_at = 15;
+  // Émission (rien à débiter) ou débit du portefeuille ; vide tant que la facture est due.
+  string paid_at = 16;
+  // Débit du portefeuille qui a réglé la commission à débiter ; vide sinon.
+  string wallet_transaction_id = 17;
+  // Débit automatique ; absent sans commission à débiter.
+  CommissionDebit debit = 18;
+  // En-tête d'une organisation créancière, copié d'identity à l'émission ; absent pour un compte.
+  InvoiceOrganization organization = 19;
+}
+
+// Recouvrement (ADR-064) : reçu d'un débit du portefeuille fait par recovery pour des frais.
+message FeeReceipt {
+  string id = 1;
+  // RFD-<année>-<numéro sur 6 chiffres>, unique et sans trou par année (année du paiement).
+  string number = 2;
+  // "case_fee" (frais de dossier) ou "study_fee" (forfait d'étude) ; d'autres natures pourront s'ajouter.
+  string kind = 3;
+  // Titulaire du portefeuille débité.
+  BillingParty payer = 4;
+  string case_id = 5;
+  // Numéro lisible du dossier (RC-…) ; vide s'il n'est pas connu.
+  string case_number = 6;
+  // Libellé du débit, par exemple « Frais de dossier RC-000123 ».
+  string label = 7;
+  ksp.common.v1.Money amount = 8;
+  string paid_at = 9;
+  string issued_at = 10;
+  // Débit du portefeuille (identifiant de la transaction wallet).
+  string wallet_transaction_id = 11;
+}
+
+message ListMyCommissionInvoicesRequest {
+  Page page = 1;
+  // Filtres facultatifs : état ("pending_payment", "paid" ou "cancelled") et mois facturé (AAAA-MM).
+  string status = 2;
+  string period = 3;
+}
+
+message ListMyCommissionInvoicesResponse {
+  repeated CommissionInvoice commission_invoices = 1;
+  string next_cursor = 2;
+}
+
+message GetMyCommissionInvoiceRequest {
+  string invoice_id = 1;
+}
+
+message GetMyCommissionInvoiceResponse {
+  CommissionInvoice commission_invoice = 1;
+}
+
+message ListMyFeeReceiptsRequest {
+  Page page = 1;
+  // Filtre facultatif : dossier du recouvrement.
+  string case_id = 2;
+}
+
+message ListMyFeeReceiptsResponse {
+  repeated FeeReceipt receipts = 1;
+  string next_cursor = 2;
+}
+
+message ListCommissionInvoicesRequest {
+  Page page = 1;
+  // Filtres facultatifs : état, mois facturé (AAAA-MM), créancier (compte ou organisation).
+  string status = 2;
+  string period = 3;
+  string creditor_id = 4;
+}
+
+message ListCommissionInvoicesResponse {
+  repeated CommissionInvoice commission_invoices = 1;
+  string next_cursor = 2;
+}
+
+message GetCommissionInvoiceRequest {
+  string invoice_id = 1;
+}
+
+message GetCommissionInvoiceResponse {
+  CommissionInvoice commission_invoice = 1;
 }

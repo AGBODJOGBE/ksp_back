@@ -12,6 +12,8 @@ export const BILLING_STAFF = [
   'super_admin',
 ] as const;
 export const BILLING_SETTINGS_ADMINS = ['cleaning_admin', 'finance_officer', 'super_admin'] as const;
+/** Factures de commission du recouvrement (ADR-064) : la finance, et l'administration du recouvrement en lecture. */
+export const RECOVERY_BILLING_STAFF = ['finance_officer', 'super_admin', 'recovery_admin'] as const;
 
 /** Double authentification faite pendant la session back-office en cours (12 heures au plus). */
 export const BACKOFFICE_MFA_MAX_AGE_SECONDS = 12 * 3600;

@@ -480,6 +480,189 @@ export interface ListCreditNotesResponse {
   nextCursor: string;
 }
 
+/** Recouvrement (ADR-064) : créancier facturé, ou titulaire du portefeuille qui a payé des frais. */
+export interface BillingParty {
+  /** "user" (compte) ou "organization". */
+  type: string;
+  id: string;
+}
+
+/** Recouvrement (ADR-064) : une ligne par encaissement. Montants hors taxe. */
+export interface CommissionInvoiceLine {
+  caseId: string;
+  /** Numéro lisible du dossier (RC-…). */
+  caseNumber: string;
+  /** Encaissement chez recovery. */
+  collectionId: string;
+  receivedAt: string;
+  /** Jour de l'encaissement (AAAA-MM-JJ, heure du Bénin). */
+  receivedOn: string;
+  /** Origine : "payment_link", "offline_cash", "offline_transfer", "partner" ou "direct_to_creditor". */
+  source: string;
+  /** Montant encaissé (brut). */
+  gross?:
+    | Money
+    | undefined;
+  /** Commission de l'encaissement, 0 possible. */
+  commission?:
+    | Money
+    | undefined;
+  /**
+   * "deducted" : retenue à l'encaissement, déjà réglée ; "invoiced" : paiement reçu directement par le
+   * créancier, commission débitée de son portefeuille.
+   */
+  settlement: string;
+}
+
+/** Recouvrement (ADR-064) : débit automatique de la commission "invoiced" du portefeuille du créancier. */
+export interface CommissionDebit {
+  /** Tentatives faites (la première à l'émission). */
+  attempts: number;
+  lastAttemptAt: string;
+  /** Prochaine tentative ; vide une fois la facture réglée. */
+  nextAttemptAt: string;
+  /**
+   * Dernier échec : "insufficient_funds" (solde insuffisant) ou "wallet_error" (wallet indisponible ou
+   * refus) ; vide sinon.
+   */
+  lastFailure: string;
+  /** Montant manquant au dernier essai (solde insuffisant) ; absent sinon. */
+  missing?: Money | undefined;
+}
+
+/**
+ * Recouvrement (ADR-064) : facture mensuelle de commission d'un créancier. Montants hors taxe, aucune
+ * ligne de TVA. Une facture émise ne se modifie jamais ; seul son règlement évolue.
+ */
+export interface CommissionInvoice {
+  id: string;
+  /** FCR-<année>-<numéro sur 6 chiffres>, unique et sans trou par année (année du mois facturé). */
+  number: string;
+  /** "pending_payment" (commission à débiter pas encore réglée) ou "paid" ; "cancelled" réservé. */
+  status: string;
+  creditor?:
+    | BillingParty
+    | undefined;
+  /** Mois facturé (AAAA-MM) et ses bornes : minuit, heure du Bénin ; period_end est exclusive. */
+  period: string;
+  periodStart: string;
+  periodEnd: string;
+  /** Par date d'encaissement. */
+  lines: CommissionInvoiceLine[];
+  /** Somme des montants encaissés. */
+  totalCollected?:
+    | Money
+    | undefined;
+  /** Commission retenue à l'encaissement (déjà réglée). */
+  commissionDeducted?:
+    | Money
+    | undefined;
+  /** Commission à débiter du portefeuille du créancier. */
+  commissionInvoiced?:
+    | Money
+    | undefined;
+  /** commission_deducted + commission_invoiced. */
+  commissionTotal?:
+    | Money
+    | undefined;
+  /** Reste à débiter : commission_invoiced tant que la facture est due, 0 ensuite. */
+  balance?:
+    | Money
+    | undefined;
+  /** Toujours vrai : montants hors taxe. */
+  amountsExcludingTax: boolean;
+  issuedAt: string;
+  /** Émission (rien à débiter) ou débit du portefeuille ; vide tant que la facture est due. */
+  paidAt: string;
+  /** Débit du portefeuille qui a réglé la commission à débiter ; vide sinon. */
+  walletTransactionId: string;
+  /** Débit automatique ; absent sans commission à débiter. */
+  debit?:
+    | CommissionDebit
+    | undefined;
+  /** En-tête d'une organisation créancière, copié d'identity à l'émission ; absent pour un compte. */
+  organization?: InvoiceOrganization | undefined;
+}
+
+/** Recouvrement (ADR-064) : reçu d'un débit du portefeuille fait par recovery pour des frais. */
+export interface FeeReceipt {
+  id: string;
+  /** RFD-<année>-<numéro sur 6 chiffres>, unique et sans trou par année (année du paiement). */
+  number: string;
+  /** "case_fee" (frais de dossier) ou "study_fee" (forfait d'étude) ; d'autres natures pourront s'ajouter. */
+  kind: string;
+  /** Titulaire du portefeuille débité. */
+  payer?: BillingParty | undefined;
+  caseId: string;
+  /** Numéro lisible du dossier (RC-…) ; vide s'il n'est pas connu. */
+  caseNumber: string;
+  /** Libellé du débit, par exemple « Frais de dossier RC-000123 ». */
+  label: string;
+  amount?: Money | undefined;
+  paidAt: string;
+  issuedAt: string;
+  /** Débit du portefeuille (identifiant de la transaction wallet). */
+  walletTransactionId: string;
+}
+
+export interface ListMyCommissionInvoicesRequest {
+  page?:
+    | Page
+    | undefined;
+  /** Filtres facultatifs : état ("pending_payment", "paid" ou "cancelled") et mois facturé (AAAA-MM). */
+  status: string;
+  period: string;
+}
+
+export interface ListMyCommissionInvoicesResponse {
+  commissionInvoices: CommissionInvoice[];
+  nextCursor: string;
+}
+
+export interface GetMyCommissionInvoiceRequest {
+  invoiceId: string;
+}
+
+export interface GetMyCommissionInvoiceResponse {
+  commissionInvoice?: CommissionInvoice | undefined;
+}
+
+export interface ListMyFeeReceiptsRequest {
+  page?:
+    | Page
+    | undefined;
+  /** Filtre facultatif : dossier du recouvrement. */
+  caseId: string;
+}
+
+export interface ListMyFeeReceiptsResponse {
+  receipts: FeeReceipt[];
+  nextCursor: string;
+}
+
+export interface ListCommissionInvoicesRequest {
+  page?:
+    | Page
+    | undefined;
+  /** Filtres facultatifs : état, mois facturé (AAAA-MM), créancier (compte ou organisation). */
+  status: string;
+  period: string;
+  creditorId: string;
+}
+
+export interface ListCommissionInvoicesResponse {
+  commissionInvoices: CommissionInvoice[];
+  nextCursor: string;
+}
+
+export interface GetCommissionInvoiceRequest {
+  invoiceId: string;
+}
+
+export interface GetCommissionInvoiceResponse {
+  commissionInvoice?: CommissionInvoice | undefined;
+}
+
 /**
  * Espace client : factures du client connecté (contexte personnel) ou de son organisation
  * active (contexte entreprise).
@@ -527,6 +710,29 @@ export interface BillingServiceClient {
     request: UpdateMyBillingPreferencesRequest,
     metadata?: Metadata,
   ): Observable<UpdateMyBillingPreferencesResponse>;
+
+  /**
+   * Recouvrement (ADR-064) : factures de commission du créancier connecté (contexte personnel) ou de
+   * son organisation active (tout membre), les plus récentes d'abord. Hors périmètre :
+   * BILLING_INVOICE_NOT_FOUND.
+   */
+
+  listMyCommissionInvoices(
+    request: ListMyCommissionInvoicesRequest,
+    metadata?: Metadata,
+  ): Observable<ListMyCommissionInvoicesResponse>;
+
+  getMyCommissionInvoice(
+    request: GetMyCommissionInvoiceRequest,
+    metadata?: Metadata,
+  ): Observable<GetMyCommissionInvoiceResponse>;
+
+  /**
+   * Recouvrement (ADR-064) : reçus des frais de dossier payés par le portefeuille du client ou de son
+   * organisation active (tout membre), les plus récents d'abord.
+   */
+
+  listMyFeeReceipts(request: ListMyFeeReceiptsRequest, metadata?: Metadata): Observable<ListMyFeeReceiptsResponse>;
 }
 
 /**
@@ -594,6 +800,38 @@ export interface BillingServiceController {
     | Promise<UpdateMyBillingPreferencesResponse>
     | Observable<UpdateMyBillingPreferencesResponse>
     | UpdateMyBillingPreferencesResponse;
+
+  /**
+   * Recouvrement (ADR-064) : factures de commission du créancier connecté (contexte personnel) ou de
+   * son organisation active (tout membre), les plus récentes d'abord. Hors périmètre :
+   * BILLING_INVOICE_NOT_FOUND.
+   */
+
+  listMyCommissionInvoices(
+    request: ListMyCommissionInvoicesRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ListMyCommissionInvoicesResponse>
+    | Observable<ListMyCommissionInvoicesResponse>
+    | ListMyCommissionInvoicesResponse;
+
+  getMyCommissionInvoice(
+    request: GetMyCommissionInvoiceRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<GetMyCommissionInvoiceResponse>
+    | Observable<GetMyCommissionInvoiceResponse>
+    | GetMyCommissionInvoiceResponse;
+
+  /**
+   * Recouvrement (ADR-064) : reçus des frais de dossier payés par le portefeuille du client ou de son
+   * organisation active (tout membre), les plus récents d'abord.
+   */
+
+  listMyFeeReceipts(
+    request: ListMyFeeReceiptsRequest,
+    metadata?: Metadata,
+  ): Promise<ListMyFeeReceiptsResponse> | Observable<ListMyFeeReceiptsResponse> | ListMyFeeReceiptsResponse;
 }
 
 export function BillingServiceControllerMethods() {
@@ -605,6 +843,9 @@ export function BillingServiceControllerMethods() {
       "payMyInvoiceByMobileMoney",
       "getMyBillingPreferences",
       "updateMyBillingPreferences",
+      "listMyCommissionInvoices",
+      "getMyCommissionInvoice",
+      "listMyFeeReceipts",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
@@ -672,6 +913,22 @@ export interface BillingAdminServiceClient {
   /** v2 : avoirs, les plus récents d'abord ; filtres facultatifs. */
 
   listCreditNotes(request: ListCreditNotesRequest, metadata?: Metadata): Observable<ListCreditNotesResponse>;
+
+  /**
+   * Recouvrement (ADR-064) : factures de commission de tous les créanciers, les plus récentes
+   * d'abord, avec l'état du débit automatique (la finance suit celles qui restent dues).
+   * finance_officer, super_admin, recovery_admin (lecture) ; double authentification de la session.
+   */
+
+  listCommissionInvoices(
+    request: ListCommissionInvoicesRequest,
+    metadata?: Metadata,
+  ): Observable<ListCommissionInvoicesResponse>;
+
+  getCommissionInvoice(
+    request: GetCommissionInvoiceRequest,
+    metadata?: Metadata,
+  ): Observable<GetCommissionInvoiceResponse>;
 }
 
 /**
@@ -734,6 +991,25 @@ export interface BillingAdminServiceController {
     request: ListCreditNotesRequest,
     metadata?: Metadata,
   ): Promise<ListCreditNotesResponse> | Observable<ListCreditNotesResponse> | ListCreditNotesResponse;
+
+  /**
+   * Recouvrement (ADR-064) : factures de commission de tous les créanciers, les plus récentes
+   * d'abord, avec l'état du débit automatique (la finance suit celles qui restent dues).
+   * finance_officer, super_admin, recovery_admin (lecture) ; double authentification de la session.
+   */
+
+  listCommissionInvoices(
+    request: ListCommissionInvoicesRequest,
+    metadata?: Metadata,
+  ):
+    | Promise<ListCommissionInvoicesResponse>
+    | Observable<ListCommissionInvoicesResponse>
+    | ListCommissionInvoicesResponse;
+
+  getCommissionInvoice(
+    request: GetCommissionInvoiceRequest,
+    metadata?: Metadata,
+  ): Promise<GetCommissionInvoiceResponse> | Observable<GetCommissionInvoiceResponse> | GetCommissionInvoiceResponse;
 }
 
 export function BillingAdminServiceControllerMethods() {
@@ -746,6 +1022,8 @@ export function BillingAdminServiceControllerMethods() {
       "updateBillingSettings",
       "issueAdminCreditNote",
       "listCreditNotes",
+      "listCommissionInvoices",
+      "getCommissionInvoice",
     ];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);

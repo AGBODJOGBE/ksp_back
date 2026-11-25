@@ -264,3 +264,130 @@ model CreditNoteCounter {
 
   @@map("credit_note_counters")
 }
+
+// ---------------------------------------------------------------------------------------------
+// Recouvrement — facture mensuelle de commission et reçus des frais (ADR-060 décision 11, R-CO-05 ;
+// ADR-064). Identifiants et montants seulement : aucune donnée du débiteur.
+// ---------------------------------------------------------------------------------------------
+
+/// Encaissement d'un dossier, appris par recovery.payment.collected (un par encaissement), rattaché à
+/// la facture de commission qui le porte. Montants en entiers de FCFA, hors taxe.
+model CommissionCollection {
+  collectionId String             @id @map("collection_id") @db.Uuid
+  /// user ou organization (CHECK commission_collections_creditor_type_check).
+  creditorType String             @map("creditor_type")
+  creditorId   String             @map("creditor_id") @db.Uuid
+  caseId       String             @map("case_id") @db.Uuid
+  caseNumber   String             @map("case_number")
+  /// payment_link, offline_cash, offline_transfer, partner ou direct_to_creditor.
+  source       String
+  gross        Int
+  commission   Int
+  /// deducted (retenue à l'encaissement) ou invoiced (à débiter du portefeuille du créancier).
+  settlement   String
+  /// Réception de l'encaissement : fixe le mois facturé (heure du Bénin).
+  receivedAt   DateTime           @map("received_at") @db.Timestamptz(3)
+  /// Facture qui porte l'encaissement ; null tant qu'il n'est pas facturé.
+  invoiceId    String?            @map("invoice_id") @db.Uuid
+  recordedAt   DateTime           @map("recorded_at") @db.Timestamptz(3)
+  invoice      CommissionInvoice? @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@index([creditorType, creditorId, receivedAt])
+  @@index([invoiceId])
+  @@map("commission_collections")
+}
+
+/// Facture mensuelle de commission d'un créancier : une seule par (créancier, mois). Numéro
+/// FCR-<année>-<000001> (série FCR de series_counters). Hors taxe : aucune ligne de TVA.
+model CommissionInvoice {
+  id                    String                  @id @db.Uuid
+  number                String                  @unique
+  /// pending_payment (commission invoiced pas encore débitée) ou paid ; cancelled réservé.
+  status                String
+  creditorType          String                  @map("creditor_type")
+  creditorId            String                  @map("creditor_id") @db.Uuid
+  /// Mois facturé : minuit (heure du Bénin) ; period_end exclusive.
+  periodStart           DateTime                @map("period_start") @db.Timestamptz(3)
+  periodEnd             DateTime                @map("period_end") @db.Timestamptz(3)
+  totalCollected        Int                     @map("total_collected")
+  commissionDeducted    Int                     @map("commission_deducted")
+  commissionInvoiced    Int                     @map("commission_invoiced")
+  commissionTotal       Int                     @map("commission_total")
+  /// En-tête d'une organisation créancière, copié d'identity à l'émission ; null pour un compte.
+  organizationLegalName String?                 @map("organization_legal_name")
+  organizationAddress   String?                 @map("organization_address")
+  organizationIfu       String?                 @map("organization_ifu")
+  organizationRccm      String?                 @map("organization_rccm")
+  issuedAt              DateTime                @map("issued_at") @db.Timestamptz(3)
+  paidAt                DateTime?               @map("paid_at") @db.Timestamptz(3)
+  /// Débit du portefeuille qui a réglé la commission invoiced.
+  walletTransactionId   String?                 @map("wallet_transaction_id")
+  /// Débit automatique : tentatives, dernière, prochaine (null une fois réglée), dernier échec.
+  debitAttempts         Int                     @default(0) @map("debit_attempts")
+  lastDebitAttemptAt    DateTime?               @map("last_debit_attempt_at") @db.Timestamptz(3)
+  nextDebitAttemptAt    DateTime?               @map("next_debit_attempt_at") @db.Timestamptz(3)
+  /// insufficient_funds ou wallet_error ; null sinon.
+  lastDebitFailure      String?                 @map("last_debit_failure")
+  /// Montant manquant au dernier essai (solde insuffisant).
+  debitMissingAmount    Int?                    @map("debit_missing_amount")
+  version               Int                     @default(0)
+  lines                 CommissionInvoiceLine[]
+  collections           CommissionCollection[]
+
+  @@unique([creditorType, creditorId, periodStart])
+  @@index([creditorType, creditorId, id])
+  @@index([status, nextDebitAttemptAt])
+  @@map("commission_invoices")
+}
+
+/// Ligne figée d'une facture de commission : une par encaissement, jamais modifiée.
+model CommissionInvoiceLine {
+  invoiceId    String            @map("invoice_id") @db.Uuid
+  /// Rang dans la facture, à partir de 1 (par date d'encaissement).
+  position     Int
+  collectionId String            @unique @map("collection_id") @db.Uuid
+  caseId       String            @map("case_id") @db.Uuid
+  caseNumber   String            @map("case_number")
+  receivedAt   DateTime          @map("received_at") @db.Timestamptz(3)
+  source       String
+  gross        Int
+  commission   Int
+  settlement   String
+  invoice      CommissionInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@id([invoiceId, position])
+  @@map("commission_invoice_lines")
+}
+
+/// Reçu d'un débit du portefeuille fait par recovery pour des frais (wallet.prepaid.debited) : un par
+/// transaction du portefeuille, jamais annulé. Numéro RFD-<année>-<000001> (série RFD).
+model FeeReceipt {
+  id                  String   @id @db.Uuid
+  number              String   @unique
+  walletTransactionId String   @unique @map("wallet_transaction_id") @db.Uuid
+  /// case_fee (frais de dossier) ou study_fee (forfait d'étude).
+  kind                String
+  payerType           String   @map("payer_type")
+  payerId             String   @map("payer_id") @db.Uuid
+  caseId              String   @map("case_id") @db.Uuid
+  /// Numéro du dossier lu dans le libellé du débit ; null s'il n'y figure pas.
+  caseNumber          String?  @map("case_number")
+  /// Libellé du débit (« Frais de dossier RC-… »).
+  label               String
+  amount              Int
+  paidAt              DateTime @map("paid_at") @db.Timestamptz(3)
+  issuedAt            DateTime @map("issued_at") @db.Timestamptz(3)
+
+  @@index([payerType, payerId, id])
+  @@map("fee_receipts")
+}
+
+/// Compteur des numéros par série (FCR, RFD) et par année : numérotation continue, sans trou.
+model SeriesCounter {
+  series     String
+  year       Int
+  lastNumber Int    @map("last_number")
+
+  @@id([series, year])
+  @@map("series_counters")
+}

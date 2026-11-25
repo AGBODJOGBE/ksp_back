@@ -74,6 +74,25 @@ export interface BillingEventPayloads {
     offsetDays: number;
     remindedAt: string;
   };
+  /**
+   * Facture mensuelle de commission du recouvrement d'un créancier (ADR-064, R-CO-05). Montants hors
+   * taxe ; aucune donnée personnelle.
+   */
+  'billing.commission_invoice.issued': {
+    invoiceId: string;
+    /** FCR-<année>-<numéro sur 6 chiffres>. */
+    invoiceNumber: string;
+    creditor: { type: 'user' | 'organization'; id: string };
+    /** Mois facturé AAAA-MM (heure du Bénin). */
+    period: string;
+    totalCollected: BillingMoney;
+    /** Commission retenue à l'encaissement, déjà réglée. */
+    commissionDeducted: BillingMoney;
+    /** Commission à débiter du portefeuille du créancier. */
+    commissionInvoiced: BillingMoney;
+    commissionTotal: BillingMoney;
+    issuedAt: string;
+  };
   /** Avoir émis sur une facture (R-PE-07). */
   'billing.credit_note.issued': {
     creditNoteId: string;

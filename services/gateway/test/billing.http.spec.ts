@@ -1,6 +1,13 @@
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
-import { type BillingServer, INVOICE_ID, protoInvoice, startBillingStub } from './support/billing-stub';
+import {
+  type BillingServer,
+  COMMISSION_INVOICE_ID,
+  INVOICE_ID,
+  protoCommissionInvoice,
+  protoInvoice,
+  startBillingStub,
+} from './support/billing-stub';
 import {
   type IdentityServer,
   ORIGINS,
@@ -150,5 +157,121 @@ describe('gateway → billing', () => {
     });
     expect(wrong.status).toBe(400);
     expect(billing.stub.calls).toEqual([]);
+  });
+
+  describe('recouvrement (ADR-064) : factures de commission et reçus des frais', () => {
+    const staffToken = (role: string, mfa = true) =>
+      keys.accessToken({ claims: { client_id: 'backoffice', mfa, roles: [{ role, scopeType: 'global' }] } });
+
+    it('« Mes factures de commission » : filtres transmis, hors taxe, null pour les vides', async () => {
+      const res = await web(
+        http().get('/api/v1/billing/commission-invoices?status=pending_payment&period=2026-11&limit=5'),
+        customer,
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.nextCursor).toBeNull();
+      expect(res.body.data[0]).toMatchObject({
+        id: COMMISSION_INVOICE_ID,
+        number: 'FCR-2026-000007',
+        creditor: { type: 'organization' },
+        period: '2026-11',
+        commissionInvoiced: { amount: 9000, currency: 'XOF' },
+        balance: { amount: 9000, currency: 'XOF' },
+        amountsExcludingTax: true,
+        paidAt: null,
+        walletTransactionId: null,
+        debit: { attempts: 1, lastFailure: 'insufficient_funds', missing: { amount: 5000, currency: 'XOF' } },
+      });
+      expect(res.body.data[0].organization.rccm).toBeNull();
+      expect(res.body.data[0].lines[0]).toMatchObject({ receivedOn: '2026-11-04', settlement: 'invoiced' });
+      const call = billing.stub.last('listMyCommissionInvoices')!;
+      expect(call.request).toMatchObject({
+        status: 'pending_payment',
+        period: '2026-11',
+        page: { limit: 5 },
+      });
+      expect(call.context?.user?.userId).toBe(USER_ID);
+
+      // Rien à débiter, compte créancier : débit et en-tête absents → null.
+      billing.stub.on('getMyCommissionInvoice', async () => ({
+        commissionInvoice: { ...protoCommissionInvoice, debit: undefined, organization: undefined },
+      }));
+      const detail = await web(
+        http().get(`/api/v1/billing/commission-invoices/${COMMISSION_INVOICE_ID}`),
+        customer,
+      );
+      expect(detail.status).toBe(200);
+      expect(detail.body).toMatchObject({ debit: null, organization: null });
+      expect(billing.stub.last('getMyCommissionInvoice')!.request).toEqual({
+        invoiceId: COMMISSION_INVOICE_ID,
+      });
+
+      const receipts = await web(http().get(`/api/v1/billing/receipts?caseId=${CONTRACT}`), customer);
+      expect(receipts.status).toBe(200);
+      expect(receipts.body.data[0]).toMatchObject({
+        number: 'RFD-2026-000012',
+        kind: 'case_fee',
+        caseNumber: 'RC-000123',
+      });
+      expect(billing.stub.last('listMyFeeReceipts')!.request).toMatchObject({ caseId: CONTRACT });
+    });
+
+    it('refus avant tout appel : mois, état ou dossier mal formés', async () => {
+      for (const url of [
+        '/api/v1/billing/commission-invoices?period=2026-13',
+        '/api/v1/billing/commission-invoices?period=11/2026',
+        '/api/v1/billing/commission-invoices?status=overdue',
+        '/api/v1/billing/receipts?caseId=RC-000123',
+      ]) {
+        expect((await web(http().get(url), customer)).status).toBe(400);
+      }
+      expect(billing.stub.calls).toEqual([]);
+    });
+
+    it('back-office : finance, super administrateur, administration du recouvrement ; autres rôles refusés', async () => {
+      const recoveryAdmin = await staffToken('recovery_admin');
+      const list = await backoffice(
+        http().get(`/api/v1/admin/billing/commission-invoices?creditorId=${USER_ID}&period=2026-11`),
+        recoveryAdmin,
+      );
+      expect(list.status).toBe(200);
+      expect(list.body.nextCursor).toBe(COMMISSION_INVOICE_ID);
+      expect(billing.stub.last('listCommissionInvoices')!.request).toMatchObject({
+        creditorId: USER_ID,
+        period: '2026-11',
+        status: '',
+      });
+      const detail = await backoffice(
+        http().get(`/api/v1/admin/billing/commission-invoices/${COMMISSION_INVOICE_ID}`),
+        finance,
+      );
+      expect(detail.status).toBe(200);
+      expect(detail.body.number).toBe('FCR-2026-000007');
+      expect(
+        (
+          await backoffice(
+            http().get('/api/v1/admin/billing/commission-invoices'),
+            await staffToken('super_admin'),
+          )
+        ).status,
+      ).toBe(200);
+
+      billing.stub.reset();
+      // Lecture des factures du Nettoyage sans les factures de commission.
+      const supervisor = await staffToken('cleaning_supervisor');
+      expect(
+        (await backoffice(http().get('/api/v1/admin/billing/commission-invoices'), supervisor)).status,
+      ).toBe(403);
+      const noMfa = await backoffice(
+        http().get(`/api/v1/admin/billing/commission-invoices/${COMMISSION_INVOICE_ID}`),
+        await staffToken('recovery_admin', false),
+      );
+      expect(noMfa.status).toBe(403);
+      expect(noMfa.body.error.code).toBe('GATEWAY_MFA_REQUIRED');
+      expect(
+        (await backoffice(http().get('/api/v1/admin/billing/commission-invoices'), customer)).status,
+      ).toBe(403);
+      expect(billing.stub.calls).toEqual([]);
+    });
   });
 });
