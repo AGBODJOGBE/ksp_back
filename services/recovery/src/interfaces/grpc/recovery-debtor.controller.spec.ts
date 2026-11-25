@@ -114,7 +114,7 @@ describe('RecoveryDebtorGrpcController (ADR-061)', () => {
       expect((await rejection(callSessionMethod(method, withSession('A'.repeat(43))))).code).toBe(
         'RECOVERY_DEBTOR_SESSION_INVALID',
       );
-      // Requête vide : refusée par le cas d’usage (R3) ou « pas encore disponible » (R4), jamais 401.
+      // Session acceptée : la méthode répond selon son cas d'usage (ici, sans dossier en base).
       expect((await rejection(callSessionMethod(method, withSession(sessionToken)))).code).not.toBe(
         'RECOVERY_DEBTOR_SESSION_INVALID',
       );

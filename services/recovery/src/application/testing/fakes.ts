@@ -22,6 +22,8 @@ import {
 import { type RecoveryDeps } from '../use-cases';
 import { memoryDebtorAccess } from './debtor-access.fakes';
 import { memoryCaseStores } from './case-fakes';
+import { type AmicableOptions } from '../amicable/amicable.ports';
+import { MemoryAmicableStore, MemoryDocumentCancellation } from './amicable-fakes';
 import { memoryMoneyStores } from './money-fakes';
 
 /** Doublures en mémoire des ports (tests des cas d'usage). */
@@ -202,6 +204,10 @@ export function makeDeps(overrides: Partial<RecoveryDeps> = {}) {
     ids: new SequentialIds(),
     debtorAccess: memoryDebtorAccess(),
     ...caseStores,
+    // Procédure amiable (R4) : ordre des canaux du service, e-mail d'abord (choix à trancher).
+    amicable: new MemoryAmicableStore(caseStores.cases),
+    documentCancellation: new MemoryDocumentCancellation(),
+    amicableOptions: { debtorChannels: ['email', 'whatsapp'] } as AmicableOptions,
     ...memoryMoneyStores(caseStores.cases),
   };
   return { ...base, ...overrides } as typeof base;

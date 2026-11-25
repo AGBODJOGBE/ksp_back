@@ -186,6 +186,8 @@ model RecoveryCase {
   callbackRequests CallbackRequest[]
   debtorAccesses   DebtorAccess[]
   evidence         EvidenceEntry[]
+  settlements      Settlement[]
+  debtorMessages   DebtorMessage[]
   refunds          OverpaymentRefund[]
 
   @@unique([creditorType, creditorId, idempotencyKey])
@@ -307,24 +309,30 @@ model CaseDocument {
 
 /// Contact avec le débiteur : message, appel, courrier, visite (R-PR-08).
 model Contact {
-  id             String   @id @db.Uuid
-  caseId         String   @map("case_id") @db.Uuid
+  id             String    @id @db.Uuid
+  caseId         String    @map("case_id") @db.Uuid
   channel        String
   /// outbound ou inbound.
   direction      String
-  occurredAt     DateTime @map("occurred_at") @db.Timestamptz(3)
-  byType         String   @map("by_type")
-  byId           String?  @map("by_id") @db.Uuid
+  occurredAt     DateTime  @map("occurred_at") @db.Timestamptz(3)
+  byType         String    @map("by_type")
+  byId           String?   @map("by_id") @db.Uuid
   outcome        String?
-  deliveryStatus String?  @map("delivery_status")
+  deliveryStatus String?   @map("delivery_status")
   note           String?
   /// Note interne : jamais montrée au créancier ni au débiteur.
-  internal       Boolean  @default(false)
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  internal       Boolean   @default(false)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Lot R4 : débiteur joint, rappel promis (« Ma journée ») et pièce jointe au contact.
+  debtorId       String?   @map("debtor_id") @db.Uuid
+  callbackAt     DateTime? @map("callback_at") @db.Timestamptz(3)
+  callbackDoneAt DateTime? @map("callback_done_at") @db.Timestamptz(3)
+  fileId         String?   @map("file_id") @db.Uuid
 
   case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
   @@index([caseId, occurredAt])
+  @@index([callbackAt])
   @@map("contacts")
 }
 
@@ -339,6 +347,9 @@ model PaymentPromise {
   createdBy String    @map("created_by") @db.Uuid
   keptAt    DateTime? @map("kept_at") @db.Timestamptz(3)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Lot R4 : note du chargé, date du constat de la promesse non tenue.
+  note      String?
+  brokenAt  DateTime? @map("broken_at") @db.Timestamptz(3)
 
   case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
@@ -367,11 +378,22 @@ model PaymentPlan {
   signedAt           DateTime? @map("signed_at") @db.Timestamptz(3)
   endedAt            DateTime? @map("ended_at") @db.Timestamptz(3)
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Lot R4 : protocole en cours de signature et ses envois, message ou note de la proposition,
+  /// validation du superviseur, verrou optimiste de l'échéancier et de ses échéances.
+  documentId         String?   @map("document_id") @db.Uuid
+  signatureSentAt    DateTime? @map("signature_sent_at") @db.Timestamptz(3)
+  signatureExpiresAt DateTime? @map("signature_expires_at") @db.Timestamptz(3)
+  signatureRound     Int       @default(0) @map("signature_round")
+  note               String?
+  reviewedBy         String?   @map("reviewed_by") @db.Uuid
+  reviewedAt         DateTime? @map("reviewed_at") @db.Timestamptz(3)
+  version            Int       @default(0)
 
   case         RecoveryCase  @relation(fields: [caseId], references: [id], onDelete: Cascade)
   installments Installment[]
 
   @@index([caseId, status])
+  @@index([documentId])
   @@map("payment_plans")
 }
 
@@ -729,6 +751,61 @@ model Dispute {
   @@unique([caseId, idempotencyKey])
   @@index([caseId, status])
   @@map("disputes")
+}
+
+/// Remise pour paiement immédiat (R-PR-05), lot R4 : proposée au débiteur dans le barème, ou soumise
+/// au créancier ; une seule remise ouverte par dossier.
+model Settlement {
+  id          String    @id @db.Uuid
+  caseId      String    @map("case_id") @db.Uuid
+  payNow      Int       @map("pay_now")
+  waived      Int
+  discountBps Int       @map("discount_bps")
+  validUntil  DateTime  @map("valid_until") @db.Date
+  /// proposed, pending_creditor, accepted, rejected, executed ou expired.
+  status      String
+  withinScale Boolean   @map("within_scale")
+  proposedBy  String    @map("proposed_by") @db.Uuid
+  note        String?
+  createdAt   DateTime  @map("created_at") @db.Timestamptz(3)
+  answeredAt  DateTime? @map("answered_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, status])
+  @@index([status, validUntil])
+  @@map("settlements")
+}
+
+/// Message au débiteur en file (lot R4) : envoyé dans la plage de contact, hors jours fériés, lien
+/// personnel renouvelé à l'envoi. Ni coordonnée ni nom : lus dans le dossier au moment d'envoyer.
+model DebtorMessage {
+  id             String    @id @db.Uuid
+  caseId         String    @map("case_id") @db.Uuid
+  debtorId       String    @map("debtor_id") @db.Uuid
+  /// Message direct de notification (mandate_notice, reminder, installment_reminder…).
+  message        String
+  /// notice, amicable_step, promise_followup, installment_reminder, plan_confirmed ou manual.
+  purpose        String
+  dedupeKey      String    @unique @map("dedupe_key")
+  /// Variables sans donnée personnelle (montant et jour d'une échéance).
+  variables      Json
+  refId          String?   @map("ref_id") @db.Uuid
+  /// Canal imposé (email) ; null : ordre réglé du service.
+  channel        String?
+  notBefore      DateTime  @map("not_before") @db.Timestamptz(3)
+  /// pending, sent, failed ou cancelled.
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  notificationId String?   @map("notification_id")
+  sentAt         DateTime? @map("sent_at") @db.Timestamptz(3)
+  createdAt      DateTime  @map("created_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([status, notBefore])
+  @@index([caseId, purpose])
+  @@map("debtor_messages")
 }
 
 /// Rappel demandé par le débiteur sur un créneau (partie 7).

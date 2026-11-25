@@ -16,6 +16,7 @@ deux codes internes sont décrits dans `outcome.ts`.
 | `score`              | Score de recouvrabilité (R-SD-07)                                                                          |
 | `deadlines`          | Délais, jours ouvrés, prescription (17.1, partie 2)                                                        |
 | `contact-policy`     | Plages et personnes de contact (partie 2, décision 6)                                                      |
+| `amicable`           | Moment et canal des messages automatiques au débiteur, remise pour paiement immédiat (R-PR-05)             |
 | `eligibility`        | Injonction de payer (étape 6)                                                                              |
 | `debtor-access`      | Lien et code du débiteur (partie 7, 17.3)                                                                  |
 | `import`             | Import par tableur (R-SD-01, R-SD-02)                                                                      |

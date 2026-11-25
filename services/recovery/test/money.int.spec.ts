@@ -20,7 +20,6 @@ import {
   MoneyWallet,
 } from '../src/application/testing/money-fakes';
 import { asFinance, FINANCE_A, FINANCE_B } from '../src/application/testing/money-scenarios';
-import { NO_SETTLEMENTS } from '../src/application/debtor-space/settlement-terms';
 import { createUseCases } from '../src/application/use-cases';
 import { PrismaCaseImportRepository } from '../src/infrastructure/persistence/prisma-case-imports.repository';
 import { PrismaCaseQueries } from '../src/infrastructure/persistence/prisma-case-queries';
@@ -101,7 +100,6 @@ describeWithDatabase('argent du recouvrement (PostgreSQL)', () => {
       money,
       debtorUploads: new MemoryDebtorUploads(),
       documentUrls: new MemoryDocumentUrls(),
-      settlementTerms: NO_SETTLEMENTS,
       ids: new UuidV7Generator(),
     });
     for (const [id, stored] of caseWorld().deps.rules.rules) deps.rules.rules.set(id, stored);

@@ -15,6 +15,12 @@ import { type PersonalData } from './application/ports';
 import { createUseCases, RECOVERY_USE_CASES } from './application/use-cases';
 import { type ServiceConfig } from './config';
 import { GrpcCreditorProfiles } from './infrastructure/grpc/grpc-creditor-profiles';
+import { GrpcDocumentCancellation } from './infrastructure/grpc/grpc-document-cancellation';
+import { PrismaAmicableStore } from './infrastructure/persistence/prisma-amicable.store';
+import {
+  AMICABLE_TASKS_INTERVAL_MS,
+  AmicableTasksService,
+} from './infrastructure/scheduling/amicable-tasks.service';
 import { FileSpreadsheetReader } from './infrastructure/imports/file-spreadsheet-reader';
 import { PrismaCaseImportRepository } from './infrastructure/persistence/prisma-case-imports.repository';
 import { PrismaCaseQueries } from './infrastructure/persistence/prisma-case-queries';
@@ -29,7 +35,6 @@ import {
 } from './infrastructure/scheduling/case-deadlines.service';
 import { MandateSignatureConsumer } from './interfaces/messaging/mandate-signature.consumer';
 // Argent et espace du débiteur (R3).
-import { NO_SETTLEMENTS } from './application/debtor-space/settlement-terms';
 import { GrpcDebtorUploads, GrpcDocumentUrls } from './infrastructure/grpc/grpc-debtor-files';
 import { PrismaMoneyStore } from './infrastructure/persistence/prisma-money.store';
 import { MoneyEffectsService } from './infrastructure/scheduling/money-effects.service';
@@ -148,6 +153,10 @@ export class AppModule {
         CaseDeadlinesService,
         { provide: CASE_DEADLINES_INTERVAL_MS, useValue: config.RECOVERY_CASE_DEADLINES_INTERVAL_MS },
         MandateSignatureConsumer,
+        // Procédure amiable (R4) : contacts, échéanciers, décisions, messages, et sa tâche planifiée.
+        PrismaAmicableStore,
+        AmicableTasksService,
+        { provide: AMICABLE_TASKS_INTERVAL_MS, useValue: config.RECOVERY_AMICABLE_INTERVAL_MS },
         // Argent et espace du débiteur (R3) : dépôt, liens payés, reprise des crédits et des clôtures.
         PrismaMoneyStore,
         PaymentLinkPaidConsumer,
@@ -166,6 +175,7 @@ export class AppModule {
             PrismaCaseQueries,
             PrismaCaseImportRepository,
             PrismaCreditorPreferencesStore,
+            PrismaAmicableStore,
             PrismaMoneyStore,
             WALLET_CLIENT,
             PAYMENT_CLIENT,
@@ -187,6 +197,7 @@ export class AppModule {
             caseQueries: PrismaCaseQueries,
             imports: PrismaCaseImportRepository,
             preferences: PrismaCreditorPreferencesStore,
+            amicable: PrismaAmicableStore,
             money: PrismaMoneyStore,
             wallet: ClientGrpc,
             payment: ClientGrpc,
@@ -253,11 +264,12 @@ export class AppModule {
               clock: new SystemClock(),
               ids: new UuidV7Generator(),
               debtorAccess,
+              amicable,
+              documentCancellation: new GrpcDocumentCancellation(documentClient, callerOf('document')),
+              amicableOptions: { debtorChannels: config.RECOVERY_DEBTOR_CHANNELS },
               money,
               debtorUploads: new GrpcDebtorUploads(fileClient, callerOf('file')),
               documentUrls: new GrpcDocumentUrls(documentClient, callerOf('document')),
-              // Remises de R4, branchées à la fusion.
-              settlementTerms: NO_SETTLEMENTS,
             });
           },
         },

@@ -61,6 +61,34 @@ export const configSchema = baseServiceConfigSchema
     RECOVERY_LONG_DOCUMENT_DEADLINE_MS: z.coerce.number().int().min(3_000).max(60_000).default(15_000),
     /** Intervalle de la tâche des échéances des dossiers (R-SD-04, 4.4) : 10 minutes ; 0 : désactivée. */
     RECOVERY_CASE_DEADLINES_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
+    /** Intervalle de la tâche de la procédure amiable (lot R4) : 10 minutes ; 0 : désactivée. */
+    RECOVERY_AMICABLE_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
+    /**
+     * Ordre des canaux des messages automatiques au débiteur, premier contact compris : « email »,
+     * « whatsapp », ou les deux séparés par une virgule. Le premier dont la coordonnée est connue sert,
+     * notification prend l'autre en repli. La place de WhatsApp au premier contact reste à trancher
+     * avec l'avocat : l'e-mail passe d'abord par défaut.
+     */
+    RECOVERY_DEBTOR_CHANNELS: z.preprocess(
+      unset,
+      z
+        .string()
+        .default('email,whatsapp')
+        .transform((value, ctx) => {
+          const channels = value.split(',').map((channel) => channel.trim());
+          if (
+            channels.some((channel) => channel !== 'email' && channel !== 'whatsapp') ||
+            new Set(channels).size !== channels.length
+          ) {
+            ctx.addIssue({
+              code: 'custom',
+              message: '« email », « whatsapp » ou les deux, séparés par une virgule, sans doublon.',
+            });
+            return z.NEVER;
+          }
+          return channels as ('email' | 'whatsapp')[];
+        }),
+    ),
   })
   .superRefine((cfg, ctx) => {
     requireFieldKeysInProduction(cfg, ctx, ['RECOVERY_PII_ENCRYPTION_KEYS', 'RECOVERY_BLIND_INDEX_KEYS']);
