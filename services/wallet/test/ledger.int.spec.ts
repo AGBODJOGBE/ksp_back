@@ -86,7 +86,7 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       fingerprints: new HmacPhoneFingerprints('test-phone-hash-secret-0123456789abcdef'),
       settings: {
         ledgerCallers: ['recovery'],
-        debitCallers: ['cleaning', 'billing'],
+        debitCallers: ['cleaning', 'billing', 'recovery'],
         creditCallers: ['cleaning'],
         topUpMin: 500,
         topUpMax: 1_000_000,
@@ -129,6 +129,7 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       { code: 'ksp:payouts_in_transit', balance: '0' },
       { code: 'ksp:prepaid_funds', balance: '0' },
       { code: 'ksp:prepaid_withdrawals_in_transit', balance: '0' },
+      { code: 'ksp:recovery_provisions', balance: '0' },
       { code: 'ksp:service_revenue', balance: '0' },
     ]);
     const statement = await asRecovery(() =>
@@ -316,6 +317,87 @@ describeWithDatabase('grand livre wallet (PostgreSQL)', () => {
       const balance = (code: string) => overview.internal.find((a) => a.account === code)!.balance;
       expect(balance('ksp:prepaid_funds')).toBe(overview.owedToCustomers + balance('ksp:service_revenue'));
       expect(overview).toMatchObject({ owedToCustomers: 12000, customersCount: 1 });
+    });
+
+    it('provision du recouvrement : tenue sur ksp:recovery_provisions par la base, remboursée du même compte', async () => {
+      const CASE_ID = '0192f1c4-0000-7000-8000-00000000ca01';
+      const asRecoveryFor = <T>(fn: () => Promise<T>) =>
+        runWithContext(
+          {
+            correlationId: 'c-int',
+            callerService: 'recovery',
+            user: { userId: USER.id, sessionId: 's-int', activeContext: 'personal', roles: [], mfa: false },
+          },
+          fn,
+        );
+      const accountBalance = async (code: string) =>
+        Number(
+          (await pool.query('SELECT balance FROM ledger_accounts WHERE code = $1', [code])).rows[0].balance,
+        );
+      const revenueBefore = await accountBalance('ksp:service_revenue');
+      const before = await prepaidBalance();
+      const provision = () =>
+        asRecoveryFor(() =>
+          useCases.debitPrepaid.execute({
+            idempotencyKey: `recovery_provision:${CASE_ID}:0001`,
+            holder: USER,
+            amount: xof(7000),
+            object: { objectType: 'recovery_provision', objectId: CASE_ID, part: '' },
+            description: 'Provision du dossier RC-000123',
+          }),
+        );
+      const first = await provision();
+      // Rejeu de la même clé : le même débit, rien de plus.
+      expect(await provision()).toMatchObject({ created: false, transaction: { id: first.transaction.id } });
+      const debitId = first.transaction.id;
+      const { rows: lines } = await pool.query(
+        'SELECT account_code, direction, amount, balance_after FROM ledger_entries WHERE transaction_id = $1 ORDER BY account_code',
+        [debitId],
+      );
+      expect(lines).toEqual([
+        {
+          account_code: 'ksp:recovery_provisions',
+          direction: 'credit',
+          amount: '7000',
+          balance_after: '7000',
+        },
+        {
+          account_code: `prepaid:user:${USER.id}`,
+          direction: 'debit',
+          amount: '7000',
+          balance_after: String(before - 7000),
+        },
+      ]);
+      expect(await accountBalance('ksp:recovery_provisions')).toBe(7000);
+      expect(await accountBalance('ksp:service_revenue')).toBe(revenueBefore);
+      const overview = await store.overview();
+      const balance = (code: string) => overview.internal.find((a) => a.account === code)!.balance;
+      expect(balance('ksp:prepaid_funds')).toBe(
+        overview.owedToCustomers + balance('ksp:service_revenue') + balance('ksp:recovery_provisions'),
+      );
+
+      const refund = await asRecoveryFor(() =>
+        useCases.refundDebit.execute({ transactionId: debitId, reason: 'dossier refusé' }),
+      );
+      expect(refund).toMatchObject({ created: true, wallet: { balance: before } });
+      expect(await accountBalance('ksp:recovery_provisions')).toBe(0);
+      expect(await accountBalance('ksp:service_revenue')).toBe(revenueBefore);
+      // Débit de frais de dossier de recovery : un service payé, comme avant.
+      const fee = await asRecoveryFor(() =>
+        useCases.debitPrepaid.execute({
+          idempotencyKey: `recovery_case_fee:${CASE_ID}`,
+          holder: USER,
+          amount: xof(1000),
+          object: { objectType: 'recovery_case_fee', objectId: CASE_ID, part: '' },
+          description: 'Frais de dossier RC-000123',
+        }),
+      );
+      expect(await accountBalance('ksp:service_revenue')).toBe(revenueBefore + 1000);
+      await asRecoveryFor(() =>
+        useCases.refundDebit.execute({ transactionId: fee.transaction.id, reason: 'dossier refusé' }),
+      );
+      expect(await accountBalance('ksp:service_revenue')).toBe(revenueBefore);
+      expect(await prepaidBalance()).toBe(before);
     });
   });
 

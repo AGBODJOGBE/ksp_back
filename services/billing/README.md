@@ -108,6 +108,12 @@ partie 10) : version minimale du lot 2 ; factures de commission et reçus des fr
   insuffisant : facture due, montant manquant noté, nouvel essai après
   `BILLING_COMMISSION_DEBIT_RETRY_MS` (un jour) ; autre échec de wallet : un quart d'heure. Sans
   commission à débiter : réglée dès l'émission.
+- **Nouvel essai dès un crédit** : à `wallet.prepaid.credited` (recharge, remboursement, crédit de la
+  finance ou d'un service), les factures de commission dues du titulaire crédité sont débitées tout de
+  suite, même clé, sous le verrou consultatif de la tâche (`billing.commission_billing`) : jamais deux
+  passages de débit en même temps. Verrou pris : le message revient par la file de reprise. Seul
+  abonnement de billing à cet événement : `WalletCreditEventsConsumer` (facture du lot F visée par
+  `forObject`, puis commissions dues).
 - **Reçus des frais** : `wallet.prepaid.debited` de `recovery` pour `recovery_case_fee` ou
   `recovery_study_fee` donne un reçu `RFD-<année>-<000001>` (année du paiement), un par transaction du
   portefeuille ; un remboursement ultérieur ne l'annule pas. Tout autre débit est ignoré.

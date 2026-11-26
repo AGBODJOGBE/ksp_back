@@ -19,7 +19,8 @@ export const EVENT_CONSUMERS = {
     'cleaning.session.missed',
     'payment.intent.succeeded',
     // Lot F (R-PE-04) : virement ou Mobile Money crédité au portefeuille pour une facture
-    // (forObject "billing_invoice"), débité aussitôt.
+    // (forObject "billing_invoice"), débité aussitôt. Recouvrement (ADR-064) : tout crédit relance
+    // aussitôt le débit des factures de commission dues du titulaire.
     'wallet.prepaid.credited',
     // Recouvrement (ADR-064) : encaissements de la facture mensuelle de commission, et débits des
     // frais de dossier par recovery (service "recovery") qui donnent chacun un reçu.

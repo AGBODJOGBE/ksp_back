@@ -9,6 +9,7 @@ import { type FeeReceipt, formatFeeReceiptNumber } from '../../domain/fee-receip
 import { type BillingMonth } from '../../domain/monthly-invoice';
 import { type OutboxMessage, type PageRequest } from '../ports';
 import {
+  type CommissionDebitLock,
   type CommissionInvoiceFilter,
   type FeeReceiptFilter,
   type RecoveryBillingDeps,
@@ -185,11 +186,29 @@ export class InMemoryRecoveryBilling implements RecoveryBillingRepository {
   }
 }
 
+/** Verrou des débits en mémoire : `held` simule un passage en cours (sur une autre réplique). */
+export class FakeDebitLock implements CommissionDebitLock {
+  held = false;
+  runs = 0;
+
+  async tryRun<T>(run: () => Promise<T>): Promise<{ ran: true; result: T } | { ran: false }> {
+    if (this.held) return { ran: false };
+    this.held = true;
+    this.runs += 1;
+    try {
+      return { ran: true, result: await run() };
+    } finally {
+      this.held = false;
+    }
+  }
+}
+
 export interface RecoveryTestWorld extends RecoveryBillingDeps {
   recorder: Recorder;
   recovery: InMemoryRecoveryBilling;
   organizations: InMemoryOrganizations;
   wallet: FakeWallet;
+  debitLock: FakeDebitLock;
   clock: FixedClock;
 }
 
@@ -202,6 +221,7 @@ export function recoveryTestWorld(): RecoveryTestWorld {
     recovery: new InMemoryRecoveryBilling(recorder),
     organizations,
     wallet: new FakeWallet(),
+    debitLock: new FakeDebitLock(),
     clock: new FixedClock(),
     ids: new SequentialIds(),
   };

@@ -20,6 +20,8 @@ const xof = (value: moneyV1.Money | undefined) => ({
   currency: value?.currency || 'XOF',
 });
 const page = (value: Page): walletV1.Page => ({ limit: value.limit ?? 0, cursor: value.cursor ?? '' });
+/** Compte interne des provisions du recouvrement (ADR-060, point 10). */
+const RECOVERY_PROVISIONS = 'ksp:recovery_provisions';
 
 /** Portefeuille prépayé (ADR-046) : solde dépensable, jamais négatif. */
 /** Demande de crédit manuel soumise à double validation (ADR-048). */
@@ -344,17 +346,27 @@ export class WalletGrpcAdapter implements WalletApi {
     );
   }
 
+  /**
+   * Vue d'ensemble du grand livre. Les provisions du recouvrement (`ksp:recovery_provisions`, ADR-060,
+   * point 10) sont rendues dans leur propre champ, `recoveryProvisions` : l'énumération publiée des
+   * comptes de `internalAccounts` ne prend aucune valeur nouvelle (règle du contrat REST). Absentes
+   * d'un wallet d'avant : champ omis.
+   */
   async getLedgerOverview(): Promise<Json> {
     const res = await this.read('getLedgerOverview', (m) => this.clients.admin.getLedgerOverview({}, m));
+    const provisions = res.internalAccounts.find((account) => account.account === RECOVERY_PROVISIONS);
     return {
-      internalAccounts: res.internalAccounts.map((account) => ({
-        account: account.account,
-        balance: xof(account.balance),
-      })),
+      internalAccounts: res.internalAccounts
+        .filter((account) => account.account !== RECOVERY_PROVISIONS)
+        .map((account) => ({
+          account: account.account,
+          balance: xof(account.balance),
+        })),
       owedToHolders: xof(res.owedToHolders),
       holdersCount: res.holdersCount,
       owedToCustomers: xof(res.owedToCustomers),
       customersCount: res.customersCount,
+      ...(provisions ? { recoveryProvisions: xof(provisions.balance) } : {}),
     };
   }
 

@@ -21,6 +21,7 @@ import {
   COMMISSION_BILLING_LOCK,
   CommissionBillingSchedulerService,
 } from '../src/infrastructure/scheduling/commission-billing-scheduler.service';
+import { PgCommissionDebitLock } from '../src/infrastructure/scheduling/pg-commission-debit-lock';
 import { PgRunLock } from '../src/infrastructure/scheduling/pg-run-lock';
 import { UuidV7Generator } from '../src/infrastructure/system/system';
 
@@ -78,6 +79,7 @@ describeWithDatabase('facturation du recouvrement (PostgreSQL, ADR-064)', () => 
       recovery: new PrismaRecoveryBillingRepository(prisma),
       organizations,
       wallet: new FakeWallet(),
+      debitLock: new PgCommissionDebitLock(new PgRunLock(prisma)),
       clock: new FixedClock(),
       ids,
     };
@@ -375,5 +377,79 @@ describeWithDatabase('facturation du recouvrement (PostgreSQL, ADR-064)', () => 
     await expect(
       pool.query("INSERT INTO series_counters (series, year, last_number) VALUES ('FAC', 2026, 1)"),
     ).rejects.toThrow(/series_counters_values_check/);
+  });
+
+  it('nouvel essai dès un crédit du portefeuille : sous le verrou de la tâche, un seul débit, même clé', async () => {
+    await collect({
+      commission: xof(8_000),
+      commissionSettlement: 'invoiced',
+      source: 'direct_to_creditor',
+      receivedAt: '2027-01-10T10:00:00Z',
+    });
+    deps.clock.current = at('2027-01-31T23:00:00Z');
+    deps.wallet.balances.set(ORGANIZATION_ID, 1_000);
+    await useCases.issueCommissionInvoices.execute();
+    await useCases.debitCommissionInvoices.execute();
+    const invoice = async () =>
+      (await commissionInvoices()).find(
+        (row) => String(row['number']).startsWith('FCR-2027-') && row['creditor_type'] === 'organization',
+      );
+    expect(await invoice()).toMatchObject({
+      status: 'pending_payment',
+      debit_attempts: 1,
+      last_debit_failure: 'insufficient_funds',
+      debit_missing_amount: 7_000,
+    });
+
+    // Recharge du créancier le matin : le prochain essai n'est prévu que le soir.
+    deps.wallet.balances.set(ORGANIZATION_ID, 20_000);
+    deps.clock.current = at('2027-02-01T08:00:00Z');
+    const payload: WalletEventPayloads['wallet.prepaid.credited'] = {
+      transactionId: ids.next(),
+      kind: 'top_up',
+      topUpChannel: 'mobile_money_online',
+      origin: 'payment',
+      holder: { type: 'organization', id: ORGANIZATION_ID },
+      userId: CUSTOMER_ID,
+      amount: xof(19_000),
+      balanceAfter: xof(20_000),
+      description: 'Recharge Mobile Money',
+      paymentId: ids.next(),
+      refundedTransactionId: null,
+      creditedAt: '2027-02-01T08:00:00Z',
+    };
+    const retry = () => useCases.retryCommissionDebitsOnWalletCredit.execute({ payload });
+
+    // La tâche planifiée tient le verrou sur une autre réplique : erreur (message repris plus tard).
+    let release: () => void = () => undefined;
+    const holding = new Promise<void>((resolve) => (release = resolve));
+    const other = new PgRunLock(prisma).tryRun(COMMISSION_BILLING_LOCK, () => holding, 30_000);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await expect(retry()).rejects.toThrow(/Débit des commissions en cours/);
+    expect(await invoice()).toMatchObject({ status: 'pending_payment', debit_attempts: 1 });
+    release();
+    await other;
+
+    // Même crédit livré deux fois en même temps : un seul passage débite, une seule fois.
+    const outcomes = await Promise.allSettled([retry(), retry()]);
+    const paid = outcomes
+      .filter((outcome) => outcome.status === 'fulfilled')
+      .reduce((sum, outcome) => sum + (outcome as PromiseFulfilledResult<{ paid: number }>).value.paid, 0);
+    expect(paid).toBe(1);
+    // Message rejoué : plus rien de dû.
+    expect(await retry()).toEqual({ due: 0, paid: 0, failures: [] });
+    const settled = await invoice();
+    expect(settled).toMatchObject({
+      status: 'paid',
+      debit_attempts: 2,
+      last_debit_failure: null,
+      debit_missing_amount: null,
+      next_debit_attempt_at: null,
+      paid_at: at('2027-02-01T08:00:00Z'),
+    });
+    expect(settled!['wallet_transaction_id']).toBe(
+      deps.wallet.debits.get(`billing_commission_invoice:${String(settled!['id'])}`)!.transactionId,
+    );
+    expect(deps.wallet.balances.get(ORGANIZATION_ID)).toBe(12_000);
   });
 });

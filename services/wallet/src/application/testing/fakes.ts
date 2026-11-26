@@ -458,7 +458,7 @@ export function makeDeps(overrides: Partial<WalletDeps> = {}) {
       },
       settings: {
         ledgerCallers: ['recovery'] as readonly string[],
-        debitCallers: ['cleaning', 'billing'] as readonly string[],
+        debitCallers: ['cleaning', 'billing', 'recovery'] as readonly string[],
         creditCallers: ['cleaning'] as readonly string[],
         topUpMin: 500,
         topUpMax: 1_000_000,

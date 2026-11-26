@@ -42,6 +42,16 @@ par la CI (oasdiff). `billing` ne produit aucun PDF aujourd'hui.
    plus tard. La finance voit au back-office l'état du débit (tentatives, dernier échec, montant
    manquant, prochain essai). Une commission `deducted` s'affiche comme déjà réglée ; une facture sans
    part `invoiced` est réglée dès son émission.
+   **Nouvel essai dès un crédit du portefeuille** (décision du 2026-11-25) : à la réception de
+   `wallet.prepaid.credited` (recharge, remboursement, crédit de la finance ou d'un service), les
+   factures de commission encore dues du titulaire crédité sont débitées tout de suite, sans attendre
+   le prochain essai, avec la même clé d'idempotence (`billing_commission_invoice:<id>`) : `wallet`
+   rend un débit déjà fait, jamais un second. Ce nouvel essai prend le verrou consultatif de la tâche
+   planifiée (`billing.commission_billing`) : tâche et nouvel essai ne débitent jamais en même temps,
+   d'une réplique à l'autre ; les factures sont relues sous le verrou. Verrou pris (passage en cours) :
+   le message revient par la file de reprise (10 s, puis délais croissants). Aucune facture due : rien,
+   sans verrou. Un échec suit la règle ci-dessus (solde encore insuffisant : prochain essai un jour plus
+   tard). L'événement reçu deux fois n'a pas d'effet de plus : une facture réglée n'est plus due.
 5. **Reçus des frais de dossier** : émis à partir de `wallet.prepaid.debited` quand `service` vaut
    `recovery` et `objectType` vaut `recovery_case_fee` (frais de dossier) ou `recovery_study_fee`
    (forfait d'étude). Convention suivie par `recovery` : objectId = id du dossier, libellé « Frais de
@@ -89,7 +99,9 @@ par la CI (oasdiff). `billing` ne produit aucun PDF aujourd'hui.
 - `billing` : migration `0010_recovery_commission_invoices` (encaissements, factures de commission et
   leurs lignes, reçus, compteurs par série) ; abonnements à `recovery.payment.collected` et
   `wallet.prepaid.debited` déclarés dans `EVENT_CONSUMERS` ; tâche planifiée propre sous verrou
-  consultatif ; variable `BILLING_COMMISSION_DEBIT_RETRY_MS`.
+  consultatif ; variable `BILLING_COMMISSION_DEBIT_RETRY_MS`. `wallet.prepaid.credited`, déjà écouté
+  pour le lot F (déjà dans `EVENT_CONSUMERS`), relance aussi le débit des commissions dues : un seul
+  abonnement (`WalletCreditEventsConsumer`), une file par service et par événement.
 - `wallet` : `billing` figure déjà dans `WALLET_DEBIT_CALLERS` ; les débits de commission apparaissent
   au relevé du créancier (« Commission de recouvrement — facture FCR-… ») et dans
   `wallet.prepaid.debited` (service `billing`, ignoré par le reçu de frais).
@@ -99,8 +111,6 @@ par la CI (oasdiff). `billing` ne produit aucun PDF aujourd'hui.
 
 ## À valider
 
-- Relance de la commission due dès une recharge du portefeuille (`wallet.prepaid.credited`), en plus du
-  nouvel essai quotidien.
 - Commission due par une organisation : faut-il prévenir ses administrateurs à chaque échec du débit
   (événement à publier pour `notification`) ?
 - Mentions légales de la facture hors taxe (régime fiscal de KSP) à confirmer par le comptable avant

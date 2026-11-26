@@ -191,6 +191,27 @@ describe('gateway → liens de paiement, reversements, portefeuille', () => {
       const denied = await backoffice(http().get('/api/v1/admin/wallet/overview'), cleaningAdmin);
       expect(denied.status).toBe(403);
     });
+
+    it('vue d’ensemble : provisions du recouvrement dans leur champ, énumération des comptes inchangée', async () => {
+      const res = await backoffice(http().get('/api/v1/admin/wallet/overview'), finance);
+      expect(res.status).toBe(200);
+      expect(res.body.internalAccounts.map((line: { account: string }) => line.account)).toEqual([
+        'ksp:collections',
+        'ksp:commission',
+        'ksp:payouts_in_transit',
+      ]);
+      expect(res.body.recoveryProvisions).toEqual({ amount: 7000, currency: 'XOF' });
+      // wallet d'avant les provisions : champ omis.
+      wallet.stub.on('getLedgerOverview', async () => ({
+        internalAccounts: [{ account: 'ksp:collections', balance: { amount: 100, currency: 'XOF' } }],
+        owedToHolders: { amount: 100, currency: 'XOF' },
+        holdersCount: 1,
+        owedToCustomers: { amount: 0, currency: 'XOF' },
+        customersCount: 0,
+      }));
+      const before = await backoffice(http().get('/api/v1/admin/wallet/overview'), finance);
+      expect(before.body).not.toHaveProperty('recoveryProvisions');
+    });
     it('portefeuille prépayé (ADR-046) : solde, limites de recharge, relevé filtré', async () => {
       const auth = (req: request.Test) =>
         req.set('Origin', ORIGINS.web).set('Authorization', `Bearer ${customer}`);
