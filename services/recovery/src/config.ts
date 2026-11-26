@@ -63,6 +63,8 @@ export const configSchema = baseServiceConfigSchema
     RECOVERY_CASE_DEADLINES_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
     /** Intervalle de la tâche de la procédure amiable (lot R4) : 10 minutes ; 0 : désactivée. */
     RECOVERY_AMICABLE_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
+    /** Intervalle de la tâche du contentieux (lot R5) : 10 minutes ; 0 : désactivée. */
+    RECOVERY_LITIGATION_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
     /**
      * Ordre des canaux des messages automatiques au débiteur, premier contact compris : « email »,
      * « whatsapp », ou les deux séparés par une virgule. Le premier dont la coordonnée est connue sert,
