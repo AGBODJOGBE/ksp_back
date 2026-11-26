@@ -55,6 +55,26 @@ function debited(
   };
 }
 
+function credited(
+  overrides: Partial<WalletEventPayloads['wallet.prepaid.credited']> = {},
+): WalletEventPayloads['wallet.prepaid.credited'] {
+  return {
+    transactionId: nextId('c000'),
+    kind: 'top_up',
+    topUpChannel: 'mobile_money_online',
+    origin: 'payment',
+    holder: { type: 'organization', id: ORGANIZATION_ID },
+    userId: CUSTOMER_ID,
+    amount: xof(20_000),
+    balanceAfter: xof(20_000),
+    description: 'Recharge Mobile Money',
+    paymentId: nextId('d000'),
+    refundedTransactionId: null,
+    creditedAt: '2026-12-01T09:00:00Z',
+    ...overrides,
+  };
+}
+
 describe('Facturation du recouvrement (ADR-064)', () => {
   let world: RecoveryTestWorld;
   let useCases: ReturnType<typeof createRecoveryBillingUseCases>;
@@ -289,6 +309,133 @@ describe('Facturation du recouvrement (ADR-064)', () => {
         missingAmount: null,
         nextAttemptAt: new Date(at('2026-12-01T05:00:00Z').getTime() + WALLET_ERROR_RETRY_MS),
       });
+    });
+  });
+
+  describe('nouvel essai dès un crédit du portefeuille (wallet.prepaid.credited)', () => {
+    const invoiced = (commission: number) =>
+      record(
+        collected({
+          commission: xof(commission),
+          commissionSettlement: 'invoiced',
+          source: 'direct_to_creditor',
+        }),
+      );
+    const credit = (payload = credited()) =>
+      useCases.retryCommissionDebitsOnWalletCredit.execute({ payload });
+    const debitCalls = () => world.wallet.debits.size;
+
+    /** Facture de commission de l'organisation, due après un premier essai refusé (solde insuffisant). */
+    async function dueInvoice() {
+      await invoiced(12_000);
+      world.wallet.balances.set(ORGANIZATION_ID, 2_000);
+      await useCases.issueCommissionInvoices.execute();
+      await useCases.debitCommissionInvoices.execute();
+      expect(invoices()[0]).toMatchObject({ status: 'pending_payment', debit: { attempts: 1 } });
+    }
+
+    it('aucune facture due : rien, sans verrou ni appel à wallet', async () => {
+      expect(await credit()).toEqual({ due: 0, paid: 0, failures: [] });
+      // Facture réglée dès l'émission (commission retenue) : rien non plus.
+      await record();
+      await useCases.issueCommissionInvoices.execute();
+      expect(await credit()).toEqual({ due: 0, paid: 0, failures: [] });
+      expect(world.debitLock.runs).toBe(0);
+      expect(debitCalls()).toBe(0);
+    });
+
+    it('facture due puis recharge : débitée tout de suite, même clé, sans attendre le nouvel essai', async () => {
+      await dueInvoice();
+      world.wallet.balances.set(ORGANIZATION_ID, 15_000);
+      world.clock.current = at('2026-12-01T09:00:00Z');
+      expect(await credit()).toEqual({ due: 1, paid: 1, failures: [] });
+      const [invoice] = invoices();
+      const debit = world.wallet.debits.get(`billing_commission_invoice:${invoice!.id}`);
+      expect(debit).toMatchObject({ amount: 12_000, holderId: ORGANIZATION_ID });
+      expect(invoice).toMatchObject({
+        status: 'paid',
+        paidAt: at('2026-12-01T09:00:00Z'),
+        walletTransactionId: debit!.transactionId,
+        debit: { attempts: 2, nextAttemptAt: null, lastFailure: null, missingAmount: null },
+      });
+      expect(world.wallet.balances.get(ORGANIZATION_ID)).toBe(3_000);
+      expect(world.debitLock.runs).toBe(1);
+      // La tâche planifiée n'a plus rien à débiter.
+      world.clock.current = at('2026-12-01T23:00:00Z');
+      expect(await useCases.debitCommissionInvoices.execute()).toEqual({ paid: 0, failures: [] });
+    });
+
+    it('idempotent : le même crédit reçu deux fois ne débite rien de plus', async () => {
+      await dueInvoice();
+      world.wallet.balances.set(ORGANIZATION_ID, 50_000);
+      const payload = credited();
+      expect((await credit(payload)).paid).toBe(1);
+      expect(await credit(payload)).toEqual({ due: 0, paid: 0, failures: [] });
+      expect(debitCalls()).toBe(1);
+      expect(world.wallet.balances.get(ORGANIZATION_ID)).toBe(38_000);
+    });
+
+    it('recharge insuffisante : reste due, montant manquant, nouvel essai planifié', async () => {
+      await dueInvoice();
+      world.wallet.balances.set(ORGANIZATION_ID, 5_000);
+      world.clock.current = at('2026-12-01T09:00:00Z');
+      const outcome = await credit();
+      expect(outcome).toMatchObject({ due: 1, paid: 0 });
+      expect(outcome.failures).toEqual([
+        expect.objectContaining({ reason: 'insufficient_funds', code: 'WALLET_INSUFFICIENT_FUNDS' }),
+      ]);
+      expect(invoices()[0]).toMatchObject({
+        status: 'pending_payment',
+        debit: {
+          attempts: 2,
+          lastFailure: 'insufficient_funds',
+          missingAmount: 7_000,
+          nextAttemptAt: new Date(at('2026-12-01T09:00:00Z').getTime() + DEFAULT_DEBIT_RETRY_DELAY_MS),
+        },
+      });
+    });
+
+    it('crédit d’un autre titulaire : rien ; le compte personnel du membre n’est pas l’organisation', async () => {
+      await dueInvoice();
+      world.wallet.balances.set(ORGANIZATION_ID, 50_000);
+      expect(await credit(credited({ holder: { type: 'user', id: CUSTOMER_ID } }))).toEqual({
+        due: 0,
+        paid: 0,
+        failures: [],
+      });
+      expect(await credit(credited({ holder: { type: 'organization', id: OTHER_ORG } }))).toEqual({
+        due: 0,
+        paid: 0,
+        failures: [],
+      });
+      expect(invoices()[0]!.status).toBe('pending_payment');
+    });
+
+    it('passage de débit en cours (verrou pris) : erreur, rien n’est débité ; repris ensuite', async () => {
+      await dueInvoice();
+      world.wallet.balances.set(ORGANIZATION_ID, 15_000);
+      world.debitLock.held = true;
+      await expect(credit()).rejects.toThrow(/Débit des commissions en cours/);
+      expect(invoices()[0]).toMatchObject({ status: 'pending_payment', debit: { attempts: 1 } });
+      expect(debitCalls()).toBe(0);
+      // Message rejoué par la file de reprise, le passage terminé.
+      world.debitLock.held = false;
+      expect((await credit()).paid).toBe(1);
+    });
+
+    it('facture réglée par le passage qui tenait le verrou : relue sous le verrou, rien de plus', async () => {
+      await dueInvoice();
+      world.wallet.balances.set(ORGANIZATION_ID, 15_000);
+      const tryRun = world.debitLock.tryRun.bind(world.debitLock);
+      world.debitLock.tryRun = async <T>(run: () => Promise<T>) => {
+        // La tâche planifiée règle la facture juste avant que le verrou ne soit libéré.
+        world.clock.current = at('2026-12-01T23:00:00Z');
+        await useCases.debitCommissionInvoices.execute();
+        return tryRun(run);
+      };
+      expect(await credit()).toEqual({ due: 0, paid: 0, failures: [] });
+      expect(debitCalls()).toBe(1);
+      expect(invoices()[0]).toMatchObject({ status: 'paid', debit: { attempts: 2 } });
     });
   });
 

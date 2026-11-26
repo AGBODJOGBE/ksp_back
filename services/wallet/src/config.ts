@@ -26,8 +26,11 @@ export const configSchema = baseServiceConfigSchema
   .safeExtend({
     /** Services autorisés à écrire dans le grand livre et à lire les titulaires (jeton de service). */
     WALLET_LEDGER_CALLERS: serviceList('recovery'),
-    /** Services autorisés à débiter et rembourser les portefeuilles prépayés (ADR-046). */
-    WALLET_DEBIT_CALLERS: serviceList('cleaning,billing'),
+    /**
+     * Services autorisés à débiter et rembourser les portefeuilles prépayés (ADR-046) ; recovery pour
+     * les frais de dossier et les provisions (ADR-060, point 10).
+     */
+    WALLET_DEBIT_CALLERS: serviceList('cleaning,billing,recovery'),
     /**
      * Services autorisés à créditer un portefeuille sans débit à rembourser (Credit : geste
      * commercial, crédit d'une réclamation, remboursement partiel ; CDC Nettoyage v2, R-WL-04),

@@ -1,4 +1,5 @@
 import { type AppError, runWithContext } from '@ksp/platform';
+import { type AccountCode } from '../domain/ledger';
 import {
   asCustomer,
   asService,
@@ -197,7 +198,7 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
       await topUp();
       await debit();
       expect((await rejection(debit({ amount: xof(1000) }))).code).toBe('WALLET_IDEMPOTENCY_KEY_REUSED');
-      expect((await rejection(debit({ idempotencyKey: 'other-key-0001' }, 'recovery'))).code).toBe(
+      expect((await rejection(debit({ idempotencyKey: 'other-key-0001' }, 'notification'))).code).toBe(
         'WALLET_CALLER_FORBIDDEN',
       );
     });
@@ -229,6 +230,73 @@ describe('portefeuille prépayé (cas d’usage, ADR-046)', () => {
         type: 'wallet.prepaid.credited',
         payload: { kind: 'refund', origin: 'service', refundedTransactionId: transaction.id },
       });
+    });
+  });
+
+  describe('provision du recouvrement (ADR-060, point 10)', () => {
+    const CASE_ID = '0192f1c4-0000-7000-8000-00000000ca01';
+    const balance = (code: AccountCode) => setup.store.balances.get(code) ?? 0;
+    const provision = (overrides: Record<string, unknown> = {}, caller = 'recovery') =>
+      debit(
+        {
+          idempotencyKey: `recovery_provision:${CASE_ID}:0001`,
+          object: { objectType: 'recovery_provision', objectId: CASE_ID, part: '' },
+          description: 'Provision du dossier RC-000123',
+          ...overrides,
+        },
+        caller,
+      );
+
+    it('tenue sur ksp:recovery_provisions, pas un produit de KSP ; écritures équilibrées', async () => {
+      await topUp();
+      const { transaction } = await provision({ amount: xof(12000) });
+      expect(transaction).toMatchObject({ kind: 'service_payment', caller: 'recovery', amount: 12000 });
+      expect(transaction.entries).toEqual([
+        { account: `prepaid:user:${USER_ID}`, direction: 'debit', amount: 12000 },
+        { account: 'ksp:recovery_provisions', direction: 'credit', amount: 12000 },
+      ]);
+      expect(balance('ksp:recovery_provisions')).toBe(12000);
+      expect(balance('ksp:service_revenue')).toBe(0);
+      expect((await prepaid()).balance).toBe(8000);
+      // Invariant : recharges reçues = portefeuilles + services payés + provisions du recouvrement.
+      expect(balance('ksp:prepaid_funds')).toBe(
+        (await prepaid()).balance + balance('ksp:service_revenue') + balance('ksp:recovery_provisions'),
+      );
+      expect(setup.store.events.at(-1)).toMatchObject({
+        type: 'wallet.prepaid.debited',
+        payload: { service: 'recovery', objectType: 'recovery_provision', amount: xof(12000) },
+      });
+    });
+
+    it('remboursement : repart du même compte, une seule fois', async () => {
+      await topUp();
+      const { transaction } = await provision({ amount: xof(12000) });
+      const refund = () =>
+        asService('recovery', () =>
+          useCases.refundDebit.execute({ transactionId: transaction.id, reason: 'dossier refusé' }),
+        );
+      const first = await refund();
+      expect(first).toMatchObject({ created: true, wallet: { balance: 20000 } });
+      expect(first.transaction.entries).toEqual([
+        { account: `prepaid:user:${USER_ID}`, direction: 'credit', amount: 12000 },
+        { account: 'ksp:recovery_provisions', direction: 'debit', amount: 12000 },
+      ]);
+      expect(await refund()).toMatchObject({ created: false, transaction: { id: first.transaction.id } });
+      expect(balance('ksp:recovery_provisions')).toBe(0);
+      expect(balance('ksp:service_revenue')).toBe(0);
+    });
+
+    it('autres débits inchangés : frais de dossier de recovery, provision d’un autre service', async () => {
+      await topUp();
+      await provision({
+        idempotencyKey: `recovery_case_fee:${CASE_ID}`,
+        amount: xof(5000),
+        object: { objectType: 'recovery_case_fee', objectId: CASE_ID, part: '' },
+        description: 'Frais de dossier RC-000123',
+      });
+      await provision({ idempotencyKey: `cleaning-provision:${CASE_ID}`, amount: xof(3000) }, 'cleaning');
+      expect(balance('ksp:service_revenue')).toBe(8000);
+      expect(balance('ksp:recovery_provisions')).toBe(0);
     });
   });
 

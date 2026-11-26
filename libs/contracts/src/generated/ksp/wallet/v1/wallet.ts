@@ -130,7 +130,8 @@ export interface LedgerEntry {
    * "holder:user:<id>", "holder:organization:<id>", "ksp:collections", "ksp:commission" ou
    * "ksp:payouts_in_transit" ; portefeuille prépayé (ADR-046) : "prepaid:user:<id>",
    * "prepaid:organization:<id>", "ksp:prepaid_funds" ou "ksp:service_revenue" ; retraits (R-WL-04) :
-   * "ksp:prepaid_withdrawals_in_transit".
+   * "ksp:prepaid_withdrawals_in_transit" ; provisions du recouvrement (ADR-060, point 10) :
+   * "ksp:recovery_provisions".
    */
   account: string;
   /** "debit" ou "credit". */
@@ -374,8 +375,10 @@ export interface GetLedgerOverviewRequest {
 
 export interface AccountBalance {
   /**
-   * "ksp:collections", "ksp:commission", "ksp:payouts_in_transit", "ksp:prepaid_funds" ou
-   * "ksp:service_revenue".
+   * "ksp:collections", "ksp:commission", "ksp:payouts_in_transit", "ksp:prepaid_funds",
+   * "ksp:service_revenue", "ksp:prepaid_withdrawals_in_transit" ou "ksp:recovery_provisions"
+   * (provisions du recouvrement, ADR-060, point 10 ; rendu par la gateway dans `recoveryProvisions`,
+   * hors de `internalAccounts`, dont l'énumération publiée ne change pas).
    */
   account: string;
   /** Solde dans le sens naturel du compte (positif en temps normal). */
@@ -773,11 +776,17 @@ export interface WalletServiceClient {
    * "cleaning_session:<id>" pour une séance, R-PP-01) et un objet (appelant, type, identifiant, part)
    * n'a jamais deux débits non remboursés : un second débit avec une autre clé est refusé
    * (WALLET_OBJECT_ALREADY_DEBITED).
+   * Contrepartie : "ksp:service_revenue", sauf la provision versée au recouvrement (appelant
+   * "recovery", object_type "recovery_provision"), tenue sur "ksp:recovery_provisions" : KSP n'avance
+   * jamais de frais de procédure, et la provision n'est pas un produit de KSP (ADR-060, point 10).
    */
 
   debit(request: DebitRequest, metadata?: Metadata): Observable<DebitResponse>;
 
-  /** Remboursement d'un débit de l'appelant : écriture inverse, le montant est recrédité (une fois). */
+  /**
+   * Remboursement d'un débit de l'appelant : écriture inverse, le montant est recrédité (une fois)
+   * depuis le compte que le débit avait crédité.
+   */
 
   refund(request: RefundRequest, metadata?: Metadata): Observable<RefundResponse>;
 
@@ -837,11 +846,17 @@ export interface WalletServiceController {
    * "cleaning_session:<id>" pour une séance, R-PP-01) et un objet (appelant, type, identifiant, part)
    * n'a jamais deux débits non remboursés : un second débit avec une autre clé est refusé
    * (WALLET_OBJECT_ALREADY_DEBITED).
+   * Contrepartie : "ksp:service_revenue", sauf la provision versée au recouvrement (appelant
+   * "recovery", object_type "recovery_provision"), tenue sur "ksp:recovery_provisions" : KSP n'avance
+   * jamais de frais de procédure, et la provision n'est pas un produit de KSP (ADR-060, point 10).
    */
 
   debit(request: DebitRequest, metadata?: Metadata): Promise<DebitResponse> | Observable<DebitResponse> | DebitResponse;
 
-  /** Remboursement d'un débit de l'appelant : écriture inverse, le montant est recrédité (une fois). */
+  /**
+   * Remboursement d'un débit de l'appelant : écriture inverse, le montant est recrédité (une fois)
+   * depuis le compte que le débit avait crédité.
+   */
 
   refund(
     request: RefundRequest,

@@ -28,6 +28,15 @@
  * le virement fait, ou rendu au portefeuille (échec, refus).
  *
  * Invariant v2 : fonds des recharges = Σ portefeuilles + services payés + retraits en transit.
+ *
+ * Provisions du recouvrement (ADR-060, point 10) : KSP n'avance jamais de frais de procédure, le
+ * créancier verse une provision depuis son portefeuille prépayé (débit de `recovery`, objet
+ * `recovery_provision`). Elle est tenue sur `ksp:recovery_provisions` — passif, sens naturel crédit :
+ * argent du créancier gardé pour ses frais de procédure, pas un produit de KSP — et non sur
+ * `ksp:service_revenue`. Le remboursement de ce débit (écriture inverse) repart de ce même compte.
+ *
+ * Invariant : fonds des recharges = Σ portefeuilles + services payés + retraits en transit +
+ * provisions du recouvrement.
  */
 export type HolderType = 'user' | 'organization';
 export const HOLDER_TYPES: readonly HolderType[] = ['user', 'organization'];
@@ -43,7 +52,8 @@ export type InternalAccount =
   | 'ksp:payouts_in_transit'
   | 'ksp:prepaid_funds'
   | 'ksp:service_revenue'
-  | 'ksp:prepaid_withdrawals_in_transit';
+  | 'ksp:prepaid_withdrawals_in_transit'
+  | 'ksp:recovery_provisions';
 export const INTERNAL_ACCOUNTS: readonly InternalAccount[] = [
   'ksp:collections',
   'ksp:commission',
@@ -51,6 +61,7 @@ export const INTERNAL_ACCOUNTS: readonly InternalAccount[] = [
   'ksp:prepaid_funds',
   'ksp:service_revenue',
   'ksp:prepaid_withdrawals_in_transit',
+  'ksp:recovery_provisions',
 ];
 export type AccountCode =
   InternalAccount | `holder:${HolderType}:${string}` | `prepaid:${HolderType}:${string}`;
@@ -222,11 +233,35 @@ export function topUpEntries(holder: Holder, amount: number): EntryLine[] {
   ];
 }
 
-/** Paiement d'un service : le portefeuille est débité, le service payé. */
-export function servicePaymentEntries(holder: Holder, amount: number): EntryLine[] {
+/** Débit d'une provision du recouvrement (ADR-060, point 10) : service appelant et type d'objet. */
+export const RECOVERY_PROVISION_DEBIT = { service: 'recovery', objectType: 'recovery_provision' } as const;
+
+/** Compte interne crédité par le débit d'un portefeuille. */
+export type DebitCounterpart = Extract<InternalAccount, 'ksp:service_revenue' | 'ksp:recovery_provisions'>;
+
+/**
+ * Compte crédité par le débit d'un portefeuille : `ksp:recovery_provisions` pour une provision du
+ * recouvrement (argent du créancier, pas un produit de KSP), `ksp:service_revenue` pour tout autre
+ * paiement de service.
+ */
+export function debitCounterpart(service: string, objectType: string): DebitCounterpart {
+  return service === RECOVERY_PROVISION_DEBIT.service && objectType === RECOVERY_PROVISION_DEBIT.objectType
+    ? 'ksp:recovery_provisions'
+    : 'ksp:service_revenue';
+}
+
+/**
+ * Paiement d'un service : le portefeuille est débité, le service payé — ou la provision du
+ * recouvrement tenue (contrepartie donnée par `debitCounterpart`).
+ */
+export function servicePaymentEntries(
+  holder: Holder,
+  amount: number,
+  counterpart: DebitCounterpart = 'ksp:service_revenue',
+): EntryLine[] {
   return [
     { account: prepaidAccount(holder), direction: 'debit', amount },
-    { account: 'ksp:service_revenue', direction: 'credit', amount },
+    { account: counterpart, direction: 'credit', amount },
   ];
 }
 

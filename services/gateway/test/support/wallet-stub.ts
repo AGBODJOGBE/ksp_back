@@ -246,6 +246,8 @@ const DEFAULTS: Record<Method, () => unknown> = {
       { account: 'ksp:collections', balance: xof(33750) },
       { account: 'ksp:commission', balance: xof(3125) },
       { account: 'ksp:payouts_in_transit', balance: xof(21875) },
+      // Provisions du recouvrement (ADR-060, point 10) : rendues hors de internalAccounts.
+      { account: 'ksp:recovery_provisions', balance: xof(7000) },
     ],
     owedToHolders: xof(8750),
     holdersCount: 1,

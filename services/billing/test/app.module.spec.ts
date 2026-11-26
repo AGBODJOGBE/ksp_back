@@ -2,6 +2,7 @@ import { loadConfig } from '@ksp/platform';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { configSchema } from '../src/config';
+import { WalletCreditEventsConsumer } from '../src/infrastructure/messaging/wallet-credit-events.consumer';
 import { BillingSchedulerService } from '../src/infrastructure/scheduling/billing-scheduler.service';
 import { CommissionBillingSchedulerService } from '../src/infrastructure/scheduling/commission-billing-scheduler.service';
 import { BillingAdminGrpcController, BillingGrpcController } from '../src/interfaces/grpc/billing.controller';
@@ -23,6 +24,8 @@ describe('AppModule', () => {
     expect(moduleRef.get(BillingAdminGrpcController)).toBeDefined();
     expect(moduleRef.get(BillingSchedulerService)).toBeDefined();
     expect(moduleRef.get(CommissionBillingSchedulerService)).toBeDefined();
+    // Seul abonné de billing à wallet.prepaid.credited (lot F, puis commissions dues du recouvrement).
+    expect(moduleRef.get(WalletCreditEventsConsumer)).toBeDefined();
     await moduleRef.close();
   });
 });

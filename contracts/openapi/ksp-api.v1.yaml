@@ -17882,6 +17882,10 @@ paths:
         payés depuis un portefeuille), `owedToCustomers` (somme des portefeuilles). Invariant : recharges reçues =
         portefeuilles + services payés.
 
+        Provisions du recouvrement (ADR-060, point 10) : `recoveryProvisions`, provisions versées par les créanciers
+        depuis leur portefeuille pour les frais de procédure (compte interne `ksp:recovery_provisions`, hors de
+        `internalAccounts`). Ce n'est pas un produit de KSP.
+
         Rôles : `finance_officer`, `super_admin` ; double authentification faite pendant la session (12 heures au plus).
       x-ksp-grpc: ksp.wallet.v1.WalletAdminService/GetLedgerOverview
       x-ksp-access: authenticated
@@ -34411,6 +34415,12 @@ components:
         customersCount:
           type: integer
           minimum: 0
+        recoveryProvisions:
+          $ref: '#/components/schemas/Money'
+          description: |
+            Provisions du recouvrement détenues par KSP (compte interne `ksp:recovery_provisions`, ADR-060, point 10) :
+            versées par les créanciers depuis leur portefeuille prépayé pour les frais de procédure, remboursées du même
+            compte. Rendu ici plutôt que dans `internalAccounts`, dont l'énumération ne change pas.
     WalletTopUpRequest:
       type: object
       additionalProperties: false
