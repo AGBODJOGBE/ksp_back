@@ -4,7 +4,8 @@ import {
   createAmicableUseCases,
   type DocumentCancellation,
 } from './amicable';
-import { AmicableSettlementTerms } from './amicable/settlement-terms';
+import { AmicableDisputeResponses } from './amicable/dispute-responses';
+import { AmicableSettlementTerms, executedSettlement } from './amicable/settlement-terms';
 import { type DebtorAccessPorts } from './debtor-access/debtor-access.ports';
 import {
   EndDebtorSessionUseCase,
@@ -23,6 +24,7 @@ import {
   type SpreadsheetReader,
 } from './cases/ports';
 import { type DebtorUploads, type DocumentUrls } from './debtor-space/debtor-space.ports';
+import { type DisputeResponses, NO_DISPUTE_RESPONSES } from './debtor-space/dispute-responses';
 import { NO_SETTLEMENTS, type SettlementTerms } from './debtor-space/settlement-terms';
 import { createMoneyUseCases } from './money';
 import { CaseClosure } from './money/case-closure.service';
@@ -55,6 +57,7 @@ import {
   SimulatePricingUseCase,
   UpdatePricingRuleUseCase,
 } from './pricing.use-cases';
+import { createStatementUseCases, type StatementStore } from './statements';
 import {
   GetSettingsUseCase,
   ListHolidaysUseCase,
@@ -102,28 +105,44 @@ export interface RecoveryDeps {
   money: MoneyStore;
   debtorUploads: DebtorUploads;
   documentUrls: DocumentUrls;
+  /** Relevés mensuels par dossier et factures de commission de billing (R-CO-05). */
+  statements: StatementStore;
+}
+
+/** Ponts entre l'argent (R3) et la procédure amiable (R4) : remises, réponses aux contestations. */
+interface AmicableBridges {
+  settlementTerms: SettlementTerms;
+  disputeResponses: DisputeResponses;
 }
 
 /**
- * Les dépendances, plus les remises (R-PR-05) : vue qui relit `deps` à chaque accès, sans copie, pour
- * suivre un port remplacé après la création (doublures des tests).
+ * Les dépendances, plus les ponts de R4 : vue qui relit `deps` à chaque accès, sans copie, pour suivre
+ * un port remplacé après la création (doublures des tests).
  */
-function withSettlementTerms(
-  deps: RecoveryDeps,
-  settlementTerms: SettlementTerms,
-): RecoveryDeps & { settlementTerms: SettlementTerms } {
+function withBridges(deps: RecoveryDeps, bridges: AmicableBridges): RecoveryDeps & AmicableBridges {
   return Object.create(deps, {
-    settlementTerms: { value: settlementTerms, enumerable: true },
-  }) as RecoveryDeps & {
-    settlementTerms: SettlementTerms;
-  };
+    settlementTerms: { value: bridges.settlementTerms, enumerable: true },
+    disputeResponses: { value: bridges.disputeResponses, enumerable: true },
+  }) as RecoveryDeps & AmicableBridges;
 }
 
 export function createUseCases(deps: RecoveryDeps) {
   // Remises de R4 payées par le lien du débiteur (R3) : exécutées, puis dossier clos par le service
-  // de clôture de R3 (« accord transactionnel exécuté »).
-  const closure = new CaseClosure(withSettlementTerms(deps, NO_SETTLEMENTS));
-  const moneyDeps = withSettlementTerms(deps, new AmicableSettlementTerms(deps, closure));
+  // de clôture de R3 (« accord transactionnel exécuté »), dont l'attestation porte le solde abandonné.
+  const closure = new CaseClosure(
+    withBridges(deps, {
+      settlementTerms: {
+        ...NO_SETTLEMENTS,
+        executed: (input) => executedSettlement(deps.amicable, input.caseId),
+      },
+      disputeResponses: NO_DISPUTE_RESPONSES,
+    }),
+  );
+  // Contestation du débiteur (R3) : réponse demandée au créancier (décision `dispute_response` de R4).
+  const moneyDeps = withBridges(deps, {
+    settlementTerms: new AmicableSettlementTerms(deps, closure),
+    disputeResponses: new AmicableDisputeResponses(deps),
+  });
   return {
     getSettings: new GetSettingsUseCase(deps),
     updateSettings: new UpdateSettingsUseCase(deps),
@@ -149,6 +168,7 @@ export function createUseCases(deps: RecoveryDeps) {
     ...createCaseUseCases(deps),
     ...createAmicableUseCases(deps),
     ...createMoneyUseCases(moneyDeps),
+    ...createStatementUseCases(deps),
   };
 }
 

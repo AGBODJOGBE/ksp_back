@@ -9,6 +9,7 @@ import { type WorkItemView } from '../../application/amicable/case-work.use-case
 import { type DecisionView } from '../../application/amicable/decisions.use-cases';
 import { type PlanSimulation, type TermsInput } from '../../application/amicable/payment-plans.use-cases';
 import { presentSummary } from './case-presenters';
+import { presentAnsweredDispute } from './dispute-presenters';
 import { amountOf, money } from './presenters';
 
 /**
@@ -109,7 +110,7 @@ export function presentDecision(view: DecisionView): recoveryV1.Decision {
     paymentPlan: view.plan ? presentPlan(view.plan) : undefined,
     settlement: view.settlement ? presentSettlement(view.settlement) : undefined,
     feeQuote: undefined,
-    dispute: undefined,
+    dispute: view.dispute ? presentAnsweredDispute(view.dispute) : undefined,
     answeredAt: iso(decision.decidedAt),
   };
 }

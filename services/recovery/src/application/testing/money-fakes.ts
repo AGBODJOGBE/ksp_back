@@ -7,6 +7,7 @@ import {
   type RecoveryCaseRecord,
 } from '../cases/ports';
 import { type DebtorUploads, type DocumentUrls, type UploadSlot } from '../debtor-space/debtor-space.ports';
+import { NO_DISPUTE_RESPONSES } from '../debtor-space/dispute-responses';
 import { NO_SETTLEMENTS } from '../debtor-space/settlement-terms';
 import {
   type CallbackRecord,
@@ -443,5 +444,6 @@ export function memoryMoneyStores(cases: MemoryCaseRepository) {
     debtorUploads: new MemoryDebtorUploads(),
     documentUrls: new MemoryDocumentUrls(),
     settlementTerms: NO_SETTLEMENTS,
+    disputeResponses: NO_DISPUTE_RESPONSES,
   };
 }

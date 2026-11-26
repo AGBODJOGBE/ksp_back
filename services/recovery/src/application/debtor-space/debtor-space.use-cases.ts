@@ -48,7 +48,21 @@ const CALLBACK_HORIZON_DAYS = 30;
 
 export const debtorActor = (debtorId: string): EvidenceActor => ({ type: 'debtor', id: debtorId });
 
-/** Dossier de la session : un dossier clos ou refusé ferme déjà la session (ADR-061). */
+/**
+ * Documents d'un dossier clos que le débiteur garde en lecture seule pendant N jours (ADR-061) :
+ * attestation de solde et reçus.
+ */
+const CLOSED_CASE_DOCUMENTS: ReadonlySet<string> = new Set(['settlement_certificate', 'receipt']);
+
+/** Pièce montrée au débiteur : choisie par KSP ; dossier clos, attestation et reçus seulement. */
+function shownToDebtor(record: RecoveryCaseRecord, document: CaseDocumentData): boolean {
+  return document.visibleToDebtor && (record.status !== 'closed' || CLOSED_CASE_DOCUMENTS.has(document.kind));
+}
+
+/**
+ * Dossier de la session : un dossier refusé, ou clos depuis plus de N jours, ferme déjà la session ;
+ * clos depuis moins longtemps, elle ne sert qu'à lire (ADR-061).
+ */
 async function sessionCase(deps: MoneyDeps, scope: DebtorScope): Promise<RecoveryCaseRecord> {
   const record = await deps.cases.find(scope.caseId);
   if (!record || !record.debtors.some((debtor) => debtor.id === scope.debtorId))
@@ -90,7 +104,8 @@ export interface DebtorCaseView {
 /**
  * Situation du débiteur (GetDebtorCase) : créancier (nom seulement), nature et références, montant dû
  * détaillé, paiements et reçus, pièces choisies par KSP, barème du simulateur, ses contestations, lien
- * de paiement en cours. L'échéancier et la remise autorisée viennent avec le lot R4.
+ * de paiement en cours. L'échéancier et la remise autorisée viennent avec le lot R4. Dossier clos
+ * (lecture seule pendant N jours) : attestation de solde et reçus, sans lien de paiement ni proposition.
  */
 export class GetDebtorCaseUseCase {
   constructor(private readonly deps: MoneyDeps) {}
@@ -106,9 +121,13 @@ export class GetDebtorCaseUseCase {
       this.deps.money.activePaymentRequests(record.id),
       displayNames(this.deps.directory, [record.creditor], []),
     ]);
-    const pending = requests.find(
-      (request) => request.debtorId === scope.debtorId && request.expiresAt > now && request.paymentUrl,
-    );
+    const closed = record.status === 'closed';
+    const pending = closed
+      ? undefined
+      : requests.find(
+          (request) => request.debtorId === scope.debtorId && request.expiresAt > now && request.paymentUrl,
+        );
+    const scale = effectiveScale(record, settings);
     return {
       caseNumber: record.number,
       creditorName: names.holder(record.creditor),
@@ -129,8 +148,9 @@ export class GetDebtorCaseUseCase {
         channel: PAYMENT_CHANNELS[collection.source],
         receiptDocumentId: collection.receiptDocumentId,
       })),
-      documents: record.documents.filter((document) => document.visibleToDebtor),
-      planScale: effectiveScale(record, settings),
+      documents: record.documents.filter((document) => shownToDebtor(record, document)),
+      // Dossier clos : plus de proposition d'échéancier ni de remise.
+      planScale: closed ? { ...scale, acceptsPaymentPlan: false, maxDiscountBps: 0 } : scale,
       status: record.status,
       disputes: disputes.filter(
         (dispute) => dispute.debtorId === null || dispute.debtorId === scope.debtorId,
@@ -408,8 +428,8 @@ export class RequestDebtorCallbackUseCase {
 
 /**
  * Adresse de lecture de courte durée d'une pièce montrée au débiteur (GetDebtorDocumentUrl) : reçu,
- * attestation de solde, échéancier signé (document) ou pièce choisie par KSP (file). Chaque
- * téléchargement est tracé à l'audit.
+ * attestation de solde, échéancier signé (document) ou pièce choisie par KSP (file) ; dossier clos,
+ * attestation et reçus seulement. Chaque téléchargement est tracé à l'audit.
  */
 export class GetDebtorDocumentUrlUseCase {
   constructor(private readonly deps: MoneyDeps) {}
@@ -419,7 +439,8 @@ export class GetDebtorDocumentUrlUseCase {
     if (!UUID.test(id)) throw RecoveryErrors.invalid('documentId', 'Ce document est introuvable.');
     const record = await sessionCase(this.deps, input);
     const document = record.documents.find(
-      (candidate) => candidate.visibleToDebtor && (candidate.documentId === id || candidate.fileId === id),
+      (candidate) =>
+        shownToDebtor(record, candidate) && (candidate.documentId === id || candidate.fileId === id),
     );
     if (!document) throw RecoveryErrors.invalid('documentId', 'Ce document est introuvable.');
     const url = document.documentId

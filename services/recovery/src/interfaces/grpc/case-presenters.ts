@@ -241,6 +241,7 @@ export function presentCase(view: CaseView): recoveryV1.RecoveryCase {
     acceptedAt: iso(record.acceptedAt),
     updatedAt: iso(record.updatedAt),
     rejectionReason: record.rejectionReason ?? '',
+    settlements: [],
   };
 }
 

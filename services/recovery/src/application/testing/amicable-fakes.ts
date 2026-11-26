@@ -80,7 +80,11 @@ export class MemoryAmicableStore implements AmicableStore {
               other.id !== write.row.id &&
               other.caseId === write.row.caseId &&
               other.kind === write.row.kind &&
-              other.status === 'pending',
+              other.status === 'pending' &&
+              // Mise à jour d'abord, comme en base : une décision close dans la même écriture libère la place.
+              !amicable.decisions.some(
+                (closed) => closed.row.id === other.id && closed.row.status !== 'pending',
+              ),
           ),
       );
     if (!fresh) return 'stale';
@@ -397,11 +401,15 @@ export class MemoryDocumentCancellation implements DocumentCancellation {
   }
 }
 
-/** Lecture du débiteur d'un dossier pour son lien (ADR-061), servie par le dépôt des dossiers en mémoire. */
+/**
+ * Lecture du débiteur d'un dossier pour son lien (ADR-061), servie par le dépôt des dossiers en mémoire ;
+ * la date de clôture vient des clôtures du dépôt de l'argent, s'il est fourni.
+ */
 export class CaseBackedDebtorReader extends MemoryDebtorCaseReader {
   constructor(
     private readonly repository: MemoryCaseRepository,
     private readonly personal: PersonalData,
+    private readonly closures?: { closures: ReadonlyMap<string, { closedAt: Date }> },
   ) {
     super();
   }
@@ -409,7 +417,12 @@ export class CaseBackedDebtorReader extends MemoryDebtorCaseReader {
   override async caseDebtor(caseId: string, debtorId: string): Promise<CaseDebtor | null> {
     const record = this.repository.cases.get(caseId);
     if (!record || !record.debtors.some((debtor) => debtor.id === debtorId)) return null;
-    return { caseNumber: record.number, caseStatus: record.status, creditor: record.creditor };
+    return {
+      caseNumber: record.number,
+      caseStatus: record.status,
+      creditor: record.creditor,
+      closedAt: this.closures?.closures.get(caseId)?.closedAt ?? null,
+    };
   }
 
   override async contacts(debtorId: string): Promise<EncryptedContact[]> {

@@ -25,6 +25,7 @@ import { memoryCaseStores } from './case-fakes';
 import { type AmicableOptions } from '../amicable/amicable.ports';
 import { MemoryAmicableStore, MemoryDocumentCancellation } from './amicable-fakes';
 import { memoryMoneyStores } from './money-fakes';
+import { MemoryStatementStore } from './statement-fakes';
 
 /** Doublures en mémoire des ports (tests des cas d'usage). */
 
@@ -171,6 +172,7 @@ const unused = (name: string) => () => {
 
 export function makeDeps(overrides: Partial<RecoveryDeps> = {}) {
   const caseStores = memoryCaseStores();
+  const moneyStores = memoryMoneyStores(caseStores.cases);
   const base = {
     settings: new MemorySettingsStore(),
     holidays: new MemoryHolidayStore(),
@@ -208,7 +210,9 @@ export function makeDeps(overrides: Partial<RecoveryDeps> = {}) {
     amicable: new MemoryAmicableStore(caseStores.cases),
     documentCancellation: new MemoryDocumentCancellation(),
     amicableOptions: { debtorChannels: ['email', 'whatsapp'] } as AmicableOptions,
-    ...memoryMoneyStores(caseStores.cases),
+    ...moneyStores,
+    // Relevés mensuels (R-CO-05), sur les encaissements du dépôt de l'argent.
+    statements: new MemoryStatementStore(moneyStores.money),
   };
   return { ...base, ...overrides } as typeof base;
 }

@@ -8,6 +8,7 @@ import { type DebtorData, type RecoveryCaseRecord } from '../cases/ports';
 import { type DebtorChannel, type Notifier, type PaymentLinks, type PersonalData } from '../ports';
 import { formatXof } from '../shared/errors';
 import { type DebtorUploads, type DocumentUrls } from '../debtor-space/debtor-space.ports';
+import { type DisputeResponses } from '../debtor-space/dispute-responses';
 import { type SettlementTerms } from '../debtor-space/settlement-terms';
 import { type CaseMoney, type MoneyStore } from './money.ports';
 
@@ -26,6 +27,8 @@ export interface MoneyDeps extends AdminCaseDeps {
   documentUrls: DocumentUrls;
   /** Remises pour paiement immédiat (R4) ; `NO_SETTLEMENTS` en attendant. */
   settlementTerms: SettlementTerms;
+  /** Réponse du créancier aux contestations (décision `dispute_response` de R4). */
+  disputeResponses: DisputeResponses;
 }
 
 /** Erreurs de l'argent (en-tête de recovery.proto). */

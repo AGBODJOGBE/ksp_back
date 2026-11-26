@@ -20,6 +20,7 @@ import {
   type SaveOutcome,
 } from '../cases/ports';
 import { type DebtorAccessPorts } from '../debtor-access/debtor-access.ports';
+import { type MoneyStore } from '../money/money.ports';
 import { type AuditLog, type DebtorChannel, type DebtorMessage, type Holder, type Notifier } from '../ports';
 
 /**
@@ -124,10 +125,11 @@ export interface PlanRecord {
   installments: InstallmentRecord[];
 }
 
-/** Objet d'une décision : échéancier, remise ou saut d'étape (R-PR-03). */
+/** Objet d'une décision : échéancier, remise, saut d'étape (R-PR-03) ou contestation (R-PR-02). */
 export interface DecisionPayload {
   planId?: string;
   settlementId?: string;
+  disputeId?: string;
   skip?: { from: CaseStage; to: CaseStage; reason: SkipReason; note: string };
 }
 
@@ -361,4 +363,6 @@ export interface AmicableDeps extends CaseDeps {
   debtorAccess: DebtorAccessPorts;
   documentCancellation: DocumentCancellation;
   amicableOptions: AmicableOptions;
+  /** Contestations du débiteur (lot R3), lues pour la décision `dispute_response`. */
+  money: Pick<MoneyStore, 'disputes'>;
 }

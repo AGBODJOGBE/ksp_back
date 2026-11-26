@@ -82,3 +82,13 @@ sans compte existent déjà dans le service qui possède l'objet : le lien de pa
 
 - Chemin de la page du portail (`/recouvrement/<jeton>` proposé).
 - Durée de la session (30 minutes) et nombre de pièces par contestation.
+
+## Complément (25/11/2026) : espace du débiteur après la clôture
+
+La clôture révoquait les liens du débiteur : il ne pouvait plus télécharger son attestation de solde.
+Désormais, ses liens encore valables le restent, **en lecture seule**, jusqu'à la clôture + 30 jours
+(`RECOVERY_DEBTOR_CLOSED_ACCESS_DAYS`, 0 : révoqués comme avant), et l'attestation de solde lui est
+envoyée avec un lien neuf de la même durée. La session y lit sa situation et ses documents
+(attestation de solde et reçus seulement) ; paiement, échéancier, contestation, pièce et rappel
+répondent `RECOVERY_INVALID_TRANSITION` (statut `closed`). Au-delà, lien et session répondent comme
+un jeton inconnu. Un dossier refusé ne garde aucun accès.

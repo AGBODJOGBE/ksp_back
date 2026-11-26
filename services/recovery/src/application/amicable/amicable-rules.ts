@@ -144,8 +144,8 @@ export function signerOf(record: RecoveryCaseRecord, plan: Pick<PlanRecord, 'pro
   return record.debtors.find((debtor) => debtor.id === proposer) ?? mainDebtor(record);
 }
 
-/** Étapes où un échéancier se négocie : notification, échéancier (renégociation), relance amiable. */
-export const PLAN_STAGES: readonly CaseStage[] = ['notice', 'payment_plan', 'amicable'];
+/** Étapes où un échéancier se négocie : règle du domaine (mise en demeure comprise). */
+export { PLAN_STAGES } from '../../domain/progression';
 
 /** Premières coordonnées valables du débiteur (téléphone E.164, e-mail). */
 export function coordinatesOf(debtor: DebtorData): { phone: string | null; email: string | null } {

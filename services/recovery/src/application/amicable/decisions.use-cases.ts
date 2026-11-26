@@ -63,6 +63,7 @@ import {
   STAGE_SKIPPERS,
 } from './amicable-rules';
 import { longDay } from './debtor-messages';
+import { type AnsweredDispute, decisionDispute, requireDisputeOpen } from './dispute-responses';
 
 /** Durée de validité d'une remise proposée : 30 jours au plus. */
 const SETTLEMENT_MAX_DAYS = 30;
@@ -328,12 +329,13 @@ export class ChangeCaseStageUseCase {
   }
 }
 
-/** Décision présentée : son dossier, et l'échéancier ou la remise qu'elle porte. */
+/** Décision présentée : son dossier, et l'échéancier, la remise ou la contestation qu'elle porte. */
 export interface DecisionView {
   decision: DecisionRecord;
   caseNumber: string;
   plan: PlanRecord | null;
   settlement: SettlementRecord | null;
+  dispute: AnsweredDispute | null;
 }
 
 async function decisionView(
@@ -347,6 +349,7 @@ async function decisionView(
     caseNumber,
     plan: planId ? await deps.amicable.plan(planId) : null,
     settlement: settlementId ? await deps.amicable.settlement(settlementId) : null,
+    dispute: await decisionDispute(deps, decision),
   };
 }
 
@@ -571,6 +574,7 @@ export class AnswerDecisionUseCase {
         };
       }
       case 'dispute_response': {
+        await requireDisputeOpen(this.deps, decision);
         for (const fileId of fileIds) {
           await this.deps.files.attach({
             fileId: fileId.toLowerCase(),

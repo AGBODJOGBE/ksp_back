@@ -52,9 +52,9 @@ const MAX_DISPUTE_FILES = 10;
 
 /**
  * Contestation du débiteur (DisputeDebtorCase, R-PR-02, UC-RC-13) : motif, texte (chiffré en base),
- * pièces qu'il a envoyées ; le dossier est suspendu, le créancier a 10 jours (réglable) pour répondre,
- * `recovery.case.suspended` le prévient ; le débiteur reçoit l'accusé de réception. Rejouée avec la
- * même clé, elle rend la contestation enregistrée.
+ * pièces qu'il a envoyées ; le dossier est suspendu, le créancier a 10 jours (réglable) pour répondre
+ * (décision `dispute_response` de R4), `recovery.case.suspended` le prévient ; le débiteur reçoit
+ * l'accusé de réception. Rejouée avec la même clé, elle rend la contestation enregistrée.
  */
 export class DisputeDebtorCaseUseCase {
   constructor(private readonly deps: MoneyDeps) {}
@@ -70,6 +70,8 @@ export class DisputeDebtorCaseUseCase {
     const known = await this.deps.money.disputeByKey(record.id, key);
     if (known) {
       if (known.debtorId !== input.debtorId) throw RecoveryErrors.keyReused();
+      // Rejouée après un échec : la réponse est demandée au créancier si elle ne l'a pas été.
+      await this.deps.disputeResponses.requested({ caseId: record.id, disputeId: known.id });
       return known;
     }
     const reason = input.reason as DisputeReason;
@@ -143,6 +145,8 @@ export class DisputeDebtorCaseUseCase {
     const outcome = await this.deps.money.commit(next, { disputes: [dispute] }, changes);
     if (outcome !== 'saved') throw CaseErrors.concurrentUpdate(record.status);
     await this.acknowledge(next, input.debtorId, dispute.id);
+    // Réponse demandée au créancier (décision `dispute_response`) ; en échec, la demande rejouée la refait.
+    await this.deps.disputeResponses.requested({ caseId: record.id, disputeId: dispute.id });
     return dispute;
   }
 
@@ -303,6 +307,10 @@ export class ResolveDisputeUseCase {
     const outcome = await this.deps.money.commit(next, writes, changes);
     if (outcome !== 'saved') throw CaseErrors.concurrentUpdate(record.status);
     const saved = { ...next, version: record.version + 1 };
+    // Contestation tranchée : la réponse du créancier n'est plus attendue (sans bloquer la résolution).
+    await this.deps.disputeResponses
+      .settled({ caseId: record.id, disputeId: dispute.id })
+      .catch(() => undefined);
     if (writes.closure) await this.closure.completeQuietly(record.id);
     return moneyCaseView(this.deps, saved, now);
   }

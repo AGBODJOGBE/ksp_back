@@ -39,6 +39,10 @@ import { GrpcDebtorUploads, GrpcDocumentUrls } from './infrastructure/grpc/grpc-
 import { PrismaMoneyStore } from './infrastructure/persistence/prisma-money.store';
 import { MoneyEffectsService } from './infrastructure/scheduling/money-effects.service';
 import { PaymentLinkPaidConsumer } from './interfaces/messaging/payment-link-paid.consumer';
+// Compléments : relevés mensuels (R-CO-05) et factures de commission de billing (ADR-064).
+import { PrismaStatementStore } from './infrastructure/persistence/prisma-statements.store';
+import { STATEMENTS_INTERVAL_MS, StatementsService } from './infrastructure/scheduling/statements.service';
+import { CommissionInvoiceConsumer } from './interfaces/messaging/commission-invoice.consumer';
 import { GrpcDirectory } from './infrastructure/grpc/grpc-directory';
 import { GrpcDocuments } from './infrastructure/grpc/grpc-documents';
 import { GrpcFiles } from './infrastructure/grpc/grpc-files';
@@ -127,6 +131,7 @@ export class AppModule {
             journal,
             secrets: new NodeDebtorSecrets(config.RECOVERY_DEBTOR_CODE_HMAC_SECRET),
             baseUrl: config.RECOVERY_DEBTOR_BASE_URL,
+            closedAccessDays: config.RECOVERY_DEBTOR_CLOSED_ACCESS_DAYS,
           }),
         },
         // Dossiers (R2) : coordonnées chiffrées, dépôts, tâche des échéances, signatures du mandat.
@@ -161,6 +166,11 @@ export class AppModule {
         PrismaMoneyStore,
         PaymentLinkPaidConsumer,
         MoneyEffectsService,
+        // Relevés mensuels (R-CO-05) : dépôt, tâche planifiée, factures de commission de billing.
+        PrismaStatementStore,
+        StatementsService,
+        { provide: STATEMENTS_INTERVAL_MS, useValue: config.RECOVERY_STATEMENTS_INTERVAL_MS },
+        CommissionInvoiceConsumer,
         {
           provide: RECOVERY_USE_CASES,
           inject: [
@@ -177,6 +187,7 @@ export class AppModule {
             PrismaCreditorPreferencesStore,
             PrismaAmicableStore,
             PrismaMoneyStore,
+            PrismaStatementStore,
             WALLET_CLIENT,
             PAYMENT_CLIENT,
             DOCUMENT_CLIENT,
@@ -199,6 +210,7 @@ export class AppModule {
             preferences: PrismaCreditorPreferencesStore,
             amicable: PrismaAmicableStore,
             money: PrismaMoneyStore,
+            statements: PrismaStatementStore,
             wallet: ClientGrpc,
             payment: ClientGrpc,
             document: ClientGrpc,
@@ -270,6 +282,7 @@ export class AppModule {
               money,
               debtorUploads: new GrpcDebtorUploads(fileClient, callerOf('file')),
               documentUrls: new GrpcDocumentUrls(documentClient, callerOf('document')),
+              statements,
             });
           },
         },

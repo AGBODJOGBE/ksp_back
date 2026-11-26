@@ -79,6 +79,7 @@ export const RECOVERY_SHAPES = {
     submittedAt: 'str?',
     acceptedAt: 'str?',
     updatedAt: 'str',
+    settlements: '[]#RecoverySettlement',
   },
   RecoveryDebtor: {
     id: 'str',

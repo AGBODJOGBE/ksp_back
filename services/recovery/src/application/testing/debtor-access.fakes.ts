@@ -70,6 +70,18 @@ export class MemoryDebtorAccessStore implements DebtorAccessStore {
     return revoked;
   }
 
+  async restrict(scope: { caseId: string }, until: Date, at: Date): Promise<number> {
+    let restricted = 0;
+    for (const { access } of this.rows.values()) {
+      if (access.caseId !== scope.caseId || access.link.revokedAt !== null || access.link.expiresAt <= at) {
+        continue;
+      }
+      access.link.expiresAt = until;
+      restricted += 1;
+    }
+    return restricted;
+  }
+
   async updateLocked<T>(
     accessId: string,
     decide: (access: StoredDebtorAccess) => { change: DebtorAccessChange | null; result: T },

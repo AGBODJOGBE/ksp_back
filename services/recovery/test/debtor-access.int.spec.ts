@@ -2,11 +2,11 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BlindIndex, FieldCipher, ReadinessRegistry } from '@ksp/platform';
 import { Client, Pool } from 'pg';
-import { DEBTOR_CONTACT_CONTEXT } from '../src/application/debtor-access/debtor-contact';
 import { DebtorLinks } from '../src/application/debtor-access/debtor-links.service';
 import { CapturingNotifier } from '../src/application/testing/debtor-access.fakes';
 import { asService, makeDeps, NOW, rejection } from '../src/application/testing/fakes';
 import { createUseCases } from '../src/application/use-cases';
+import { contactContext } from '../src/infrastructure/persistence/prisma-case-rows';
 import { PrismaDebtorAccessJournal } from '../src/infrastructure/persistence/prisma-debtor-access.journal';
 import {
   PrismaDebtorAccessStore,
@@ -84,7 +84,7 @@ describeWithDatabase('accès du débiteur (PostgreSQL)', () => {
   const contact = (id: string, channel: 'phone' | 'email', value: string, extra: object = {}) => ({
     id,
     channel,
-    valueEnc: personal.encrypt(value, DEBTOR_CONTACT_CONTEXT),
+    valueEnc: personal.encrypt(value, contactContext(id)),
     valueIndex: channel === 'phone' ? personal.phoneIndex(value) : personal.emailIndex(value),
     ...extra,
   });
@@ -284,6 +284,7 @@ describeWithDatabase('accès du débiteur (PostgreSQL)', () => {
       caseNumber: 'RC-000101',
       caseStatus: 'active',
       creditor: { type: 'organization', id: CREDITOR },
+      closedAt: null,
     });
     await expect(reader.caseDebtor(OTHER_CASE_ID, DEBTORS.contacts)).resolves.toBeNull();
     await prisma.debtorContact.createMany({
@@ -298,7 +299,7 @@ describeWithDatabase('accès du débiteur (PostgreSQL)', () => {
     });
     const contacts = await reader.contacts(DEBTORS.contacts);
     expect(contacts.map((item) => item.channel)).toEqual(['phone', 'email']);
-    expect(personal.decrypt(contacts[0]!.valueEnc, DEBTOR_CONTACT_CONTEXT)).toBe(PHONE);
+    expect(personal.decrypt(contacts[0]!.valueEnc, contacts[0]!.context!)).toBe(PHONE);
 
     await expect(
       store.issue({

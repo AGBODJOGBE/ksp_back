@@ -1,7 +1,10 @@
 import { type Metadata } from '@grpc/grpc-js';
 import { recoveryV1 } from '@ksp/contracts';
 import { Controller, Inject } from '@nestjs/common';
-import { type DebtorSessionScope } from '../../application/debtor-access/debtor-access.use-cases';
+import {
+  type DebtorSessionScope,
+  type DebtorSessionUse,
+} from '../../application/debtor-access/debtor-access.use-cases';
 import { RECOVERY_USE_CASES, type RecoveryUseCases } from '../../application/use-cases';
 import { debtorSessionToken } from './debtor-session';
 import {
@@ -36,6 +39,8 @@ import {
   presentRemittance,
 } from './money-presenters';
 import { notImplemented } from './not-implemented';
+import { presentProcedureCase } from './procedure-presenters';
+import { presentStatement } from './statement-presenters';
 import {
   amountOf,
   money,
@@ -141,7 +146,8 @@ export class RecoveryCreditorGrpcController implements recoveryV1.RecoveryCredit
 
   async getMyCase(request: recoveryV1.GetMyCaseRequest): Promise<recoveryV1.GetMyCaseResponse> {
     const view = await this.useCases.getMyCase.execute(request);
-    return { case: presentMoneyCase(await this.useCases.addCaseMoney.execute(view)) };
+    const money = await this.useCases.addCaseMoney.execute(view);
+    return { case: presentProcedureCase(await this.useCases.addCaseProcedure.execute(money)) };
   }
 
   async listMyCaseJournal(
@@ -234,8 +240,15 @@ export class RecoveryCreditorGrpcController implements recoveryV1.RecoveryCredit
     return { remittances: result.items.map(presentRemittance), nextCursor: result.nextCursor ?? '' };
   }
 
-  listMyStatements(): Promise<recoveryV1.ListMyStatementsResponse> {
-    return notImplemented('ListMyStatements');
+  async listMyStatements(
+    request: recoveryV1.ListMyStatementsRequest,
+  ): Promise<recoveryV1.ListMyStatementsResponse> {
+    const result = await this.useCases.listMyStatements.execute({
+      period: request.period,
+      caseId: request.caseId,
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return { statements: result.items.map(presentStatement), nextCursor: result.nextCursor ?? '' };
   }
 
   async getMyDashboard(): Promise<recoveryV1.GetMyDashboardResponse> {
@@ -314,7 +327,7 @@ export class RecoveryDebtorGrpcController implements recoveryV1.RecoveryDebtorSe
     _request: recoveryV1.GetDebtorCaseRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.GetDebtorCaseResponse> {
-    const { caseId, debtorId } = await this.debtorSession(metadata);
+    const { caseId, debtorId } = await this.debtorSession(metadata, 'read');
     return { case: presentDebtorCase(await this.useCases.getDebtorCase.execute({ caseId, debtorId })) };
   }
 
@@ -438,16 +451,20 @@ export class RecoveryDebtorGrpcController implements recoveryV1.RecoveryDebtorSe
     request: recoveryV1.GetDebtorDocumentUrlRequest,
     metadata?: Metadata,
   ): Promise<recoveryV1.GetDebtorDocumentUrlResponse> {
-    const { caseId, debtorId } = await this.debtorSession(metadata);
+    const { caseId, debtorId } = await this.debtorSession(metadata, 'read');
     return this.useCases.getDebtorDocumentUrl.execute({ caseId, debtorId, documentId: request.documentId });
   }
 
   /**
    * Dossier et débiteur de la session (`{ caseId, debtorId }`), ou `RECOVERY_DEBTOR_SESSION_INVALID`
-   * (401) : session absente, inconnue, expirée ou révoquée.
+   * (401) : session absente, inconnue, expirée ou révoquée. Dossier clos depuis peu : lecture seule
+   * (`read` : situation et documents), toute écriture refusée.
    */
-  private debtorSession(metadata: Metadata | undefined): Promise<DebtorSessionScope> {
-    return this.useCases.resolveDebtorSession.execute({ sessionToken: debtorSessionToken(metadata) });
+  private debtorSession(
+    metadata: Metadata | undefined,
+    use: DebtorSessionUse = 'write',
+  ): Promise<DebtorSessionScope> {
+    return this.useCases.resolveDebtorSession.execute({ sessionToken: debtorSessionToken(metadata), use });
   }
 }
 
@@ -515,8 +532,9 @@ export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServ
 
   async getCase(request: recoveryV1.GetCaseRequest): Promise<recoveryV1.GetCaseResponse> {
     const result = await this.useCases.getCase.execute(request);
+    const money = await this.useCases.addCaseMoney.execute(result.view);
     return {
-      case: presentMoneyCase(await this.useCases.addCaseMoney.execute(result.view)),
+      case: presentProcedureCase(await this.useCases.addCaseProcedure.execute(money)),
       scoreFactors: presentScoreFactors(result.score),
       injunctionEligible: result.injunctionEligible,
     };

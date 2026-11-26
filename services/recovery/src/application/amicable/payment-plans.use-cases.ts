@@ -1,7 +1,7 @@
 import { localDay } from '../../domain/calendar';
-import { advanceStage, canAdvanceStage } from '../../domain/case';
 import { openDecision } from '../../domain/decision';
 import { installmentStatus, type PlanTerms } from '../../domain/payment-plan';
+import { planSignedMove } from '../../domain/progression';
 import { requireCaseInScope } from '../cases/case-access';
 import { CaseErrors } from '../cases/case-errors';
 import { MANDATE_SIGNATURE_CONSUMER } from '../cases/case-deadlines.use-cases';
@@ -18,7 +18,7 @@ import { type EvidenceActor, noChanges, type RecoveryCaseRecord } from '../cases
 import { type FullSettings } from '../ports';
 import { loadSettings } from '../settings.use-cases';
 import { BACKOFFICE_MFA_SECONDS, requireStaff, type Staff } from '../shared/access';
-import { formatXof, RecoveryErrors, unwrap } from '../shared/errors';
+import { formatXof, RecoveryErrors } from '../shared/errors';
 import {
   type AmicableChanges,
   type AmicableDeps,
@@ -71,7 +71,7 @@ function requirePlanStage(record: RecoveryCaseRecord): void {
   if (record.stage === null || !PLAN_STAGES.includes(record.stage)) {
     throw CaseErrors.invalidTransition(
       record.status,
-      'Un échéancier se négocie à la notification, à l’échéancier ou en relance amiable.',
+      'Un échéancier se négocie à la notification, à l’échéancier, en relance amiable ou après la mise en demeure.',
       record.stage,
     );
   }
@@ -615,15 +615,13 @@ export class RecordPlanSignatureUseCase {
         ref: { type: 'document', id: plan.documentId! },
       }),
     );
-    if (
-      record.status === 'active' &&
-      record.stage !== null &&
-      canAdvanceStage(record.stage, 'payment_plan')
-    ) {
+    // Échéancier signé : étape « échéancier », depuis la mise en demeure aussi (6.1).
+    const move = planSignedMove(record);
+    if (move.ok && move.value) {
       next = applyStageMove(
         this.deps.ids,
         next,
-        unwrap(advanceStage(record, 'payment_plan')),
+        move.value,
         { actor: debtorActor, changedBy: 'system', reason: 'Échéancier signé par le débiteur', at: now },
         changes,
       );

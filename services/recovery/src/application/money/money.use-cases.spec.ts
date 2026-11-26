@@ -1,6 +1,7 @@
 import { type RecoveryCaseRecord } from '../cases/ports';
 import { DebtorLinks } from '../debtor-access/debtor-links.service';
-import { type MemoryDebtorAccessStore, type MemoryDebtorCaseReader } from '../testing/debtor-access.fakes';
+import { CaseBackedDebtorReader } from '../testing/amicable-fakes';
+import { type MemoryDebtorAccessStore } from '../testing/debtor-access.fakes';
 import { asCreditor, asStaff, CREDITOR_ID, rejection } from '../testing/fakes';
 import {
   activeCase,
@@ -137,15 +138,14 @@ describe('argent du recouvrement (R3 : UC-RC-11, 22, 28 ; ADR-060 points 4 à 11
   });
 
   describe('paiement complet et clôture', () => {
-    it('le dû à zéro clôt le dossier : attestation, liens révoqués, recovery.case.closed', async () => {
+    it('le dû à zéro clôt le dossier : attestation, liens en lecture seule, recovery.case.closed', async () => {
       const debtorId = record.debtors[0]!.id;
-      (world.deps.debtorAccess.reader as MemoryDebtorCaseReader).add(
-        record.id,
-        debtorId,
-        { caseNumber: record.number, caseStatus: 'active', creditor: record.creditor },
-        [],
+      world.deps.debtorAccess.reader = new CaseBackedDebtorReader(
+        world.deps.cases,
+        world.deps.personalData,
+        world.money,
       );
-      await new DebtorLinks(world.deps).issue({ caseId: record.id, debtorId });
+      const before = await new DebtorLinks(world.deps).issue({ caseId: record.id, debtorId });
       await requestLink(750_000);
       await payLink(world, record);
 
@@ -158,10 +158,16 @@ describe('argent du recouvrement (R3 : UC-RC-11, 22, 28 ; ADR-060 points 4 à 11
         totalCollected: { amount: 750_000, currency: 'XOF' },
         settlementCertificateDocumentId: certificate!.id,
       });
-      expect((world.deps.debtorAccess.store as MemoryDebtorAccessStore).activeOf(debtorId)).toBeUndefined();
-      expect(world.notifier.sent.get(`settlement-certificate:${record.id}`)).toMatchObject({
+      // Lien neuf en lecture seule (attestation et reçus), valable 30 jours après la clôture, remis avec
+      // l'attestation ; l'ancien est révoqué.
+      const active = (world.deps.debtorAccess.store as MemoryDebtorAccessStore).activeOf(debtorId)!;
+      expect(active.id).not.toBe(before.accessId);
+      const closedAt = (await world.money.money(record.id)).closure!.closedAt;
+      expect(active.link.expiresAt).toEqual(new Date(closedAt.getTime() + 30 * 86_400_000));
+      expect(world.notifier.sent.get(`settlement-certificate:${record.id}:${active.id}`)).toMatchObject({
         message: 'settlement_certificate',
         channel: 'whatsapp',
+        variables: { link: expect.stringMatching(/^https:\/\/ksp\.bj\/recouvrement\/[A-Za-z0-9_-]{43}$/) },
       });
       expect((await world.money.money(record.id)).closure?.completedAt).not.toBeNull();
       // Le minimum de commission au cumul : aucune borne ici, 10 % du tout.

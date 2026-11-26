@@ -28,12 +28,14 @@ export function codeRecipient(
   contacts: readonly EncryptedContact[],
   personalData: PersonalData,
 ): CodeRecipient | null {
+  const decrypt = (contact: EncryptedContact) =>
+    personalData.decrypt(contact.valueEnc, contact.context ?? DEBTOR_CONTACT_CONTEXT);
   for (const contact of contacts.filter((candidate) => candidate.channel === 'phone')) {
-    const phone = tryNormalizePhone(personalData.decrypt(contact.valueEnc, DEBTOR_CONTACT_CONTEXT));
+    const phone = tryNormalizePhone(decrypt(contact));
     if (phone) return { channel: 'whatsapp', phone, email: null, masked: maskPhone(phone) };
   }
   for (const contact of contacts.filter((candidate) => candidate.channel === 'email')) {
-    const email = personalData.decrypt(contact.valueEnc, DEBTOR_CONTACT_CONTEXT).trim().toLowerCase();
+    const email = decrypt(contact).trim().toLowerCase();
     if (EMAIL.test(email)) return { channel: 'email', phone: null, email, masked: maskEmail(email) };
   }
   return null;

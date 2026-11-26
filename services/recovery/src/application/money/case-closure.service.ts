@@ -24,8 +24,9 @@ import { debtorRecipient, mainDebtor, type MoneyDeps } from './money-rules';
  * 1. `closeRecord` prépare l'état clos et sa trace, enregistrés avec l'écriture qui en est la cause
  *    (encaissement, décision) dans la même transaction ;
  * 2. `CaseClosure.complete` en fait les effets, idempotents et repris par la tâche tant qu'ils ne sont
- *    pas terminés : attestation de solde (dossier payé, R-DB-03) remise au débiteur, liens de paiement
- *    et liens personnels du débiteur révoqués, `recovery.case.closed`.
+ *    pas terminés : attestation de solde (dossier payé ou accord transactionnel exécuté, R-DB-03)
+ *    remise au débiteur avec un lien en lecture seule, liens de paiement révoqués, liens personnels du
+ *    débiteur gardés en lecture seule N jours (ADR-061 complété) puis révoqués, `recovery.case.closed`.
  */
 export interface ClosureCause {
   reason: ClosureReason;
@@ -44,8 +45,11 @@ const CLOSURE_SUMMARIES: Record<ClosureReason, string> = {
   prescribed: 'Dossier clos : créance prescrite',
 };
 
-/** Motifs qui donnent une attestation de solde au débiteur (R-DB-03). */
-const CERTIFIED: ReadonlySet<ClosureReason> = new Set(['paid']);
+/**
+ * Motifs qui donnent une attestation de solde au débiteur (R-DB-03) : payé en entier, ou accord
+ * transactionnel exécuté (remise payée, solde abandonné par le créancier imprimé sur l'attestation).
+ */
+const CERTIFIED: ReadonlySet<ClosureReason> = new Set(['paid', 'settlement_executed']);
 
 /** État clos d'un dossier et sa trace, à enregistrer par l'appelant avec sa propre écriture. */
 export function closeRecord(
@@ -127,8 +131,10 @@ export class CaseClosure {
 
   /**
    * Effets de la clôture, idempotents : attestation de solde produite (clé stable) et envoyée au
-   * débiteur, liens de paiement et liens personnels révoqués, `recovery.case.closed`. Sans effet sur un
-   * dossier dont la clôture est déjà terminée. Lève si un service manque : rien n'est marqué terminé.
+   * débiteur avec un lien en lecture seule, liens de paiement révoqués, liens personnels gardés en
+   * lecture seule jusqu'à la fin de l'accès après la clôture (ou révoqués), `recovery.case.closed`. Sans
+   * effet sur un dossier dont la clôture est déjà terminée. Lève si un service manque : rien n'est
+   * marqué terminé.
    */
   async complete(caseId: string): Promise<boolean> {
     const record = await this.deps.cases.find(caseId);
@@ -158,20 +164,31 @@ export class CaseClosure {
       }
       revokedRequestIds.push(request.id);
     }
-    await new DebtorLinks(this.deps).revoke({ caseId });
+    // Liens du débiteur gardés en lecture seule N jours après la clôture (attestation, reçus), sinon révoqués.
+    const links = new DebtorLinks(this.deps);
+    await links.closeAccess({ caseId, closedAt: money.closure.closedAt });
 
     if (certificate) {
-      const recipient = debtorRecipient(mainDebtor(record));
-      if (recipient) {
+      const debtor = mainDebtor(record);
+      const recipient = debtorRecipient(debtor);
+      if (debtor && recipient) {
+        // Lien neuf en lecture seule ; s'il ne s'émet pas, l'adresse du portail (le débiteur garde son
+        // lien précédent, en lecture seule) : la clôture n'en dépend pas.
+        const link = await links
+          .issueReadOnly({ caseId, debtorId: debtor.id, closedAt: money.closure.closedAt })
+          .catch(() => null);
         await this.deps.notifier.sendToDebtor({
           message: 'settlement_certificate',
           ...recipient,
           variables: {
             creditor_name: creditorName,
             case_number: record.number,
-            link: this.deps.debtorAccess.baseUrl,
+            link: link?.url ?? this.deps.debtorAccess.baseUrl,
           },
-          idempotencyKey: `settlement-certificate:${record.id}`,
+          // Une clé par lien : un renvoi après une panne porte le nouveau lien, jamais l'ancien révoqué.
+          idempotencyKey: link
+            ? `settlement-certificate:${record.id}:${link.accessId}`
+            : `settlement-certificate:${record.id}`,
         });
       }
     }
@@ -208,13 +225,26 @@ export class CaseClosure {
     return this.deps.money.completeClosure(caseId, { at: now, certificate, revokedRequestIds }, changes);
   }
 
-  /** Attestation de solde (modèle `recovery_settlement_certificate`), clé stable par dossier. */
+  /**
+   * Attestation de solde (modèle `recovery_settlement_certificate`), clé stable par dossier : payé en
+   * entier, ou accord transactionnel exécuté avec le solde abandonné de la remise (`waived`).
+   */
   private async certificate(
     record: RecoveryCaseRecord,
     creditorName: string,
     closedAt: Date,
     now: Date,
   ): Promise<CaseDocumentData> {
+    let closure: Record<string, unknown> = { closure: 'paid_in_full' };
+    if (record.closureReason === 'settlement_executed') {
+      const settlement = await this.deps.settlementTerms.executed({ caseId: record.id });
+      // Sans remise exécutée lisible (procédure amiable indisponible), l'effet est repris plus tard.
+      if (!settlement) throw new Error(`Dossier ${record.id} clos sans remise exécutée.`);
+      closure =
+        settlement.waived > 0
+          ? { closure: 'settlement_executed', waivedAmount: settlement.waived }
+          : { closure: 'paid_in_full' };
+    }
     const debtor = mainDebtor(record);
     const references = record.claims.map((claim) => claim.reference).join(', ');
     const identification = debtor?.ifu || debtor?.rccm || '';
@@ -236,7 +266,7 @@ export class CaseClosure {
               1000,
             ),
         },
-        closure: 'paid_in_full',
+        ...closure,
         totalPaid: record.paid,
         settledOn: localDay(closedAt),
       },
