@@ -38,6 +38,12 @@ import { MandateSignatureConsumer } from './interfaces/messaging/mandate-signatu
 import { GrpcDebtorUploads, GrpcDocumentUrls } from './infrastructure/grpc/grpc-debtor-files';
 import { PrismaMoneyStore } from './infrastructure/persistence/prisma-money.store';
 import { MoneyEffectsService } from './infrastructure/scheduling/money-effects.service';
+// Contentieux (R5).
+import { PrismaLitigationStore } from './infrastructure/persistence/prisma-litigation.store';
+import {
+  LITIGATION_TASKS_INTERVAL_MS,
+  LitigationTasksService,
+} from './infrastructure/scheduling/litigation-tasks.service';
 import { PaymentLinkPaidConsumer } from './interfaces/messaging/payment-link-paid.consumer';
 // Compléments : relevés mensuels (R-CO-05) et factures de commission de billing (ADR-064).
 import { PrismaStatementStore } from './infrastructure/persistence/prisma-statements.store';
@@ -171,6 +177,10 @@ export class AppModule {
         StatementsService,
         { provide: STATEMENTS_INTERVAL_MS, useValue: config.RECOVERY_STATEMENTS_INTERVAL_MS },
         CommissionInvoiceConsumer,
+        // Contentieux (R5) : courriers, devis et provisions, partenaires, et sa tâche planifiée.
+        PrismaLitigationStore,
+        LitigationTasksService,
+        { provide: LITIGATION_TASKS_INTERVAL_MS, useValue: config.RECOVERY_LITIGATION_INTERVAL_MS },
         {
           provide: RECOVERY_USE_CASES,
           inject: [
@@ -188,6 +198,7 @@ export class AppModule {
             PrismaAmicableStore,
             PrismaMoneyStore,
             PrismaStatementStore,
+            PrismaLitigationStore,
             WALLET_CLIENT,
             PAYMENT_CLIENT,
             DOCUMENT_CLIENT,
@@ -211,6 +222,7 @@ export class AppModule {
             amicable: PrismaAmicableStore,
             money: PrismaMoneyStore,
             statements: PrismaStatementStore,
+            litigation: PrismaLitigationStore,
             wallet: ClientGrpc,
             payment: ClientGrpc,
             document: ClientGrpc,
@@ -283,6 +295,7 @@ export class AppModule {
               debtorUploads: new GrpcDebtorUploads(fileClient, callerOf('file')),
               documentUrls: new GrpcDocumentUrls(documentClient, callerOf('document')),
               statements,
+              litigation,
             });
           },
         },

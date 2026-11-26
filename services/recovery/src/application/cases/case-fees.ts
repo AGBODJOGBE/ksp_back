@@ -27,12 +27,12 @@ export const caseFeeKey = (caseId: string) => `recovery:case-fee:${caseId}`;
 export const studyFeeKey = (caseId: string) => `recovery:study-fee:${caseId}`;
 
 /** Refus métier de wallet (solde, clé…), par opposition à une panne : la demande n'a rien débité. */
-function isRefusal(error: unknown): error is AppError {
+export function isRefusal(error: unknown): error is AppError {
   return error instanceof AppError && error.kind !== 'UNAVAILABLE' && error.kind !== 'DEADLINE_EXCEEDED';
 }
 
 /** Solde insuffisant chez wallet → erreur du contrat, avec le montant manquant. */
-function translateRefusal(error: AppError): AppError {
+export function translateRefusal(error: AppError): AppError {
   if (error.code !== 'WALLET_INSUFFICIENT_FUNDS') return error;
   const details = error.details as { missing?: { amount?: number }; balance?: { amount?: number } };
   return CaseErrors.insufficientFunds(Number(details.missing?.amount ?? 0), details.balance?.amount ?? null);

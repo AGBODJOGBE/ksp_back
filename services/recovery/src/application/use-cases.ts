@@ -26,6 +26,12 @@ import {
 import { type DebtorUploads, type DocumentUrls } from './debtor-space/debtor-space.ports';
 import { type DisputeResponses, NO_DISPUTE_RESPONSES } from './debtor-space/dispute-responses';
 import { NO_SETTLEMENTS, type SettlementTerms } from './debtor-space/settlement-terms';
+import {
+  createLitigationUseCases,
+  type EscalationDecisions,
+  EscalationDecisionsService,
+  type LitigationStore,
+} from './litigation';
 import { createMoneyUseCases } from './money';
 import { CaseClosure } from './money/case-closure.service';
 import { type MoneyStore } from './money/money.ports';
@@ -107,6 +113,8 @@ export interface RecoveryDeps {
   documentUrls: DocumentUrls;
   /** Relevés mensuels par dossier et factures de commission de billing (R-CO-05). */
   statements: StatementStore;
+  // Contentieux (R5) : mises en demeure, devis et provisions, partenaires, assignations et actes.
+  litigation: LitigationStore;
 }
 
 /** Ponts entre l'argent (R3) et la procédure amiable (R4) : remises, réponses aux contestations. */
@@ -126,6 +134,16 @@ function withBridges(deps: RecoveryDeps, bridges: AmicableBridges): RecoveryDeps
   }) as RecoveryDeps & AmicableBridges;
 }
 
+/** Les dépendances, plus les devis des étapes payantes (R5) pour les décisions de R4 (même vue). */
+function withEscalations(
+  deps: RecoveryDeps,
+  escalations: EscalationDecisions,
+): RecoveryDeps & { escalations: EscalationDecisions } {
+  return Object.create(deps, {
+    escalations: { value: escalations, enumerable: true },
+  }) as RecoveryDeps & { escalations: EscalationDecisions };
+}
+
 export function createUseCases(deps: RecoveryDeps) {
   // Remises de R4 payées par le lien du débiteur (R3) : exécutées, puis dossier clos par le service
   // de clôture de R3 (« accord transactionnel exécuté »), dont l'attestation porte le solde abandonné.
@@ -138,10 +156,17 @@ export function createUseCases(deps: RecoveryDeps) {
       disputeResponses: NO_DISPUTE_RESPONSES,
     }),
   );
+  // Devis des étapes payantes (R5) : tranchés par AnswerDecision, expirés par la tâche de R4.
+  const amicableDeps = withEscalations(
+    deps,
+    new EscalationDecisionsService(
+      withBridges(deps, { settlementTerms: NO_SETTLEMENTS, disputeResponses: NO_DISPUTE_RESPONSES }),
+    ),
+  );
   // Contestation du débiteur (R3) : réponse demandée au créancier (décision `dispute_response` de R4).
   const moneyDeps = withBridges(deps, {
     settlementTerms: new AmicableSettlementTerms(deps, closure),
-    disputeResponses: new AmicableDisputeResponses(deps),
+    disputeResponses: new AmicableDisputeResponses(amicableDeps),
   });
   return {
     getSettings: new GetSettingsUseCase(deps),
@@ -166,9 +191,10 @@ export function createUseCases(deps: RecoveryDeps) {
     endDebtorSession: new EndDebtorSessionUseCase(deps),
     resolveDebtorSession: new ResolveDebtorSessionUseCase(deps),
     ...createCaseUseCases(deps),
-    ...createAmicableUseCases(deps),
+    ...createAmicableUseCases(amicableDeps),
     ...createMoneyUseCases(moneyDeps),
     ...createStatementUseCases(deps),
+    ...createLitigationUseCases(moneyDeps),
   };
 }
 

@@ -70,6 +70,8 @@ export const configSchema = baseServiceConfigSchema
      * ADR-061 complété) : 30 par défaut ; 0 : liens révoqués dès la clôture.
      */
     RECOVERY_DEBTOR_CLOSED_ACCESS_DAYS: z.coerce.number().int().min(0).max(365).default(30),
+    /** Intervalle de la tâche du contentieux (lot R5) : 10 minutes ; 0 : désactivée. */
+    RECOVERY_LITIGATION_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
     /**
      * Ordre des canaux des messages automatiques au débiteur, premier contact compris : « email »,
      * « whatsapp », ou les deux séparés par une virgule. Le premier dont la coordonnée est connue sert,

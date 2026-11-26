@@ -190,6 +190,7 @@ model RecoveryCase {
   debtorMessages   DebtorMessage[]
   refunds          OverpaymentRefund[]
   statements       Statement[]
+  feeQuotes        FeeQuote[]
 
   @@unique([creditorType, creditorId, idempotencyKey])
   @@index([creditorType, creditorId, status])
@@ -471,6 +472,11 @@ model Notice {
   deliveredAt    DateTime? @map("delivered_at") @db.Timestamptz(3)
   deliveryMethod String?   @map("delivery_method")
   proofFileId    String?   @map("proof_file_id") @db.Uuid
+  /// Lot R5 : délai laissé au débiteur (mise en demeure) et sa fin, comptée de la remise ; auteur de
+  /// la preuve de remise.
+  deadlineDays   Int?      @map("deadline_days")
+  deadlineAt     DateTime? @map("deadline_at") @db.Timestamptz(3)
+  deliveredBy    String?   @map("delivered_by") @db.Uuid
 
   case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
@@ -480,29 +486,35 @@ model Notice {
 
 /// Huissier ou avocat partenaire (R-HU-01), vérifié avant activation.
 model Partner {
-  id               String    @id @db.Uuid
+  id                 String    @id @db.Uuid
   /// bailiff ou lawyer.
-  kind             String
+  kind               String
   /// Compte KSP du partenaire (accès partenaire), s'il en a un.
-  userId           String?   @unique @map("user_id") @db.Uuid
-  displayName      String    @map("display_name")
-  office           String
+  userId             String?   @unique @map("user_id") @db.Uuid
+  displayName        String    @map("display_name")
+  office             String
   /// Ressort : clés de commune de geo.
-  areas            String[]  @default([])
+  areas              String[]  @default([])
   /// Coordonnées professionnelles : JSON chiffré.
-  contactsEnc      String?   @map("contacts_enc")
+  contactsEnc        String?   @map("contacts_enc")
   /// Grille d'honoraires par type d'acte.
-  feeSchedule      Json?     @map("fee_schedule")
+  feeSchedule        Json?     @map("fee_schedule")
   /// pending, active, suspended.
-  status           String    @default("pending")
-  verifiedAt       DateTime? @map("verified_at") @db.Timestamptz(3)
-  verifiedBy       String?   @map("verified_by") @db.Uuid
-  averageDelayDays Int?      @map("average_delay_days")
-  successRateBps   Int?      @map("success_rate_bps")
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  status             String    @default("pending")
+  verifiedAt         DateTime? @map("verified_at") @db.Timestamptz(3)
+  verifiedBy         String?   @map("verified_by") @db.Uuid
+  averageDelayDays   Int?      @map("average_delay_days")
+  successRateBps     Int?      @map("success_rate_bps")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// Lot R5 : pièce de vérification (nomination, inscription au barreau), motif de la suspension,
+  /// auteur de la fiche.
+  verificationFileId String?   @map("verification_file_id") @db.Uuid
+  statusReason       String?   @map("status_reason")
+  createdBy          String?   @map("created_by") @db.Uuid
 
   assignments PartnerAssignment[]
+  feeQuotes   FeeQuote[]
 
   @@index([kind, status])
   @@map("partners")
@@ -521,6 +533,9 @@ model PartnerAssignment {
   lastUpdateAt    DateTime  @map("last_update_at") @db.Timestamptz(3)
   withdrawnAt     DateTime? @map("withdrawn_at") @db.Timestamptz(3)
   withdrawReason  String?   @map("withdraw_reason")
+  /// Lot R5 : note du juriste à l'assignation ; fin de la mission (dossier clos).
+  note            String?
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz(3)
 
   case    RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
   partner Partner      @relation(fields: [partnerId], references: [id])
@@ -534,16 +549,18 @@ model PartnerAssignment {
 
 /// Acte d'un partenaire : sommation, signification, saisie, audience, décision (R-HU-04).
 model LegalAct {
-  id           String   @id @db.Uuid
-  assignmentId String   @map("assignment_id") @db.Uuid
-  caseId       String   @map("case_id") @db.Uuid
+  id           String    @id @db.Uuid
+  assignmentId String    @map("assignment_id") @db.Uuid
+  caseId       String    @map("case_id") @db.Uuid
   type         String
-  actDate      DateTime @map("act_date") @db.Date
-  cost         Int      @default(0)
-  fileId       String?  @map("file_id") @db.Uuid
+  actDate      DateTime  @map("act_date") @db.Date
+  cost         Int       @default(0)
+  fileId       String?   @map("file_id") @db.Uuid
   note         String?
-  recordedBy   String   @map("recorded_by") @db.Uuid
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  recordedBy   String    @map("recorded_by") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Lot R5 : prochaine échéance annoncée (audience…).
+  nextStepDate DateTime? @map("next_step_date") @db.Date
 
   assignment PartnerAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 
@@ -566,11 +583,44 @@ model Provision {
   consumedAmount Int       @default(0) @map("consumed_amount")
   refundedAmount Int       @default(0) @map("refunded_amount")
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Lot R5 : devis accepté dont la provision est issue.
+  feeQuoteId     String?   @unique @map("fee_quote_id") @db.Uuid
 
   case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
   @@index([caseId])
   @@map("provisions")
+}
+
+/// Devis des frais d'une étape payante (R-PR-04, lot R5) : soumis au créancier par une décision,
+/// accepté (provision débitée), refusé ou expiré. La provision demandée est le total : KSP n'avance
+/// jamais de frais (ADR-060, point 10).
+model FeeQuote {
+  id             String    @id @db.Uuid
+  caseId         String    @map("case_id") @db.Uuid
+  decisionId     String    @map("decision_id") @db.Uuid
+  /// bailiff ou litigation.
+  stage          String
+  partnerId      String    @map("partner_id") @db.Uuid
+  /// Lignes { label, amount }.
+  lines          Json
+  total          Int
+  provision      Int
+  documentId     String    @map("document_id") @db.Uuid
+  documentNumber String    @map("document_number")
+  validUntil     DateTime  @map("valid_until") @db.Timestamptz(3)
+  /// pending, accepted, rejected, expired.
+  status         String    @default("pending")
+  note           String?
+  createdBy      String    @map("created_by") @db.Uuid
+  createdAt      DateTime  @map("created_at") @db.Timestamptz(3)
+  answeredAt     DateTime? @map("answered_at") @db.Timestamptz(3)
+
+  case    RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  partner Partner      @relation(fields: [partnerId], references: [id])
+
+  @@index([caseId])
+  @@map("fee_quotes")
 }
 
 /// Montant à payer et son lien de paiement (payment, ADR-040) : un seul lien actif par dossier,

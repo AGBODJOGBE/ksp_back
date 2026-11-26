@@ -38,7 +38,15 @@ import {
   presentOfflinePayment,
   presentRemittance,
 } from './money-presenters';
-import { notImplemented } from './not-implemented';
+import { presentFeeQuote } from './escalation-presenters';
+import {
+  partnerInputOf,
+  presentAct,
+  presentAssignment,
+  presentAssignmentFile,
+  presentNotice,
+  presentPartner,
+} from './litigation-presenters';
 import { presentProcedureCase } from './procedure-presenters';
 import { presentStatement } from './statement-presenters';
 import {
@@ -53,8 +61,9 @@ import {
 
 // Adaptateurs gRPC des quatre services du contrat (ADR-060) : aucune règle métier ici. R1 livre la
 // tarification, les réglages, les jours fériés et l'estimation des frais ; R2 les dossiers, l'import,
-// les préférences et la recevabilité ; R3 l'argent et l'espace du débiteur ; les autres méthodes
-// répondent « pas encore disponible » jusqu'à leur branche (R4, R5).
+// les préférences et la recevabilité ; R3 l'argent et l'espace du débiteur ; R4 la procédure amiable ;
+// R5 le contentieux (arrêt, mise en demeure, devis, partenaires, clôture, journal de preuve). Une
+// méthode non livrée répond « pas encore disponible ».
 
 @Controller()
 @recoveryV1.RecoveryCreditorServiceControllerMethods()
@@ -208,8 +217,8 @@ export class RecoveryCreditorGrpcController implements recoveryV1.RecoveryCredit
     return { decision: presentDecision(result.decision), case: presentCase(result.view) };
   }
 
-  stopCase(): Promise<recoveryV1.StopCaseResponse> {
-    return notImplemented('StopCase');
+  async stopCase(request: recoveryV1.StopCaseRequest): Promise<recoveryV1.StopCaseResponse> {
+    return { case: presentMoneyCase(await this.useCases.stopCase.execute(request)) };
   }
 
   // Argent (R3) : paiement reçu directement, reversements.
@@ -468,23 +477,59 @@ export class RecoveryDebtorGrpcController implements recoveryV1.RecoveryDebtorSe
   }
 }
 
+/**
+ * Huissier ou avocat partenaire (R5, partie 8) : ses assignations seulement, sans double
+ * authentification ; hors de son périmètre, RECOVERY_ASSIGNMENT_NOT_FOUND.
+ */
 @Controller()
 @recoveryV1.RecoveryPartnerServiceControllerMethods()
 export class RecoveryPartnerGrpcController implements recoveryV1.RecoveryPartnerServiceController {
-  listMyAssignments(): Promise<recoveryV1.ListMyAssignmentsResponse> {
-    return notImplemented('ListMyAssignments');
+  constructor(@Inject(RECOVERY_USE_CASES) private readonly useCases: RecoveryUseCases) {}
+
+  async listMyAssignments(
+    request: recoveryV1.ListMyAssignmentsRequest,
+  ): Promise<recoveryV1.ListMyAssignmentsResponse> {
+    const result = await this.useCases.listMyAssignments.execute({
+      statuses: request.statuses,
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return { assignments: result.items.map(presentAssignment), nextCursor: result.nextCursor ?? '' };
   }
 
-  getMyAssignment(): Promise<recoveryV1.GetMyAssignmentResponse> {
-    return notImplemented('GetMyAssignment');
+  async getMyAssignment(
+    request: recoveryV1.GetMyAssignmentRequest,
+  ): Promise<recoveryV1.GetMyAssignmentResponse> {
+    return { file: presentAssignmentFile(await this.useCases.getMyAssignment.execute(request)) };
   }
 
-  recordLegalAct(): Promise<recoveryV1.RecordLegalActResponse> {
-    return notImplemented('RecordLegalAct');
+  async recordLegalAct(
+    request: recoveryV1.RecordLegalActRequest,
+  ): Promise<recoveryV1.RecordLegalActResponse> {
+    const act = await this.useCases.recordLegalAct.execute({
+      assignmentId: request.assignmentId,
+      idempotencyKey: request.idempotencyKey,
+      type: request.type,
+      actDate: request.actDate,
+      cost: amountOf('cost', request.cost),
+      fileId: request.fileId,
+      note: request.note,
+      nextStepDate: request.nextStepDate,
+    });
+    return { act: presentAct(act) };
   }
 
-  declarePartnerCollection(): Promise<recoveryV1.DeclarePartnerCollectionResponse> {
-    return notImplemented('DeclarePartnerCollection');
+  async declarePartnerCollection(
+    request: recoveryV1.DeclarePartnerCollectionRequest,
+  ): Promise<recoveryV1.DeclarePartnerCollectionResponse> {
+    const view = await this.useCases.declarePartnerCollection.execute({
+      assignmentId: request.assignmentId,
+      idempotencyKey: request.idempotencyKey,
+      amount: amountOf('amount', request.amount),
+      receivedOn: request.receivedOn,
+      proofFileId: request.proofFileId,
+      note: request.note,
+    });
+    return { payment: presentOfflinePayment(view) };
   }
 }
 
@@ -625,12 +670,18 @@ export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServ
     return { case: presentCase(await this.useCases.changeCaseStage.execute(request)) };
   }
 
-  issueFormalNotice(): Promise<recoveryV1.IssueFormalNoticeResponse> {
-    return notImplemented('IssueFormalNotice');
+  // Contentieux (R5) : mise en demeure, devis des étapes payantes, partenaires, clôture, journal.
+
+  async issueFormalNotice(
+    request: recoveryV1.IssueFormalNoticeRequest,
+  ): Promise<recoveryV1.IssueFormalNoticeResponse> {
+    return { notice: presentNotice(await this.useCases.issueFormalNotice.execute(request)) };
   }
 
-  recordNoticeDelivery(): Promise<recoveryV1.RecordNoticeDeliveryResponse> {
-    return notImplemented('RecordNoticeDelivery');
+  async recordNoticeDelivery(
+    request: recoveryV1.RecordNoticeDeliveryRequest,
+  ): Promise<recoveryV1.RecordNoticeDeliveryResponse> {
+    return { notice: presentNotice(await this.useCases.recordNoticeDelivery.execute(request)) };
   }
 
   async resolveDispute(
@@ -646,20 +697,42 @@ export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServ
     return { case: presentMoneyCase(view) };
   }
 
-  requestEscalation(): Promise<recoveryV1.RequestEscalationResponse> {
-    return notImplemented('RequestEscalation');
+  async requestEscalation(
+    request: recoveryV1.RequestEscalationRequest,
+  ): Promise<recoveryV1.RequestEscalationResponse> {
+    const result = await this.useCases.requestEscalation.execute({
+      caseId: request.caseId,
+      idempotencyKey: request.idempotencyKey,
+      stage: request.stage,
+      partnerId: request.partnerId,
+      lines: request.lines.map((line) => ({ label: line.label, amount: amountOf('lines', line.amount) })),
+      validUntil: request.validUntil,
+      note: request.note,
+    });
+    return { feeQuote: presentFeeQuote(result.quote), decision: presentDecision(result.decision) };
   }
 
-  suggestPartners(): Promise<recoveryV1.SuggestPartnersResponse> {
-    return notImplemented('SuggestPartners');
+  async suggestPartners(
+    request: recoveryV1.SuggestPartnersRequest,
+  ): Promise<recoveryV1.SuggestPartnersResponse> {
+    const suggestions = await this.useCases.suggestPartners.execute(request);
+    return {
+      suggestions: suggestions.map((item) => ({
+        partner: presentPartner(item.view),
+        rank: item.rank,
+        coversDebtorArea: item.coversDebtorArea,
+      })),
+    };
   }
 
-  assignPartner(): Promise<recoveryV1.AssignPartnerResponse> {
-    return notImplemented('AssignPartner');
+  async assignPartner(request: recoveryV1.AssignPartnerRequest): Promise<recoveryV1.AssignPartnerResponse> {
+    return { assignment: presentAssignment(await this.useCases.assignPartner.execute(request)) };
   }
 
-  withdrawPartner(): Promise<recoveryV1.WithdrawPartnerResponse> {
-    return notImplemented('WithdrawPartner');
+  async withdrawPartner(
+    request: recoveryV1.WithdrawPartnerRequest,
+  ): Promise<recoveryV1.WithdrawPartnerResponse> {
+    return { assignment: presentAssignment(await this.useCases.withdrawPartner.execute(request)) };
   }
 
   // Argent (R3) : paiements hors ligne validés à deux, trop-perçus remboursés.
@@ -725,28 +798,46 @@ export class RecoveryAdminGrpcController implements recoveryV1.RecoveryAdminServ
     return { case: presentMoneyCase(view) };
   }
 
-  closeCase(): Promise<recoveryV1.CloseCaseResponse> {
-    return notImplemented('CloseCase');
+  async closeCase(request: recoveryV1.CloseCaseRequest): Promise<recoveryV1.CloseCaseResponse> {
+    return { case: presentMoneyCase(await this.useCases.closeCase.execute(request)) };
   }
 
-  exportCaseJournal(): Promise<recoveryV1.ExportCaseJournalResponse> {
-    return notImplemented('ExportCaseJournal');
+  async exportCaseJournal(
+    request: recoveryV1.ExportCaseJournalRequest,
+  ): Promise<recoveryV1.ExportCaseJournalResponse> {
+    return this.useCases.exportCaseJournal.execute(request);
   }
 
-  listPartners(): Promise<recoveryV1.ListPartnersResponse> {
-    return notImplemented('ListPartners');
+  async listPartners(request: recoveryV1.ListPartnersRequest): Promise<recoveryV1.ListPartnersResponse> {
+    const result = await this.useCases.listPartners.execute({
+      kind: request.kind,
+      statuses: request.statuses,
+      communeKey: request.communeKey,
+      ...(request.page ? { page: request.page } : {}),
+    });
+    return { partners: result.items.map(presentPartner), nextCursor: result.nextCursor ?? '' };
   }
 
-  getPartner(): Promise<recoveryV1.GetPartnerResponse> {
-    return notImplemented('GetPartner');
+  async getPartner(request: recoveryV1.GetPartnerRequest): Promise<recoveryV1.GetPartnerResponse> {
+    return { partner: presentPartner(await this.useCases.getPartner.execute(request)) };
   }
 
-  createPartner(): Promise<recoveryV1.CreatePartnerResponse> {
-    return notImplemented('CreatePartner');
+  async createPartner(request: recoveryV1.CreatePartnerRequest): Promise<recoveryV1.CreatePartnerResponse> {
+    const view = await this.useCases.createPartner.execute({
+      idempotencyKey: request.idempotencyKey,
+      input: partnerInputOf(request.input),
+    });
+    return { partner: presentPartner(view) };
   }
 
-  updatePartner(): Promise<recoveryV1.UpdatePartnerResponse> {
-    return notImplemented('UpdatePartner');
+  async updatePartner(request: recoveryV1.UpdatePartnerRequest): Promise<recoveryV1.UpdatePartnerResponse> {
+    const view = await this.useCases.updatePartner.execute({
+      partnerId: request.partnerId,
+      input: partnerInputOf(request.input),
+      status: request.status,
+      statusReason: request.statusReason,
+    });
+    return { partner: presentPartner(view) };
   }
 
   async listPricingRules(

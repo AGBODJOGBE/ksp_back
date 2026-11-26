@@ -1,4 +1,6 @@
 import { isLocalDay, localInstant } from '../../domain/calendar';
+import { isCommissionDueOnDirectPayment } from '../../domain/case';
+import { FIXED_RULES } from '../../domain/settings';
 import { creditorWriter, requireCaseInScope, requireOwnCase } from '../cases/case-access';
 import { CaseErrors } from '../cases/case-errors';
 import {
@@ -93,8 +95,9 @@ export class RecordLinkPaymentUseCase {
 
 /**
  * Paiement reçu directement par le créancier (DeclareDirectPayment, R-PR-07) : imputé comme tout
- * encaissement, rien n'est crédité ; la commission lui est facturée par billing (`invoiced`). Rejoué
- * avec la même clé, il rend l'encaissement enregistré.
+ * encaissement, rien n'est crédité ; la commission lui est facturée par billing (`invoiced`). Après
+ * l'arrêt du dossier (R-PR-06, lot R5), il se déclare encore : commissionné s'il est reçu dans les
+ * 30 jours qui suivent l'arrêt. Rejoué avec la même clé, il rend l'encaissement enregistré.
  */
 export class DeclareDirectPaymentUseCase {
   private readonly collections: CollectionService;
@@ -118,13 +121,22 @@ export class DeclareDirectPaymentUseCase {
     const reference = `direct:${stableId('recovery-direct-payment', record.id, key)}`;
     const known = await this.deps.money.collectionByReference(reference);
     if (known) return { view: await moneyCaseView(this.deps, record, now), collection: known };
-    if (record.status !== 'active' && record.status !== 'suspended') {
+    const stoppedAt =
+      record.status === 'closed' && record.closureReason === 'abandoned_by_creditor'
+        ? ((await this.deps.money.money(record.id)).closure?.closedAt ?? null)
+        : null;
+    if (record.status !== 'active' && record.status !== 'suspended' && !stoppedAt) {
       throw CaseErrors.invalidTransition(record.status, 'Ce dossier n’est pas en cours de recouvrement.');
     }
     const amount = requireAmount('amount', input.amount);
     const due = amountDue(record);
     if (amount > due) throw MoneyErrors.amountInvalid(due);
     const receivedAt = requireReceivedOn('receivedOn', input.receivedOn, now);
+    const commissionDue = isCommissionDueOnDirectPayment(
+      stoppedAt,
+      receivedAt,
+      FIXED_RULES.directPaymentCommissionDays,
+    );
     const note = optionalText('note', input.note, 1000);
     const proofFileId = optionalFileId('proofFileId', input.proofFileId);
     const documents: CaseDocumentData[] = [];
@@ -158,6 +170,7 @@ export class DeclareDirectPaymentUseCase {
       proofFileId,
       note,
       documents,
+      commissionDue,
       summary: 'Paiement reçu directement par le créancier, déclaré par lui',
     });
     record = outcome.record;
