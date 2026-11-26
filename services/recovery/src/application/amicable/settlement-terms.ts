@@ -15,7 +15,7 @@ const PAYABLE = new Set(['proposed', 'accepted']);
  */
 export class AmicableSettlementTerms implements SettlementTerms {
   constructor(
-    private readonly deps: AmicableDeps,
+    private readonly deps: Omit<AmicableDeps, 'escalations'>,
     private readonly closure: CaseClosure,
   ) {}
 

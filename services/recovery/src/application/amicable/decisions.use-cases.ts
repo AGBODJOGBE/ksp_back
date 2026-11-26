@@ -36,6 +36,7 @@ import { caseView, type CaseView } from '../cases/case-views';
 import { caseSubject, requireCaseId } from '../cases/creditor-cases.use-cases';
 import { type CaseChanges, noChanges, type RecoveryCaseRecord } from '../cases/ports';
 import { DebtorLinks } from '../debtor-access/debtor-links.service';
+import { type FeeQuoteView } from '../litigation/escalation.port';
 import { loadSettings } from '../settings.use-cases';
 import { BACKOFFICE_MFA_SECONDS, currentCreditor, requireStaff } from '../shared/access';
 import { formatXof, RecoveryErrors, unwrap } from '../shared/errors';
@@ -328,12 +329,13 @@ export class ChangeCaseStageUseCase {
   }
 }
 
-/** Décision présentée : son dossier, et l'échéancier ou la remise qu'elle porte. */
+/** Décision présentée : son dossier, et l'échéancier, la remise ou le devis (lot R5) qu'elle porte. */
 export interface DecisionView {
   decision: DecisionRecord;
   caseNumber: string;
   plan: PlanRecord | null;
   settlement: SettlementRecord | null;
+  feeQuote: FeeQuoteView | null;
 }
 
 async function decisionView(
@@ -341,12 +343,13 @@ async function decisionView(
   decision: DecisionRecord,
   caseNumber: string,
 ): Promise<DecisionView> {
-  const { planId, settlementId } = decision.payload;
+  const { planId, settlementId, feeQuoteId } = decision.payload;
   return {
     decision,
     caseNumber,
     plan: planId ? await deps.amicable.plan(planId) : null,
     settlement: settlementId ? await deps.amicable.settlement(settlementId) : null,
+    feeQuote: feeQuoteId ? await deps.escalations.feeQuote(feeQuoteId) : null,
   };
 }
 
@@ -387,8 +390,8 @@ interface Effect {
  * (`RECOVERY_DECISION_CLOSED` sinon) : échéancier hors barème accepté (protocole envoyé à la signature
  * du débiteur) ou refusé ; remise acceptée (offerte au débiteur) ou refusée ; saut d'étape accepté
  * (exécuté, conditions contrôlées de nouveau) ou refusé ; contestation : réponse et pièces, la suite
- * revenant au juriste. Les devis des étapes payantes arrivent avec l'huissier. Rejouée avec la même
- * clé, elle rend l'état sans rien refaire.
+ * revenant au juriste ; devis d'une étape payante : tranché par le contentieux (lot R5, provision et
+ * étape). Rejouée avec la même clé, elle rend l'état sans rien refaire.
  */
 export class AnswerDecisionUseCase {
   constructor(private readonly deps: AmicableDeps) {}
@@ -431,6 +434,25 @@ export class AnswerDecisionUseCase {
     if (!answered.ok && answered.code === 'RECOVERY_DECISION_CLOSED')
       throw AmicableErrors.decisionClosed(decision.status);
     const status = unwrap(answered).status;
+    if (decision.kind === 'bailiff_escalation' || decision.kind === 'litigation_escalation') {
+      // Étapes payantes (lot R5) : provision débitée et étape ouverte, ou devis refusé, avec la décision.
+      await this.deps.escalations.answer({
+        record,
+        decision,
+        answer,
+        comment,
+        idempotencyKey: key,
+        creditorUserId: creditor.userId,
+      });
+      return {
+        decision: await decisionView(
+          this.deps,
+          (await this.deps.amicable.decision(decision.id)) ?? decision,
+          record.number,
+        ),
+        view: await caseView(this.deps, (await this.deps.cases.find(record.id)) ?? record, settings, now),
+      };
+    }
 
     const changes = noChanges();
     const amicable = noAmicableChanges();
@@ -586,7 +608,7 @@ export class AnswerDecisionUseCase {
       default:
         throw CaseErrors.invalidTransition(
           record.status,
-          'Les devis des étapes payantes se valident avec l’assignation de l’huissier.',
+          'Décision inconnue de la procédure amiable.',
           record.stage,
         );
     }
@@ -600,6 +622,10 @@ export class AnswerDecisionUseCase {
  * à expirer.
  */
 export async function expirePendingDecision(deps: AmicableDeps, decision: DecisionRecord): Promise<boolean> {
+  // Devis d'une étape payante (lot R5) : clôture par le service de clôture, devis expiré.
+  if (decision.kind === 'bailiff_escalation' || decision.kind === 'litigation_escalation') {
+    return deps.escalations.expire(decision);
+  }
   const now = deps.clock.now();
   const expired = expireDecision({ ...decision, createdAt: decision.requestedAt }, now);
   if (!expired) return false;

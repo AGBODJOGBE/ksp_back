@@ -24,6 +24,12 @@ import {
 } from './cases/ports';
 import { type DebtorUploads, type DocumentUrls } from './debtor-space/debtor-space.ports';
 import { NO_SETTLEMENTS, type SettlementTerms } from './debtor-space/settlement-terms';
+import {
+  createLitigationUseCases,
+  type EscalationDecisions,
+  EscalationDecisionsService,
+  type LitigationStore,
+} from './litigation';
 import { createMoneyUseCases } from './money';
 import { CaseClosure } from './money/case-closure.service';
 import { type MoneyStore } from './money/money.ports';
@@ -102,6 +108,8 @@ export interface RecoveryDeps {
   money: MoneyStore;
   debtorUploads: DebtorUploads;
   documentUrls: DocumentUrls;
+  // Contentieux (R5) : mises en demeure, devis et provisions, partenaires, assignations et actes.
+  litigation: LitigationStore;
 }
 
 /**
@@ -119,10 +127,25 @@ function withSettlementTerms(
   };
 }
 
+/** Les dépendances, plus les devis des étapes payantes (R5) pour les décisions de R4 (même vue). */
+function withEscalations(
+  deps: RecoveryDeps,
+  escalations: EscalationDecisions,
+): RecoveryDeps & { escalations: EscalationDecisions } {
+  return Object.create(deps, {
+    escalations: { value: escalations, enumerable: true },
+  }) as RecoveryDeps & { escalations: EscalationDecisions };
+}
+
 export function createUseCases(deps: RecoveryDeps) {
   // Remises de R4 payées par le lien du débiteur (R3) : exécutées, puis dossier clos par le service
   // de clôture de R3 (« accord transactionnel exécuté »).
   const closure = new CaseClosure(withSettlementTerms(deps, NO_SETTLEMENTS));
+  // Devis des étapes payantes (R5) : tranchés par AnswerDecision, expirés par la tâche de R4.
+  const amicableDeps = withEscalations(
+    deps,
+    new EscalationDecisionsService(withSettlementTerms(deps, NO_SETTLEMENTS)),
+  );
   const moneyDeps = withSettlementTerms(deps, new AmicableSettlementTerms(deps, closure));
   return {
     getSettings: new GetSettingsUseCase(deps),
@@ -147,8 +170,9 @@ export function createUseCases(deps: RecoveryDeps) {
     endDebtorSession: new EndDebtorSessionUseCase(deps),
     resolveDebtorSession: new ResolveDebtorSessionUseCase(deps),
     ...createCaseUseCases(deps),
-    ...createAmicableUseCases(deps),
+    ...createAmicableUseCases(amicableDeps),
     ...createMoneyUseCases(moneyDeps),
+    ...createLitigationUseCases(moneyDeps),
   };
 }
 

@@ -50,12 +50,41 @@ export function suggestPartners(
 ): PartnerProfile[] {
   return partners
     .filter((p) => p.status === 'active' && p.kind === kind && p.areas.includes(debtorArea))
-    .sort(
-      (a, b) =>
-        a.openAssignments - b.openAssignments ||
-        successRateBp(b) - successRateBp(a) ||
-        (a.averageDays ?? Number.MAX_SAFE_INTEGER) - (b.averageDays ?? Number.MAX_SAFE_INTEGER),
-    );
+    .sort(byLoadAndEfficiency);
+}
+
+/** Charge croissante, puis taux de succès décroissant, puis délai moyen croissant. */
+function byLoadAndEfficiency(a: PartnerProfile, b: PartnerProfile): number {
+  return (
+    a.openAssignments - b.openAssignments ||
+    successRateBp(b) - successRateBp(a) ||
+    (a.averageDays ?? Number.MAX_SAFE_INTEGER) - (b.averageDays ?? Number.MAX_SAFE_INTEGER)
+  );
+}
+
+export interface RankedPartner {
+  partner: PartnerProfile;
+  coversArea: boolean;
+}
+
+/**
+ * Classement complet pour le juriste (SuggestPartners) : les partenaires actifs du métier qui couvrent
+ * la commune du débiteur d'abord (`suggestPartners`), puis les autres, selon les mêmes critères ; il
+ * peut ainsi confirmer la proposition ou en choisir un autre (R-HU-02).
+ */
+export function rankPartners(
+  partners: readonly PartnerProfile[],
+  kind: PartnerKind,
+  debtorArea: string | null,
+): RankedPartner[] {
+  const covering = debtorArea ? suggestPartners(partners, kind, debtorArea) : [];
+  const others = partners
+    .filter((p) => p.status === 'active' && p.kind === kind && !covering.includes(p))
+    .sort(byLoadAndEfficiency);
+  return [
+    ...covering.map((partner) => ({ partner, coversArea: true })),
+    ...others.map((partner) => ({ partner, coversArea: false })),
+  ];
 }
 
 /** Sans mise à jour depuis N jours (`partnerSilenceAlertDays`, 15), le juriste est alerté (R-HU-04). */

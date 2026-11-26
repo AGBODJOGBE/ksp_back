@@ -26,6 +26,7 @@ const PURPOSE_LABELS: Record<MessagePurpose, string> = {
   promise_followup: 'Relance après une promesse non tenue',
   installment_reminder: 'Rappel d’échéance',
   plan_confirmed: 'Confirmation de l’échéancier signé',
+  formal_notice: 'Annonce de la mise en demeure',
   manual: 'Message du chargé',
 };
 
