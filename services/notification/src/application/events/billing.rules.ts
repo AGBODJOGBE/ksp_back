@@ -52,10 +52,12 @@ function customer(
 }
 
 /**
- * Événements v2 de billing (CDC Nettoyage v2 : relances R-PE-05, avoirs R-PE-07) pas encore écoutés :
- * leurs messages restent à écrire. Les retirer d'ici en livrant leurs règles.
+ * Événements de billing pas encore écoutés : relances R-PE-05 et avoirs R-PE-07 (CDC Nettoyage v2),
+ * facture de commission du recouvrement (ADR-064, lue par recovery pour ses relevés). Leurs messages
+ * restent à écrire : les retirer d'ici en livrant leurs règles.
  */
-type BillingEventsNotYetNotified = 'billing.invoice.reminded' | 'billing.credit_note.issued';
+type BillingEventsNotYetNotified =
+  'billing.invoice.reminded' | 'billing.credit_note.issued' | 'billing.commission_invoice.issued';
 
 export const BILLING_RULES: {
   readonly [T in Exclude<BillingEventType, BillingEventsNotYetNotified>]: EventRule<T>;

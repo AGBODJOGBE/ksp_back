@@ -23,6 +23,15 @@ export interface InvoicePaymentInput {
   idempotencyKey?: string | undefined;
 }
 
+/** Recouvrement (ADR-064) : filtres des factures de commission. */
+export interface CommissionInvoiceFilters {
+  status?: string | undefined;
+  /** Mois facturé AAAA-MM (heure du Bénin). */
+  period?: string | undefined;
+  /** Back-office seulement : créancier (compte ou organisation). */
+  creditorId?: string | undefined;
+}
+
 /** Un appel par méthode du contrat ksp.billing.v1 exposée en REST. */
 export interface BillingApi {
   listMyInvoices(page: Page, status: string | undefined): Promise<Json>;
@@ -34,4 +43,10 @@ export interface BillingApi {
   recordInvoicePayment(id: string, input: InvoicePaymentInput): Promise<Json>;
   getSettings(): Promise<Json>;
   updateSettings(input: { paymentTermDays: number }): Promise<Json>;
+  // Recouvrement (ADR-064) : factures de commission et reçus des frais de dossier.
+  listMyCommissionInvoices(page: Page, filters: CommissionInvoiceFilters): Promise<Json>;
+  getMyCommissionInvoice(id: string): Promise<Json>;
+  listMyFeeReceipts(page: Page, caseId: string | undefined): Promise<Json>;
+  listCommissionInvoices(page: Page, filters: CommissionInvoiceFilters): Promise<Json>;
+  getCommissionInvoice(id: string): Promise<Json>;
 }

@@ -65,6 +65,67 @@ export const protoInvoice: billingV1.Invoice = {
 
 const settings: billingV1.BillingSettings = { paymentTermDays: 10, updatedBy: '', updatedAt: '' };
 
+/** Recouvrement (ADR-064) : facture de commission d'une organisation, commission à débiter encore due. */
+export const COMMISSION_INVOICE_ID = '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7301';
+export const protoCommissionInvoice: billingV1.CommissionInvoice = {
+  id: COMMISSION_INVOICE_ID,
+  number: 'FCR-2026-000007',
+  status: 'pending_payment',
+  creditor: { type: 'organization', id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d0000' },
+  period: '2026-11',
+  periodStart: '2026-10-31T23:00:00.000Z',
+  periodEnd: '2026-11-30T23:00:00.000Z',
+  lines: [
+    {
+      caseId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5000',
+      caseNumber: 'RC-000123',
+      collectionId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5101',
+      receivedAt: '2026-11-04T10:00:00.000Z',
+      receivedOn: '2026-11-04',
+      source: 'direct_to_creditor',
+      gross: xof(60000),
+      commission: xof(9000),
+      settlement: 'invoiced',
+    },
+  ],
+  totalCollected: xof(60000),
+  commissionDeducted: xof(0),
+  commissionInvoiced: xof(9000),
+  commissionTotal: xof(9000),
+  balance: xof(9000),
+  amountsExcludingTax: true,
+  issuedAt: '2026-11-30T23:00:00.000Z',
+  paidAt: '',
+  walletTransactionId: '',
+  debit: {
+    attempts: 1,
+    lastAttemptAt: '2026-11-30T23:00:00.000Z',
+    nextAttemptAt: '2026-12-01T23:00:00.000Z',
+    lastFailure: 'insufficient_funds',
+    missing: xof(5000),
+  },
+  organization: {
+    legalName: 'SARL Bénin Propre',
+    address: 'Lot 12, Haie Vive, Cotonou',
+    ifu: '3201912345678',
+    rccm: '',
+  },
+};
+
+export const protoFeeReceipt: billingV1.FeeReceipt = {
+  id: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7401',
+  number: 'RFD-2026-000012',
+  kind: 'case_fee',
+  payer: { type: 'user', id: USER_ID },
+  caseId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d5000',
+  caseNumber: 'RC-000123',
+  label: 'Frais de dossier RC-000123',
+  amount: xof(25000),
+  paidAt: '2026-11-03T09:00:00.000Z',
+  issuedAt: '2026-11-03T09:00:02.000Z',
+  walletTransactionId: '0192f1c4-7a2b-7c3d-8e4f-5a6b7c8d7501',
+};
+
 type Method = keyof billingV1.BillingServiceController | keyof billingV1.BillingAdminServiceController;
 const CUSTOMER_METHODS: readonly Method[] = [
   'listMyInvoices',
@@ -73,6 +134,9 @@ const CUSTOMER_METHODS: readonly Method[] = [
   'payMyInvoiceByMobileMoney',
   'getMyBillingPreferences',
   'updateMyBillingPreferences',
+  'listMyCommissionInvoices',
+  'getMyCommissionInvoice',
+  'listMyFeeReceipts',
 ];
 
 const DEFAULTS: Record<Method, () => unknown> = {
@@ -106,6 +170,15 @@ const DEFAULTS: Record<Method, () => unknown> = {
   updateMyBillingPreferences: () => ({}),
   issueAdminCreditNote: () => ({}),
   listCreditNotes: () => ({}),
+  // Recouvrement (ADR-064).
+  listMyCommissionInvoices: () => ({ commissionInvoices: [protoCommissionInvoice], nextCursor: '' }),
+  getMyCommissionInvoice: () => ({ commissionInvoice: protoCommissionInvoice }),
+  listMyFeeReceipts: () => ({ receipts: [protoFeeReceipt], nextCursor: '' }),
+  listCommissionInvoices: () => ({
+    commissionInvoices: [protoCommissionInvoice],
+    nextCursor: COMMISSION_INVOICE_ID,
+  }),
+  getCommissionInvoice: () => ({ commissionInvoice: protoCommissionInvoice }),
 };
 
 export class BillingStub {

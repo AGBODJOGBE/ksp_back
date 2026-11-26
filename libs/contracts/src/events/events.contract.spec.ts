@@ -1139,6 +1139,17 @@ const billingExamples: { [K in BillingEventType]: BillingEventPayloads[K] } = {
     offsetDays: -3,
     remindedAt: '2026-12-08T07:00:00Z',
   },
+  'billing.commission_invoice.issued': {
+    invoiceId: uuid,
+    invoiceNumber: 'FCR-2026-000007',
+    creditor: { type: 'organization', id: uuid },
+    period: '2026-11',
+    totalCollected: xof(1_250_000),
+    commissionDeducted: xof(100_000),
+    commissionInvoiced: xof(25_000),
+    commissionTotal: xof(125_000),
+    issuedAt: '2026-11-30T23:00:00Z',
+  },
   'billing.credit_note.issued': {
     creditNoteId: uuid,
     creditNoteNumber: 'AV-2026-000003',
@@ -1227,6 +1238,18 @@ describe('Contrats des événements billing', () => {
         settledBy: 'payment',
       }),
     ).toBe(true);
+  });
+
+  it('facture de commission du recouvrement (ADR-064) : série FCR, mois AAAA-MM, aucune donnée personnelle', () => {
+    const validate = ajv.compile(schemas.get('billing.commission_invoice.issued')!);
+    const example = billingExamples['billing.commission_invoice.issued'];
+    expect(validate({ ...example, commissionInvoiced: xof(0) })).toBe(true);
+    expect(validate({ ...example, invoiceNumber: 'FAC-2026-000007' })).toBe(false);
+    expect(validate({ ...example, period: '2026-13' })).toBe(false);
+    expect(validate({ ...example, creditor: { type: 'debtor', id: uuid } })).toBe(false);
+    expect(validate({ ...example, creditor: { ...example.creditor, legalName: 'SARL Bénin Propre' } })).toBe(
+      false,
+    );
   });
 
   it('aucun événement billing n’accepte d’adresse, et les montants sont des entiers en XOF', () => {
