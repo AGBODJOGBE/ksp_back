@@ -20,10 +20,16 @@ export interface SettlementTerms {
    * « accord transactionnel exécuté »). Idempotent ; repris au prochain paiement s'il échoue.
    */
   paid(input: { settlementId: string; caseId: string; collectionId: string; at: Date }): Promise<void>;
+  /**
+   * Remise exécutée qui a clos le dossier (« accord transactionnel exécuté ») : solde abandonné par le
+   * créancier, imprimé sur l'attestation de solde du débiteur (R-DB-03). Null : aucune.
+   */
+  executed(input: { caseId: string }): Promise<{ id: string; waived: number } | null>;
 }
 
 /** Aucune remise en attendant R4. */
 export const NO_SETTLEMENTS: SettlementTerms = {
   payable: async () => null,
   paid: async () => undefined,
+  executed: async () => null,
 };

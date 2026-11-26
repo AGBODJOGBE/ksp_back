@@ -63,6 +63,13 @@ export const configSchema = baseServiceConfigSchema
     RECOVERY_CASE_DEADLINES_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
     /** Intervalle de la tâche de la procédure amiable (lot R4) : 10 minutes ; 0 : désactivée. */
     RECOVERY_AMICABLE_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
+    /** Intervalle de la tâche des relevés mensuels (R-CO-05) : une heure ; 0 : désactivée. */
+    RECOVERY_STATEMENTS_INTERVAL_MS: z.coerce.number().int().min(0).default(3_600_000),
+    /**
+     * Jours de lecture seule de l'espace du débiteur après la clôture (attestation de solde et reçus,
+     * ADR-061 complété) : 30 par défaut ; 0 : liens révoqués dès la clôture.
+     */
+    RECOVERY_DEBTOR_CLOSED_ACCESS_DAYS: z.coerce.number().int().min(0).max(365).default(30),
     /** Intervalle de la tâche du contentieux (lot R5) : 10 minutes ; 0 : désactivée. */
     RECOVERY_LITIGATION_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
     /**

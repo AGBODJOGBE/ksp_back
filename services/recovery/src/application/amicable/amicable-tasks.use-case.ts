@@ -2,7 +2,12 @@ import { automaticChannelOf, isAutomaticMessageAllowed } from '../../domain/amic
 import { localDay, type LocalDay } from '../../domain/calendar';
 import { advanceStage } from '../../domain/case';
 import { installmentStatus, payInstallments, planProgress, remindersDue } from '../../domain/payment-plan';
-import { amicableStepsDue, DEFAULT_AMICABLE_SEQUENCE, nextProgression } from '../../domain/progression';
+import {
+  amicableStepsDue,
+  DEFAULT_AMICABLE_SEQUENCE,
+  nextProgression,
+  planDefaultedMove,
+} from '../../domain/progression';
 import { evaluatePromise } from '../../domain/promise';
 import { FIXED_RULES } from '../../domain/settings';
 import { evidenceEntry, SYSTEM, upcomingHolidays } from '../cases/case-rules';
@@ -100,8 +105,8 @@ async function eachPage<T>(
  *    mandat au débiteur principal, avec son lien personnel ;
  * 2. échéanciers signés : échéances déduites des encaissements (lecture seule), échéance manquée
  *    après la grâce (`recovery.plan.installment_missed`), échéancier soldé, ou rompu à 2 échéances
- *    manquées, 1 après une renégociation (`recovery.plan.defaulted`, relance amiable) ; rappels 3
- *    jours avant et le jour de chaque échéance ;
+ *    manquées, 1 après une renégociation (`recovery.plan.defaulted`, relance amiable, ou retour à la
+ *    mise en demeure si elle était faite) ; rappels 3 jours avant et le jour de chaque échéance ;
  * 3. promesses tenues par les encaissements, ou non tenues le lendemain (relance du débiteur) ;
  * 4. avancement : notification sans suite après 8 jours → relance amiable (sauf échéancier en cours
  *    d'accord) ; pas automatiques de la relance (message J0, e-mail J7) ; relance amiable échue →
@@ -266,11 +271,13 @@ export class WatchAmicableUseCase {
           summary: `Échéancier rompu : ${missedCount} échéance(s) manquée(s)`,
         }),
       );
-      if (record.status === 'active' && record.stage === 'payment_plan') {
+      // Relance amiable, ou retour à la mise en demeure déjà faite.
+      const move = unwrap(planDefaultedMove(record));
+      if (move) {
         nextRecord = applyStageMove(
           this.deps.ids,
           record,
-          unwrap(advanceStage(record, 'amicable')),
+          move,
           { actor: SYSTEM, changedBy: 'system', reason: 'Échéancier rompu', at: now },
           changes,
         );

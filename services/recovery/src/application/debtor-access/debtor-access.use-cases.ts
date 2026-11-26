@@ -4,9 +4,11 @@ import {
   checkLink,
   codeExpiry,
   codeResendWait,
+  DEFAULT_CLOSED_ACCESS_DAYS,
+  type DebtorAccessMode,
+  debtorAccessMode,
   isCodeValid,
   isLocked,
-  isOpenToDebtor,
   registerFailure,
   registerSuccess,
   retryAfterSeconds,
@@ -58,8 +60,26 @@ const LOCK_OPTIONS = {
 };
 
 /**
+ * Accès du débiteur à son dossier : complet s'il est actif ou suspendu, en lecture seule pendant les N
+ * jours qui suivent sa clôture (`closedAccessDays`), aucun sinon.
+ */
+function accessMode(
+  deps: Pick<DebtorAccessDeps, 'debtorAccess'>,
+  caseDebtor: CaseDebtor,
+  now: Date,
+): DebtorAccessMode | null {
+  return debtorAccessMode(
+    caseDebtor.caseStatus,
+    caseDebtor.closedAt ?? null,
+    now,
+    deps.debtorAccess.closedAccessDays ?? DEFAULT_CLOSED_ACCESS_DAYS,
+  );
+}
+
+/**
  * Lien utilisable : jeton bien formé et connu, lien ni révoqué ni expiré, débiteur toujours dans un
- * dossier actif ou suspendu. Sinon `RECOVERY_DEBTOR_LINK_INVALID`, la même erreur dans tous les cas.
+ * dossier actif ou suspendu, ou clos depuis moins de N jours (lecture seule). Sinon
+ * `RECOVERY_DEBTOR_LINK_INVALID`, la même erreur dans tous les cas.
  */
 async function usableLink(
   deps: DebtorAccessDeps,
@@ -71,7 +91,7 @@ async function usableLink(
   const access = await store.findByTokenHash(secrets.hashToken(token));
   if (!access || !checkLink(access.link, now).ok) throw DebtorAccessErrors.linkInvalid();
   const caseDebtor = await reader.caseDebtor(access.caseId, access.debtorId);
-  if (!caseDebtor || !isOpenToDebtor(caseDebtor.caseStatus)) throw DebtorAccessErrors.linkInvalid();
+  if (!caseDebtor || !accessMode(deps, caseDebtor, now)) throw DebtorAccessErrors.linkInvalid();
   return { access, caseDebtor };
 }
 
@@ -324,19 +344,30 @@ export interface DebtorSessionScope {
   accessId: string;
   sessionId: string;
   expiresAt: Date;
+  /** Dossier clos depuis moins de N jours : lecture de ses documents seulement. */
+  readOnly: boolean;
 }
+
+/**
+ * Usage de la session demandé par la méthode : `read` (situation, documents, fin de session) reste
+ * permis en lecture seule après la clôture ; `write` (paiement, échéancier, contestation, pièce,
+ * rappel) ne l'est que sur un dossier en cours.
+ */
+export type DebtorSessionUse = 'read' | 'write';
 
 /**
  * Session du débiteur (en-tête X-Debtor-Session, transmis par la gateway en métadonnée
  * `x-debtor-session`), vérifiée à chaque appel : la gateway ne la vérifie pas. Absente, mal formée,
- * inconnue, expirée, fermée, révoquée avec son lien (renouvelé, dossier clos), ou dossier qui n'est
- * plus ouvert au débiteur : `RECOVERY_DEBTOR_SESSION_INVALID` (401), toujours la même erreur. Les
- * méthodes de la session s'en servent pour ne lire et n'écrire que ce dossier et ce débiteur.
+ * inconnue, expirée, fermée, révoquée avec son lien (renouvelé, accès fermé), ou dossier qui n'est
+ * plus ouvert au débiteur : `RECOVERY_DEBTOR_SESSION_INVALID` (401), toujours la même erreur. Dossier
+ * clos depuis moins de N jours : lecture seule, une écriture répond `RECOVERY_INVALID_TRANSITION`
+ * (statut `closed`). Les méthodes de la session s'en servent pour ne lire et n'écrire que ce dossier
+ * et ce débiteur.
  */
 export class ResolveDebtorSessionUseCase {
   constructor(private readonly deps: Pick<DebtorAccessDeps, 'debtorAccess' | 'clock'>) {}
 
-  async execute(input: { sessionToken: string | null }): Promise<DebtorSessionScope> {
+  async execute(input: { sessionToken: string | null; use?: DebtorSessionUse }): Promise<DebtorSessionScope> {
     requireCaller(GATEWAY_CALLERS);
     const token = input.sessionToken ?? '';
     if (!DEBTOR_TOKEN.test(token)) throw DebtorAccessErrors.sessionInvalid();
@@ -352,13 +383,16 @@ export class ResolveDebtorSessionUseCase {
       throw DebtorAccessErrors.sessionInvalid();
     }
     const caseDebtor = await reader.caseDebtor(session.caseId, session.debtorId);
-    if (!caseDebtor || !isOpenToDebtor(caseDebtor.caseStatus)) throw DebtorAccessErrors.sessionInvalid();
+    const mode = caseDebtor ? accessMode(this.deps, caseDebtor, now) : null;
+    if (!mode) throw DebtorAccessErrors.sessionInvalid();
+    if (mode === 'read_only' && (input.use ?? 'write') === 'write') throw DebtorAccessErrors.readOnly();
     return {
       caseId: session.caseId,
       debtorId: session.debtorId,
       accessId: session.accessId,
       sessionId: session.id,
       expiresAt: session.expiresAt,
+      readOnly: mode === 'read_only',
     };
   }
 }
@@ -375,7 +409,7 @@ export class EndDebtorSessionUseCase {
   }
 
   async execute(input: { sessionToken: string | null }): Promise<{ endedAt: Date }> {
-    const scope = await this.sessions.execute(input);
+    const scope = await this.sessions.execute({ ...input, use: 'read' });
     const now = this.deps.clock.now();
     if (!(await this.deps.debtorAccess.store.endSession(scope.sessionId, now))) {
       throw DebtorAccessErrors.sessionInvalid();

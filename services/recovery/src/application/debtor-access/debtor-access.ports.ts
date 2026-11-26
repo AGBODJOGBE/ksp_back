@@ -73,6 +73,11 @@ export interface DebtorAccessStore {
   /** Révoque les liens actifs d'un dossier, ou d'un de ses débiteurs, et leurs sessions. */
   revoke(scope: { caseId: string; debtorId?: string }, at: Date): Promise<number>;
   /**
+   * Dossier clos (lecture seule) : ses liens encore valables à `at` le restent jusqu'à `until`,
+   * prolongés ou raccourcis ; leurs sessions courent jusqu'à leur propre échéance. Rend leur nombre.
+   */
+  restrict(scope: { caseId: string }, until: Date, at: Date): Promise<number>;
+  /**
    * Relit le lien sous verrou (SELECT … FOR UPDATE), laisse le cas d'usage décider et enregistre son
    * changement dans la même transaction : envois et essais sont comptés de façon atomique (ADR-050),
    * des appels simultanés passent l'un après l'autre. Lien inconnu : null.
@@ -91,12 +96,19 @@ export interface CaseDebtor {
   caseNumber: string;
   caseStatus: CaseStatus;
   creditor: { type: 'user' | 'organization'; id: string };
+  /** Clôture du dossier : ouvre la lecture seule pendant N jours ; absente, aucun accès après la clôture. */
+  closedAt?: Date | null;
 }
 
 /** Coordonnée chiffrée du débiteur (ADR-063), déchiffrée par le cas d'usage au moment de servir. */
 export interface EncryptedContact {
   channel: 'phone' | 'email';
   valueEnc: string;
+  /**
+   * Contexte de chiffrement de la valeur (le dépôt des dossiers lie chaque coordonnée à sa ligne) ;
+   * absent : `DEBTOR_CONTACT_CONTEXT`.
+   */
+  context?: string;
 }
 
 /** Lecture du dossier et du débiteur (tables du dépôt des dossiers). */
@@ -157,4 +169,9 @@ export interface DebtorAccessPorts {
   secrets: DebtorSecrets;
   /** Page du portail qui reçoit le jeton : `<RECOVERY_DEBTOR_BASE_URL>/<jeton>`. */
   baseUrl: string;
+  /**
+   * Jours de lecture seule après la clôture (attestation de solde et reçus) :
+   * `RECOVERY_DEBTOR_CLOSED_ACCESS_DAYS`, 30 par défaut ; 0 : liens révoqués à la clôture.
+   */
+  closedAccessDays?: number;
 }

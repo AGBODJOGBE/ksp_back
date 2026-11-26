@@ -189,6 +189,7 @@ model RecoveryCase {
   settlements      Settlement[]
   debtorMessages   DebtorMessage[]
   refunds          OverpaymentRefund[]
+  statements       Statement[]
   feeQuotes        FeeQuote[]
 
   @@unique([creditorType, creditorId, idempotencyKey])
@@ -897,6 +898,48 @@ model OverpaymentRefund {
   @@unique([recordedBy, idempotencyKey])
   @@index([caseId])
   @@map("overpayment_refunds")
+}
+
+/// Relevé mensuel d'un dossier (R-CO-05, ADR-060 point 11) : encaissements crédités au créancier pendant
+/// le mois (heure du Bénin), commission, frais retenus et net reversé ; PDF `recovery_statement` de
+/// document ; facture de commission du même mois émise par billing, rattachée dès qu'elle est reçue.
+model Statement {
+  id             String    @id @db.Uuid
+  caseId         String    @map("case_id") @db.Uuid
+  creditorType   PartyType @map("creditor_type")
+  creditorId     String    @map("creditor_id") @db.Uuid
+  /// Mois « AAAA-MM ».
+  period         String
+  collected      Int
+  commission     Int
+  costs          Int
+  remitted       Int
+  documentId     String    @map("document_id") @db.Uuid
+  documentNumber String    @map("document_number")
+  invoiceId      String?   @map("invoice_id") @db.Uuid
+  issuedAt       DateTime  @map("issued_at") @db.Timestamptz(3)
+
+  case RecoveryCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@unique([caseId, period])
+  @@index([creditorType, creditorId, period])
+  @@map("statements")
+}
+
+/// Facture mensuelle de commission émise par billing (`billing.commission_invoice.issued`, ADR-064) :
+/// identifiants et période seulement, une par créancier et par mois.
+model CommissionInvoice {
+  id           String    @id @db.Uuid
+  number       String
+  creditorType PartyType @map("creditor_type")
+  creditorId   String    @map("creditor_id") @db.Uuid
+  /// Mois facturé « AAAA-MM ».
+  period       String
+  issuedAt     DateTime  @map("issued_at") @db.Timestamptz(3)
+  receivedAt   DateTime  @default(now()) @map("received_at") @db.Timestamptz(3)
+
+  @@unique([creditorType, creditorId, period])
+  @@map("commission_invoices")
 }
 
 /// Lien personnel du débiteur (ADR-061) : jeton aléatoire dont seule l'empreinte est gardée, code

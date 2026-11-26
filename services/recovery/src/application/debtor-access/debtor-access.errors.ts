@@ -29,6 +29,14 @@ export const DebtorAccessErrors = {
       'Trop de codes faux : l’accès est bloqué pendant une heure.',
       { retryAfterSeconds },
     ),
+  /** Dossier clos : la session ne sert plus qu'à lire la situation et télécharger les documents. */
+  readOnly: () =>
+    AppError.precondition(
+      'RECOVERY_INVALID_TRANSITION',
+      'Ce dossier est clos : votre espace reste consultable pour télécharger vos documents, sans paiement, ' +
+        'contestation ni envoi de pièce.',
+      { status: 'closed' },
+    ),
   /** Émission d'un lien (appel interne) pour un débiteur qui n'est pas celui de ce dossier. */
   caseNotFound: () => AppError.notFound('RECOVERY_CASE_NOT_FOUND', 'Ce dossier est introuvable.'),
   /** Émission d'un lien pour un dossier qui n'est ni actif ni suspendu. */

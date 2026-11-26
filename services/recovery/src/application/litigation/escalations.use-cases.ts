@@ -94,7 +94,10 @@ async function escalationView(
   caseNumber: string,
 ): Promise<{ quote: FeeQuoteView; decision: DecisionView }> {
   const view = await feeQuoteView(deps, quote);
-  return { quote: view, decision: { decision, caseNumber, plan: null, settlement: null, feeQuote: view } };
+  return {
+    quote: view,
+    decision: { decision, caseNumber, plan: null, settlement: null, dispute: null, feeQuote: view },
+  };
 }
 
 /**

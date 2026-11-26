@@ -12,15 +12,16 @@ deux codes internes sont décrits dans `outcome.ts`.
 | `amounts`            | Montant dû (R-SD-08), imputation frais → intérêts → principal (R-EN-03), trop-perçu, accord transactionnel |
 | `pricing`            | Règles tarifaires, versions, priorité du tarif négocié, commission à arrondi unique (partie 13, R-CO-01)   |
 | `payment-plan`       | Barème, échéances, défaut, renégociation, rappels (6.1, R-EC-01 à 03)                                      |
-| `progression`        | Avancement automatique des étapes et séquence de relance amiable (UC-RC-26, étape 3)                       |
+| `progression`        | Avancement des étapes, relance amiable (UC-RC-26, étape 3), échéancier jusqu'à la mise en demeure (6.1)    |
 | `score`              | Score de recouvrabilité (R-SD-07)                                                                          |
 | `deadlines`          | Délais, jours ouvrés, prescription (17.1, partie 2)                                                        |
 | `contact-policy`     | Plages et personnes de contact (partie 2, décision 6)                                                      |
 | `amicable`           | Moment et canal des messages automatiques au débiteur, remise pour paiement immédiat (R-PR-05)             |
 | `eligibility`        | Injonction de payer (étape 6)                                                                              |
-| `debtor-access`      | Lien et code du débiteur (partie 7, 17.3)                                                                  |
+| `debtor-access`      | Lien et code du débiteur (partie 7, 17.3), lecture seule après la clôture                                  |
 | `import`             | Import par tableur (R-SD-01, R-SD-02)                                                                      |
 | `partner`            | Huissiers et avocats (partie 8)                                                                            |
 | `decision`           | Décisions du créancier, dont le saut d'étape `stage_skip` (UC-RC-06, 07 ; R-PR-03, R-PR-04)                |
 | `promise`, `dispute` | Promesses (R-PR-09), contestations (R-PR-02)                                                               |
 | `settings`           | Réglages et bornes (17.1)                                                                                  |
+| `statement`          | Relevé mensuel par dossier : encaissé, commission, frais, reversé (R-CO-05)                                |

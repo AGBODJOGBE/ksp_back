@@ -11,6 +11,7 @@ import {
   type StoredDebtorSession,
 } from '../../application/debtor-access/debtor-access.ports';
 import { PrismaService } from '../prisma/prisma.service';
+import { contactContext } from './prisma-case-rows';
 
 /** Ligne de `debtor_accesses` → lien, code en cours et compteurs. */
 function toAccess(row: AccessRow): StoredDebtorAccess {
@@ -117,6 +118,14 @@ export class PrismaDebtorAccessStore implements DebtorAccessStore {
     });
   }
 
+  async restrict(scope: { caseId: string }, until: Date, at: Date): Promise<number> {
+    const { count } = await this.prisma.debtorAccess.updateMany({
+      where: { caseId: scope.caseId, revokedAt: null, expiresAt: { gt: at } },
+      data: { expiresAt: until },
+    });
+    return count;
+  }
+
   async updateLocked<T>(
     accessId: string,
     decide: (access: StoredDebtorAccess) => { change: DebtorAccessChange | null; result: T },
@@ -174,8 +183,9 @@ export class PrismaDebtorAccessStore implements DebtorAccessStore {
 }
 
 /**
- * Lecture du dossier et du débiteur pour son accès : statut, numéro, créancier, coordonnées encore
- * valables (chiffrées, déchiffrées par le cas d'usage au moment de servir).
+ * Lecture du dossier et du débiteur pour son accès : statut, numéro, créancier, date de clôture
+ * (lecture seule après la clôture), coordonnées encore valables (chiffrées, déchiffrées par le cas
+ * d'usage au moment de servir).
  */
 @Injectable()
 export class PrismaDebtorCaseReader implements DebtorCaseReader {
@@ -184,7 +194,11 @@ export class PrismaDebtorCaseReader implements DebtorCaseReader {
   async caseDebtor(caseId: string, debtorId: string): Promise<CaseDebtor | null> {
     const debtor = await this.prisma.debtor.findFirst({
       where: { id: debtorId, caseId },
-      select: { case: { select: { number: true, status: true, creditorType: true, creditorId: true } } },
+      select: {
+        case: {
+          select: { number: true, status: true, creditorType: true, creditorId: true, closedAt: true },
+        },
+      },
     });
     if (!debtor) return null;
     const recoveryCase = debtor.case;
@@ -192,6 +206,7 @@ export class PrismaDebtorCaseReader implements DebtorCaseReader {
       caseNumber: recoveryCase.number,
       caseStatus: recoveryCase.status,
       creditor: { type: recoveryCase.creditorType, id: recoveryCase.creditorId },
+      closedAt: recoveryCase.closedAt,
     };
   }
 
@@ -199,11 +214,13 @@ export class PrismaDebtorCaseReader implements DebtorCaseReader {
     const rows = await this.prisma.debtorContact.findMany({
       where: { debtorId, valid: true, channel: { in: ['phone', 'email'] } },
       orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }],
-      select: { channel: true, valueEnc: true },
+      select: { id: true, channel: true, valueEnc: true },
     });
+    // Chaque valeur est chiffrée liée à sa ligne par le dépôt des dossiers (ADR-063).
     return rows.map((row) => ({
       channel: row.channel as EncryptedContact['channel'],
       valueEnc: row.valueEnc,
+      context: contactContext(row.id),
     }));
   }
 }

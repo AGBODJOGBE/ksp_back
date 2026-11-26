@@ -1,5 +1,6 @@
 import { type AmicableDeps } from './amicable.ports';
 import { WatchAmicableUseCase } from './amicable-tasks.use-case';
+import { AddCaseProcedureUseCase } from './case-procedure';
 import {
   AddInternalNoteUseCase,
   GetMyWorkQueueUseCase,
@@ -45,6 +46,8 @@ export function createAmicableUseCases(deps: AmicableDeps) {
     resendDebtorPlanSignature: new ResendDebtorPlanSignatureUseCase(deps),
     recordPlanSignature: new RecordPlanSignatureUseCase(deps),
     watchAmicable: new WatchAmicableUseCase(deps),
+    // Fiche du dossier : échéancier en cours, promesses, remises, réponses aux contestations.
+    addCaseProcedure: new AddCaseProcedureUseCase(deps),
   };
 }
 

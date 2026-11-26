@@ -477,6 +477,8 @@ export interface RecoveryCase {
    * classé par la tâche des échéances, partie 4.4) ; vide sinon.
    */
   rejectionReason: string;
+  /** Remises pour paiement immédiat du dossier (R-PR-05), la plus récente d'abord (ajout facultatif). */
+  settlements: Settlement[];
 }
 
 export interface CaseSummary {

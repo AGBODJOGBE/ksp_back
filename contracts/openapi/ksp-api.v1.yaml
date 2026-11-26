@@ -36978,6 +36978,11 @@ components:
         updatedAt:
           type: string
           format: date-time
+        settlements:
+          type: array
+          description: Remises pour paiement immédiat du dossier (R-PR-05), la plus récente d’abord
+          items:
+            $ref: '#/components/schemas/RecoverySettlement'
     RecoveryCaseSummary:
       type: object
       additionalProperties: false

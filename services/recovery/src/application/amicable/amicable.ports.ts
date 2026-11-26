@@ -20,6 +20,7 @@ import {
   type SaveOutcome,
 } from '../cases/ports';
 import { type DebtorAccessPorts } from '../debtor-access/debtor-access.ports';
+import { type MoneyStore } from '../money/money.ports';
 import { type EscalationDecisions } from '../litigation/escalation.port';
 import { type AuditLog, type DebtorChannel, type DebtorMessage, type Holder, type Notifier } from '../ports';
 
@@ -125,10 +126,14 @@ export interface PlanRecord {
   installments: InstallmentRecord[];
 }
 
-/** Objet d'une décision : échéancier, remise, saut d'étape (R-PR-03) ou devis d'une étape payante (R5). */
+/**
+ * Objet d'une décision : échéancier, remise, saut d'étape (R-PR-03), contestation (R-PR-02) ou devis
+ * d'une étape payante (R5).
+ */
 export interface DecisionPayload {
   planId?: string;
   settlementId?: string;
+  disputeId?: string;
   skip?: { from: CaseStage; to: CaseStage; reason: SkipReason; note: string };
   feeQuoteId?: string;
 }
@@ -369,6 +374,8 @@ export interface AmicableDeps extends CaseDeps {
   debtorAccess: DebtorAccessPorts;
   documentCancellation: DocumentCancellation;
   amicableOptions: AmicableOptions;
+  /** Contestations du débiteur (lot R3), lues pour la décision `dispute_response`. */
+  money: Pick<MoneyStore, 'disputes'>;
   /** Devis des étapes payantes (lot R5) : présentés, tranchés et expirés avec leur décision. */
   escalations: EscalationDecisions;
 }

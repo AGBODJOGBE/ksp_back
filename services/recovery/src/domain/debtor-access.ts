@@ -89,6 +89,37 @@ export function isOpenToDebtor(status: CaseStatus): boolean {
   return status === 'active' || status === 'suspended';
 }
 
+/**
+ * Accès en lecture seule après la clôture : 30 jours par défaut (réglable, 0 : aucun), le temps pour le
+ * débiteur de télécharger son attestation de solde et ses reçus (R-DB-03).
+ */
+export const DEFAULT_CLOSED_ACCESS_DAYS = 30;
+
+/** Accès complet (dossier en cours) ou lecture seule de ses documents (dossier clos depuis peu). */
+export type DebtorAccessMode = 'full' | 'read_only';
+
+/** Fin de l'accès en lecture seule d'un dossier clos ; null s'il n'y en a pas (0 jour). */
+export function closedAccessEnd(closedAt: Date, closedAccessDays: number): Date | null {
+  return closedAccessDays > 0 ? addDaysToInstant(closedAt, closedAccessDays) : null;
+}
+
+/**
+ * Accès du débiteur selon son dossier : complet pour un dossier actif ou suspendu ; en lecture seule
+ * (attestation de solde et reçus, ni paiement, ni contestation, ni pièce) pendant N jours après la
+ * clôture ; aucun sinon (dossier refusé, clos depuis plus longtemps, date de clôture inconnue).
+ */
+export function debtorAccessMode(
+  status: CaseStatus,
+  closedAt: Date | null,
+  now: Date,
+  closedAccessDays: number,
+): DebtorAccessMode | null {
+  if (isOpenToDebtor(status)) return 'full';
+  if (status !== 'closed' || closedAt === null) return null;
+  const end = closedAccessEnd(closedAt, closedAccessDays);
+  return end !== null && now < end ? 'read_only' : null;
+}
+
 /** Échéance d'un code envoyé maintenant (`debtorCodeMinutes`, 10 — `FIXED_RULES`). */
 export function codeExpiry(now: Date, debtorCodeMinutes: number): Date {
   return new Date(now.getTime() + debtorCodeMinutes * 60_000);

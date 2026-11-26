@@ -681,6 +681,8 @@ message RecoveryCase {
   // "debtor_unreachable", "other"), ou "incomplete" (complément non fourni dans le délai, dossier
   // classé par la tâche des échéances, partie 4.4) ; vide sinon.
   string rejection_reason = 38;
+  // Remises pour paiement immédiat du dossier (R-PR-05), la plus récente d'abord (ajout facultatif).
+  repeated Settlement settlements = 39;
 }
 
 message CaseSummary {
