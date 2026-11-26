@@ -8,6 +8,7 @@ import {
   ListCommissionInvoicesUseCase,
   ListMyCommissionInvoicesUseCase,
   RecordCommissionCollectionUseCase,
+  RetryCommissionDebitsOnWalletCreditUseCase,
 } from './commission-invoices.use-cases';
 import { ListMyFeeReceiptsUseCase, RecordFeeReceiptUseCase } from './fee-receipts.use-cases';
 import { type RecoveryBillingDeps, type RecoveryBillingOptions } from './ports';
@@ -21,6 +22,7 @@ export function createRecoveryBillingUseCases(
     recordCollection: new RecordCommissionCollectionUseCase(deps),
     issueCommissionInvoices: new IssueCommissionInvoicesUseCase(deps),
     debitCommissionInvoices: new DebitCommissionInvoicesUseCase(deps, options),
+    retryCommissionDebitsOnWalletCredit: new RetryCommissionDebitsOnWalletCreditUseCase(deps, options),
     listMyCommissionInvoices: new ListMyCommissionInvoicesUseCase(deps),
     getMyCommissionInvoice: new GetMyCommissionInvoiceUseCase(deps),
     listCommissionInvoices: new ListCommissionInvoicesUseCase(deps),

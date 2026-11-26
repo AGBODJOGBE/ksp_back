@@ -2,11 +2,14 @@ import {
   balanceDelta,
   collectionEntries,
   commissionOf,
+  debitCounterpart,
+  INTERNAL_ACCOUNTS,
   isBalanced,
   payoutHoldEntries,
   payoutReleaseEntries,
   payoutSettlementEntries,
   reversalEntries,
+  servicePaymentEntries,
 } from './ledger';
 import { markSubmitted, maskPhone, settle, type WalletPayout } from './wallet-payout';
 
@@ -50,6 +53,40 @@ describe('grand livre (ADR-042)', () => {
     expect(balanceDelta({ account: 'ksp:collections', direction: 'debit', amount: 5 })).toBe(5);
     expect(balanceDelta({ account: 'holder:user:u1', direction: 'debit', amount: 5 })).toBe(-5);
     expect(balanceDelta({ account: 'ksp:commission', direction: 'credit', amount: 5 })).toBe(5);
+  });
+});
+
+describe('provisions du recouvrement (ADR-060, point 10)', () => {
+  it('débit de recovery pour une provision : crédite ksp:recovery_provisions, tout autre débit les services', () => {
+    expect(debitCounterpart('recovery', 'recovery_provision')).toBe('ksp:recovery_provisions');
+    expect(debitCounterpart('recovery', 'recovery_case_fee')).toBe('ksp:service_revenue');
+    expect(debitCounterpart('recovery', 'recovery_study_fee')).toBe('ksp:service_revenue');
+    expect(debitCounterpart('cleaning', 'recovery_provision')).toBe('ksp:service_revenue');
+    expect(debitCounterpart('billing', 'billing_commission_invoice')).toBe('ksp:service_revenue');
+    expect(INTERNAL_ACCOUNTS).toContain('ksp:recovery_provisions');
+  });
+
+  it('écritures équilibrées ; le remboursement repart du même compte ; passif au crédit', () => {
+    const debit = servicePaymentEntries(HOLDER, 7000, debitCounterpart('recovery', 'recovery_provision'));
+    expect(debit).toEqual([
+      { account: 'prepaid:organization:o1', direction: 'debit', amount: 7000 },
+      { account: 'ksp:recovery_provisions', direction: 'credit', amount: 7000 },
+    ]);
+    const refund = reversalEntries({ entries: debit });
+    expect(refund).toEqual([
+      { account: 'prepaid:organization:o1', direction: 'credit', amount: 7000 },
+      { account: 'ksp:recovery_provisions', direction: 'debit', amount: 7000 },
+    ]);
+    expect(isBalanced(debit)).toBe(true);
+    expect(isBalanced(refund)).toBe(true);
+    expect(balanceDelta(debit[1]!)).toBe(7000);
+    expect(balanceDelta(refund[1]!)).toBe(-7000);
+    // Sans contrepartie donnée : un paiement de service, comme avant.
+    expect(servicePaymentEntries(HOLDER, 7000)[1]).toEqual({
+      account: 'ksp:service_revenue',
+      direction: 'credit',
+      amount: 7000,
+    });
   });
 });
 

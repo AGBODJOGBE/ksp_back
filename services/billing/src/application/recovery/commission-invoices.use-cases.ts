@@ -1,4 +1,4 @@
-import { type RecoveryEventPayloads } from '@ksp/contracts';
+import { type RecoveryEventPayloads, type WalletEventPayloads } from '@ksp/contracts';
 import { AppError } from '@ksp/platform';
 import {
   COMMISSION_DEBIT_OBJECT_TYPE,
@@ -167,8 +167,9 @@ export interface CommissionDebitFailureReport {
  * Débit automatique de la commission `invoiced` (décision du 2026-11-23) : du portefeuille prépayé du
  * créancier (wallet.Debit, ADR-046), objet `billing_commission_invoice`, clé stable par facture (un
  * débit déjà fait est rendu tel quel par wallet : rien n'est débité deux fois). Solde insuffisant : la
- * facture reste due, nouvel essai après le délai réglable (un jour par défaut) ; autre échec de
- * wallet : nouvel essai un quart d'heure plus tard. La finance suit les factures dues au back-office.
+ * facture reste due, nouvel essai après le délai réglable (un jour par défaut), ou dès un crédit du
+ * portefeuille (`RetryCommissionDebitsOnWalletCreditUseCase`) ; autre échec de wallet : nouvel essai
+ * un quart d'heure plus tard. La finance suit les factures dues au back-office.
  */
 export class DebitCommissionInvoicesUseCase {
   constructor(
@@ -178,41 +179,101 @@ export class DebitCommissionInvoicesUseCase {
 
   async execute(): Promise<{ paid: number; failures: CommissionDebitFailureReport[] }> {
     const now = this.deps.clock.now();
-    let paid = 0;
-    const failures: CommissionDebitFailureReport[] = [];
-    for (const invoice of await this.deps.recovery.listDueDebits(now, COMMISSION_BATCH_SIZE)) {
-      const amount = commissionBalance(invoice);
-      if (amount <= 0) continue;
-      try {
-        const debit = await this.deps.wallet.debit({
-          idempotencyKey: commissionDebitKey(invoice.id),
-          holder: invoice.creditor,
-          amount,
-          object: { objectType: COMMISSION_DEBIT_OBJECT_TYPE, objectId: invoice.id, part: '' },
-          description: `Commission de recouvrement — facture ${invoice.number}`,
-        });
-        if (await this.deps.recovery.saveDebit(withCommissionDebited(invoice, debit.transactionId, now))) {
-          paid += 1;
-        }
-      } catch (error) {
-        const code = error instanceof AppError ? error.code : 'WALLET_UNAVAILABLE';
-        const reason: CommissionDebitFailure =
-          code === 'WALLET_INSUFFICIENT_FUNDS' ? 'insufficient_funds' : 'wallet_error';
-        const delay =
-          reason === 'insufficient_funds' ? this.options.debitRetryDelayMs : WALLET_ERROR_RETRY_MS;
-        await this.deps.recovery.saveDebit(
-          withCommissionDebitFailed(invoice, {
-            reason,
-            missingAmount: missingAmount(error),
-            at: now,
-            nextAttemptAt: new Date(now.getTime() + delay),
-          }),
-        );
-        failures.push({ invoiceId: invoice.id, invoiceNumber: invoice.number, reason, code });
-      }
-    }
-    return { paid, failures };
+    return debitInvoices(
+      this.deps,
+      this.options,
+      await this.deps.recovery.listDueDebits(now, COMMISSION_BATCH_SIZE),
+      now,
+    );
   }
+}
+
+/**
+ * Nouvel essai dès un crédit du portefeuille (`wallet.prepaid.credited` : recharge, remboursement,
+ * crédit de la finance ou d'un service) : les factures de commission dues du titulaire crédité sont
+ * débitées tout de suite, sans attendre l'essai suivant (un jour après un solde insuffisant). Même
+ * débit que la tâche planifiée — clé stable par facture : wallet rend le débit déjà fait, jamais un
+ * second — et même suite en cas d'échec. Sous le verrou de la tâche : jamais deux passages de débit
+ * en même temps, d'une réplique à l'autre ; verrou pris (passage en cours) : erreur, l'événement
+ * revient par la file de reprise. Aucune facture due : rien, sans prendre le verrou. Le même
+ * événement reçu deux fois n'a pas d'effet de plus : une facture réglée n'est plus due.
+ */
+export class RetryCommissionDebitsOnWalletCreditUseCase {
+  constructor(
+    private readonly deps: RecoveryBillingDeps,
+    private readonly options: RecoveryBillingOptions,
+  ) {}
+
+  async execute(input: {
+    payload: Pick<WalletEventPayloads['wallet.prepaid.credited'], 'holder'>;
+  }): Promise<{ due: number; paid: number; failures: CommissionDebitFailureReport[] }> {
+    const creditor: CreditorRef = {
+      type: input.payload.holder.type,
+      id: input.payload.holder.id.toLowerCase(),
+    };
+    if ((await this.dueInvoices(creditor)).length === 0) return { due: 0, paid: 0, failures: [] };
+    const run = await this.deps.debitLock.tryRun(async () => {
+      // Relues sous le verrou : le passage qui le tenait a pu les régler.
+      const invoices = await this.dueInvoices(creditor);
+      const outcome = await debitInvoices(this.deps, this.options, invoices, this.deps.clock.now());
+      return { due: invoices.length, ...outcome };
+    });
+    if (!run.ran) {
+      throw new Error('Débit des commissions en cours ; nouvel essai après le crédit du portefeuille.');
+    }
+    return run.result;
+  }
+
+  private async dueInvoices(creditor: CreditorRef): Promise<CommissionInvoice[]> {
+    const unpaid = await this.deps.recovery.listUnpaidForCreditors([creditor]);
+    return unpaid.filter((invoice) => commissionBalance(invoice) > 0);
+  }
+}
+
+/**
+ * Un essai de débit par facture due, avec la clé stable de la facture : réglée, ou échec noté avec son
+ * prochain essai (solde insuffisant : délai réglable ; autre échec de wallet : un quart d'heure).
+ * Facture modifiée entre-temps (contrôle de version) : rien n'est écrit.
+ */
+async function debitInvoices(
+  deps: RecoveryBillingDeps,
+  options: RecoveryBillingOptions,
+  invoices: readonly CommissionInvoice[],
+  now: Date,
+): Promise<{ paid: number; failures: CommissionDebitFailureReport[] }> {
+  let paid = 0;
+  const failures: CommissionDebitFailureReport[] = [];
+  for (const invoice of invoices) {
+    const amount = commissionBalance(invoice);
+    if (amount <= 0) continue;
+    try {
+      const debit = await deps.wallet.debit({
+        idempotencyKey: commissionDebitKey(invoice.id),
+        holder: invoice.creditor,
+        amount,
+        object: { objectType: COMMISSION_DEBIT_OBJECT_TYPE, objectId: invoice.id, part: '' },
+        description: `Commission de recouvrement — facture ${invoice.number}`,
+      });
+      if (await deps.recovery.saveDebit(withCommissionDebited(invoice, debit.transactionId, now))) {
+        paid += 1;
+      }
+    } catch (error) {
+      const code = error instanceof AppError ? error.code : 'WALLET_UNAVAILABLE';
+      const reason: CommissionDebitFailure =
+        code === 'WALLET_INSUFFICIENT_FUNDS' ? 'insufficient_funds' : 'wallet_error';
+      const delay = reason === 'insufficient_funds' ? options.debitRetryDelayMs : WALLET_ERROR_RETRY_MS;
+      await deps.recovery.saveDebit(
+        withCommissionDebitFailed(invoice, {
+          reason,
+          missingAmount: missingAmount(error),
+          at: now,
+          nextAttemptAt: new Date(now.getTime() + delay),
+        }),
+      );
+      failures.push({ invoiceId: invoice.id, invoiceNumber: invoice.number, reason, code });
+    }
+  }
+  return { paid, failures };
 }
 
 /** Montant manquant rappelé par wallet (`details.missing`, ADR-046), ou null. */

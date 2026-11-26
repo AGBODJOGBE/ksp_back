@@ -46,12 +46,21 @@ Idempotence : encaissement et annulation par (appelant, référence), reversemen
 Second compte par titulaire, `prepaid:<user|organization>:<id>`, distinct des fonds dus au créancier :
 dépensable sur la plateforme, **jamais reversé, jamais négatif** (contrôle sous verrou, puis contrainte
 en base). Comptes internes `ksp:prepaid_funds` (recharges reçues) et `ksp:service_revenue` (services
-payés). Invariant : recharges reçues = Σ portefeuilles + services payés.
+payés). Invariant : recharges reçues = Σ portefeuilles + services payés (+ retraits en transit +
+provisions du recouvrement).
+
+Provisions du recouvrement (ADR-060, point 10) : KSP n'avance jamais de frais de procédure. La provision
+versée par le créancier (`Debit` de `recovery`, objet `recovery_provision`) est tenue sur
+`ksp:recovery_provisions` (passif, sens crédit), pas sur `ksp:service_revenue` : ce n'est pas un produit
+de KSP. Son `Refund` en repart. Le reste d'une provision est rendu à la main par la finance. La vue
+d'ensemble REST rend ce solde dans `recoveryProvisions`, hors de `internalAccounts` (énumération publiée
+inchangée).
 
 | Opération                                              | Écritures                                           |
 | ------------------------------------------------------ | --------------------------------------------------- |
 | Recharge (`payment.intent.succeeded`, `wallet_top_up`) | D recharges / C portefeuille, une fois par paiement |
-| `Debit` (cleaning, billing)                            | D portefeuille / C services — jamais partiel        |
+| `Debit` (cleaning, billing, recovery)                  | D portefeuille / C services — jamais partiel        |
+| `Debit` de recovery, objet `recovery_provision`        | D portefeuille / C provisions du recouvrement       |
 | `Refund`                                               | écriture inverse du débit, une seule fois           |
 | Crédit de la finance (`refund` ou `top_up`)            | D services (ou D recharges) / C portefeuille, motif |
 
@@ -63,8 +72,8 @@ payés). Invariant : recharges reçues = Σ portefeuilles + services payés.
 - Écart de montant d'une recharge : rien n'est crédité ; la finance crédite le montant reçu
   (`CreditPrepaidWallet`, `kind: top_up`, `paymentId`), une seule fois par paiement.
 - Événements : `wallet.prepaid.debited`, `wallet.prepaid.credited` (outbox, même transaction).
-- Appelants : `WALLET_DEBIT_CALLERS` (`cleaning,billing`). Jetons de service : `cleaning` et `billing`
-  → audience `wallet`.
+- Appelants : `WALLET_DEBIT_CALLERS` (`cleaning,billing,recovery`). Jetons de service : `cleaning`,
+  `billing` et `recovery` → audience `wallet`.
 
 ## Contrôles de l'argent (ADR-048)
 

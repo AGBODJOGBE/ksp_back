@@ -91,12 +91,24 @@ export interface RecoveryBillingRepository {
   listFeeReceipts(filter: FeeReceiptFilter, page: PageRequest): Promise<PageResult<FeeReceipt>>;
 }
 
+/**
+ * Verrou des débits de commission : celui de la tâche planifiée (verrou consultatif), pour qu'une
+ * facture ne soit jamais débitée par deux passages en même temps, d'une réplique à l'autre — tâche
+ * planifiée ou nouvel essai après un crédit du portefeuille.
+ */
+export interface CommissionDebitLock {
+  /** `run` sous le verrou ; `ran: false`, sans attendre, s'il est déjà pris (passage en cours). */
+  tryRun<T>(run: () => Promise<T>): Promise<{ ran: true; result: T } | { ran: false }>;
+}
+
 export interface RecoveryBillingDeps {
   recovery: RecoveryBillingRepository;
   /** En-tête des factures d'une organisation créancière (identity, GetOrganizationsByIds). */
   organizations: OrganizationDirectory;
   /** Débit de la commission `invoiced` du portefeuille prépayé du créancier (wallet.Debit). */
   wallet: WalletLedger;
+  /** Nouvel essai après un crédit : sous le verrou de la tâche planifiée. */
+  debitLock: CommissionDebitLock;
   clock: Clock;
   ids: IdGenerator;
 }

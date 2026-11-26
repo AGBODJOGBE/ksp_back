@@ -22,6 +22,8 @@ import { createRecoveryBillingUseCases, RECOVERY_BILLING_USE_CASES } from './app
 import { RecoveryEventsConsumer } from './infrastructure/messaging/recovery-events.consumer';
 import { PrismaRecoveryBillingRepository } from './infrastructure/persistence/prisma-recovery-billing.repository';
 import { CommissionBillingSchedulerService } from './infrastructure/scheduling/commission-billing-scheduler.service';
+import { PgCommissionDebitLock } from './infrastructure/scheduling/pg-commission-debit-lock';
+import { WalletCreditEventsConsumer } from './infrastructure/messaging/wallet-credit-events.consumer';
 import { type ServiceConfig } from './config';
 import { IdentityOrganizationDirectory } from './infrastructure/identity/identity-organization-directory';
 import { OutboxRelayService } from './infrastructure/messaging/outbox-relay.service';
@@ -177,20 +179,25 @@ export class AppModule {
           },
         },
         // Recouvrement (ADR-064) : encaissements et débits appris par événement, facture mensuelle de
-        // commission, débit automatique (wallet.Debit), reçus ; en-tête des organisations par identity.
+        // commission, débit automatique (wallet.Debit) relancé dès un crédit du portefeuille, reçus ;
+        // en-tête des organisations par identity.
         PrismaRecoveryBillingRepository,
         RecoveryEventsConsumer,
         CommissionBillingSchedulerService,
+        // Seul abonné de billing à wallet.prepaid.credited : facture du lot F, puis commissions dues.
+        WalletCreditEventsConsumer,
         {
           provide: RECOVERY_BILLING_USE_CASES,
           inject: [
             PrismaRecoveryBillingRepository,
+            PgRunLock,
             IDENTITY_CLIENT,
             WALLET_CLIENT,
             { token: SERVICE_TOKEN_PROVIDER, optional: true },
           ],
           useFactory: (
             recovery: PrismaRecoveryBillingRepository,
+            lock: PgRunLock,
             grpc: ClientGrpc,
             walletGrpc: ClientGrpc,
             serviceTokens: ServiceTokenProvider | undefined,
@@ -208,6 +215,7 @@ export class AppModule {
                   walletGrpc.getService<walletV1.WalletServiceClient>(walletV1.WALLET_SERVICE_NAME),
                   caller('wallet'),
                 ),
+                debitLock: new PgCommissionDebitLock(lock),
                 clock: new SystemClock(),
                 ids: new UuidV7Generator(),
               },

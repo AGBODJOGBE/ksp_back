@@ -1,6 +1,7 @@
 import { type WalletEventPayloads, type WalletObjectRef } from '@ksp/contracts';
 import { currentContext } from '@ksp/platform';
 import {
+  debitCounterpart,
   type Holder,
   type LedgerTransaction,
   type PaidObject,
@@ -136,6 +137,9 @@ export const topUpReference = (paymentId: string) => `payment:${paymentId}`;
  * solde insuffisant → WALLET_INSUFFICIENT_FUNDS avec le montant manquant, rien n'est écrit. Le solde
  * est contrôlé sous le verrou du compte, puis par la base (jamais négatif). Idempotent par
  * (appelant, clé) : le rejeu rend le même débit ; un débit déjà remboursé n'est jamais rejoué.
+ * Contrepartie : `ksp:service_revenue`, sauf la provision versée au recouvrement (appelant `recovery`,
+ * objet `recovery_provision`), tenue sur `ksp:recovery_provisions` (ADR-060, point 10) ; son
+ * remboursement, écriture inverse, en repart.
  */
 export class DebitPrepaidUseCase {
   constructor(private readonly deps: WalletDeps) {}
@@ -175,7 +179,7 @@ export class DebitPrepaidUseCase {
       description,
       actorId: currentContext()?.user?.userId ?? null,
       object,
-      entries: servicePaymentEntries(holder, amount),
+      entries: servicePaymentEntries(holder, amount, debitCounterpart(caller, object.type)),
     });
     const outcome = await this.deps.ledger.record({
       transaction: debit,
@@ -209,7 +213,9 @@ function requireObject(
 
 /**
  * Remboursement en entier d'un débit de l'appelant : écriture inverse, le montant est recrédité au
- * portefeuille. Une seule fois : un second remboursement rend le premier (`created: false`).
+ * portefeuille depuis le compte que le débit avait crédité (`ksp:service_revenue`, ou
+ * `ksp:recovery_provisions` pour une provision du recouvrement). Une seule fois : un second
+ * remboursement rend le premier (`created: false`).
  */
 async function refundDebit(
   deps: WalletDeps,
