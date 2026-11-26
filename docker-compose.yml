@@ -25,7 +25,7 @@ services:
       retries: 10
 
   rabbitmq:
-    image: rabbitmq:4.1-management-alpine
+    image: rabbitmq:4.4-management-alpine
     environment:
       RABBITMQ_DEFAULT_USER: ksp
       RABBITMQ_DEFAULT_PASS: ksp
